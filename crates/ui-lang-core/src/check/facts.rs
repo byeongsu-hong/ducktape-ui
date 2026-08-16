@@ -8510,6 +8510,18 @@ impl<'a> FactsBuilder<'a> {
                     span,
                 )?;
             }
+            Statement::Emit { args, span, .. } => {
+                for arg in args {
+                    self.statement_operand(statement_id, &mut operand, arg, None, env, span)?;
+                }
+                self.record_checked_task(
+                    declaration.task,
+                    Some(Type::Unit),
+                    None,
+                    declaration.is_final,
+                    span,
+                )?;
+            }
             Statement::ClipboardWrite { value, span, .. } => {
                 self.statement_operand(
                     statement_id,
@@ -9047,7 +9059,8 @@ impl<'a> FactsBuilder<'a> {
             | Statement::TaskFlow { .. }
             | Statement::TaskGroup { .. }
             | Statement::Abortable { .. }
-            | Statement::ClipboardWrite { .. } => {}
+            | Statement::ClipboardWrite { .. }
+            | Statement::Emit { .. } => {}
         }
         Ok(())
     }

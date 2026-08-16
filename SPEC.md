@@ -3945,7 +3945,8 @@ component Counter(label:str)
 
 They have one root, typed inputs, and no implicit capture of app state. A local
 `state` block accepts self-contained ordinary cloneable values. Local `on`
-handlers may assign that state, stop with `return if`, or end with a Future
+handlers may assign that state, stop with `return if`, fire a declared event
+with a final `emit(event, args...)`, or end with a Future
 extern call using an explicit `run every`, `run latest`, or `run replace`
 delivery mode, or with `stream replace` on an instance-owned lane. Future runs,
 replacement streams, and scoped widget operations may compose with `parallel`
@@ -4195,6 +4196,19 @@ Toggle checked=checked -> changed _
 A non-`unit` component requires a route, while a `unit` component rejects one.
 `emit` accepts exactly one value matching the declared output and may be used
 to forward nested component or extern-component output.
+
+A component handler may also fire a declared event with the statement form
+`emit(event, args...)`, one value per declared payload. It is a task
+statement (final, or composed with `parallel`/`sequential`): the event is
+delivered as the NEXT update-loop message, so the handler's state writes land
+before the receiving handler runs. Because the emitting handler cannot see
+any call site's environment, a handler-emitted event must be statically
+deliverable: every call site routes it either straight to ONE app handler
+with `_`-only payloads, or chains it upward with `emit(outer_event, _...)`
+from inside another component, where the same rule applies to the outer
+event — and every chain must converge on the same app handler. A view-route
+`emit` keeps its full call-site flexibility; the restriction binds only
+events a handler fires.
 
 Components may instead expose multiple named events with zero or more ordered
 typed payloads. Every declared event has exactly one route at each call site;

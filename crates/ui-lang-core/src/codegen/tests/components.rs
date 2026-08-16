@@ -1825,3 +1825,47 @@ view
         "{seam}"
     );
 }
+
+#[test]
+fn handler_emit_delivers_the_next_update_message() {
+    // `emit(event, args)` in a component handler lowers to `Task::done` on
+    // the app handler's message, built from the emitting handler's values —
+    // the handler finishes its writes first, and the app handler sees them.
+    let source = r#"app EmitFlow
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  received = ""
+component Sender()
+  lifetime retained
+  state
+    body = ""
+  on send
+    emit(submit, trim(body))
+  emits
+    submit(str)
+  col
+    input "Draft" <-> body
+    button "Send" -> send
+on submitted(text)
+  received = text
+view
+  col
+    Sender #sender
+      events
+        submit -> submitted _
+    text received
+"#;
+    let generated = compile(source, "emit-flow.ice").unwrap();
+    assert!(generated.contains("::iced::Task::done(__EmitFlowMessage::Submitted("));
+    // The payload is the handler's own expression over instance state.
+    assert!(generated.contains(".trim().to_owned()") || generated.contains("trim"));
+}

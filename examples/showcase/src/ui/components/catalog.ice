@@ -1,4 +1,4 @@
-component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:editor, bind catalog_query:str, clicks:i64, accepted:bool, notifications:bool, volume:f64, density:str, native_select_frameworks:[str], native_select_framework:str?, combobox_frameworks:combo[str], searched_framework:str?, catalog_sort:str, catalog_page:i64, catalog_at_start:bool, catalog_page_number:i64, demo_page:i64, demo_page_max:i64, reduced_motion:bool, otp:str, calendar:CalendarState, date_picker:DatePickerState, chart_hover:ChartHit?, command:CommandState, select:SelectState, dropdown:DropdownMenuState, context_menu:ContextMenuState, alert_dialog:AlertDialogState, hover_card_open:bool, navigation_route:str, card_action:str, sidebar:SidebarState, sonner:SonnerState, drawer:DrawerState, navigation_menu:NavigationMenuState, menubar:MenubarState, native_sizes:[f64], native_range:[f64], message_scroller:MessageScrollerState, native_popover:bool)
+component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:editor, bind catalog_query:str, scratch_note:str, clicks:i64, accepted:bool, notifications:bool, volume:f64, density:str, native_select_frameworks:[str], native_select_framework:str?, combobox_frameworks:combo[str], searched_framework:str?, catalog_sort:str, catalog_page:i64, catalog_at_start:bool, catalog_page_number:i64, demo_page:i64, demo_page_max:i64, reduced_motion:bool, otp:str, calendar:CalendarState, date_picker:DatePickerState, chart_hover:ChartHit?, command:CommandState, select:SelectState, dropdown:DropdownMenuState, context_menu:ContextMenuState, alert_dialog:AlertDialogState, hover_card_open:bool, navigation_route:str, card_action:str, sidebar:SidebarState, sonner:SonnerState, drawer:DrawerState, navigation_menu:NavigationMenuState, menubar:MenubarState, native_sizes:[f64], native_range:[f64], message_scroller:MessageScrollerState, native_popover:bool)
   emits
     clicked
     accepted_changed(bool)
@@ -7,6 +7,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
     density_changed(str)
     framework_changed(str)
     searched_framework_changed(str)
+    scratch_submitted(str)
     otp_changed(str)
     calendar_changed(CalendarEvent)
     date_picker_changed(DatePickerEvent)
@@ -380,6 +381,10 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
           hovered border=primary
           focused border=primary border-w=2.0
         ScratchPad label="Component-owned draft"
+          events
+            submitted -> emit(scratch_submitted, _)
+        if !empty(scratch_note)
+          text scratch_note size=12.0 @text-muted
         row gap=8.0 align=center
           text "Keyboard help" size=13.0 @text-fg
           Tooltip label="Open the command palette"
@@ -715,10 +720,17 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
 // clearing it is a local handler write, and no app state is involved.
 component ScratchPad(label:str)
   lifetime retained
+  emits
+    submitted(str)
   state
     body:editor = ""
   on clear
     body = editor("")
+  on submit
+    let text = trim(editor_text(body))
+    return if empty(text)
+    body = editor("")
+    emit(submitted, text)
   col w=fill gap=6.0
     text label size=13.0 @text-fg
     editor <-> body
@@ -733,4 +745,8 @@ component ScratchPad(label:str)
       active bg=surface border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
       hovered border=primary
       focused border=primary border-w=2.0
-    button "Clear draft" disabled=empty(trim(editor_text(body))) @ghost_action -> clear
+    row gap=8.0 align=center
+      button "Clear draft" disabled=empty(trim(editor_text(body))) @ghost_action -> clear
+      // ducktape-ui handler emit dogfood: the local handler clears its own
+      // draft, then hands the text up as the next update-loop message.
+      button "Submit draft" disabled=empty(trim(editor_text(body))) @ghost_action -> submit

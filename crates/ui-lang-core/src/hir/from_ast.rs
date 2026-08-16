@@ -1195,6 +1195,7 @@ pub(crate) fn statement_semantic_key(statement: &Statement) -> String {
         Statement::DebugStart { target, .. } => format!("debug-start:{target}"),
         Statement::DebugFinish { target, .. } => format!("debug-finish:{target}"),
         Statement::ClipboardWrite { primary, .. } => format!("clipboard:{primary}"),
+        Statement::Emit { event, args, .. } => format!("emit:{event}:{}", args.len()),
         Statement::WidgetOperation {
             operation, route, ..
         } => format!(

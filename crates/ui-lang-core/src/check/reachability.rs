@@ -227,7 +227,10 @@ pub(in crate::check) fn collect_statement_routes<'a>(
             | Statement::Abort { .. }
             | Statement::DebugStart { .. }
             | Statement::DebugFinish { .. }
-            | Statement::ClipboardWrite { .. } => {}
+            | Statement::ClipboardWrite { .. }
+            // The event's call-site route keeps its target handler reachable
+            // through the view walk; the emit itself names no route.
+            | Statement::Emit { .. } => {}
         }
     }
 }

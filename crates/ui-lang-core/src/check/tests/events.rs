@@ -611,3 +611,99 @@ fn checks_all_native_window_subscription_payloads() {
     assert_eq!(error.code, "E084");
     assert!(error.message.contains("does not expose a window ID"));
 }
+
+const EMIT_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
+
+#[test]
+fn handler_emit_delivers_through_the_agreed_call_site_route() {
+    // A component handler fires a declared event; the call site's `_`-only
+    // route names the one app handler the emit statically resolves to.
+    let source = format!(
+        "app EmitDemo\n{EMIT_THEME}state\n  received = \"\"\ncomponent Sender()\n  lifetime retained\n  state\n    body = \"\"\n  on send\n    emit(submit, body)\n  emits\n    submit(str)\n  col\n    input \"Draft\" <-> body\n    button \"Send\" -> send\non submitted(text)\n  received = text\nview\n  col\n    Sender #sender\n      events\n        submit -> submitted _\n    text received\n"
+    );
+    analyze(&source).unwrap();
+
+    // Not final: a statement after the emit is unreachable task composition.
+    let error = analyze(&source.replace(
+        "  on send\n    emit(submit, body)\n",
+        "  on send\n    emit(submit, body)\n    body = \"\"\n",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E141");
+    assert!(error.message.contains("emit must be the final statement"));
+
+    // An app handler has no declared events to fire.
+    let error = analyze(&source.replace(
+        "on submitted(text)\n  received = text\n",
+        "on submitted(text)\n  received = text\non relay\n  emit(submit, received)\n",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(
+        error
+            .message
+            .contains("emit is a component-handler statement")
+    );
+
+    // The event must be declared on the emitting component.
+    let error = analyze(&source.replace("emit(submit, body)", "emit(other, body)")).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("does not declare event `other`"));
+
+    // Payload arity is the declaration's.
+    let error = analyze(&source.replace("emit(submit, body)", "emit(submit)")).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(
+        error
+            .message
+            .contains("carries 1 payload(s), emit passes 0")
+    );
+
+    // A call-site expression would need this call site's environment, which
+    // the emitting handler cannot see.
+    let error = analyze(&source.replace("submit -> submitted _", "submit -> submitted received"))
+        .unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("must route every payload with `_`"));
+}
+
+#[test]
+fn handler_emit_requires_one_target_across_call_sites() {
+    let source = format!(
+        "app EmitDemo\n{EMIT_THEME}state\n  received = \"\"\n  other = \"\"\ncomponent Sender()\n  lifetime retained\n  state\n    body = \"\"\n  on send\n    emit(submit, body)\n  emits\n    submit(str)\n  col\n    input \"Draft\" <-> body\n    button \"Send\" -> send\non submitted(text)\n  received = text\non elsewhere(text)\n  other = text\nview\n  col\n    Sender #one\n      events\n        submit -> submitted _\n    Sender #two\n      events\n        submit -> elsewhere _\n"
+    );
+    let error = analyze(&source).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(
+        error
+            .message
+            .contains("must deliver to one app handler at every call site")
+    );
+
+    let agreed = source
+        .replace("submit -> elsewhere _", "submit -> submitted _")
+        .replace("on elsewhere(text)\n  other = text\n", "")
+        .replace("  received = \"\"\n  other = \"\"\n", "  received = \"\"\n");
+    analyze(&agreed).unwrap();
+}
+
+#[test]
+fn handler_emit_chains_through_an_enclosing_component() {
+    // Inner emits from a handler; Outer's call site chains it upward with
+    // `emit(outer_event, _)`; the app maps the outer event. The delivery
+    // resolves through the chain to the one app handler.
+    let source = format!(
+        "app EmitDemo\n{EMIT_THEME}state\n  received = \"\"\ncomponent Inner()\n  lifetime retained\n  state\n    body = \"\"\n  on send\n    emit(submit, body)\n  emits\n    submit(str)\n  col\n    input \"Draft\" <-> body\n    button \"Send\" -> send\ncomponent Outer()\n  emits\n    forwarded(str)\n  col\n    Inner #inner\n      events\n        submit -> emit(forwarded, _)\non submitted(text)\n  received = text\nview\n  col\n    Outer #outer\n      events\n        forwarded -> submitted _\n    text received\n"
+    );
+    analyze(&source).unwrap();
+
+    // A caller-local route cannot take a handler-emitted event: the emitting
+    // handler cannot name the caller's instance.
+    let error = analyze(&source.replace(
+        "component Outer()\n  emits\n    forwarded(str)\n  col\n    Inner #inner\n      events\n        submit -> emit(forwarded, _)\n",
+        "component Outer()\n  state\n    kept = \"\"\n  on keep(text)\n    kept = text\n  col\n    Inner #inner\n      events\n        submit -> keep _\n",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("routes to a caller-local handler"));
+}
