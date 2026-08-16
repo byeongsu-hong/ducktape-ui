@@ -162,6 +162,10 @@ type LinePressFn<'a, Message> = dyn Fn(&str, Position) -> Option<Message> + 'a;
 /// unhandled so it bubbles to the application.
 type KeyBindingFn<'a> = dyn Fn(&text_editor::KeyPress) -> Option<Binding<Edit>> + 'a;
 
+/// The bubbling-chord route — consulted when a key press resolves to no
+/// binding; a message CAPTURES the press instead of letting it bubble.
+type ChordFn<'a, Message> = dyn Fn(&text_editor::KeyPress) -> Option<Message> + 'a;
+
 /// The hover-gutter route — `None` hides the gutter for that line.
 type GutterFn<'a, Message> = dyn Fn(usize, GutterButton) -> Option<Message> + 'a;
 
@@ -199,6 +203,7 @@ where
     wrapping: text::Wrapping,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
     key_binding: Option<Box<KeyBindingFn<'a>>>,
+    on_chord: Option<Box<ChordFn<'a, Message>>>,
     on_line_press: Option<Box<LinePressFn<'a, Message>>>,
     on_gutter: Option<Box<GutterFn<'a, Message>>>,
     drop_boundaries: Vec<usize>,
@@ -238,6 +243,7 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             wrapping: text::Wrapping::default(),
             on_action: None,
             key_binding: None,
+            on_chord: None,
             focus_enabled: true,
             highlighter_settings: (),
             format: Box::new(|_| Format::default()),
@@ -369,6 +375,20 @@ where
         self
     }
 
+    /// Routes a key press that resolved to NO binding — the presses
+    /// [`default_key_binding`] deliberately lets bubble, application command
+    /// chords first among them. Returning a message consumes the press and
+    /// publishes it like an action, so a composer can catch its own
+    /// formatting chords (Cmd/Ctrl+B and friends) without giving up the
+    /// bubble contract for everything else; `None` bubbles as before.
+    pub fn on_chord(
+        mut self,
+        on_chord: impl Fn(&text_editor::KeyPress) -> Option<Message> + 'a,
+    ) -> Self {
+        self.on_chord = Some(Box::new(on_chord));
+        self
+    }
+
     /// Keeps the editor's internal focus and drag state aligned with the
     /// surrounding view focus.
     pub fn focus_enabled(mut self, enabled: bool) -> Self {
@@ -420,6 +440,7 @@ where
             wrapping: self.wrapping,
             on_action: self.on_action,
             key_binding: self.key_binding,
+            on_chord: self.on_chord,
             focus_enabled: self.focus_enabled,
             highlighter_settings: settings,
             format: Box::new(format),
@@ -1536,7 +1557,18 @@ where
                     None => default_key_binding(&key_press),
                 };
 
-                if let Some(binding) = binding {
+                let Some(binding) = binding else {
+                    if let Some(on_chord) = self.on_chord.as_deref()
+                        && let Some(message) = on_chord(&key_press)
+                    {
+                        state.pending_ime_commit.clear();
+                        shell.publish(message);
+                        shell.capture_event();
+                        shell.request_redraw();
+                    }
+                    return;
+                };
+                {
                     state.pending_ime_commit.clear();
                     let capture = !matches!(binding, Binding::Unfocus);
                     let mut binding_context = BindingContext::new(
