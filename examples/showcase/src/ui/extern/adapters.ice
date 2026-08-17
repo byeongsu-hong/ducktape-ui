@@ -47,6 +47,7 @@ extern crate::adapters
   component switch(id:&str, checked:bool, disabled:bool) -> bool
   component input_otp(id:&str, value:&str, invalid:bool, disabled:bool) -> str
   component spinner(frame:i64, reduced_motion:bool) -> unit
+  component draft_length(document:&editor) -> unit
   sync calendar_state() -> CalendarState
   task calendar_apply(state:CalendarState, event:CalendarEvent) -> CalendarState
   component calendar(state:&CalendarState) -> CalendarEvent

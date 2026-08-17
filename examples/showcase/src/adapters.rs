@@ -425,6 +425,17 @@ pub fn spinner(frame: i64, reduced_motion: bool) -> Element<'static, ()> {
     semantic(spinner, "showcase-spinner", Role::ProgressIndicator)
 }
 
+/// A borrowed-`editor` extern component. The interesting part is the
+/// SIGNATURE: `&editor` fed from component state is the shape that, before
+/// the read became a place expression, borrowed through a temporary and
+/// failed to compile in the generated crate (E0716). rustc is the only gate
+/// that catches it, so the showcase mounts one.
+pub fn draft_length(document: &iced::widget::text_editor::Content) -> Element<'_, ()> {
+    let label = format!("{} characters", document.text().trim().chars().count());
+    let text: Element<'_, ()> = iced::widget::text(label).size(12.0).into();
+    semantic(text, "showcase-draft-length", Role::Label)
+}
+
 fn current_date() -> Option<Date> {
     let days = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -302,8 +302,14 @@ pub(in crate::codegen) fn component_editor_read_code(
     scope: &str,
     state: &str,
 ) -> String {
+    // A PLACE EXPRESSION, not a reference VALUE: every consumer borrows what
+    // it is handed (`&{code}` in the widget, `Borrow::borrow(&({code}))` for
+    // an extern-component argument, auto-ref for the editor builtins), and a
+    // `&Content` value sitting in a temporary would be freed at the end of
+    // the statement that borrowed through it. The deref reborrows out of the
+    // map instead, so the borrow is tied to `self`.
     format!(
-        "{states}.get(&{scope}).map_or(&self.{initial}, |__ice_local| &__ice_local.{state})",
+        "(*{states}.get(&{scope}).map_or(&self.{initial}, |__ice_local| &__ice_local.{state}))",
         initial = component_editor_initial_field(component, state)
     )
 }

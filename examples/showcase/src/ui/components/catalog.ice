@@ -746,6 +746,10 @@ component ScratchPad(label:str)
       hovered border=primary
       focused border=primary border-w=2.0
     row gap=8.0 align=center
+      // The `&editor` extern-component gate: an instance's content handed to
+      // a borrowing extern, which is where a reference-valued read used to
+      // borrow through a temporary.
+      extern draft_length(body)
       button "Clear draft" disabled=empty(trim(editor_text(body))) @ghost_action -> clear
       // ducktape-ui handler emit dogfood: the local handler clears its own
       // draft, then hands the text up as the next update-loop message.
