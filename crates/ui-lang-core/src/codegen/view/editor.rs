@@ -41,7 +41,7 @@ pub(in crate::codegen) fn render_text_editor(
                 // instance with no materialized entry renders the shared
                 // initial content, which only an update pass can replace.
                 format!(
-                    "self.{field}.get(&{scope_code}).map_or(&self.{initial}, |__ice_local| &__ice_local.{name})"
+                    "&(*self.{field}.get(&{scope_code}).map_or(&self.{initial}, |__ice_local| &__ice_local.{name}))"
                 ),
             )
         }

@@ -88,9 +88,13 @@ view
     // The update arm materializes the instance entry and performs on it.
     assert!(generated.contains("__local.body.perform(__action)"));
     // The instance's content renders by reference, with the shared initial
-    // content standing in until the first delivered action materializes it.
+    // content standing in until the first delivered action materializes it —
+    // as a PLACE expression, so every consumer reborrows out of the map
+    // instead of borrowing through a `&Content` temporary (E0716 in the
+    // generated crate; only rustc catches it, which the showcase mount does).
+    assert!(generated.contains("(*self.__ice_component_composer.get(&"));
     assert!(generated.contains(
-        ".map_or(&self.__ice_editor_initial_composer_body, |__ice_local| &__ice_local.body)"
+        ".map_or(&self.__ice_editor_initial_composer_body, |__ice_local| &__ice_local.body))"
     ));
     assert!(
         generated
