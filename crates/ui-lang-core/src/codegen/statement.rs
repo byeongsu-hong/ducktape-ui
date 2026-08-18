@@ -515,6 +515,19 @@ pub(in crate::codegen) fn publishes_slices(statements: &[ResolvedStatement]) -> 
 /// inside one hands back.
 pub(in crate::codegen) const SLICE_ACCUMULATOR: &str = "__ice_published";
 
+/// What a body does with the tasks its statements produce.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::codegen) enum TaskMode {
+    /// The task IS the value being built (a group member, a route body).
+    Bare,
+    /// The handler closes on it.
+    Return,
+    /// The handler publishes as it goes and batches at the end — the mode a
+    /// `slice` needs, since a publication is not a closing act and a guard
+    /// below one must not be able to swallow it.
+    Accumulate,
+}
+
 pub(in crate::codegen) fn generate_statements(
     out: &mut String,
     statements: &[ResolvedStatement],
@@ -522,7 +535,7 @@ pub(in crate::codegen) fn generate_statements(
     message: &str,
     env: &dyn BindingEnvironment,
     state: &str,
-    return_task: bool,
+    mode: TaskMode,
 ) -> Result<bool, Error> {
     if statements.is_empty() {
         return Ok(false);
@@ -530,15 +543,12 @@ pub(in crate::codegen) fn generate_statements(
     let mut local_env = ScopedBindingEnv::new(env);
     let env = &mut local_env;
     let mut has_task = false;
-    // A slice-publishing body pushes every task it produces and returns the
-    // batch at the end, so a `return if` between a slice and the handler's
-    // own task cannot drop either.
-    let accumulate = return_task && publishes_slices(statements);
     let push = format!("{SLICE_ACCUMULATOR}.push(");
-    let (task_prefix, task_suffix) = match (return_task, accumulate) {
-        (_, true) => (push.as_str(), ");"),
-        (true, false) => ("return ", ";"),
-        (false, false) => ("", ""),
+    let accumulate = mode == TaskMode::Accumulate;
+    let (task_prefix, task_suffix) = match mode {
+        TaskMode::Accumulate => (push.as_str(), ");"),
+        TaskMode::Return => ("return ", ";"),
+        TaskMode::Bare => ("", ""),
     };
     for statement in statements {
         has_task |= statement.task.is_some();
@@ -625,9 +635,28 @@ pub(in crate::codegen) fn generate_statements(
             }
             ResolvedStatementKind::Match { value, arms } => {
                 let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
-                if return_task {
-                    write!(out, "return ").unwrap();
+                // ACCUMULATING, the arms push their own work and the match is
+                // an ordinary statement — a closure per arm would borrow the
+                // accumulator inside an expression already borrowing it.
+                if accumulate {
+                    writeln!(out, "match {value} {{").unwrap();
+                    for arm in arms {
+                        writeln!(out, "{}::{} => {{", arm.owner, pascal(&arm.variant)).unwrap();
+                        generate_statements(
+                            out,
+                            &arm.statements,
+                            program,
+                            message,
+                            env,
+                            state,
+                            TaskMode::Accumulate,
+                        )?;
+                        writeln!(out, "}},").unwrap();
+                    }
+                    writeln!(out, "}};").unwrap();
+                    continue;
                 }
+                write!(out, "{task_prefix}").unwrap();
                 writeln!(out, "match {value} {{").unwrap();
                 for arm in arms {
                     writeln!(out, "{}::{} => (|| {{", arm.owner, pascal(&arm.variant)).unwrap();
@@ -638,7 +667,7 @@ pub(in crate::codegen) fn generate_statements(
                         message,
                         env,
                         state,
-                        true,
+                        TaskMode::Return,
                     )?;
                     if !arm_has_task {
                         writeln!(out, "::iced::Task::none()").unwrap();
@@ -771,9 +800,7 @@ pub(in crate::codegen) fn generate_statements(
             ResolvedStatementKind::TaskGroup {
                 kind, statements, ..
             } => {
-                if return_task {
-                    write!(out, "return ").unwrap();
-                }
+                write!(out, "{task_prefix}").unwrap();
                 match kind {
                     TaskGroupKind::Parallel => {
                         writeln!(out, "::iced::Task::batch([").unwrap();
@@ -786,7 +813,7 @@ pub(in crate::codegen) fn generate_statements(
                                 message,
                                 env,
                                 state,
-                                false,
+                                TaskMode::Bare,
                             )?;
                             writeln!(out, "}},").unwrap();
                         }
@@ -803,7 +830,7 @@ pub(in crate::codegen) fn generate_statements(
                                 message,
                                 env,
                                 state,
-                                false,
+                                TaskMode::Bare,
                             )?;
                             write!(out, "}})").unwrap();
                         }
@@ -817,9 +844,7 @@ pub(in crate::codegen) fn generate_statements(
                 task,
                 ..
             } => {
-                if return_task {
-                    write!(out, "return ").unwrap();
-                }
+                write!(out, "{task_prefix}").unwrap();
                 writeln!(out, "{{ let (__task, __handle) = ({{").unwrap();
                 generate_statements(
                     out,
@@ -828,7 +853,7 @@ pub(in crate::codegen) fn generate_statements(
                     message,
                     env,
                     state,
-                    false,
+                    TaskMode::Bare,
                 )?;
                 writeln!(out, "}}).abortable();").unwrap();
                 writeln!(
