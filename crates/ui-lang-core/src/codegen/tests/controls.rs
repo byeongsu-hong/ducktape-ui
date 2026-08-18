@@ -107,6 +107,11 @@ view
     assert!(generated.contains(".body = ::iced::widget::text_editor::Content::with_text"));
     // The component test seam exposes the draft as its text.
     assert!(generated.contains("body: __state.body.text(),"));
+    // …and can name an instance that has only RENDERED. Retained storage
+    // gains a map entry when an event is delivered, so without the sighting
+    // side-channel a harness could not address a composer before typing in it.
+    assert!(generated.contains("register_component_sighting(\"Composer\", &"));
+    assert!(generated.contains("::ui_lang_runtime::testing::component_sightings(\"Composer\")"));
     // A view expression over the local editor reads through the same
     // reference, never a clone.
     assert!(!generated.contains("__state.body.clone()"));

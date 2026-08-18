@@ -844,7 +844,10 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             ComponentStorage::Stateless => unreachable!(),
         };
         let keys = match component.storage {
-            ComponentStorage::Retained => format!("self.{field}.keys().cloned().collect()"),
+            ComponentStorage::Retained => format!(
+                "let mut __scopes: ::std::vec::Vec<::std::string::String> = self.{field}.keys().cloned().collect(); for __scope in ::ui_lang_runtime::testing::component_sightings({}) {{ if !__scopes.contains(&__scope) {{ __scopes.push(__scope); }} }} __scopes",
+                rust_string(&component.name)
+            ),
             ComponentStorage::Mounted => format!("self.{field}.scopes()"),
             ComponentStorage::Stateless => unreachable!(),
         };
