@@ -701,6 +701,15 @@ pub(in crate::codegen) fn generate_update(
         for param in &handler.params {
             env.insert(param.name.clone(), handler_param_binding(param));
         }
+        let publishes = publishes_slices(&handler.statements);
+        if publishes {
+            writeln!(
+                out,
+                "let mut {} : ::std::vec::Vec<::iced::Task<{message}>> = ::std::vec::Vec::new();",
+                SLICE_ACCUMULATOR
+            )
+            .unwrap();
+        }
         let has_task = generate_statements(
             out,
             &handler.statements,
@@ -710,7 +719,9 @@ pub(in crate::codegen) fn generate_update(
             "self",
             true,
         )?;
-        if !has_task {
+        if publishes {
+            writeln!(out, "::iced::Task::batch({})", SLICE_ACCUMULATOR).unwrap();
+        } else if !has_task {
             writeln!(out, "::iced::Task::none()").unwrap();
         }
         writeln!(out, "}})(),").unwrap();

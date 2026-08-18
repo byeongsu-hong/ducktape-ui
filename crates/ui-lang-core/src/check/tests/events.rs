@@ -717,14 +717,14 @@ fn a_slice_hands_one_instance_its_share_of_a_payload() {
     );
     analyze(&source).unwrap();
 
-    // Not final: a slice is a task statement like every other.
-    let error = analyze(&source.replace(
+    // A SLICE IS A PUBLICATION, so it sits anywhere — including above a
+    // guard that ends the handler, which is exactly where a failure hands a
+    // body back before deciding whether the timeline on screen is its own.
+    analyze(&source.replace(
         "  slice Room.delivered(next) at next\n",
-        "  slice Room.delivered(next) at next\n  seen = \"\"\n",
+        "  slice Room.delivered(next) at next\n  return if empty(next)\n  seen = \"\"\n",
     ))
-    .unwrap_err();
-    assert_eq!(error.code, "E141");
-    assert!(error.message.contains("slice must be the final statement"));
+    .unwrap();
 
     // The negatives keep the target fed by a route of its own, so the slice's
     // own refusal is what answers rather than "cannot infer" for a handler

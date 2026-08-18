@@ -1922,4 +1922,58 @@ view
     let seen = generated.find("self.seen =").expect("the app write");
     let sliced = generated.find("__slice_key").expect("the slice");
     assert!(seen < sliced);
+    // And the handler ACCUMULATES rather than closing on the slice, so a
+    // guard below one cannot swallow it.
+    assert!(generated.contains("let mut __ice_published :"));
+    assert!(generated.contains("__ice_published.push("));
+    assert!(generated.contains("::iced::Task::batch(__ice_published)"));
+}
+
+#[test]
+fn a_guard_below_a_slice_cannot_swallow_it() {
+    // The shape the downstream failure path needs: hand the words back to the
+    // room they were written in, THEN decide whether the timeline on screen
+    // is that room's. A `return if` between the two must still publish.
+    let source = r#"app SliceGuard
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  rooms:[str] = ["a"]
+  here = "a"
+  seen = ""
+component Room(id:str)
+  lifetime retained
+  state
+    latest = ""
+  on delivered(text)
+    latest = text
+  text latest
+on live(next)
+  slice Room.delivered(next) at next
+  return if next != here
+  seen = next
+view
+  col
+    for room in rooms
+      Room #room(room) id=room
+    button "Deliver" -> live("a")
+    text seen
+"#;
+    let generated = compile(source, "slice-guard.ice").unwrap();
+    let sliced = generated.find("__ice_published.push(").expect("the slice");
+    let guard = generated
+        .find("{ return ::iced::Task::batch(__ice_published); }")
+        .expect("the guard hands back what was published");
+    assert!(
+        sliced < guard,
+        "the publication is made before the guard can return"
+    );
 }

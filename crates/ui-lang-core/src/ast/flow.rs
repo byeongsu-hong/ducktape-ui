@@ -273,7 +273,11 @@ impl Statement {
             Self::Abortable { .. } => Some(ImmediateTask::Abortable),
             Self::ClipboardWrite { .. } => Some(ImmediateTask::Clipboard),
             Self::Emit { .. } => Some(ImmediateTask::Emit),
-            Self::Slice { .. } => Some(ImmediateTask::Slice),
+            // A SLICE IS A PUBLICATION, not the handler's closing act: it
+            // hands a payload on and the handler keeps going. Its message is
+            // accumulated and batched with whatever task the handler does
+            // end on, so a guard below one cannot swallow it.
+            Self::Slice { .. } => None,
             Self::WidgetOperation { .. } => Some(ImmediateTask::Widget),
             Self::WindowOperation { .. } => Some(ImmediateTask::Window),
             Self::PaneOperation {
@@ -296,7 +300,6 @@ pub(crate) enum ImmediateTask {
     Abortable,
     Clipboard,
     Emit,
-    Slice,
     Widget,
     Window,
     PaneQuery,

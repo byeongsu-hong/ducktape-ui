@@ -493,6 +493,28 @@ fn invalidate_run_lane_code(
     Ok(format!("{advance}{abort}"))
 }
 
+/// Whether this body publishes any slice. A handler that does accumulates
+/// its tasks instead of closing on one, so the publication can sit ANYWHERE —
+/// a slice is a message handed on, not the handler's last act, and a guard
+/// below it must not be able to swallow it.
+pub(in crate::codegen) fn publishes_slices(statements: &[ResolvedStatement]) -> bool {
+    statements.iter().any(|statement| match &statement.kind {
+        ResolvedStatementKind::Slice { .. } => true,
+        ResolvedStatementKind::TaskGroup { statements, .. } => publishes_slices(statements),
+        ResolvedStatementKind::Match { arms, .. } => {
+            arms.iter().any(|arm| publishes_slices(&arm.statements))
+        }
+        ResolvedStatementKind::Abortable { task, .. } => {
+            publishes_slices(::std::slice::from_ref(task.as_ref()))
+        }
+        _ => false,
+    })
+}
+
+/// The accumulator a slice-publishing handler returns, and what a `return`
+/// inside one hands back.
+pub(in crate::codegen) const SLICE_ACCUMULATOR: &str = "__ice_published";
+
 pub(in crate::codegen) fn generate_statements(
     out: &mut String,
     statements: &[ResolvedStatement],
@@ -508,10 +530,15 @@ pub(in crate::codegen) fn generate_statements(
     let mut local_env = ScopedBindingEnv::new(env);
     let env = &mut local_env;
     let mut has_task = false;
-    let (task_prefix, task_suffix) = if return_task {
-        ("return ", ";")
-    } else {
-        ("", "")
+    // A slice-publishing body pushes every task it produces and returns the
+    // batch at the end, so a `return if` between a slice and the handler's
+    // own task cannot drop either.
+    let accumulate = return_task && publishes_slices(statements);
+    let push = format!("{SLICE_ACCUMULATOR}.push(");
+    let (task_prefix, task_suffix) = match (return_task, accumulate) {
+        (_, true) => (push.as_str(), ");"),
+        (true, false) => ("return ", ";"),
+        (false, false) => ("", ""),
     };
     for statement in statements {
         has_task |= statement.task.is_some();
@@ -589,7 +616,12 @@ pub(in crate::codegen) fn generate_statements(
             }
             ResolvedStatementKind::ReturnIf { condition } => {
                 let code = resolved_expr_use_code(program, *condition, env, ValueMode::Owned)?;
-                writeln!(out, "if {code} {{ return ::iced::Task::none(); }}").unwrap();
+                let handed_back = if accumulate {
+                    format!("::iced::Task::batch({SLICE_ACCUMULATOR})")
+                } else {
+                    "::iced::Task::none()".to_owned()
+                };
+                writeln!(out, "if {code} {{ return {handed_back}; }}").unwrap();
             }
             ResolvedStatementKind::Match { value, arms } => {
                 let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;

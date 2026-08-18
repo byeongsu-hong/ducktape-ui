@@ -850,7 +850,6 @@ fn check_task_finality(statement: &Statement, is_final: bool) -> Result<(), Erro
         ImmediateTask::Abortable => ("E141", "abortable task"),
         ImmediateTask::Clipboard => ("E141", "clipboard write"),
         ImmediateTask::Emit => ("E141", "emit"),
-        ImmediateTask::Slice => ("E141", "slice"),
         ImmediateTask::Widget => ("E172", "widget operation"),
         ImmediateTask::Window => ("E173", "window task"),
         ImmediateTask::PaneQuery => ("E188", "pane query"),
