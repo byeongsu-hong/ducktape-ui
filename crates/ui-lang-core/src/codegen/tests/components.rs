@@ -1914,9 +1914,9 @@ view
     // defined order rather than a hash one…
     assert!(generated.contains("__slice_scopes.sort()"));
     // …and each is a message in the same loop, tagged with its scope.
-    assert!(
-        generated.contains("::iced::Task::done(__SliceFlowMessage::__RoomHandleDelivered(__scope")
-    );
+    assert!(generated.contains(
+        "__published.chain(::iced::Task::done(__SliceFlowMessage::__RoomHandleDelivered(__scope"
+    ));
     // The app handler's own write happens first: the slice is the statement
     // AFTER it, so `seen` is already current when the instance is told.
     let seen = generated.find("self.seen =").expect("the app write");

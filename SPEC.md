@@ -4246,9 +4246,12 @@ Committed ordering and lifecycle:
 - The app handler's own writes land FIRST. The slice is a statement in it,
   so by the time an instance is told, the app-level state that route
   maintains is already current.
-- Several matching instances are delivered in ascending scope order, so two
-  panes under one key see the same payload in a defined order rather than a
-  hash one.
+- Several matching instances are delivered in ascending scope order — the
+  deliveries of ONE slice are chained, not batched, so two panes under one
+  key see the payload in a defined order rather than the runtime's. Two
+  SLICE STATEMENTS in one handler run concurrently with each other and with
+  whatever the handler itself launches; they address different instances, and
+  ordering them would mean delaying one behind the other's task.
 - An instance with no materialized state receives nothing — a `retained`
   instance keeps receiving while it is off screen (that IS the point: its
   pane is current when the reader returns), and a `mounted` instance stops

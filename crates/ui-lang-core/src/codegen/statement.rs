@@ -909,6 +909,11 @@ pub(in crate::codegen) fn generate_statements(
                 // difference is the whole point: iced 0.14 rebuilds on every
                 // message, so a broadcast would charge the frame for rooms
                 // nobody is looking at.
+                //
+                // CHAINED, not batched: `Task::batch` selects over its
+                // streams, so the order two instances under one key saw the
+                // payload in would be the runtime's choice. A chain of ready
+                // messages keeps the order the scopes were sorted into.
                 let contract = program.component_by_name(component)?;
                 let field = component_state_field(component);
                 let variant = component_handler_variant(component, handler);
@@ -938,7 +943,7 @@ pub(in crate::codegen) fn generate_statements(
                     .collect::<String>();
                 writeln!(
                     out,
-                    "{task_prefix}{{ let __slice_key = ::std::format!(\"({{}})\", {key}); {bindings} let __slice_scopes: ::std::vec::Vec<::std::string::String> = {{ let __slice_states = {states}; let mut __slice_scopes: ::std::vec::Vec<::std::string::String> = __slice_states.keys().filter(|__scope| __scope.ends_with(&__slice_key)).cloned().collect(); __slice_scopes.sort(); __slice_scopes }}; ::iced::Task::batch(__slice_scopes.into_iter().map(|__scope| ::iced::Task::done({message}::{variant}(__scope{passed})))) }}{task_suffix}"
+                    "{task_prefix}{{ let __slice_key = ::std::format!(\"({{}})\", {key}); {bindings} let __slice_scopes: ::std::vec::Vec<::std::string::String> = {{ let __slice_states = {states}; let mut __slice_scopes: ::std::vec::Vec<::std::string::String> = __slice_states.keys().filter(|__scope| __scope.ends_with(&__slice_key)).cloned().collect(); __slice_scopes.sort(); __slice_scopes }}; __slice_scopes.into_iter().fold(::iced::Task::none(), |__published, __scope| __published.chain(::iced::Task::done({message}::{variant}(__scope{passed})))) }}{task_suffix}"
                 )
                 .unwrap();
             }
