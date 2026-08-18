@@ -838,6 +838,53 @@ pub(in crate::codegen) fn generate_statements(
                 )
                 .unwrap();
             }
+            ResolvedStatementKind::Slice {
+                component,
+                handler,
+                args,
+                key,
+            } => {
+                // THE INSTANCE THE KEY NAMES, and nobody else. An instance's
+                // identity IS its explicit id key, so the scope that carries
+                // it ends in `(key)` — the delivery is one message per
+                // matching instance (normally exactly one), NOT a fan-out
+                // every live instance has to filter for itself. That
+                // difference is the whole point: iced 0.14 rebuilds on every
+                // message, so a broadcast would charge the frame for rooms
+                // nobody is looking at.
+                let contract = program.component_by_name(component)?;
+                let field = component_state_field(component);
+                let variant = component_handler_variant(component, handler);
+                let states = match contract.storage {
+                    ComponentStorage::Retained => format!("&self.{field}"),
+                    ComponentStorage::Mounted => format!("self.{field}.values()"),
+                    ComponentStorage::Stateless => {
+                        return Err(Error::new(
+                            "E196",
+                            &Span::line(1),
+                            "a slice targets a component that keeps no state",
+                        ));
+                    }
+                };
+                let key = resolved_expr_use_code(program, *key, env, ValueMode::Owned)?;
+                let args = args
+                    .iter()
+                    .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let bindings = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, code)| format!("let __slice_{index} = {code};"))
+                    .collect::<String>();
+                let passed = (0..args.len())
+                    .map(|index| format!(", __slice_{index}.clone()"))
+                    .collect::<String>();
+                writeln!(
+                    out,
+                    "{task_prefix}{{ let __slice_key = ::std::format!(\"({{}})\", {key}); {bindings} let __slice_scopes: ::std::vec::Vec<::std::string::String> = {{ let __slice_states = {states}; let mut __slice_scopes: ::std::vec::Vec<::std::string::String> = __slice_states.keys().filter(|__scope| __scope.ends_with(&__slice_key)).cloned().collect(); __slice_scopes.sort(); __slice_scopes }}; ::iced::Task::batch(__slice_scopes.into_iter().map(|__scope| ::iced::Task::done({message}::{variant}(__scope{passed})))) }}{task_suffix}"
+                )
+                .unwrap();
+            }
             ResolvedStatementKind::Emit { target, args, .. } => {
                 // An emitted event is delivered as the NEXT update-loop
                 // message: the handler finishes its writes first, and the

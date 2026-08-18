@@ -21,6 +21,8 @@ on framework_changed(next)
 
 on scratch_submitted(text)
   scratch_note = text
+  // The app keeps the route; the pad the key names gets its share.
+  slice ScratchPad.noted(text) at "notes"
 
 on searched_framework_changed(next)
   searched_framework = some(next)

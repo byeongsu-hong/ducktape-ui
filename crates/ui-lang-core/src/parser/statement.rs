@@ -223,6 +223,9 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
     if line.text == "emit" || line.text.starts_with("emit ") || line.text.starts_with("emit(") {
         return parse_emit(line);
     }
+    if let Some(source) = line.text.strip_prefix("slice ") {
+        return parse_slice(source, line);
+    }
     for (prefix, primary) in [
         ("task clipboard write-primary ", true),
         ("task clipboard write ", false),
@@ -1194,6 +1197,53 @@ fn parse_emit(line: &Line) -> Result<Statement, Error> {
     Ok(Statement::Emit {
         event,
         args,
+        span: Span::line(line.number),
+    })
+}
+
+/// `slice <Component>.<handler>(args…) at <key>` — hand this payload on to
+/// the ONE instance the key names, as the next message in the same loop.
+fn parse_slice(source: &str, line: &Line) -> Result<Statement, Error> {
+    let source = source.trim();
+    let Some((call, key)) = split_top_marker(source, " at ") else {
+        return Err(error(
+            "E050",
+            line,
+            "a slice names the instance it is for: `slice Component.handler(args) at <key>`",
+        ));
+    };
+    let key = parse_expr(key.trim(), line)?;
+    let call = call.trim();
+    let (target, args) = match call.find('(') {
+        Some(open) => {
+            let close = matching_paren(call, line)?;
+            if !call[close + 1..].trim().is_empty() {
+                return Err(error("E050", line, "unexpected text after slice"));
+            }
+            let args = split_top(&call[open + 1..close], ',')
+                .into_iter()
+                .filter(|part| !part.trim().is_empty())
+                .map(|part| parse_expr(part.trim(), line))
+                .collect::<Result<Vec<_>, Error>>()?;
+            (&call[..open], args)
+        }
+        None => (call, Vec::new()),
+    };
+    let Some((component, handler)) = target.trim().split_once('.') else {
+        return Err(error(
+            "E050",
+            line,
+            "a slice targets a component's own handler: `Component.handler`",
+        ));
+    };
+    let component = identifier(component.trim(), line)?;
+    let handler = identifier(handler.trim(), line)?;
+    line.record_symbol(SymbolKind::Component, &component, false, source);
+    Ok(Statement::Slice {
+        component,
+        handler,
+        args,
+        key,
         span: Span::line(line.number),
     })
 }

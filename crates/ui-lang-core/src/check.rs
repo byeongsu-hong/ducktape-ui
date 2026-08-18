@@ -288,6 +288,20 @@ fn check(
                     "use `stream replace lane=name ...` so the component owns one replaceable stream",
                 ));
             }
+            if let Some(span) = handler
+                .statements
+                .iter()
+                .find_map(|statement| match statement {
+                    Statement::Slice { span, .. } => Some(span),
+                    _ => None,
+                })
+            {
+                return Err(Error::new(
+                    "E140",
+                    span,
+                    "a slice hands an APP handler's payload down; a component handler already has its own state",
+                ));
+            }
             if handler
                 .statements
                 .iter()

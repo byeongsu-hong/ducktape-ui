@@ -10,7 +10,19 @@ struct ScopeRisk {
 
 impl ScopeRisk {
     fn with_id(self, id: &Option<Id>) -> Self {
-        if id.as_ref().is_some_and(|id| id.key.is_some()) {
+        // A LITERAL key is not a dynamic identity: the set of instances it
+        // can name is written out in the source, so retained storage cannot
+        // accumulate past it. Only a key computed at runtime can.
+        let dynamic_key = id
+            .as_ref()
+            .and_then(|id| id.key.as_ref())
+            .is_some_and(|key| {
+                !matches!(
+                    key,
+                    Expr::Str(_) | Expr::I64(_) | Expr::F64(_) | Expr::Bool(_)
+                )
+            });
+        if dynamic_key {
             Self {
                 dynamic: true,
                 ..self
