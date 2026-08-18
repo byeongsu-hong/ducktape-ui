@@ -676,6 +676,43 @@ fn infer_run_statements<'a>(
             )?;
             continue;
         }
+        // A SLICE IS THE ONLY ROUTE ITS TARGET HAS. Nothing in the view
+        // routes to a sliced handler — the app hands it the payload — so the
+        // argument types here are where that handler's parameters come from.
+        if let Statement::Slice {
+            component,
+            handler,
+            args,
+            span,
+            ..
+        } = statement
+        {
+            // A target that does not exist, or one whose arity disagrees, is
+            // the CHECKER's error to report with its own message — inference
+            // stays quiet so it cannot answer first with "cannot infer".
+            let target = document
+                .components
+                .iter()
+                .find(|entry| entry.name == *component)
+                .and_then(|entry| entry.handlers.iter().find(|entry| entry.name == *handler))
+                .filter(|target| target.params.len() == args.len());
+            let Some(_) = target else {
+                continue;
+            };
+            let key = component_handler_key(component, handler);
+            let mut inferred = Vec::with_capacity(args.len());
+            for arg in args {
+                inferred.push(Some(expr_type(arg, &local_env, document, span)?));
+            }
+            let entry = signatures.entry(key).or_insert_with(|| inferred.clone());
+            if entry.len() == inferred.len() {
+                for (slot, inferred) in entry.iter_mut().zip(inferred) {
+                    if slot.is_none() {
+                        *slot = inferred;
+                    }
+                }
+            }
+        }
         if let Statement::WidgetOperation {
             operation: WidgetOperation::Focused { .. },
             route: Some(route),

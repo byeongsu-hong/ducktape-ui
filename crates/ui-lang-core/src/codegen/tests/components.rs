@@ -1869,3 +1869,111 @@ view
     // The payload is the handler's own expression over instance state.
     assert!(generated.contains(".trim().to_owned()") || generated.contains("trim"));
 }
+
+#[test]
+fn a_slice_delivers_to_the_instance_its_key_names() {
+    // ducktape-ui#698: the app keeps its one subscription and its route, and
+    // hands each payload on to the ONE instance the key names — a scope
+    // lookup, not a broadcast every instance has to filter for itself.
+    let source = r#"app SliceFlow
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  rooms:[str] = ["a", "b"]
+  seen = ""
+component Room(id:str)
+  lifetime retained
+  state
+    latest = ""
+  on delivered(text)
+    latest = text
+  text latest
+on live(next)
+  seen = next
+  slice Room.delivered(next) at next
+view
+  col
+    for room in rooms
+      Room #room(room) id=room
+    button "Deliver" -> live("a")
+    text seen
+"#;
+    let generated = compile(source, "slice-flow.ice").unwrap();
+    // The key is matched against the scope's own id segment…
+    assert!(generated.contains("let __slice_key = ::std::format!(\"({})\", "));
+    assert!(generated.contains(".ends_with(&__slice_key)"));
+    // …the matches are ordered, so two instances under one key deliver in a
+    // defined order rather than a hash one…
+    assert!(generated.contains("__slice_scopes.sort()"));
+    // …and each is a message in the same loop, tagged with its scope.
+    assert!(generated.contains(
+        "__published.chain(::iced::Task::done(__SliceFlowMessage::__RoomHandleDelivered(__scope"
+    ));
+    // The app handler's own write happens first: the slice is the statement
+    // AFTER it, so `seen` is already current when the instance is told.
+    let seen = generated.find("self.seen =").expect("the app write");
+    let sliced = generated.find("__slice_key").expect("the slice");
+    assert!(seen < sliced);
+    // And the handler ACCUMULATES rather than closing on the slice, so a
+    // guard below one cannot swallow it.
+    assert!(generated.contains("let mut __ice_published :"));
+    assert!(generated.contains("__ice_published.push("));
+    assert!(generated.contains("::iced::Task::batch(__ice_published)"));
+}
+
+#[test]
+fn a_guard_below_a_slice_cannot_swallow_it() {
+    // The shape the downstream failure path needs: hand the words back to the
+    // room they were written in, THEN decide whether the timeline on screen
+    // is that room's. A `return if` between the two must still publish.
+    let source = r#"app SliceGuard
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  rooms:[str] = ["a"]
+  here = "a"
+  seen = ""
+component Room(id:str)
+  lifetime retained
+  state
+    latest = ""
+  on delivered(text)
+    latest = text
+  text latest
+on live(next)
+  slice Room.delivered(next) at next
+  return if next != here
+  seen = next
+view
+  col
+    for room in rooms
+      Room #room(room) id=room
+    button "Deliver" -> live("a")
+    text seen
+"#;
+    let generated = compile(source, "slice-guard.ice").unwrap();
+    let sliced = generated.find("__ice_published.push(").expect("the slice");
+    let guard = generated
+        .find("{ return ::iced::Task::batch(__ice_published); }")
+        .expect("the guard hands back what was published");
+    assert!(
+        sliced < guard,
+        "the publication is made before the guard can return"
+    );
+}

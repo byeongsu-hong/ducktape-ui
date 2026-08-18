@@ -195,6 +195,17 @@ pub enum Statement {
         args: Vec<Expr>,
         span: Span,
     },
+    /// One instance's share of what this handler just received. The app keeps
+    /// its single subscription and its route; the statement hands the payload
+    /// on to the instance the key names, as the next message in the same
+    /// update loop.
+    Slice {
+        component: String,
+        handler: String,
+        args: Vec<Expr>,
+        key: Expr,
+        span: Span,
+    },
     WidgetOperation {
         operation: WidgetOperation,
         route: Option<Route>,
@@ -235,6 +246,7 @@ impl Statement {
             | Self::DebugFinish { span, .. }
             | Self::ClipboardWrite { span, .. }
             | Self::Emit { span, .. }
+            | Self::Slice { span, .. }
             | Self::WidgetOperation { span, .. }
             | Self::WindowOperation { span, .. }
             | Self::PaneOperation { span, .. } => span,
@@ -261,6 +273,11 @@ impl Statement {
             Self::Abortable { .. } => Some(ImmediateTask::Abortable),
             Self::ClipboardWrite { .. } => Some(ImmediateTask::Clipboard),
             Self::Emit { .. } => Some(ImmediateTask::Emit),
+            // A SLICE IS A PUBLICATION, not the handler's closing act: it
+            // hands a payload on and the handler keeps going. Its message is
+            // accumulated and batched with whatever task the handler does
+            // end on, so a guard below one cannot swallow it.
+            Self::Slice { .. } => None,
             Self::WidgetOperation { .. } => Some(ImmediateTask::Widget),
             Self::WindowOperation { .. } => Some(ImmediateTask::Window),
             Self::PaneOperation {

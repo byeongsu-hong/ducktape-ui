@@ -493,6 +493,41 @@ fn invalidate_run_lane_code(
     Ok(format!("{advance}{abort}"))
 }
 
+/// Whether this body publishes any slice. A handler that does accumulates
+/// its tasks instead of closing on one, so the publication can sit ANYWHERE —
+/// a slice is a message handed on, not the handler's last act, and a guard
+/// below it must not be able to swallow it.
+pub(in crate::codegen) fn publishes_slices(statements: &[ResolvedStatement]) -> bool {
+    statements.iter().any(|statement| match &statement.kind {
+        ResolvedStatementKind::Slice { .. } => true,
+        ResolvedStatementKind::TaskGroup { statements, .. } => publishes_slices(statements),
+        ResolvedStatementKind::Match { arms, .. } => {
+            arms.iter().any(|arm| publishes_slices(&arm.statements))
+        }
+        ResolvedStatementKind::Abortable { task, .. } => {
+            publishes_slices(::std::slice::from_ref(task.as_ref()))
+        }
+        _ => false,
+    })
+}
+
+/// The accumulator a slice-publishing handler returns, and what a `return`
+/// inside one hands back.
+pub(in crate::codegen) const SLICE_ACCUMULATOR: &str = "__ice_published";
+
+/// What a body does with the tasks its statements produce.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(in crate::codegen) enum TaskMode {
+    /// The task IS the value being built (a group member, a route body).
+    Bare,
+    /// The handler closes on it.
+    Return,
+    /// The handler publishes as it goes and batches at the end — the mode a
+    /// `slice` needs, since a publication is not a closing act and a guard
+    /// below one must not be able to swallow it.
+    Accumulate,
+}
+
 pub(in crate::codegen) fn generate_statements(
     out: &mut String,
     statements: &[ResolvedStatement],
@@ -500,7 +535,7 @@ pub(in crate::codegen) fn generate_statements(
     message: &str,
     env: &dyn BindingEnvironment,
     state: &str,
-    return_task: bool,
+    mode: TaskMode,
 ) -> Result<bool, Error> {
     if statements.is_empty() {
         return Ok(false);
@@ -508,10 +543,12 @@ pub(in crate::codegen) fn generate_statements(
     let mut local_env = ScopedBindingEnv::new(env);
     let env = &mut local_env;
     let mut has_task = false;
-    let (task_prefix, task_suffix) = if return_task {
-        ("return ", ";")
-    } else {
-        ("", "")
+    let push = format!("{SLICE_ACCUMULATOR}.push(");
+    let accumulate = mode == TaskMode::Accumulate;
+    let (task_prefix, task_suffix) = match mode {
+        TaskMode::Accumulate => (push.as_str(), ");"),
+        TaskMode::Return => ("return ", ";"),
+        TaskMode::Bare => ("", ""),
     };
     for statement in statements {
         has_task |= statement.task.is_some();
@@ -589,13 +626,37 @@ pub(in crate::codegen) fn generate_statements(
             }
             ResolvedStatementKind::ReturnIf { condition } => {
                 let code = resolved_expr_use_code(program, *condition, env, ValueMode::Owned)?;
-                writeln!(out, "if {code} {{ return ::iced::Task::none(); }}").unwrap();
+                let handed_back = if accumulate {
+                    format!("::iced::Task::batch({SLICE_ACCUMULATOR})")
+                } else {
+                    "::iced::Task::none()".to_owned()
+                };
+                writeln!(out, "if {code} {{ return {handed_back}; }}").unwrap();
             }
             ResolvedStatementKind::Match { value, arms } => {
                 let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
-                if return_task {
-                    write!(out, "return ").unwrap();
+                // ACCUMULATING, the arms push their own work and the match is
+                // an ordinary statement — a closure per arm would borrow the
+                // accumulator inside an expression already borrowing it.
+                if accumulate {
+                    writeln!(out, "match {value} {{").unwrap();
+                    for arm in arms {
+                        writeln!(out, "{}::{} => {{", arm.owner, pascal(&arm.variant)).unwrap();
+                        generate_statements(
+                            out,
+                            &arm.statements,
+                            program,
+                            message,
+                            env,
+                            state,
+                            TaskMode::Accumulate,
+                        )?;
+                        writeln!(out, "}},").unwrap();
+                    }
+                    writeln!(out, "}};").unwrap();
+                    continue;
                 }
+                write!(out, "{task_prefix}").unwrap();
                 writeln!(out, "match {value} {{").unwrap();
                 for arm in arms {
                     writeln!(out, "{}::{} => (|| {{", arm.owner, pascal(&arm.variant)).unwrap();
@@ -606,7 +667,7 @@ pub(in crate::codegen) fn generate_statements(
                         message,
                         env,
                         state,
-                        true,
+                        TaskMode::Return,
                     )?;
                     if !arm_has_task {
                         writeln!(out, "::iced::Task::none()").unwrap();
@@ -739,9 +800,7 @@ pub(in crate::codegen) fn generate_statements(
             ResolvedStatementKind::TaskGroup {
                 kind, statements, ..
             } => {
-                if return_task {
-                    write!(out, "return ").unwrap();
-                }
+                write!(out, "{task_prefix}").unwrap();
                 match kind {
                     TaskGroupKind::Parallel => {
                         writeln!(out, "::iced::Task::batch([").unwrap();
@@ -754,7 +813,7 @@ pub(in crate::codegen) fn generate_statements(
                                 message,
                                 env,
                                 state,
-                                false,
+                                TaskMode::Bare,
                             )?;
                             writeln!(out, "}},").unwrap();
                         }
@@ -771,7 +830,7 @@ pub(in crate::codegen) fn generate_statements(
                                 message,
                                 env,
                                 state,
-                                false,
+                                TaskMode::Bare,
                             )?;
                             write!(out, "}})").unwrap();
                         }
@@ -785,9 +844,7 @@ pub(in crate::codegen) fn generate_statements(
                 task,
                 ..
             } => {
-                if return_task {
-                    write!(out, "return ").unwrap();
-                }
+                write!(out, "{task_prefix}").unwrap();
                 writeln!(out, "{{ let (__task, __handle) = ({{").unwrap();
                 generate_statements(
                     out,
@@ -796,7 +853,7 @@ pub(in crate::codegen) fn generate_statements(
                     message,
                     env,
                     state,
-                    false,
+                    TaskMode::Bare,
                 )?;
                 writeln!(out, "}}).abortable();").unwrap();
                 writeln!(
@@ -835,6 +892,58 @@ pub(in crate::codegen) fn generate_statements(
                     out,
                     "{}::iced::clipboard::{function}::<{message}>({value}){}",
                     task_prefix, task_suffix
+                )
+                .unwrap();
+            }
+            ResolvedStatementKind::Slice {
+                component,
+                handler,
+                args,
+                key,
+            } => {
+                // THE INSTANCE THE KEY NAMES, and nobody else. An instance's
+                // identity IS its explicit id key, so the scope that carries
+                // it ends in `(key)` — the delivery is one message per
+                // matching instance (normally exactly one), NOT a fan-out
+                // every live instance has to filter for itself. That
+                // difference is the whole point: iced 0.14 rebuilds on every
+                // message, so a broadcast would charge the frame for rooms
+                // nobody is looking at.
+                //
+                // CHAINED, not batched: `Task::batch` selects over its
+                // streams, so the order two instances under one key saw the
+                // payload in would be the runtime's choice. A chain of ready
+                // messages keeps the order the scopes were sorted into.
+                let contract = program.component_by_name(component)?;
+                let field = component_state_field(component);
+                let variant = component_handler_variant(component, handler);
+                let states = match contract.storage {
+                    ComponentStorage::Retained => format!("&self.{field}"),
+                    ComponentStorage::Mounted => format!("self.{field}.values()"),
+                    ComponentStorage::Stateless => {
+                        return Err(Error::new(
+                            "E196",
+                            &Span::line(1),
+                            "a slice targets a component that keeps no state",
+                        ));
+                    }
+                };
+                let key = resolved_expr_use_code(program, *key, env, ValueMode::Owned)?;
+                let args = args
+                    .iter()
+                    .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let bindings = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, code)| format!("let __slice_{index} = {code};"))
+                    .collect::<String>();
+                let passed = (0..args.len())
+                    .map(|index| format!(", __slice_{index}.clone()"))
+                    .collect::<String>();
+                writeln!(
+                    out,
+                    "{task_prefix}{{ let __slice_key = ::std::format!(\"({{}})\", {key}); {bindings} let __slice_scopes: ::std::vec::Vec<::std::string::String> = {{ let __slice_states = {states}; let mut __slice_scopes: ::std::vec::Vec<::std::string::String> = __slice_states.keys().filter(|__scope| __scope.ends_with(&__slice_key)).cloned().collect(); __slice_scopes.sort(); __slice_scopes }}; __slice_scopes.into_iter().fold(::iced::Task::none(), |__published, __scope| __published.chain(::iced::Task::done({message}::{variant}(__scope{passed})))) }}{task_suffix}"
                 )
                 .unwrap();
             }

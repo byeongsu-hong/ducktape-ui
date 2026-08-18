@@ -412,6 +412,7 @@ fn automatic_routes(statement: &Statement) -> Vec<AutomaticRoute<'_>> {
         | Statement::DebugFinish { .. }
         | Statement::ClipboardWrite { .. }
         | Statement::Emit { .. }
+        | Statement::Slice { .. }
         | Statement::PaneOperation { .. } => {}
     }
     routes

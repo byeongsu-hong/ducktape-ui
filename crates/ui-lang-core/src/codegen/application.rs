@@ -567,7 +567,15 @@ fn generate_initial_task_method(
     )
     .unwrap();
     let env = checked_state_env(program, "self");
-    let has_task = generate_statements(out, statements, program, message, &env, "self", false)?;
+    let has_task = generate_statements(
+        out,
+        statements,
+        program,
+        message,
+        &env,
+        "self",
+        TaskMode::Bare,
+    )?;
     if !has_task {
         writeln!(out, "::iced::Task::none()").unwrap();
     }
@@ -701,6 +709,15 @@ pub(in crate::codegen) fn generate_update(
         for param in &handler.params {
             env.insert(param.name.clone(), handler_param_binding(param));
         }
+        let publishes = publishes_slices(&handler.statements);
+        if publishes {
+            writeln!(
+                out,
+                "let mut {} : ::std::vec::Vec<::iced::Task<{message}>> = ::std::vec::Vec::new();",
+                SLICE_ACCUMULATOR
+            )
+            .unwrap();
+        }
         let has_task = generate_statements(
             out,
             &handler.statements,
@@ -708,9 +725,15 @@ pub(in crate::codegen) fn generate_update(
             message,
             &env,
             "self",
-            true,
+            if publishes {
+                TaskMode::Accumulate
+            } else {
+                TaskMode::Return
+            },
         )?;
-        if !has_task {
+        if publishes {
+            writeln!(out, "::iced::Task::batch({})", SLICE_ACCUMULATOR).unwrap();
+        } else if !has_task {
             writeln!(out, "::iced::Task::none()").unwrap();
         }
         writeln!(out, "}})(),").unwrap();
@@ -835,7 +858,7 @@ pub(in crate::codegen) fn generate_update(
                 message,
                 &env,
                 "__local",
-                true,
+                TaskMode::Return,
             )?;
             if !has_task {
                 writeln!(out, "::iced::Task::none()").unwrap();

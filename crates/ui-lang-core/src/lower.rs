@@ -838,6 +838,12 @@ pub(crate) enum ResolvedStatementKind {
         target: String,
         args: Vec<CheckedExprUseId>,
     },
+    Slice {
+        component: String,
+        handler: String,
+        args: Vec<CheckedExprUseId>,
+        key: CheckedExprUseId,
+    },
     WidgetOperation {
         operation: ResolvedWidgetOperation,
         route: Option<ResolvedRoute>,
@@ -1870,6 +1876,12 @@ fn resolved_statement_semantic_key(
             format!("clipboard:{primary}")
         }
         ResolvedStatementKind::Emit { event, args, .. } => format!("emit:{event}:{}", args.len()),
+        ResolvedStatementKind::Slice {
+            component,
+            handler,
+            args,
+            ..
+        } => format!("slice:{component}.{handler}:{}", args.len()),
         ResolvedStatementKind::WidgetOperation {
             operation, route, ..
         } => format!(
@@ -2472,6 +2484,10 @@ impl LoweredProgram {
                 | ResolvedStatementKind::ComboPush { value, .. }
                 | ResolvedStatementKind::ClipboardWrite { value, .. } => operands.push(*value),
                 ResolvedStatementKind::Emit { args, .. } => operands.extend(args.iter().copied()),
+                ResolvedStatementKind::Slice { args, key, .. } => {
+                    operands.extend(args.iter().copied());
+                    operands.push(*key);
+                }
                 ResolvedStatementKind::Assign { value, at, .. } => {
                     operands.push(*value);
                     operands.extend(at);
@@ -3723,6 +3739,19 @@ impl LoweredProgram {
             .iter()
             .filter(move |contract| contract.name == component)
             .flat_map(|contract| contract.events.iter().map(|event| event.name.as_str()))
+    }
+
+    /// The contract a `slice` statement names, by the component's own name.
+    pub(crate) fn component_by_name(&self, name: &str) -> Result<&ComponentContract, Error> {
+        self.components
+            .iter()
+            .find(|component| component.name == name)
+            .ok_or_else(|| {
+                self.invariant_at_origin(
+                    self.settings.origin,
+                    format!("sliced component `{name}` is absent from the normalized program"),
+                )
+            })
     }
 
     pub(crate) fn component(&self, id: ComponentId) -> &ComponentContract {
@@ -7595,7 +7624,8 @@ impl Lowerer {
                 | ResolvedStatementKind::DebugStart { .. }
                 | ResolvedStatementKind::DebugFinish { .. }
                 | ResolvedStatementKind::ClipboardWrite { .. }
-                | ResolvedStatementKind::Emit { .. } => true,
+                | ResolvedStatementKind::Emit { .. }
+                | ResolvedStatementKind::Slice { .. } => true,
             }
         }
 
@@ -8509,6 +8539,25 @@ impl Lowerer {
                 primary: *primary,
                 value: self.checked_statement_expression(id, &mut operand, span)?,
             },
+            Statement::Slice {
+                component,
+                handler,
+                args,
+                span,
+                ..
+            } => {
+                let values = args
+                    .iter()
+                    .map(|_| self.checked_statement_expression(id, &mut operand, span))
+                    .collect::<Result<Vec<_>, Error>>()?;
+                let key = self.checked_statement_expression(id, &mut operand, span)?;
+                ResolvedStatementKind::Slice {
+                    component: component.clone(),
+                    handler: handler.clone(),
+                    args: values,
+                    key,
+                }
+            }
             Statement::Emit { event, args, span } => {
                 let values = args
                     .iter()
@@ -10866,6 +10915,9 @@ mod tests {
             ResolvedStatementKind::Emit { event, target, .. } => {
                 format!("emit {event} -> {target}")
             }
+            ResolvedStatementKind::Slice {
+                component, handler, ..
+            } => format!("slice {component}.{handler}"),
             ResolvedStatementKind::WidgetOperation { route, .. } => format!(
                 "widget-op {}",
                 route

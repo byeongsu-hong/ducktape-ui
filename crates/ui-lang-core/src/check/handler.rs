@@ -354,6 +354,64 @@ fn check_handler_statements(
             Statement::ClipboardWrite { value, span, .. } => {
                 require_type(&expr_type(value, &env, document, span)?, &Type::Str, span)?;
             }
+            Statement::Slice {
+                component,
+                handler,
+                args,
+                key,
+                span,
+            } => {
+                // THE APP KEEPS THE SUBSCRIPTION; the instance gets its share.
+                // The target is a component's own handler, so the payload
+                // lands in that instance's local state through the ordinary
+                // update loop — one message, tagged with the instance scope
+                // the key names.
+                if events.is_some() {
+                    return Err(Error::new(
+                        "E140",
+                        span,
+                        "a slice hands an APP handler's payload down; a component handler already has its own state",
+                    ));
+                }
+                let declaration = document
+                    .components
+                    .iter()
+                    .find(|entry| entry.name == *component)
+                    .ok_or_else(|| {
+                        Error::new("E140", span, format!("unknown component `{component}`"))
+                    })?;
+                let target = declaration
+                    .handlers
+                    .iter()
+                    .find(|entry| entry.name == *handler)
+                    .ok_or_else(|| {
+                        Error::new(
+                            "E140",
+                            span,
+                            format!("component `{component}` has no handler `{handler}`"),
+                        )
+                    })?;
+                if target.params.len() != args.len() {
+                    return Err(Error::new(
+                        "E140",
+                        span,
+                        format!(
+                            "`{component}.{handler}` takes {} argument(s), the slice passes {}",
+                            target.params.len(),
+                            args.len()
+                        ),
+                    ));
+                }
+                for (arg, param) in args.iter().zip(&target.params) {
+                    let actual = expr_type(arg, &env, document, span)?;
+                    if param.ty != Type::Unknown {
+                        require_type(&actual, &param.ty, span)?;
+                    }
+                }
+                // The key is the instance's own — the expression the mount
+                // keys its explicit id with, read here from the payload.
+                require_type(&expr_type(key, &env, document, span)?, &Type::Str, span)?;
+            }
             Statement::Emit { event, args, span } => {
                 let Some(events) = events else {
                     return Err(Error::new(

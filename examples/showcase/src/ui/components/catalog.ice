@@ -380,7 +380,12 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
           active bg=surface border=border border-w=1.0 r=8.0 placeholder=muted value=fg selection=primary
           hovered border=primary
           focused border=primary border-w=2.0
-        ScratchPad label="Component-owned draft"
+        // ducktape-ui#698 dogfood: two KEYED instances, and the app's own
+        // handler hands each its share of what it just received.
+        ScratchPad #pad("notes") label="Notes"
+          events
+            submitted -> emit(scratch_submitted, _)
+        ScratchPad #pad("todo") label="To do"
           events
             submitted -> emit(scratch_submitted, _)
         if !empty(scratch_note)
@@ -724,6 +729,7 @@ component ScratchPad(label:str)
     submitted(str)
   state
     body:editor = ""
+    note = ""
   on clear
     body = editor("")
   on submit
@@ -731,6 +737,10 @@ component ScratchPad(label:str)
     return if empty(text)
     body = editor("")
     emit(submitted, text)
+  // The instance's share of the app's broadcast: only the pad the key names
+  // is told, so the other one is not rebuilt for a note it never asked for.
+  on noted(text)
+    note = text
   col w=fill gap=6.0
     text label size=13.0 @text-fg
     editor <-> body
@@ -754,3 +764,5 @@ component ScratchPad(label:str)
       // ducktape-ui handler emit dogfood: the local handler clears its own
       // draft, then hands the text up as the next update-loop message.
       button "Submit draft" disabled=empty(trim(editor_text(body))) @ghost_action -> submit
+    if !empty(note)
+      text note size=11.0 @text-muted

@@ -707,3 +707,110 @@ fn handler_emit_chains_through_an_enclosing_component() {
     assert_eq!(error.code, "E140");
     assert!(error.message.contains("routes to a caller-local handler"));
 }
+
+#[test]
+fn a_slice_hands_one_instance_its_share_of_a_payload() {
+    // ducktape-ui#698: the app keeps its single subscription and its route;
+    // the statement hands the payload on to the instance the key names.
+    let source = format!(
+        "app SliceDemo\n{EMIT_THEME}state\n  rooms:[str] = [\"a\", \"b\"]\n  seen = \"\"\ncomponent Room(id:str)\n  lifetime retained\n  state\n    latest = \"\"\n  on delivered(text)\n    latest = text\n  text latest\non live(next)\n  seen = next\n  slice Room.delivered(next) at next\nview\n  col\n    for room in rooms\n      Room #room(room) id=room\n    button \"Deliver\" -> live(\"a\")\n    text seen\n"
+    );
+    analyze(&source).unwrap();
+
+    // A SLICE IS A PUBLICATION, so it sits anywhere — including above a
+    // guard that ends the handler, which is exactly where a failure hands a
+    // body back before deciding whether the timeline on screen is its own.
+    analyze(&source.replace(
+        "  slice Room.delivered(next) at next\n",
+        "  slice Room.delivered(next) at next\n  return if empty(next)\n  seen = \"\"\n",
+    ))
+    .unwrap();
+
+    // The negatives keep the target fed by a route of its own, so the slice's
+    // own refusal is what answers rather than "cannot infer" for a handler
+    // the broken slice orphaned.
+    let routed = source.replace(
+        "  on delivered(text)\n    latest = text\n",
+        "  on delivered(text)\n    latest = text\n  on prod\n    latest = \"x\"\n",
+    );
+    let routed = routed.replace(
+        "  text latest\n",
+        "  col\n    text latest\n    button \"P\" -> delivered(\"x\")\n",
+    );
+    analyze(&routed).unwrap();
+
+    // The component and the handler both have to exist.
+    let error =
+        analyze(&routed.replace("Room.delivered(next)", "Parlour.delivered(next)")).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("unknown component `Parlour`"));
+
+    let error = analyze(&routed.replace("Room.delivered(next)", "Room.arrived(next)")).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(error.message.contains("has no handler `arrived`"));
+
+    // Arity is the target handler's.
+    let error =
+        analyze(&routed.replace("Room.delivered(next)", "Room.delivered(next, next)")).unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(
+        error
+            .message
+            .contains("takes 1 argument(s), the slice passes 2")
+    );
+
+    // A component handler already owns its state; the slice is the APP's.
+    let error = analyze(&routed.replace(
+        "  on prod\n    latest = \"x\"\n",
+        "  on prod\n    slice Room.delivered(\"x\") at \"a\"\n",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E140");
+    assert!(
+        error
+            .message
+            .contains("a slice hands an APP handler's payload down")
+    );
+}
+
+#[test]
+fn a_slice_is_the_route_its_target_has() {
+    // A sliced handler is reachable and its writes count: nothing in the
+    // component view names it, so without the slice both the unreachable
+    // handler (W005) and the never-written state (W003) warnings fire on a
+    // component that is working exactly as designed.
+    let source = format!(
+        "app SliceReach\n{EMIT_THEME}state\n  seen = \"\"\ncomponent Room(id:str)\n  lifetime retained\n  state\n    latest = \"\"\n  on delivered(text)\n    latest = text\n  text latest\non live(next)\n  seen = next\n  slice Room.delivered(next) at next\nview\n  col\n    Room #room(\"a\") id=\"a\"\n    button \"Deliver\" -> live(\"a\")\n    text seen\n"
+    );
+    let checked = analyze(&source).unwrap();
+    let codes: Vec<String> = checked
+        .warnings()
+        .iter()
+        .map(|warning| warning.code.to_string())
+        .collect();
+    assert!(
+        !codes.iter().any(|code| code == "W005"),
+        "a sliced handler is reachable: {codes:?}"
+    );
+    assert!(
+        !codes.iter().any(|code| code == "W003"),
+        "and its writes count as writes: {codes:?}"
+    );
+    // A LITERAL keyed id is not a dynamic identity — the instances it can
+    // name are written out in the source, so retained storage is bounded.
+    assert!(
+        !codes.iter().any(|code| code == "W009"),
+        "a literal key cannot accumulate: {codes:?}"
+    );
+
+    // A key computed at runtime still warns, which is the case W009 is for.
+    let dynamic = source.replace("Room #room(\"a\") id=\"a\"", "Room #room(seen) id=seen");
+    let checked = analyze(&dynamic).unwrap();
+    assert!(
+        checked
+            .warnings()
+            .iter()
+            .any(|warning| warning.code == "W009"),
+        "a runtime key is exactly what retained storage can accumulate past"
+    );
+}

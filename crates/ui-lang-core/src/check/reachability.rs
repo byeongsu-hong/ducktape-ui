@@ -98,6 +98,9 @@ pub(in crate::check) fn reachable_handlers(
         let mut queue: VecDeque<&str> = routes.iter().map(|route| route.handler.as_str()).collect();
         // The runtime dispatches `boot` on first sighting; no view routes it.
         queue.push_back("boot");
+        // …and a SLICE is the only route its target has: the app hands the
+        // payload down, so nothing in the component view names the handler.
+        collect_sliced_handlers(document, &component.name, &mut queue);
         while let Some(name) = queue.pop_front() {
             if !names.contains(name) || !reachable.insert(name.to_owned()) {
                 continue;
@@ -165,6 +168,40 @@ pub(in crate::check) fn unreachable_handler_warnings(
     warnings
 }
 
+/// Every handler of `component` an app-level `slice` targets. Walks whole
+/// handler bodies, so a slice inside a task group counts.
+fn collect_sliced_handlers<'a>(
+    document: &'a Document,
+    component: &str,
+    output: &mut VecDeque<&'a str>,
+) {
+    fn walk<'a>(statements: &'a [Statement], component: &str, output: &mut VecDeque<&'a str>) {
+        for statement in statements {
+            match statement {
+                Statement::Slice {
+                    component: target,
+                    handler,
+                    ..
+                } if target == component => output.push_back(handler),
+                Statement::Match { arms, .. } => {
+                    for arm in arms {
+                        walk(&arm.statements, component, output);
+                    }
+                }
+                Statement::TaskGroup { statements, .. } => walk(statements, component, output),
+                Statement::Abortable { task, .. } => {
+                    walk(::std::slice::from_ref(task.as_ref()), component, output);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    for handler in &document.handlers {
+        walk(&handler.statements, component, output);
+    }
+}
+
 pub(in crate::check) fn collect_statement_routes<'a>(
     statements: &'a [Statement],
     output: &mut VecDeque<&'a str>,
@@ -230,7 +267,10 @@ pub(in crate::check) fn collect_statement_routes<'a>(
             | Statement::ClipboardWrite { .. }
             // The event's call-site route keeps its target handler reachable
             // through the view walk; the emit itself names no route.
-            | Statement::Emit { .. } => {}
+            | Statement::Emit { .. }
+            // A slice names a component handler directly, and the component's
+            // own reachability is decided by whether it is mounted.
+            | Statement::Slice { .. } => {}
         }
     }
 }

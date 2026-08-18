@@ -603,7 +603,11 @@ statement      = "let" name "=" expr
                | "pane" "#" name pane_operation ("->" route)?
                | window_task
                | tray_task
+               | emit_statement
+               | slice_statement
                | handler_match
+emit_statement = "emit" "(" name ("," expr)* ")"
+slice_statement = "slice" name "." name "(" (expr ("," expr)*)? ")" "at" expr
 handler_match  = "match" expr INDENT handler_match_arm+
 handler_match_arm = qualified_name "." name INDENT statement+
 task_group     = ("parallel" | "sequential") INDENT task_member+
@@ -4209,6 +4213,51 @@ from inside another component, where the same rule applies to the outer
 event — and every chain must converge on the same app handler. A view-route
 `emit` keeps its full call-site flexibility; the restriction binds only
 events a handler fires.
+
+### Subscription slices
+
+An app keeps ONE subscription and one route for it. `slice
+Component.handler(args…) at <key>` hands what that route just received on to
+the instance the key names, as the next message in the SAME update loop — so
+a data plane can live in component state without a second event system.
+
+The key is matched against the instance's own identity: a component mounted
+with an explicit keyed id (`#room(id)`) carries that key in its scope, and
+the slice delivers to every instance whose scope ends in it — normally
+exactly one, and more only when the same key is mounted twice. It is a
+lookup, not a broadcast every instance filters for itself: a message costs a
+view rebuild, so telling instances that did not ask would charge the frame
+for panes nobody is looking at.
+
+The statement is a PUBLICATION, not the handler's closing act. It sits
+anywhere, and a handler that publishes accumulates its tasks and returns
+their batch — so a `return if` below a slice cannot swallow it. That is the
+shape a failure path needs: hand the words back to the room they were
+written in, and only then decide whether the timeline on screen is that
+room's. Only an APP handler may write one; a component handler already owns
+its instance's state.
+
+Arguments are checked against the target handler's parameters, and because
+nothing else routes to a sliced handler, the slice IS where those parameter
+types come from. The key is a `str`.
+
+Committed ordering and lifecycle:
+
+- The app handler's own writes land FIRST. The slice is a statement in it,
+  so by the time an instance is told, the app-level state that route
+  maintains is already current.
+- Several matching instances are delivered in ascending scope order — the
+  deliveries of ONE slice are chained, not batched, so two panes under one
+  key see the payload in a defined order rather than the runtime's. Two
+  SLICE STATEMENTS in one handler run concurrently with each other and with
+  whatever the handler itself launches; they address different instances, and
+  ordering them would mean delaying one behind the other's task.
+- An instance with no materialized state receives nothing — a `retained`
+  instance keeps receiving while it is off screen (that IS the point: its
+  pane is current when the reader returns), and a `mounted` instance stops
+  when it leaves the tree, with its state.
+- The app-level route stays exactly what it was, so a plane can descend one
+  slice at a time.
 
 Components may instead expose multiple named events with zero or more ordered
 typed payloads. Every declared event has exactly one route at each call site;
