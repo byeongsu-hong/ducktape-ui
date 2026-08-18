@@ -77,6 +77,12 @@ impl fmt::Display for Location {
 thread_local! {
     static RENDER_SOURCE_STACK: RefCell<Vec<Location>> = const { RefCell::new(Vec::new()) };
     static RENDER_SOURCES: RefCell<HashMap<String, Vec<Location>>> = RefCell::new(HashMap::new());
+    /// Component instance scopes sighted by a render, per component name.
+    /// `mounted` storage keeps its own active set; `retained` storage has
+    /// none by design — its map only gains an entry when an event is
+    /// delivered — so a harness that just rendered would otherwise be unable
+    /// to name an instance that has not been typed into yet.
+    static COMPONENT_SIGHTINGS: RefCell<HashMap<String, Vec<String>>> = RefCell::new(HashMap::new());
     static APP_INSTANCE: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
@@ -191,6 +197,34 @@ impl Drop for RenderSourceGuard {
 
 pub(crate) fn current_render_source() -> Option<Location> {
     RENDER_SOURCE_STACK.with(|stack| stack.borrow().last().copied())
+}
+
+/// Records that `component` rendered an instance at `scope`. Test-only, and
+/// generated only for `retained` storage — see [`component_sightings`].
+#[doc(hidden)]
+pub fn register_component_sighting(component: &str, scope: &str) {
+    COMPONENT_SIGHTINGS.with(|sightings| {
+        let mut sightings = sightings.borrow_mut();
+        let scopes = sightings.entry(component.to_owned()).or_default();
+        if !scopes.iter().any(|seen| seen == scope) {
+            scopes.push(scope.to_owned());
+        }
+    });
+}
+
+/// Every instance scope of `component` a render has sighted in this thread.
+/// The generated `__ice_test_scopes_*` unions this with the storage map's own
+/// keys, so a freshly rendered instance and a materialized one are both
+/// nameable.
+#[doc(hidden)]
+pub fn component_sightings(component: &str) -> Vec<String> {
+    COMPONENT_SIGHTINGS.with(|sightings| {
+        sightings
+            .borrow()
+            .get(component)
+            .cloned()
+            .unwrap_or_default()
+    })
 }
 
 /// Associates a generated native widget ID with the current `.ice` view node.

@@ -423,6 +423,16 @@ pub(in crate::codegen) fn render_content(
             } else {
                 String::new()
             };
+            // A retained instance's storage gains an entry only when an event
+            // is delivered, so a test harness that has merely RENDERED one
+            // cannot name it. The sighting side-channel is test-only and
+            // costs a production build nothing.
+            let sighting = (call.storage == ComponentStorage::Retained).then(|| {
+                format!(
+                    "#[cfg(test)] ::ui_lang_runtime::testing::register_component_sighting({}, &{scope_binding}); ",
+                    rust_string(name)
+                )
+            });
             let mount = (call.storage == ComponentStorage::Mounted).then(|| {
                 let field = component_state_field(name);
                 // An animation's identity is the instant it started, so an
@@ -446,7 +456,8 @@ pub(in crate::codegen) fn render_content(
                 }
             });
             let body = format!(
-                "{}let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content",
+                "{}{}let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content",
+                sighting.as_deref().unwrap_or(""),
                 mount.as_deref().unwrap_or("")
             );
             // A use whose arguments, routes, and slots resolved only
