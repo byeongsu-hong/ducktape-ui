@@ -5,13 +5,14 @@
 //! moments leave that memory wrong with nothing else re-opening layout:
 //!
 //! - **The first frame, and every children replacement.** Before any event
-//!   lands the column fills a screen's worth from the strip's top — but an
-//!   end-anchored scrollable (a chat timeline, a transcript) shows the
-//!   strip's BOTTOM, so the mounted window and the visible strip never
-//!   intersect and the frame draws no rows. This wrapper re-reads the
-//!   scrollable's real translation inside `layout` and lays out once more
-//!   when the window escaped it; the second pass costs one screenful of rows
-//!   and only runs on mismatch frames.
+//!   lands the column has no viewport at all, and the scrollable can be
+//!   showing either end of the strip — an end-anchored one (a chat timeline, a
+//!   transcript) shows the BOTTOM. So the column mounts nothing on that pass
+//!   rather than guess, and this wrapper re-reads the scrollable's real
+//!   translation inside `layout` and lays out once more against it. Rows are
+//!   shaped in `layout`, so the pass that draws is the only one that ever
+//!   shapes a row: a guessed window would be a whole screenful of shaping
+//!   thrown away on every room switch.
 //! - **A rapid wheel transaction.** Iced deliberately stops forwarding
 //!   consecutive wheel events to the scrollable's descendants, so a fast
 //!   trackpad burst can translate every mounted row out of the viewport.

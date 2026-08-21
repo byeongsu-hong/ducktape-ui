@@ -563,7 +563,7 @@ fn render_resolved_scroll(
     let accessibility_key =
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
     let child_scope = rendered_child_scope(identity, scope, env, document)?;
-    let has_virtual_rows = contains_virtual_rows(child, document)?;
+    let has_virtual_rows = contains_virtual_rows(child, document, slot)?;
     let child = render_node(child, document, message, env, &child_scope, slot)?;
     let mut code = String::from("::iced::widget::scrollable(__scroll_content)");
     let bar = resolved_scroll_bar_code(scroll, program, env)?;
@@ -694,13 +694,23 @@ fn render_resolved_scroll(
 /// Whether this scroll's own content contains a virtual row. Nested scrolls
 /// stop the walk because they own their wheel transaction and get their own
 /// wrapper when rendered.
-fn contains_virtual_rows(node: ViewId, document: &LoweredProgram) -> Result<bool, Error> {
+///
+/// `slots` is the content the caller passed for the component body this scroll
+/// sits in, exactly as `render_node` receives it: a slot is written at the call
+/// site and rendered inline here, so a component whose body is `scroll { slot }`
+/// only learns about virtual rows by following it.
+fn contains_virtual_rows(
+    node: ViewId,
+    document: &LoweredProgram,
+    slots: Option<&SlotContext>,
+) -> Result<bool, Error> {
     fn any(
         children: impl IntoIterator<Item = ViewId>,
         document: &LoweredProgram,
+        slots: Option<&SlotContext>,
     ) -> Result<bool, Error> {
         for child in children {
-            if contains_virtual_rows(child, document)? {
+            if contains_virtual_rows(child, document, slots)? {
                 return Ok(true);
             }
         }
@@ -712,13 +722,13 @@ fn contains_virtual_rows(node: ViewId, document: &LoweredProgram) -> Result<bool
         ResolvedViewKind::Layout { children } => match &document.resolved_layout(node)?.mode {
             ResolvedLayoutMode::Scroll(_) => Ok(false),
             ResolvedLayoutMode::Linear(linear) if linear.virtual_row.is_some() => Ok(true),
-            _ => any(children.iter().copied(), document),
+            _ => any(children.iter().copied(), document, slots),
         },
         ResolvedViewKind::KeyedColumn { child } => {
             if document.resolved_keyed_column(node)?.virtual_row.is_some() {
                 Ok(true)
             } else {
-                contains_virtual_rows(*child, document)
+                contains_virtual_rows(*child, document, slots)
             }
         }
         ResolvedViewKind::Container { content }
@@ -729,25 +739,30 @@ fn contains_virtual_rows(node: ViewId, document: &LoweredProgram) -> Result<bool
         | ResolvedViewKind::Pin { content }
         | ResolvedViewKind::Sensor { content }
         | ResolvedViewKind::ResponsiveSize { content }
-        | ResolvedViewKind::Lazy { child: content } => contains_virtual_rows(*content, document),
+        | ResolvedViewKind::Lazy { child: content } => {
+            contains_virtual_rows(*content, document, slots)
+        }
         ResolvedViewKind::Button {
             content: Some(content),
-        } => contains_virtual_rows(*content, document),
+        } => contains_virtual_rows(*content, document, slots),
         ResolvedViewKind::Overlay { content, layer }
         | ResolvedViewKind::Tooltip {
             content,
             tip: layer,
-        } => any([*content, *layer], document),
-        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => any([*narrow, *wide], document),
-        ResolvedViewKind::If { children } | ResolvedViewKind::For { children } => {
-            any(children.iter().copied(), document)
+        } => any([*content, *layer], document, slots),
+        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
+            any([*narrow, *wide], document, slots)
         }
-        ResolvedViewKind::Match { arms } => any(arms.iter().flatten().copied(), document),
+        ResolvedViewKind::If { children } | ResolvedViewKind::For { children } => {
+            any(children.iter().copied(), document, slots)
+        }
+        ResolvedViewKind::Match { arms } => any(arms.iter().flatten().copied(), document, slots),
         ResolvedViewKind::Table { columns } => any(
             columns
                 .iter()
                 .flat_map(|column| [column.header, column.cell]),
             document,
+            slots,
         ),
         ResolvedViewKind::PaneGrid { panes, templates } => {
             let mut children = Vec::new();
@@ -759,15 +774,37 @@ fn contains_virtual_rows(node: ViewId, document: &LoweredProgram) -> Result<bool
                     children.extend(title.compact_controls);
                 }
             }
-            any(children, document)
+            any(children, document, slots)
         }
         ResolvedViewKind::Component { call } => {
             let call = document.component_call_by_id(*call)?;
             let component = document.component(call.component);
-            if contains_virtual_rows(component.root, document)? {
+            // The body's own slots bind at THIS call, not in the scope the
+            // walk is standing in, so they are covered by the call's contents
+            // below rather than followed from inside the body.
+            if contains_virtual_rows(component.root, document, None)? {
                 return Ok(true);
             }
-            any(call.slots.iter().filter_map(|slot| slot.content), document)
+            any(
+                call.slots.iter().filter_map(|slot| slot.content),
+                document,
+                slots,
+            )
+        }
+        // Content the caller wrote, rendered here. Its own slots resolve
+        // against the caller's context, which is the parent this hands down —
+        // the same handoff `render_node` makes for the rendered content.
+        ResolvedViewKind::Slot { slot, .. } => {
+            let Some(content) =
+                slots.and_then(|slots| slots.entries.iter().find(|entry| entry.slot == *slot))
+            else {
+                return Ok(false);
+            };
+            contains_virtual_rows(
+                content.view,
+                document,
+                slots.and_then(|slots| slots.parent.as_deref()),
+            )
         }
         ResolvedViewKind::Text
         | ResolvedViewKind::RichText
@@ -785,7 +822,6 @@ fn contains_virtual_rows(node: ViewId, document: &LoweredProgram) -> Result<bool
         | ResolvedViewKind::Space
         | ResolvedViewKind::Markdown
         | ResolvedViewKind::TextEditor
-        | ResolvedViewKind::Slot { .. }
         | ResolvedViewKind::ExternComponent
         | ResolvedViewKind::Themer
         | ResolvedViewKind::Shader
