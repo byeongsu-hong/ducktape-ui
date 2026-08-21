@@ -5760,6 +5760,8 @@ expect tray item string_expression
 expect no tray item string_expression
 expect tray command string_expression
 expect no tray command string_expression
+expect component target.field == expression
+expect component target.field != expression
 expect a11y target role "button"
 expect a11y target name "Save"
 expect a11y target value "Draft"
@@ -5771,13 +5773,31 @@ expect a11y target action focus false
 ```
 
 A boolean expectation uses normal checked app-state expressions, equality, and
-`pure` extern calls. Component-local state stays out of Ice test expressions;
-a generated Rust harness reaches it through the test-only component seam
-below. `~=` converts both
+`pure` extern calls. Component-local state stays out of those expressions;
+`expect component` below is the one read of it an Ice test has. `~=` converts both
 numeric operands to `f64` and uses absolute tolerance `0.001`; non-finite values
 fail. Text matching is exact over visible rendered text. `within` restricts the
 search to the selected target bounds. `exists` and `missing` are useful for IDs
 whose nodes are conditional at runtime.
+
+`expect component target.field == expression` (or `!=`) compares one declared
+`state` entry of one component instance. `target` is an alias or `#` path that
+names a component call's `#id` — an instance scope, not a rendered widget —
+and `field` is a `state` name that component declares; the expression is
+checked against the field's type. The read compiles onto the component seam
+below: the checked target path is the very scope string the runtime keys the
+instance's state by, so the generated test calls `__ice_test_state_<name>`
+with it and compares the field. An instance that has rendered but never
+handled an event reports its declared initial state; a scope no render has
+sighted fails, naming the scope and the live instances of that component. The
+checker rejects a target that is not a component scope, a field the component
+does not declare, an animation state (it has no comparable value), and a path
+under which two different components mount, all as `E194`; a type mismatch is
+the ordinary `E101`. An alias that names a component scope may be declared and
+chained from, but every rendered-widget use of it — `click alias`,
+`expect exists alias`, `alias.width` — is rejected as `E194`, the same as the
+bare path. This is an observation only: test source cannot write component
+state, and `dispatch` still reaches top-level handlers alone.
 
 For a Rust-level harness in the generated crate (`__boot`/`__update`-style
 suites and pixel probes), every stateful component also generates a
@@ -5785,7 +5805,9 @@ test-only seam, `#[cfg(test)]` and stable-named: `__IceTestState_<name>` (a
 `Clone` view over the DECLARED state fields only — lane bookkeeping and
 animations excluded, and an `editor` state carried as its text, since content
 is what a harness asserts on), `__ice_test_state_<name>(&self, scope)` returning a
-clone for one instance, `__ice_test_scopes_<name>(&self)` listing live
+clone for one instance — an instance that has rendered but holds no stored
+state yet answers with its declared initial state, and only a scope no render
+sighted is `None` — `__ice_test_scopes_<name>(&self)` listing live
 instance scopes, and `__ice_test_message_<name>_<handler>(scope, args…)`
 building the exact message the runtime would deliver for each local handler,
 `boot` included. Reads are clones and writes are ordinary update-loop
@@ -5887,7 +5909,8 @@ a generic Rust harness receives an explicit runtime failure.
 
 Parser and checker diagnostics reject duplicate test/alias names, declarations
 after executable steps, duplicate or invalid configuration, unknown presets,
-handlers, aliases, fields, or ID paths, component-scope targets, invalid key
+handlers, aliases, fields, or ID paths, component-scope targets in
+rendered-widget positions, invalid key
 shapes or options, wrong expression types, and unsupported renderer contracts
 when known statically. Runtime failures include the test name, normalized Ice
 statement, and source path/line; selector, expected/actual values, current
@@ -5910,8 +5933,8 @@ evaluation. Generated Ice tests need no Rust wrapper, registration, or
 application-level dependency on a separate simulator crate.
 
 Revision 2.0 has no DOM, CSS selector engine, computed-style object, synthetic
-component bounds, component-local-state access, external test format, test mock
-DSL, general virtual clock, built-in golden-image comparator, or multi-window
+component bounds, component-local-state writes from test source, external test
+format, test mock DSL, general virtual clock, built-in golden-image comparator, or multi-window
 orchestration. Named captures expose renderer output without making exact pixel
 equality the test contract.
 
