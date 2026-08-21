@@ -991,7 +991,7 @@ duplicated Rust assertions do not count. Component-local state is within reach
 of such a claim: `expect component target.field == value` compiles onto the
 generated component seam and reads one instance's declared state by the
 scope the view keys it under — a read, never a write. Evidence: the
-`test-component-state` compile and format fixtures, five
+`test-component-state` compile and format fixtures, six
 `test-component-state-*`/`test-component-scope-alias-*` diagnostics, a codegen
 structure test, and the showcase `component_state_read` Ice test, whose Red
 came from one mutation making `increment` add two.
