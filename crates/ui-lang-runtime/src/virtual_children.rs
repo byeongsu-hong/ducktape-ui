@@ -1285,15 +1285,18 @@ mod tests {
         );
         drop(ui);
 
-        // The rows the viewport shows, their overscan on both sides, and one
-        // more for a window that straddles a row boundary.
-        let window = (VIEWPORT / ROW) as usize + 2 * OVERSCAN_ROWS + 1;
+        // Every row the viewport shows, and at most the overscan above it —
+        // a window that sits at the strip's end has no rows below to keep
+        // warm. Both ends of the band are load-bearing: over it, a whole
+        // guessed window was shaped and thrown away; under it, the frame is
+        // missing rows it draws.
+        let visible_rows = (VIEWPORT / ROW) as usize;
+        let window = visible_rows..=visible_rows + OVERSCAN_ROWS;
         let laid_out = layouts.get();
         assert!(
-            laid_out <= window,
+            window.contains(&laid_out),
             "the first end-anchored frame laid out {laid_out} of {COUNT} rows; \
-             one overscanned window is {window}, so the seed mounted a window \
-             the re-aim threw away"
+             one overscanned tail window is {window:?}"
         );
     }
 
