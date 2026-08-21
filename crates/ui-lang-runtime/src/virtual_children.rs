@@ -13,9 +13,15 @@
 //! state. Offscreen children keep their widget state (they stay in the tree);
 //! they are simply not measured, drawn, or offered events.
 //!
-//! Mount it inside a vertical `scrollable`. The window comes from the viewport
-//! the previous pass observed, and a viewport change re-opens layout — the
-//! same trick the rich-text editor uses to bound its highlighting.
+//! Mount it inside a vertical `scrollable` wrapped in
+//! [`crate::virtual_scroll`], which is the pair codegen emits. The window
+//! comes from the viewport the previous pass observed, and a viewport change
+//! re-opens layout — the same trick the rich-text editor uses to bound its
+//! highlighting. Before any viewport has been observed the column mounts
+//! nothing and leaves the aiming to the wrapper, which reads the scrollable's
+//! real translation inside the same layout call: a scrollable can be showing
+//! either end of the strip, and a guessed window is a screenful of shaped rows
+//! thrown away.
 //!
 //! Measuring a child above the viewport moves everything below it. Anchor the
 //! scrollable to the end ([`iced::widget::scrollable::Anchor::End`]) whenever
@@ -71,11 +77,6 @@ use rustc_hash::FxHashMap;
 /// Extra rows kept live on each side of the viewport so a scroll of a row or
 /// two reveals something already measured.
 const OVERSCAN_ROWS: usize = 4;
-
-/// Stands in for the viewport height on the one pass that precedes any event
-/// reporting a real one. Only the order of magnitude matters: the first
-/// `update` corrects it.
-const NOMINAL_SCREEN_HEIGHT: f32 = 1_080.0;
 
 /// Lays out only the visible slice of `children`, estimating the rest at
 /// `estimated_height` until they are measured.
@@ -516,28 +517,35 @@ where
     ) -> layout::Node {
         let count = self.children.len();
         let state = tree.state.downcast_mut::<State>();
-        // Before the first draw the viewport is unknown; fill a screen's worth
-        // from the top rather than the whole document. A vertical scrollable
-        // hands its content an *infinite* height limit, so the limit alone
-        // would mean the whole document — which is the one moment a long list
-        // can least afford to shape every row.
-        let visible_top = state.viewport.y;
-        let visible_height = if state.viewport.height > 0.0 {
-            state.viewport.height
+        // Before the first draw this column has no viewport of its own, and
+        // where it stands then decides what a guess costs. Under a finite
+        // height limit the parent's band IS the visible one, so fill it from
+        // the top. Under an infinite one the column is inside a vertical
+        // scrollable, which can be showing either end of the strip — an
+        // end-anchored chat timeline shows the tail — and a row is SHAPED in
+        // `layout`, so a window aimed at the wrong end is a whole screenful of
+        // shaping thrown away on every switch. Mount nothing on that pass
+        // instead: `virtual_scroll` re-reads the scrollable's real
+        // translation in the same layout call and lays out once more against
+        // it, and that second pass is the one the frame draws.
+        let visible = if state.viewport.height > 0.0 {
+            Some((state.viewport.y, state.viewport.height))
         } else if limits.max().height.is_finite() {
-            limits.max().height.max(self.estimated_height)
+            Some((0.0, limits.max().height.max(self.estimated_height)))
         } else {
-            NOMINAL_SCREEN_HEIGHT.max(self.estimated_height)
+            None
         };
-        let (first, last) = state.window(
-            count,
-            self.estimated_height,
-            self.spacing,
-            visible_top,
-            visible_height,
-        );
         let live = Live {
-            mounted: first.saturating_sub(OVERSCAN_ROWS)..(last + OVERSCAN_ROWS).min(count),
+            mounted: visible.map_or(0..0, |(visible_top, visible_height)| {
+                let (first, last) = state.window(
+                    count,
+                    self.estimated_height,
+                    self.spacing,
+                    visible_top,
+                    visible_height,
+                );
+                first.saturating_sub(OVERSCAN_ROWS)..(last + OVERSCAN_ROWS).min(count)
+            }),
             // Measure the focused child wherever it is, so it keeps its key
             // events and stays visible to focus operations. It draws outside
             // the viewport and the enclosing scrollable clips it away.
@@ -1209,9 +1217,8 @@ mod tests {
     /// A room switch mounts a fresh end-anchored scrollable over content
     /// taller than the viewport, and the first drawn frame is the whole
     /// product: nothing else re-opens layout until some event lands. The
-    /// column's pre-viewport seed fills a screen's worth from the strip's
-    /// TOP, but an end anchor shows the strip's BOTTOM — without the
-    /// wrapper's layout-time sync the first frame draws no rows at all, and
+    /// column has no viewport of its own yet and mounts nothing, so without
+    /// the wrapper's layout-time sync the first frame draws no rows at all and
     /// stays blank until an unrelated state change re-opens layout.
     #[test]
     fn an_end_anchored_first_frame_draws_the_tail_rows() {
@@ -1247,16 +1254,55 @@ mod tests {
         );
     }
 
-    /// The exact sandwich the app generates around a chat stream: a layout
-    /// memo, the a11y wrapper, the wheel-sync wrapper, an end-anchored
-    /// scrollable, a plain column, and KEYED virtual rows. Every layer must
-    /// hand the first frame's layout through to the sync, or the room paints
+    /// The same switch, counted. A row is SHAPED in `layout`, not in
+    /// construction, so any window the layout-time re-aim throws away is a
+    /// whole screenful of shaping paid for nothing — and a window guessed at
+    /// the strip's top is thrown away on every switch of an end-anchored
+    /// stream, however cheap the rows are. One overscanned window's worth of
+    /// rows reaches `layout` across the first frame, not one per pass.
+    #[test]
+    fn an_end_anchored_first_frame_lays_out_one_window_of_rows() {
+        const COUNT: usize = 200;
+        const ROW: f32 = 20.0;
+        const VIEWPORT: f32 = 380.0;
+
+        let layouts = Rc::new(Cell::new(0));
+        let children: Vec<Element<'_, (), iced::Theme, iced_test::renderer::Renderer>> = (0..COUNT)
+            .map(|_| {
+                Element::new(Counted {
+                    layouts: Rc::clone(&layouts),
+                    height: ROW,
+                })
+            })
+            .collect();
+        let content = virtual_children(children, ROW);
+        let mut renderer = headless_renderer();
+        let ui = UserInterface::build(
+            crate::virtual_scroll(iced::widget::scrollable(content).anchor_bottom()),
+            Size::new(240.0, VIEWPORT),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        drop(ui);
+
+        // The rows the viewport shows, their overscan on both sides, and one
+        // more for a window that straddles a row boundary.
+        let window = (VIEWPORT / ROW) as usize + 2 * OVERSCAN_ROWS + 1;
+        let laid_out = layouts.get();
+        assert!(
+            laid_out <= window,
+            "the first end-anchored frame laid out {laid_out} of {COUNT} rows; \
+             one overscanned window is {window}, so the seed mounted a window \
+             the re-aim threw away"
+        );
+    }
+
     /// The exact sandwich the app generates around a chat stream: the
     /// wheel-sync wrapper, an end-anchored scrollable, and INSIDE the
     /// scrollable a layout memo over the keyed virtual rows. The memo is the
     /// load-bearing layer: its `(dependency, limits)` key cannot see the
     /// scrollable's translation, so without the bust-and-relayout pass the
-    /// first frame serves the memoized top-seeded window and the room paints
+    /// first frame serves the memoized pre-viewport window and the room paints
     /// blank until an unrelated dependency bump rebuilds it.
     #[test]
     fn the_memoized_end_anchored_stream_draws_its_first_frame() {
