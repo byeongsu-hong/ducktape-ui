@@ -1218,3 +1218,37 @@ view
     .unwrap();
     assert!(generated.contains("::ui_lang_runtime::virtual_scroll("));
 }
+/// A slot's content is written at the call site and rendered inline inside the
+/// component body, so a `scroll { slot }` component only learns that it owns
+/// virtual rows by following the slot. Without the wrapper the column's window
+/// is never re-aimed at the scrollable's real translation, and a column that
+/// has not seen a viewport yet mounts nothing at all.
+#[test]
+fn wraps_a_scroll_whose_virtual_rows_arrive_through_a_slot() {
+    let generated = compile(
+        r#"
+app SlottedVirtualScroll
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Frame()
+  scroll h=100.0
+    slot
+view
+  Frame
+    col virtual-row=20.0
+      for item in [1, 2, 3]
+        text item
+"#,
+        "slotted_virtual_scroll.ice",
+    )
+    .unwrap();
+    assert!(generated.contains("::ui_lang_runtime::virtual_scroll("));
+}
