@@ -6010,7 +6010,7 @@ dependencies = [
  "k256",
  "security-framework",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sha3",
  "smol",
  "tungstenite",
