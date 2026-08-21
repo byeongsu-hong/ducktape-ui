@@ -11,6 +11,39 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 const ROWS: usize = 1_000;
 
+/// How many allocator windows a batch may be measured in before the contract
+/// gives up on finding one that reads clean.
+///
+/// `StatsAlloc` is this binary's global allocator, so its counters cover every
+/// thread, and this binary holds a single test. While that test runs, libtest's
+/// main thread is doing its one-time setup — `Receiver::recv()` allocates the
+/// `mpmc` context and waker entry it needs, plus the harness's bookkeeping
+/// around it — and those blocks land in whichever window happens to be open.
+/// That is what failed `Rust and Ice` on main with `32 exact-key frames
+/// allocated 4 times (900 bytes)`, where a rerun of the same commit passed: 4
+/// is not a multiple of 32, so it was never one allocation per frame. A frame
+/// that allocated would dirty *every* window; a one-time foreign block dirties
+/// at most one. So each batch is measured in its own window and the contract
+/// asks for one clean window rather than a clean process.
+const WINDOWS: usize = 4;
+
+/// Runs `batch` in its own allocator window, up to [`WINDOWS`] times, and
+/// returns the first `(allocations, bytes)` that match `expected` — or the last
+/// window's, when none did.
+fn measure(expected: (usize, usize), mut batch: impl FnMut()) -> (usize, usize) {
+    let mut measured = (0, 0);
+    for _ in 0..WINDOWS {
+        let region = Region::new(GLOBAL);
+        batch();
+        let stats = region.change();
+        measured = (stats.allocations, stats.bytes_allocated);
+        if measured == expected {
+            break;
+        }
+    }
+    measured
+}
+
 struct FixedRow;
 
 impl Widget<(), Theme, iced_test::renderer::Renderer> for FixedRow {
@@ -74,33 +107,34 @@ fn repeated_diff_and_layout_skip_temporary_buffers() {
     let unchanged = virtual_keyed_children(rows(), 20.0);
     unchanged.diff(std::hint::black_box(&mut tree));
 
-    let region = Region::new(GLOBAL);
-    for _ in 0..DIFF_FRAMES {
-        unchanged.diff(std::hint::black_box(&mut tree));
-    }
-    let stats = region.change();
+    let diffed = measure((0, 0), || {
+        for _ in 0..DIFF_FRAMES {
+            unchanged.diff(std::hint::black_box(&mut tree));
+        }
+    });
 
     assert_eq!(
-        stats.allocations, 0,
+        diffed,
+        (0, 0),
         "{DIFF_FRAMES} exact-key frames allocated {} times ({} bytes)",
-        stats.allocations, stats.bytes_allocated
+        diffed.0,
+        diffed.1
     );
 
-    let region = Region::new(GLOBAL);
-    for _ in 0..LAYOUT_FRAMES {
-        std::hint::black_box(initial.layout(&mut tree, &renderer, &limits));
-    }
-    let stats = region.change();
-
-    assert_eq!(
-        stats.allocations, LAYOUT_FRAMES,
-        "{LAYOUT_FRAMES} layout frames allocated {} times ({} bytes)",
-        stats.allocations, stats.bytes_allocated
-    );
-    assert_eq!(
-        stats.bytes_allocated,
+    // One `Vec` of child nodes per frame, and nothing else.
+    let expected = (
+        LAYOUT_FRAMES,
         LAYOUT_FRAMES * ROWS * std::mem::size_of::<layout::Node>(),
-        "{LAYOUT_FRAMES} layout frames allocated {} bytes",
-        stats.bytes_allocated
+    );
+    let laid_out = measure(expected, || {
+        for _ in 0..LAYOUT_FRAMES {
+            std::hint::black_box(initial.layout(&mut tree, &renderer, &limits));
+        }
+    });
+
+    assert_eq!(
+        laid_out, expected,
+        "{LAYOUT_FRAMES} layout frames allocated {} times ({} bytes)",
+        laid_out.0, laid_out.1
     );
 }
