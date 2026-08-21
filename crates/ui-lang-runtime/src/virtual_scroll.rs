@@ -9,7 +9,9 @@
 //!   showing either end of the strip — an end-anchored one (a chat timeline, a
 //!   transcript) shows the BOTTOM. So the column mounts nothing on that pass
 //!   rather than guess, and this wrapper re-reads the scrollable's real
-//!   translation inside `layout` and lays out once more against it. Rows are
+//!   translation inside `layout` and lays out again against it — as many
+//!   times as it takes to settle, because measuring rows moves the content
+//!   height and an end-anchored translation is read off that height. Rows are
 //!   shaped in `layout`, so the pass that draws is the only one that ever
 //!   shapes a row: a guessed window would be a whole screenful of shaping
 //!   thrown away on every room switch.
@@ -24,6 +26,16 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
 
 use crate::virtual_children::sync_virtual_columns;
+
+/// How many times one layout call will re-aim a window that escaped the
+/// viewport before leaving the rest to the next frame.
+///
+/// A turn only repeats while it is measuring rows nobody had measured yet, so
+/// the walk is finite on its own; this caps what a single frame will spend
+/// crossing a long stretch of guessed heights — a wheel flick over scrollback
+/// nobody has read. Whatever is left over resolves over the following frames,
+/// which is what every frame used to do.
+const RE_AIMS_PER_FRAME: usize = 8;
 
 pub struct VirtualScroll<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
@@ -75,36 +87,50 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let node = self
+        let mut node = self
             .content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits);
         // The columns below seeded their windows from remembered viewports;
         // the scrollable's translation in THIS layout is where they really
-        // are. One more pass on the frames where a window escaped it — the
-        // first frame and children replacements — keeps every drawn frame
-        // aligned without waiting on an invalidation nothing else raises.
-        let escaped = sync_virtual_columns(
-            &mut self.content,
-            &mut tree.children[0],
-            Layout::new(&node),
-            renderer,
-        );
-        if !escaped {
-            return node;
+        // are. Re-aim on the frames where a window escaped it — the first
+        // frame and children replacements — so every drawn frame is aligned
+        // without waiting on an invalidation nothing else raises.
+        //
+        // Re-aiming can escape AGAIN, which is why this loops rather than
+        // taking one extra pass. Measuring a row replaces its estimate, that
+        // moves the content height, and an end-anchored scrollable reads its
+        // translation off the content height — so the viewport the second pass
+        // mounted against is no longer where the frame will draw. Settling
+        // that here is what makes the steady state steady: each turn measures
+        // rows the last one had only guessed at, so the walk shortens and
+        // stops, and the alternative is paying one turn of it per frame
+        // forever while the reader watches the content slide.
+        for _ in 0..RE_AIMS_PER_FRAME {
+            if !sync_virtual_columns(
+                &mut self.content,
+                &mut tree.children[0],
+                Layout::new(&node),
+                renderer,
+            ) {
+                break;
+            }
+            // An escaped window re-aims below memoized layouts whose keys
+            // cannot see the move; drop them so the next pass really
+            // recomputes.
+            let mut bust = crate::virtual_children::BustMemoLayouts;
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                Layout::new(&node),
+                renderer,
+                &mut bust,
+            );
+            node = self
+                .content
+                .as_widget_mut()
+                .layout(&mut tree.children[0], renderer, limits);
         }
-        // An escaped window re-aims below memoized layouts whose keys cannot
-        // see the move; drop them so the second pass really recomputes.
-        let mut bust = crate::virtual_children::BustMemoLayouts;
-        self.content.as_widget_mut().operate(
-            &mut tree.children[0],
-            Layout::new(&node),
-            renderer,
-            &mut bust,
-        );
-        self.content
-            .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
+        node
     }
 
     fn operate(
