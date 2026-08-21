@@ -1075,7 +1075,7 @@ pub(in crate::check) fn require_type(
     }
 }
 
-pub(in crate::check) fn compatible(left: &Type, right: &Type) -> bool {
+pub(crate) fn compatible(left: &Type, right: &Type) -> bool {
     left == right
         || *left == Type::Unknown
         || *right == Type::Unknown

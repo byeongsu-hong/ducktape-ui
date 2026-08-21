@@ -265,6 +265,11 @@ const COMPLETIONS: &[Completion] = &[
         "test assertion",
         "expect a11y ${1:target} ${2|role,name,value,checked,expanded,disabled,focused,action|} ${3:value}",
     ),
+    Completion::new(
+        "expect component",
+        "test assertion",
+        "expect component ${1:target}.${2:field} == ${3:value}",
+    ),
     Completion::new("if", "control", "if ${1:condition}\n  $0"),
     Completion::new(
         "match",
@@ -1010,6 +1015,9 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "expect a11y" => test_statement(
             "expect a11y <target> role|name|value <str-expression> | checked|expanded|disabled|focused <bool-expression> | action <click|focus> [<bool-expression>]",
+        ),
+        "expect component" => test_statement(
+            "expect component <component-scope-target>.<state-field> ==|!= <expression>",
         ),
         "if" => details(
             &["view"],
@@ -2474,6 +2482,7 @@ fn test_contract() -> Value {
             "approximate": { "syntax": "expect <numeric-expression> ~= <numeric-expression>", "absoluteTolerance": 0.001 },
             "presence": ["expect exists <target>", "expect missing <target>"],
             "text": ["expect text <str-expression> [within <target>]", "expect no text <str-expression> [within <target>]"],
+            "componentState": ["expect component <component-scope-target>.<state-field> == <expression>", "expect component <component-scope-target>.<state-field> != <expression>"],
             "accessibility": {
                 "text": "expect a11y <target> role|name|value <str-expression>",
                 "boolean": "expect a11y <target> checked|expanded|disabled|focused <bool-expression>",
@@ -3289,6 +3298,7 @@ mod tests {
             "dispatch",
             "expect",
             "expect a11y",
+            "expect component",
             "if",
             "match",
             "some",

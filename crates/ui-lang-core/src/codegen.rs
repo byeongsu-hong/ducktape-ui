@@ -833,16 +833,22 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
                 }
             })
             .collect::<String>();
-        let map = format!("map(|__state: &{ty}| {view_ty} {{ {clone_fields} }})");
-        let body = match component.storage {
-            ComponentStorage::Retained => format!("self.{field}.get(scope).{map}"),
+        let stored = match component.storage {
+            ComponentStorage::Retained => format!("self.{field}.get(scope).map(__ice_view)"),
             // `values()` is a RefCell borrow: bind it before indexing so the
             // guard outlives the map that clones out of it.
-            ComponentStorage::Mounted => {
-                format!("let __ice_values = self.{field}.values(); __ice_values.get(scope).{map}")
-            }
+            ComponentStorage::Mounted => format!(
+                "{{ let __ice_values = self.{field}.values(); __ice_values.get(scope).map(__ice_view) }}"
+            ),
             ComponentStorage::Stateless => unreachable!(),
         };
+        // Storage gains an entry on the first delivered event, so an instance
+        // that has only rendered holds its declared initial state — which is
+        // exactly what a read of it reports. Only a scope no render sighted
+        // is absent.
+        let body = format!(
+            "let __ice_view = |__state: &{ty}| {view_ty} {{ {clone_fields} }}; let __ice_stored = {stored}; __ice_stored.or_else(|| self.__ice_test_scopes_{suffix}().iter().any(|__ice_scope| __ice_scope == scope).then(|| __ice_view(&<{ty}>::default())))"
+        );
         let keys = match component.storage {
             ComponentStorage::Retained => format!(
                 "let mut __scopes: ::std::vec::Vec<::std::string::String> = self.{field}.keys().cloned().collect(); for __scope in ::ui_lang_runtime::testing::component_sightings({}) {{ if !__scopes.contains(&__scope) {{ __scopes.push(__scope); }} }} __scopes",

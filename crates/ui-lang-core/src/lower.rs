@@ -32,7 +32,10 @@ pub(crate) use crate::hir::{
 #[cfg(test)]
 use crate::hir::{AppSettingsId, CanvasRouteId};
 use crate::semantic::*;
-use crate::{CheckedComponentControlledEditor, CheckedControlledEditor, CheckedDocument, Error};
+use crate::{
+    CheckedComponentControlledEditor, CheckedControlledEditor, CheckedDocument,
+    CheckedTestComponentRead, Error,
+};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -278,6 +281,13 @@ pub(crate) enum ResolvedTestExpectation {
     },
     Tray {
         field: ResolvedTrayField,
+        value: ResolvedExpressionId,
+        negated: bool,
+    },
+    ComponentState {
+        target: ResolvedTestTargetRef,
+        component: ComponentId,
+        state: ComponentStateId,
         value: ResolvedExpressionId,
         negated: bool,
     },
@@ -4018,6 +4028,7 @@ pub(crate) struct Lowerer {
     controlled_inputs: Vec<AppStateId>,
     controlled_editors: Vec<CheckedControlledEditor>,
     component_controlled_editors: Vec<CheckedComponentControlledEditor>,
+    test_component_reads: Vec<CheckedTestComponentRead>,
     media: HashMap<ViewId, ResolvedMedia>,
     overlays: HashMap<ViewId, ResolvedOverlay>,
     tooltips: HashMap<ViewId, ResolvedTooltip>,
@@ -4758,6 +4769,7 @@ impl Lowerer {
             controlled_inputs,
             controlled_editors,
             component_controlled_editors,
+            test_component_reads,
             ..
         } = checked;
         let component_ids = declarations.component_ids();
@@ -4797,6 +4809,7 @@ impl Lowerer {
             controlled_inputs,
             controlled_editors,
             component_controlled_editors,
+            test_component_reads,
             media: HashMap::new(),
             overlays: HashMap::new(),
             tooltips: HashMap::new(),

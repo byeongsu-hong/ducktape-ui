@@ -217,11 +217,33 @@ fn rejects_comparisons_of_rendered_targets() {
 
 #[test]
 fn explains_that_component_ids_are_scopes() {
-    let source = VALID.replace("target root = #card/root", "target root = #card");
-    let failure = analyze(&source).unwrap_err();
-    assert_eq!(failure.code, "E194");
-    assert!(failure.message.contains("component scope"));
-    assert!(failure.message.contains("not a rendered widget"));
+    // A scope alias is declarable — `expect component` reads the instance
+    // behind it — but each rendered-widget use of the scope, through the
+    // alias or the bare path, is rejected where it happens.
+    for step in [
+        "click card",
+        "expect exists card",
+        "expect card.width ~= 1.0",
+        "click #card",
+    ] {
+        let source = VALID
+            .replace(
+                "target root = #card/root",
+                "target card = #card\n  target root = #card/root",
+            )
+            .replace(
+                "  expect count == 0\n  expect normalize",
+                &format!("  expect count == 0\n  {step}\n  expect normalize"),
+            );
+        let failure = analyze(&source).unwrap_err();
+        assert_eq!(failure.code, "E194", "{step}: {}", failure.message);
+        assert!(
+            failure.message.contains("component scope"),
+            "{step}: {}",
+            failure.message
+        );
+        assert!(failure.message.contains("not a rendered widget"), "{step}");
+    }
 }
 
 #[test]

@@ -1,0 +1,2 @@
+E194
+component state expectations compare with `==` or `!=`

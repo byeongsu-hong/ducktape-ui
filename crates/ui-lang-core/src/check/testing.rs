@@ -56,8 +56,10 @@ pub(in crate::check) fn infer_tests(
 pub(in crate::check) fn check_tests(
     document: &Document,
     states: &HashMap<String, Type>,
-) -> Result<(), Error> {
-    for test in &document.tests {
+    declarations: &crate::hir::DeclarationIndex,
+) -> Result<Vec<crate::CheckedTestComponentRead>, Error> {
+    let mut reads = Vec::new();
+    for (test_index, test) in document.tests.iter().enumerate() {
         if let Some(renderer) = &document.settings.renderer
             && let Some(span) = test_paint_span(test)
         {
@@ -84,17 +86,80 @@ pub(in crate::check) fn check_tests(
         let root = test.mount.as_ref().unwrap_or(&document.view);
         let ids = test_widget_ids(root, states, document)?;
         let mut target_env = states.clone();
+        // An alias may name a component scope — `expect component` reads the
+        // instance behind it — but every rendered-widget use of that alias is
+        // rejected where it happens, the way the bare path is.
+        let mut scope_aliases = HashSet::new();
         for target in &test.targets {
-            check_test_widget_target(&target.target, &target_env, document, &ids, &target.span)?;
+            // A path that fails to type is left to the widget check, which
+            // already words that failure.
+            if let Ok(Some(_)) =
+                component_scope_name(&target.target, &target_env, document, &ids, &target.span)
+            {
+                scope_aliases.insert(target.name.as_str());
+            } else {
+                check_test_widget_target(
+                    &target.target,
+                    &target_env,
+                    document,
+                    &ids,
+                    &target.span,
+                )?;
+            }
             target_env.insert(target.name.clone(), Type::TestTarget);
         }
 
         let env = test_env(test, states);
-        for step in &test.steps {
-            check_test_step(step, &env, test, document, &ids)?;
+        for (step_index, step) in test.steps.iter().enumerate() {
+            if let Some(alias) = crate::ast::test_step_expression_roots(step)
+                .into_iter()
+                .find_map(|expr| expr_scope_alias(expr, &scope_aliases))
+            {
+                return Err(component_scope_error(&format!("`{alias}`"), &step.span));
+            }
+            if let Some((component, state)) = check_test_step(step, &env, test, document, &ids)? {
+                let component = declarations.component(component).id;
+                reads.push(crate::CheckedTestComponentRead {
+                    step: crate::hir::TestStepId {
+                        test: declarations.test(test_index).declaration.id,
+                        index: step_index as u32,
+                    },
+                    component,
+                    state: declarations.component_state(component, state).id,
+                });
+            }
         }
     }
-    Ok(())
+    Ok(reads)
+}
+
+/// The alias of a component scope that `expr` reads a field of, if any:
+/// a scope has no bounds or paint, so `alias.width` is as wrong as `click alias`.
+fn expr_scope_alias<'a>(expr: &Expr, scope_aliases: &HashSet<&'a str>) -> Option<&'a str> {
+    match expr {
+        Expr::Path(path) => path
+            .first()
+            .and_then(|name| scope_aliases.get(name.as_str()).copied()),
+        Expr::List(values) | Expr::Call { args: values, .. } => values
+            .iter()
+            .find_map(|value| expr_scope_alias(value, scope_aliases)),
+        Expr::Unary { value, .. } => expr_scope_alias(value, scope_aliases),
+        Expr::Binary { left, right, .. } => {
+            expr_scope_alias(left, scope_aliases).or_else(|| expr_scope_alias(right, scope_aliases))
+        }
+        _ => None,
+    }
+}
+
+fn component_scope_error(label: &str, span: &Span) -> Error {
+    Error::new(
+        TEST_ERROR,
+        span,
+        format!("{label} identifies a component scope, not a rendered widget"),
+    )
+    .hint(
+        "target an explicit #id rendered inside the component, or read its state with `expect component`",
+    )
 }
 
 fn test_paint_span(test: &TestDecl) -> Option<&Span> {
@@ -156,6 +221,10 @@ fn test_paint_span(test: &TestDecl) -> Option<&Span> {
                     TestExpectation::Text { .. } | TestExpectation::Tray { .. } => true,
                     TestExpectation::Exists(target) | TestExpectation::Missing(target) => {
                         target_ref_uses_test_paint(target, test)
+                    }
+                    TestExpectation::ComponentState { target, value, .. } => {
+                        target_ref_uses_test_paint(target, test)
+                            || expr_uses_test_paint(value, test)
                     }
                     TestExpectation::Accessibility { target, property } => {
                         target_ref_uses_test_paint(target, test)
@@ -323,13 +392,15 @@ fn test_env(test: &TestDecl, states: &HashMap<String, Type>) -> HashMap<String, 
     env
 }
 
+/// Checks one step; a component state read answers the component and state
+/// indexes it resolved to, which the lowering cannot rediscover on its own.
 fn check_test_step(
     step: &TestStep,
     env: &HashMap<String, Type>,
     test: &TestDecl,
     document: &Document,
     ids: &TestWidgetIds,
-) -> Result<(), Error> {
+) -> Result<Option<(usize, usize)>, Error> {
     match &step.kind {
         TestStepKind::Click { target, .. }
         | TestStepKind::Hover(target)
@@ -559,6 +630,73 @@ fn check_test_step(
                     &step.span,
                 )?;
             }
+            TestExpectation::ComponentState {
+                target,
+                field,
+                value,
+                ..
+            } => {
+                let (path, label) = match target {
+                    TestTargetRef::Alias(name) => (
+                        &test_target_alias(test, name, &step.span)?.target,
+                        format!("`{name}`"),
+                    ),
+                    TestTargetRef::Id(path) => (path, target_label(path)),
+                };
+                let Some(name) = component_scope_name(path, env, document, ids, &step.span)? else {
+                    return Err(Error::new(
+                        TEST_ERROR,
+                        &step.span,
+                        format!("{label} does not identify a component instance"),
+                    )
+                    .hint(
+                        "`expect component` reads the state behind a component call's explicit #id",
+                    ));
+                };
+                let (component_index, component) = document
+                    .components
+                    .iter()
+                    .enumerate()
+                    .find(|(_, component)| component.name == name)
+                    .expect("widget ids name checked components");
+                let Some((state_index, state)) = component
+                    .states
+                    .iter()
+                    .enumerate()
+                    .find(|(_, state)| state.name == *field)
+                else {
+                    let declared = component
+                        .states
+                        .iter()
+                        .map(|state| format!("`{}`", state.name))
+                        .collect::<Vec<_>>();
+                    return Err(Error::new(
+                        TEST_ERROR,
+                        &step.span,
+                        format!("component `{name}` has no state `{field}`"),
+                    )
+                    .hint(if declared.is_empty() {
+                        format!("`{name}` declares no state")
+                    } else {
+                        format!("declared state: {}", declared.join(", "))
+                    }));
+                };
+                if matches!(state.ty, Type::Animation(_)) {
+                    return Err(Error::new(
+                        TEST_ERROR,
+                        &step.span,
+                        format!(
+                            "state `{field}` of `{name}` is an animation with no comparable value"
+                        ),
+                    ));
+                }
+                require_type(
+                    &expr_type(value, env, document, &step.span)?,
+                    &state.ty,
+                    &step.span,
+                )?;
+                return Ok(Some((component_index, state_index)));
+            }
             TestExpectation::Accessibility { target, property } => {
                 check_test_target_ref(target, env, test, document, ids, &step.span)?;
                 let (value, ty) = match property {
@@ -581,7 +719,7 @@ fn check_test_step(
             }
         },
     }
-    Ok(())
+    Ok(None)
 }
 
 fn require_test_index(
@@ -670,18 +808,64 @@ fn check_test_target_ref(
 ) -> Result<(), Error> {
     match target {
         TestTargetRef::Alias(name) => {
-            if test.targets.iter().any(|target| target.name == *name) {
-                Ok(())
-            } else {
-                Err(Error::new(
-                    TEST_ERROR,
-                    span,
-                    format!("unknown test target alias `{name}`"),
-                ))
+            let declared = test_target_alias(test, name, span)?;
+            if component_scope_name(&declared.target, env, document, ids, span)?.is_some() {
+                return Err(component_scope_error(&format!("`{name}`"), span));
             }
+            Ok(())
         }
         TestTargetRef::Id(target) => check_test_widget_target(target, env, document, ids, span),
     }
+}
+
+fn test_target_alias<'a>(
+    test: &'a TestDecl,
+    name: &str,
+    span: &Span,
+) -> Result<&'a TestTargetDecl, Error> {
+    test.targets
+        .iter()
+        .find(|target| target.name == *name)
+        .ok_or_else(|| {
+            Error::new(
+                TEST_ERROR,
+                span,
+                format!("unknown test target alias `{name}`"),
+            )
+        })
+}
+
+/// The component whose instance scope `target` names, when it names one. A
+/// path under which two different components mount in exclusive branches is
+/// rejected: a read there would not know whose state it compares.
+fn component_scope_name<'a>(
+    target: &WidgetTarget,
+    env: &HashMap<String, Type>,
+    document: &Document,
+    ids: &'a TestWidgetIds,
+    span: &Span,
+) -> Result<Option<&'a str>, Error> {
+    let actual = typed_target_path(target, env, document, span)?;
+    let mut names = ids
+        .component_scopes
+        .iter()
+        .filter(|(scope, _)| widget_paths_match(scope, &actual))
+        .map(|(_, name)| name.as_str());
+    let Some(first) = names.next() else {
+        return Ok(None);
+    };
+    if let Some(other) = names.find(|name| *name != first) {
+        return Err(Error::new(
+            TEST_ERROR,
+            span,
+            format!(
+                "{} identifies instances of both `{first}` and `{other}`",
+                target_label(target)
+            ),
+        )
+        .hint("give each component call its own #id"));
+    }
+    Ok(Some(first))
 }
 
 fn check_test_widget_target(
@@ -696,19 +880,9 @@ fn check_test_widget_target(
         Err(mut failure) => {
             failure.code = TEST_ERROR;
             if failure.message.starts_with("unknown app widget target") {
-                let actual = typed_target_path(target, env, document, span)?;
                 let label = target_label(target);
-                if ids
-                    .component_scopes
-                    .iter()
-                    .any(|scope| widget_paths_match(scope, &actual))
-                {
-                    return Err(Error::new(
-                        TEST_ERROR,
-                        span,
-                        format!("{label} identifies a component scope, not a rendered widget"),
-                    )
-                    .hint("target an explicit #id rendered inside the component"));
+                if component_scope_name(target, env, document, ids, span)?.is_some() {
+                    return Err(component_scope_error(&label, span));
                 }
                 failure.message = format!("unknown rendered widget target `{label}`");
                 failure.hint = Some(

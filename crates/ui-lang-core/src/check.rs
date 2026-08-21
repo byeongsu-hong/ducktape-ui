@@ -25,6 +25,7 @@ struct CheckOutput {
     controlled_inputs: Vec<crate::hir::AppStateId>,
     controlled_editors: Vec<crate::CheckedControlledEditor>,
     component_controlled_editors: Vec<crate::CheckedComponentControlledEditor>,
+    test_component_reads: Vec<crate::CheckedTestComponentRead>,
 }
 
 pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
@@ -74,6 +75,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
         checked.controlled_inputs,
         checked.controlled_editors,
         checked.component_controlled_editors,
+        checked.test_component_reads,
     ))
 }
 
@@ -667,7 +669,7 @@ fn check(
     }
     initializer_analyses.retain_handlers(handler_analysis_guard.finish(), preset_handlers);
     let test_analysis_guard = expr::HandlerAnalysisGuard::start();
-    check_tests(document, &view_states)?;
+    let test_component_reads = check_tests(document, &view_states, declarations)?;
     let mut test_analyses = test_analysis_guard.finish();
     let test_expression_keys = document
         .tests
@@ -783,6 +785,7 @@ fn check(
         controlled_inputs,
         controlled_editors,
         component_controlled_editors,
+        test_component_reads,
     })
 }
 
@@ -1641,6 +1644,8 @@ mod state;
 mod style;
 mod subscription;
 mod testing;
+
+pub(crate) use style::compatible;
 mod usage;
 mod view;
 mod widgets;

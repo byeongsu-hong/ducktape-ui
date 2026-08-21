@@ -272,6 +272,15 @@ pub enum TestExpectation {
         value: Expr,
         negated: bool,
     },
+    /// One declared `state` entry of a component instance, compared through
+    /// the generated test seam. The only way Ice test source sees
+    /// component-local state, and read-only: an observation, never a write.
+    ComponentState {
+        target: TestTargetRef,
+        field: String,
+        value: Expr,
+        negated: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -390,6 +399,10 @@ pub(crate) fn test_step_expression_roots(step: &TestStep) -> Vec<&Expr> {
                 }
             }
             TestExpectation::Tray { value, .. } => expressions.push(value),
+            TestExpectation::ComponentState { target, value, .. } => {
+                expressions.extend(target_ref_expression_roots(target));
+                expressions.push(value);
+            }
             TestExpectation::Accessibility {
                 target: value,
                 property,
@@ -511,6 +524,15 @@ fn test_expectation_semantic_key(expectation: &TestExpectation) -> String {
         TestExpectation::Tray { field, negated, .. } => {
             format!("tray:{}:{negated}", field.keyword())
         }
+        TestExpectation::ComponentState {
+            target,
+            field,
+            negated,
+            ..
+        } => format!(
+            "component:{}:{field}:{negated}",
+            test_target_ref_semantic_key(target)
+        ),
         TestExpectation::Accessibility { target, property } => format!(
             "a11y:{}:{}",
             test_target_ref_semantic_key(target),
@@ -844,6 +866,17 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
                     "{}tray {} {}",
                     if *negated { "no " } else { "" },
                     field.keyword(),
+                    expr_source(value)
+                ),
+                TestExpectation::ComponentState {
+                    target,
+                    field,
+                    value,
+                    negated,
+                } => format!(
+                    "component {}.{field} {} {}",
+                    target_ref_source(target),
+                    if *negated { "!=" } else { "==" },
                     expr_source(value)
                 ),
                 TestExpectation::Accessibility { target, property } => format!(
