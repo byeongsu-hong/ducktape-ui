@@ -38,7 +38,7 @@ component Counter(label:str)
     checkbox "Enabled" checked=enabled -> changed _
     checkbox "Mirror" checked=enabled -> changed _
     Flag value=draft #flag
-    button "Increment" -> increment
+    button "Increment" #increment -> increment
     if count == 0
       text "zero"
     if count != 0
@@ -488,6 +488,19 @@ test layout_contract
   expect space.height ~= 8.0
   resize 500 500
   expect root.width ~= 320.0
+
+test component_state_read
+  viewport 360 300
+  mount
+    Counter label="First" #first
+  target first = #first
+  target increment = first/increment
+  expect component first.count == 0
+  expect component first.draft == ""
+  click increment
+  click increment
+  expect component first.count == 2
+  expect component #first.enabled != true
 
 view
   row

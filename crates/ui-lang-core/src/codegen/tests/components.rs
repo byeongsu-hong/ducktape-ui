@@ -1827,6 +1827,61 @@ view
 }
 
 #[test]
+fn a_component_state_expectation_compiles_onto_the_seam() {
+    let source = r#"app Reads
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+component Counter()
+  state
+    count = 0
+  on increment
+    count = count + 1
+  button "Up" #up -> increment
+test reads
+  mount
+    Counter #counter
+  target counter = #counter
+  expect component counter.count == 1
+  expect component #counter.count != 2
+view
+  Counter #counter
+"#;
+    let generated = compile(source, "component-state-read.ice").unwrap();
+    // The checked target path IS the instance scope: a direct seam call, a
+    // field move, and the driver's one failure channel — no value bridge.
+    assert!(
+        generated.contains(
+            "__test.state().__ice_test_state_counter(&__scope).map(|__instance| __instance.count)"
+        ),
+        "{generated}"
+    );
+    assert!(
+        generated.contains("__test.check_component_state(&__scope, __actual, __expected, false,"),
+        "{generated}"
+    );
+    assert!(
+        generated.contains("__test.check_component_state(&__scope, __actual, __expected, true,"),
+        "{generated}"
+    );
+    // A sighted instance with no stored state reads as its declared initial
+    // state; only a scope no render sighted is absent.
+    assert!(
+        generated.contains(
+            "self.__ice_test_scopes_counter().iter().any(|__ice_scope| __ice_scope == scope).then(|| __ice_view("
+        ),
+        "{generated}"
+    );
+}
+
+#[test]
 fn handler_emit_delivers_the_next_update_message() {
     // `emit(event, args)` in a component handler lowers to `Task::done` on
     // the app handler's message, built from the emitting handler's values —

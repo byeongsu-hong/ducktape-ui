@@ -786,6 +786,37 @@ fn generate_expectation(
             )
             .unwrap();
         }
+        // Compiled straight onto the component seam: the checked target IS
+        // the instance scope string the view keys state by, so the read is a
+        // direct call and a field move — no value bridge in between.
+        ResolvedTestExpectation::ComponentState {
+            target,
+            component,
+            state,
+            value,
+            negated,
+        } => {
+            let scope = target_ref_path_code(target, test, env, program)?;
+            let component = program.component(*component);
+            let field = &component
+                .states
+                .iter()
+                .find(|declared| declared.id == *state)
+                .ok_or_else(|| {
+                    program.invariant_at_origin(
+                        test.origin,
+                        "component state expectation names a state outside its component",
+                    )
+                })?
+                .name;
+            let suffix = component_test_suffix(&component.name);
+            let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
+            writeln!(
+                out,
+                "let __scope = {scope}; let __expected = {value}; let __actual = __test.state().__ice_test_state_{suffix}(&__scope).map(|__instance| __instance.{field}); let __live = __test.state().__ice_test_scopes_{suffix}(); __test.check_component_state(&__scope, __actual, __expected, {negated}, &__live, {location});"
+            )
+            .unwrap();
+        }
         ResolvedTestExpectation::Accessibility { target, property } => {
             let path = target_ref_path_code(target, test, env, program)?;
             match property {

@@ -2531,6 +2531,34 @@ where
         }
     }
 
+    /// One declared state of a component instance, read through the generated
+    /// seam. `None` is a scope no render ever sighted, which fails naming the
+    /// scope — and the instances that ARE live — rather than comparing nothing.
+    #[track_caller]
+    pub fn check_component_state<T>(
+        &self,
+        scope: &str,
+        actual: Option<T>,
+        expected: T,
+        negated: bool,
+        live: &[String],
+        source: Location,
+    ) where
+        T: PartialEq + fmt::Debug,
+    {
+        let Some(actual) = actual else {
+            panic!(
+                "{source}: test `{}` component state expectation failed\nstatement: {}\nexpected: a component instance at scope `{scope}`\nactual: no render materialized that scope\nlive instances: {live:?}",
+                self.test_name, source.statement
+            );
+        };
+        if negated {
+            self.check_ne(actual, expected, source);
+        } else {
+            self.check_eq(actual, expected, source);
+        }
+    }
+
     #[track_caller]
     pub fn check_approx(&self, left: f64, right: f64, source: Location) {
         if !left.is_finite() || !right.is_finite() || (left - right).abs() > 0.001 {

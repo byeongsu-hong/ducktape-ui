@@ -134,6 +134,24 @@ focus field
 Actions and assertions take the alias too, so `focus #address-input` fails for
 the same reason `target` did.
 
+Component-local state is read with `expect component`:
+
+```ice
+target browser = #main/browser
+expect component browser.draft == ""
+```
+
+The target is the component call's `#id` — the scope that is not a rendered
+widget — and the field is one of the component's declared `state` entries,
+checked against its type. The read is compiled onto the generated component
+seam (`__ice_test_state_<name>`, `SPEC.md` §9), keyed by the same scope string
+the view keys the instance's state by, so there is no second naming scheme:
+the alias that fails `click` because it names a scope is the alias that works
+here, and `#path.field` works too. An instance that has rendered but never
+handled an event reads as its declared initial state; a scope no render sighted
+fails and lists the live instances of that component. It is a read only —
+seeding still goes through rendered controls or a preset.
+
 Deeper in a real view the chain grows to match. A message rendered inside a
 column inside a panel is reached one identified ancestor at a time, and
 skipping a middle name fails as though the ID were missing rather than as

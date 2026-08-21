@@ -1,0 +1,4 @@
+__ice_test_state_counter(&__scope)
+.map(|__instance| __instance.count)
+check_component_state(&__scope, __actual, __expected, false,
+check_component_state(&__scope, __actual, __expected, true,

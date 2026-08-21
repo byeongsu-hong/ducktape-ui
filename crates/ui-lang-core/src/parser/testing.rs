@@ -1029,6 +1029,9 @@ fn parse_test_expectation(
     if let Some(value) = source.strip_prefix("text ") {
         return parse_text_expectation(value, false, line, scope, targets);
     }
+    if let Some(value) = source.strip_prefix("component ") {
+        return parse_component_state_expectation(value, line, scope, targets);
+    }
     if let Some((left, right)) = split_top_marker(source, "~=") {
         return Ok(TestExpectation::Approx {
             left: parse_test_expr(left.trim(), line, scope, targets)?,
@@ -1142,6 +1145,41 @@ fn parse_tray_expectation(
     };
     Ok(TestExpectation::Tray {
         field,
+        value: parse_test_expr(value.trim(), line, scope, targets)?,
+        negated,
+    })
+}
+
+fn parse_component_state_expectation(
+    source: &str,
+    line: &Line,
+    scope: &str,
+    targets: &[TestTargetDecl],
+) -> Result<TestExpectation, Error> {
+    let (read, value, negated) = if let Some((read, value)) = split_top_marker(source, "==") {
+        (read, value, false)
+    } else if let Some((read, value)) = split_top_marker(source, "!=") {
+        (read, value, true)
+    } else {
+        return Err(error(
+            TEST_ERROR,
+            line,
+            "component state expectations compare with `==` or `!=`",
+        )
+        .hint("write `expect component target.field == value`"));
+    };
+    // The field is the last dotted name; a key expression inside the target
+    // may carry dots of its own, so split from the right.
+    let Some((target, field)) = read.trim().rsplit_once('.') else {
+        return Err(error(
+            TEST_ERROR,
+            line,
+            "component state expectations name a state field as `target.field`",
+        ));
+    };
+    Ok(TestExpectation::ComponentState {
+        target: parse_test_target_ref(target, line, scope, targets)?,
+        field: identifier(field, line)?,
         value: parse_test_expr(value.trim(), line, scope, targets)?,
         negated,
     })

@@ -49,6 +49,7 @@ pub struct CheckedDocument {
     controlled_inputs: Vec<hir::AppStateId>,
     controlled_editors: Vec<CheckedControlledEditor>,
     component_controlled_editors: Vec<CheckedComponentControlledEditor>,
+    test_component_reads: Vec<CheckedTestComponentRead>,
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +62,15 @@ struct CheckedControlledEditor {
 struct CheckedComponentControlledEditor {
     state: hir::ComponentStateId,
     action: Option<hir::ExternFnId>,
+}
+
+/// An `expect component` step and the component state the checker resolved
+/// its target to; the lowering reads the pair instead of re-walking the view.
+#[derive(Clone, Debug)]
+struct CheckedTestComponentRead {
+    step: hir::TestStepId,
+    component: hir::ComponentId,
+    state: hir::ComponentStateId,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -179,6 +189,7 @@ impl CheckedDocument {
         controlled_inputs: Vec<hir::AppStateId>,
         controlled_editors: Vec<CheckedControlledEditor>,
         component_controlled_editors: Vec<CheckedComponentControlledEditor>,
+        test_component_reads: Vec<CheckedTestComponentRead>,
     ) -> Self {
         Self {
             document,
@@ -192,6 +203,7 @@ impl CheckedDocument {
             controlled_inputs,
             controlled_editors,
             component_controlled_editors,
+            test_component_reads,
         }
     }
 

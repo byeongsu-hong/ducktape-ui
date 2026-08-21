@@ -17,7 +17,10 @@ pub(in crate::check) fn widget_operation_ids(
 
 pub(in crate::check) struct TestWidgetIds {
     pub targets: Vec<WidgetIdPath>,
-    pub component_scopes: Vec<WidgetIdPath>,
+    /// Every identified component call reachable from the tested root, with
+    /// the component it instantiates: a scope is not a rendered widget, but
+    /// a test can read the instance state behind it.
+    pub component_scopes: Vec<(WidgetIdPath, String)>,
 }
 
 pub(in crate::check) fn test_widget_ids(
@@ -122,7 +125,7 @@ fn collect_widget_ids(
         slot: Option<&WidgetIdSlot>,
         components: &mut Vec<(String, Span)>,
         output: &mut Vec<WidgetIdPath>,
-        component_scopes: &mut Vec<WidgetIdPath>,
+        component_scopes: &mut Vec<(WidgetIdPath, String)>,
         inspect_all: bool,
     ) -> Result<(), Error> {
         match node {
@@ -558,8 +561,12 @@ fn collect_widget_ids(
                     .expect("checker validates component names");
                 let mut component_scope = scope.clone();
                 component_scope.push(segment(id, env, document, span)?);
-                if inspect_all && !component_scopes.contains(&component_scope) {
-                    component_scopes.push(component_scope.clone());
+                if inspect_all
+                    && !component_scopes
+                        .iter()
+                        .any(|(scope, component)| *scope == component_scope && component == name)
+                {
+                    component_scopes.push((component_scope.clone(), name.clone()));
                 }
                 let mut component_env: HashMap<String, Type> = component
                     .params

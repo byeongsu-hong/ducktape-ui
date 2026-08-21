@@ -55,7 +55,7 @@ impl<'a> TestOperands<'a> {
     fn take_type(&mut self, expected: &Type, label: &str) -> Result<ResolvedExpressionId, Error> {
         let value = self.take()?;
         let actual = &self.lowerer.facts.expression_use(value).source;
-        if actual != expected {
+        if !crate::check::compatible(actual, expected) {
             return Err(self.lowerer.invariant(
                 self.span,
                 format!(
@@ -643,6 +643,43 @@ impl Lowerer {
                 value: values.take_type(&Type::Str, "tray expectation")?,
                 negated: *negated,
             },
+            TestExpectation::ComponentState {
+                target: source,
+                negated,
+                ..
+            } => {
+                let target = target(source, values)?;
+                let read = self
+                    .test_component_reads
+                    .iter()
+                    .find(|read| read.step == values.step)
+                    .ok_or_else(|| {
+                        self.invariant(
+                            values.span,
+                            "component state expectation has no checked component read",
+                        )
+                    })?;
+                let state = self
+                    .components
+                    .iter()
+                    .find(|component| component.id == read.component)
+                    .and_then(|component| {
+                        component.states.iter().find(|state| state.id == read.state)
+                    })
+                    .ok_or_else(|| {
+                        self.invariant(
+                            values.span,
+                            "component state expectation names a state outside the arena",
+                        )
+                    })?;
+                ResolvedTestExpectation::ComponentState {
+                    target,
+                    component: read.component,
+                    state: read.state,
+                    value: values.take_type(&state.ty, "component state expectation")?,
+                    negated: *negated,
+                }
+            }
             TestExpectation::Accessibility {
                 target: source,
                 property,
