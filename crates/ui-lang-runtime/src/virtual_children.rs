@@ -535,28 +535,41 @@ where
         } else {
             None
         };
-        let live = Live {
-            mounted: visible.map_or(0..0, |(visible_top, visible_height)| {
-                let (first, last) = state.window(
-                    count,
-                    self.estimated_height,
-                    self.spacing,
-                    visible_top,
-                    visible_height,
-                );
-                first.saturating_sub(OVERSCAN_ROWS)..(last + OVERSCAN_ROWS).min(count)
-            }),
-            // Measure the focused child wherever it is, so it keeps its key
-            // events and stays visible to focus operations. It draws outside
-            // the viewport and the enclosing scrollable clips it away.
-            focused: state.live.focused,
-        };
+        // Where the mount STARTS is settled up front, because nothing this pass
+        // does can move it: only rows at or below it are measured here, so
+        // every row above keeps the height the window was read against. Where
+        // it ENDS cannot be settled the same way — how many rows the viewport
+        // holds is exactly what measuring them decides, and rows that come
+        // back SHORTER than `estimated_height` leave a pre-computed end above
+        // the viewport's bottom edge. That hole is what `sync_viewport`
+        // reports as an escape, so a column with nothing left to do kept
+        // buying a memo bust and a second full layout pass every frame to
+        // close a hole this pass had just opened. The walk below closes the
+        // range against the running geometry it is producing — the geometry
+        // the next `sync_viewport` asks its question in — so the mount and the
+        // escape answer agree by construction once content stops changing.
+        let (mounted_start, visible_bottom) = visible.map_or((count, 0.0), |(top, height)| {
+            let (first, _) = state.window(count, self.estimated_height, self.spacing, top, height);
+            (first.saturating_sub(OVERSCAN_ROWS), top + height)
+        });
+        // Measure the focused child wherever it is, so it keeps its key
+        // events and stays visible to focus operations. It draws outside
+        // the viewport and the enclosing scrollable clips it away.
+        let focused = state.live.focused;
 
         let width = limits.max().width;
         let mut nodes = Vec::with_capacity(count);
         let mut running = 0.0;
+        let mut mounted_end = None;
         for index in 0..count {
-            let node = if live.contains(index) {
+            if mounted_end.is_none() && index >= mounted_start && running >= visible_bottom {
+                // Everything the viewport shows is measured. Keep the same
+                // overscan below it that the window keeps above.
+                mounted_end = Some((index + OVERSCAN_ROWS).min(count));
+            }
+            let node = if (mounted_start..mounted_end.unwrap_or(count)).contains(&index)
+                || focused == Some(index)
+            {
                 // Height-compressed, exactly as the enclosing scrollable hands
                 // its content: flex then resolves a fill-height descendant — a
                 // `rule vertical` in a row, say — against measured content
@@ -590,7 +603,10 @@ where
         // `running` carries a trailing gap for every child, including the last.
         let content_height = (running - self.spacing).max(0.0);
 
-        state.live = live;
+        state.live = Live {
+            mounted: mounted_start..mounted_end.unwrap_or(count),
+            focused,
+        };
         layout::Node::with_children(Size::new(width, content_height), nodes)
     }
 
@@ -1357,6 +1373,126 @@ mod tests {
             draws.get() > 0,
             "the memoized end-anchored stream drew no rows on its first frame"
         );
+    }
+
+    /// A column whose content and scroll position have stopped moving must
+    /// stop asking to be laid out again. `virtual_scroll` answers an escape
+    /// with a `BustMemoLayouts` walk and a second full layout pass, so a
+    /// window that escapes every frame pays both on every frame, and the memo
+    /// above the column never gets to serve.
+    ///
+    /// The escape is not an arithmetic disagreement between two ways of
+    /// counting rows — it is a real hole in the frame. `layout` used to pick
+    /// its last mounted row from the heights it held BEFORE the pass, and rows
+    /// that measure SHORTER than `estimated_height` leave that row above the
+    /// viewport's bottom edge: the frame draws a blank band, and the next
+    /// `sync_viewport` reports it. Only the END of the range can be wrong that
+    /// way — nothing a pass measures can move the row it starts at.
+    ///
+    /// Both anchors run here, but they do not carry the same weight. An
+    /// end-anchored column parked at the tail has its mounted range clamped to
+    /// the last row, so no hole can open below it; the arm that bites is the
+    /// one whose bottom edge is INTERIOR, over rows nobody has measured — a
+    /// start-anchored column, or an end-anchored one that jumps.
+    #[test]
+    fn a_settled_window_stops_escaping_every_frame() {
+        const COUNT: usize = 400;
+        const ROW: f32 = 12.0;
+        /// Generous on purpose: `virtual-row` is one number over rows that are
+        /// not one height, and guessing high is what opens the hole.
+        const ESTIMATE: f32 = 40.0;
+        const VIEWPORT: f32 = 384.0;
+
+        /// Every row the viewport holds, plus the overscan each side. A second
+        /// layout pass over the same frame lays all of them out again.
+        const ONE_WINDOW: usize = (VIEWPORT / ROW) as usize + 1 + 2 * OVERSCAN_ROWS;
+
+        // Rows laid out on each of five consecutive frames with no content
+        // change, no scroll, and no event but the jump that opens frame 0.
+        fn frames(anchor_end: bool, jump: f32) -> Vec<usize> {
+            let layouts = Rc::new(Cell::new(0));
+            let mut renderer = headless_renderer();
+            let mut clipboard = iced::advanced::clipboard::Null;
+            let mut messages = Vec::new();
+            let mut cache = user_interface::Cache::default();
+            let mut laid_out = Vec::new();
+
+            for frame in 0..5 {
+                let children: Vec<(
+                    u64,
+                    Element<'_, (), iced::Theme, iced_test::renderer::Renderer>,
+                )> = (0..COUNT)
+                    .map(|index| {
+                        (
+                            index as u64,
+                            Element::new(Counted {
+                                layouts: Rc::clone(&layouts),
+                                height: ROW,
+                            }),
+                        )
+                    })
+                    .collect();
+                let scroll = iced::widget::scrollable(virtual_keyed_children(children, ESTIMATE));
+                let scroll = if anchor_end {
+                    scroll.anchor_bottom()
+                } else {
+                    scroll
+                };
+                layouts.set(0);
+                let mut ui = UserInterface::build(
+                    crate::virtual_scroll(scroll),
+                    Size::new(240.0, VIEWPORT),
+                    cache,
+                    &mut renderer,
+                );
+                // One jump, far enough that nothing measures the rows it
+                // passes over, so the window lands with unmeasured rows below
+                // it — which is the only place the hole can open.
+                let events: Vec<Event> = if frame == 0 && jump != 0.0 {
+                    vec![Event::Mouse(mouse::Event::WheelScrolled {
+                        delta: mouse::ScrollDelta::Pixels { x: 0.0, y: jump },
+                    })]
+                } else {
+                    Vec::new()
+                };
+                let _ = ui.update(
+                    &events,
+                    mouse::Cursor::Available(iced::Point::new(120.0, 200.0)),
+                    &mut renderer,
+                    &mut clipboard,
+                    &mut messages,
+                );
+                ui.draw(
+                    &mut renderer,
+                    &iced::Theme::Light,
+                    &renderer::Style::default(),
+                    mouse::Cursor::Available(iced::Point::new(120.0, 200.0)),
+                );
+                laid_out.push(layouts.get());
+                cache = ui.into_cache();
+            }
+            laid_out
+        }
+
+        // Frame 0 is where the aiming happens: a fresh column mounts nothing
+        // until `virtual_scroll` hands it the scrollable's real translation.
+        // The jumped arm gets one frame more, because a flick that long
+        // outruns `RE_AIMS_PER_FRAME` and finishes on the next frame — which
+        // is the bounded remainder, not the walk.
+        for (anchor, settled, laid_out) in [
+            ("start-anchored", 1, frames(false, 0.0)),
+            ("end-anchored", 1, frames(true, 0.0)),
+            ("end-anchored, jumped", 2, frames(true, 4_000.0)),
+        ] {
+            for (frame, rows) in laid_out.iter().enumerate().skip(settled) {
+                assert!(
+                    *rows <= ONE_WINDOW,
+                    "the {anchor} column laid out {rows} rows on quiet frame {frame} — \
+                     more than the {ONE_WINDOW} one window holds, so its window escaped \
+                     and the whole pass ran again (frames: {laid_out:?})"
+                );
+            }
+        }
     }
 
     /// Iced keeps consecutive wheel events in one scroll transaction and
