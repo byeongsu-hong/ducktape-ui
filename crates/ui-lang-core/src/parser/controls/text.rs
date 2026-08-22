@@ -224,17 +224,9 @@ pub(in crate::parser) fn parse_rich_span(line: &Line) -> Result<RichSpan, Error>
             options.border = Some(value.to_owned());
         } else if let Some(value) = part.strip_prefix("border-w=") {
             options.border_width = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r=") {
-            options.radius.all = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-tl=") {
-            options.radius.top_left = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-tr=") {
-            options.radius.top_right = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-br=") {
-            options.radius.bottom_right = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-bl=") {
-            options.radius.bottom_left = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if parse_padding_option(part, &mut options.padding, line)? {
+        } else if parse_radius_option(part, &mut options.radius, "", line)?
+            || parse_padding_option(part, &mut options.padding, line)?
+        {
         } else if part == "underline" {
             options.underline = Some(Expr::Bool(true));
         } else if let Some(value) = part.strip_prefix("underline=") {

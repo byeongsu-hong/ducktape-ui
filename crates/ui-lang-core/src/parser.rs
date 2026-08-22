@@ -204,6 +204,30 @@ fn parse_padding_option(
     Ok(true)
 }
 
+fn parse_radius_option(
+    part: &str,
+    radius: &mut RadiusOptions,
+    prefix: &str,
+    line: &Line,
+) -> Result<bool, Error> {
+    let Some((name, value)) = part.split_once('=') else {
+        return Ok(false);
+    };
+    let Some(name) = name.strip_prefix(prefix) else {
+        return Ok(false);
+    };
+    let slot = match name {
+        "r" => &mut radius.all,
+        "r-tl" => &mut radius.top_left,
+        "r-tr" => &mut radius.top_right,
+        "r-br" => &mut radius.bottom_right,
+        "r-bl" => &mut radius.bottom_left,
+        _ => return Ok(false),
+    };
+    *slot = Some(parse_expr(strip_wrapping_parens(value), line)?);
+    Ok(true)
+}
+
 fn parse_accessibility_option(
     part: &str,
     accessibility: &mut AccessibilityOptions,

@@ -283,16 +283,7 @@ pub(in crate::parser) fn parse_tooltip(
             options.border_color = Some(value.to_owned());
         } else if let Some(value) = part.strip_prefix("border-w=") {
             options.border_width = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r=") {
-            options.radius.all = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-tl=") {
-            options.radius.top_left = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-tr=") {
-            options.radius.top_right = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-br=") {
-            options.radius.bottom_right = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-bl=") {
-            options.radius.bottom_left = Some(parse_expr(strip_wrapping_parens(value), line)?);
+        } else if parse_radius_option(part, &mut options.radius, "", line)? {
         } else if let Some(value) = part.strip_prefix("shadow=") {
             options.shadow_color = Some(value.to_owned());
         } else if let Some(value) = part.strip_prefix("shadow-x=") {
