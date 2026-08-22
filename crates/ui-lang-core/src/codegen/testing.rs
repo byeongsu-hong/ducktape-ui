@@ -1079,7 +1079,7 @@ fn test_program_code(
         ResolvedExecutorSelection::Default => String::new(),
         ResolvedExecutorSelection::Custom { path, origin } => format!(
             "\n{}\n.executor::<{path}>()\n{SOURCE_MARKER_END}\n",
-            source_marker_for_origin(program, *origin)
+            source_marker_origin(program, *origin)
         ),
     };
     let scale_factor = app_settings

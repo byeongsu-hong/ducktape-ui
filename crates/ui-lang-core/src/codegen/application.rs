@@ -64,7 +64,7 @@ pub(in crate::codegen) fn generate_theme(
     writeln!(
         out,
         "{}",
-        source_marker_for_origin(program, theme.active_palette_origin)
+        source_marker_origin(program, theme.active_palette_origin)
     )
     .unwrap();
     writeln!(out, "fn __palette(&self{callback_arg}) -> __IcePalette {{").unwrap();
@@ -151,7 +151,7 @@ pub(in crate::codegen) fn generate_theme(
     writeln!(
         out,
         "{}",
-        source_marker_for_origin(program, theme.app_theme_origin)
+        source_marker_origin(program, theme.app_theme_origin)
     )
     .unwrap();
     writeln!(out, "fn __theme(&self{callback_arg}) -> ::iced::Theme {{").unwrap();
@@ -205,7 +205,7 @@ pub(in crate::codegen) fn generate_theme(
     if let Some(setting) = &settings.title {
         let value =
             resolved_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
-        writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
+        writeln!(out, "{}", source_marker_origin(program, setting.origin)).unwrap();
         writeln!(
             out,
             "fn __title(&self{callback_arg}) -> ::std::string::String {{ {value} }}\n{SOURCE_MARKER_END}"
@@ -225,7 +225,7 @@ pub(in crate::codegen) fn generate_theme(
                     &state_env,
                     ValueMode::Owned,
                 )?;
-                writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
+                writeln!(out, "{}", source_marker_origin(program, setting.origin)).unwrap();
                 writeln!(out, "__style.{field} = ({value}).parse::<::iced::Color>().unwrap_or(__style.{field});\n{SOURCE_MARKER_END}").unwrap();
             }
         }
@@ -234,7 +234,7 @@ pub(in crate::codegen) fn generate_theme(
     if let Some(setting) = &settings.scale_factor {
         let value =
             resolved_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
-        writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
+        writeln!(out, "{}", source_marker_origin(program, setting.origin)).unwrap();
         writeln!(
             out,
             "fn __scale_factor(&self{callback_arg}) -> f32 {{ (({value}) as f32).max(f32::EPSILON).min(f32::MAX) }}\n{SOURCE_MARKER_END}"
@@ -476,7 +476,7 @@ pub(in crate::codegen) fn generate_tray(
         if let Some(ResolvedTrayText::Expression(setting)) = text {
             let value =
                 resolved_expr_use_code(program, setting.expression, &env, ValueMode::Owned)?;
-            writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
+            writeln!(out, "{}", source_marker_origin(program, setting.origin)).unwrap();
             writeln!(out, "{apply}(&({value}));\n{SOURCE_MARKER_END}").unwrap();
         }
     }
@@ -490,7 +490,7 @@ pub(in crate::codegen) fn generate_tray(
         {
             let value =
                 resolved_expr_use_code(program, setting.expression, &env, ValueMode::Owned)?;
-            writeln!(out, "{}", source_marker_for_origin(program, setting.origin)).unwrap();
+            writeln!(out, "{}", source_marker_origin(program, setting.origin)).unwrap();
             writeln!(
                 out,
                 "::ui_lang_runtime::tray::set_item({index}usize, &({value}));\n{SOURCE_MARKER_END}"
@@ -507,7 +507,7 @@ pub(in crate::codegen) fn generate_tray(
         } = row
         {
             let value = resolved_expr_use_code(program, guard.expression, &env, ValueMode::Owned)?;
-            writeln!(out, "{}", source_marker_for_origin(program, guard.origin)).unwrap();
+            writeln!(out, "{}", source_marker_origin(program, guard.origin)).unwrap();
             writeln!(
                 out,
                 "::ui_lang_runtime::tray::set_visible({index}usize, {value});\n{SOURCE_MARKER_END}"

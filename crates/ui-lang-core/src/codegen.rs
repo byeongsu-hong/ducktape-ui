@@ -39,10 +39,6 @@ fn source_marker_origin(program: &LoweredProgram, origin: crate::hir::OriginId) 
     }
 }
 
-fn source_marker_for_origin(program: &LoweredProgram, origin: crate::hir::OriginId) -> String {
-    source_marker_origin(program, origin)
-}
-
 /// Slug of the source fragment an origin points into: the file stem plus a
 /// short stable hash of the full path (stems repeat — `chat.ice` lives under
 /// screens/, components/, and handlers/ in the ducktape app). Origins inside
@@ -123,7 +119,7 @@ fn source_mapped_expression_origin(
     };
     format!(
         "{{\n{}\n#[cfg(test)]\nlet __ice_render_source_location = {render_source};\n#[cfg(test)]\nlet __ice_render_source = ::ui_lang_runtime::testing::push_render_source(__ice_render_source_location);\nlet __ice_rendered: __IceElement<'_, {message}> = {code};\n{descendant_source}#[cfg(test)]\ndrop(__ice_render_source);\n__ice_rendered\n{SOURCE_MARKER_END}\n}}",
-        source_marker_for_origin(program, origin)
+        source_marker_origin(program, origin)
     )
 }
 
@@ -652,7 +648,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         ResolvedRendererSelection::Custom { path, origin } => writeln!(
             out,
             "{}\ntype __IceRenderer = {path}; type __IceElement<'a, Message, Theme = ::iced::Theme> = ::iced::Element<'a, Message, Theme, __IceRenderer>;\n{SOURCE_MARKER_END}",
-            source_marker_for_origin(program, *origin)
+            source_marker_origin(program, *origin)
         )
         .unwrap(),
     }
@@ -1172,7 +1168,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     .unwrap();
     let app_settings = program.settings();
     if let Some(font) = &app_settings.default_font {
-        writeln!(out, "{}", source_marker_for_origin(program, font.origin)).unwrap();
+        writeln!(out, "{}", source_marker_origin(program, font.origin)).unwrap();
         writeln!(
             out,
             "#[must_use]\npub fn default_font() -> ::iced::Font {{ {} }}\n{SOURCE_MARKER_END}",
@@ -1209,7 +1205,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         ResolvedExecutorSelection::Default => String::new(),
         ResolvedExecutorSelection::Custom { path, origin } => format!(
             "\n{}\n.executor::<{path}>()\n{SOURCE_MARKER_END}\n",
-            source_marker_for_origin(program, *origin)
+            source_marker_origin(program, *origin)
         ),
     };
     let presets = if program.preset_names().is_empty() {

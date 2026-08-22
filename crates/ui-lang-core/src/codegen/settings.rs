@@ -3,7 +3,7 @@ use super::*;
 fn marked_setting(program: &LoweredProgram, origin: OriginId, code: String) -> String {
     format!(
         "\n{}\n{code}\n{SOURCE_MARKER_END}\n",
-        source_marker_for_origin(program, origin)
+        source_marker_origin(program, origin)
     )
 }
 
@@ -298,7 +298,7 @@ pub(in crate::codegen) fn generate_named_windows(
         writeln!(
             out,
             "{}\nfn __window_{index}() -> ::iced::window::Settings {{ {} }}\n{SOURCE_MARKER_END}",
-            source_marker_for_origin(program, window.origin),
+            source_marker_origin(program, window.origin),
             window_settings_value_code(program, &window.settings, source_path)
         )
         .unwrap();
