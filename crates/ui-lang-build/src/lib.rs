@@ -23,7 +23,6 @@ static TRANSACTION_ID: AtomicU64 = AtomicU64::new(0);
 std::thread_local! {
     static GENERATED_WRITES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static CONTENT_COMPARISON_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static RERUN_DIRECTIVE_FORMATS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Debug)]
@@ -61,33 +60,14 @@ impl Default for GeneratedManifest {
 }
 
 impl GeneratedManifest {
-    fn record(&mut self, relative: &str, contents: &str) -> Result<(String, bool), Error> {
-        let output = generated_file_name(relative);
-        let unchanged = self.insert(
-            output.clone(),
+    fn record(&mut self, output: &str, relative: &str, contents: &str) -> Result<bool, Error> {
+        self.insert(
+            output.to_owned(),
             GeneratedManifestEntry {
                 source: relative.to_owned(),
                 content_sha256: content_digest(contents.as_bytes()),
             },
-        )?;
-        Ok((output, unchanged))
-    }
-
-    fn record_group(
-        &mut self,
-        relative: &str,
-        slug: &str,
-        contents: &str,
-    ) -> Result<(String, bool), Error> {
-        let output = generated_group_file_name(relative, slug);
-        let unchanged = self.insert(
-            output.clone(),
-            GeneratedManifestEntry {
-                source: relative.to_owned(),
-                content_sha256: content_digest(contents.as_bytes()),
-            },
-        )?;
-        Ok((output, unchanged))
+        )
     }
 
     /// Drops this source's entries that the current compilation no longer
@@ -157,16 +137,6 @@ struct GenerationTransaction {
     staged_outputs: BTreeSet<String>,
     committed: bool,
     _lock: GenerationLock,
-}
-
-/// Compiles one manifest-relative Ice root into Cargo's `OUT_DIR`.
-pub fn compile(path: impl AsRef<Path>) -> Result<(), Error> {
-    let path = path.as_ref().to_owned();
-    compiler_thread(move || {
-        let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
-        let out_dir = cargo_path("OUT_DIR")?;
-        compile_many_at(&manifest, &out_dir, std::slice::from_ref(&path))
-    })
 }
 
 /// Compiles every app or daemon root below a manifest-relative directory.
@@ -253,6 +223,7 @@ where
         .map_err(|_| Error("ui-lang-build: compiler thread panicked".to_owned()))?
 }
 
+#[cfg(test)]
 fn compile_many_at(manifest: &Path, out_dir: &Path, paths: &[PathBuf]) -> Result<(), Error> {
     let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut transaction = GenerationTransaction::begin(out_dir)?;
@@ -372,9 +343,13 @@ fn compile_one(
     let (root, groups) = split_generated_groups(&relative, &compilation.rust)?;
     let mut produced = BTreeSet::new();
     for (slug, contents) in &groups {
-        produced.insert(transaction.stage_group_output(&relative, slug, contents)?);
+        produced.insert(transaction.stage(
+            generated_group_file_name(&relative, slug),
+            &relative,
+            contents,
+        )?);
     }
-    produced.insert(transaction.stage_output(&relative, &root)?);
+    produced.insert(transaction.stage(generated_file_name(&relative), &relative, &root)?);
     transaction
         .manifest
         .retain_source_outputs(&relative, &produced);
@@ -442,16 +417,13 @@ fn rerun_directives<'a>(
     sources: &'a [PathBuf],
     assets: &'a [PathBuf],
 ) -> impl Iterator<Item = String> + 'a {
-    std::iter::once_with(|| {
-        #[cfg(test)]
-        RERUN_DIRECTIVE_FORMATS.with(|formats| formats.set(formats.get() + 1));
-        format!("cargo::rerun-if-env-changed={DEV_BUILD_FINGERPRINT_ENV}")
-    })
-    .chain(sources.iter().chain(assets).map(|path| {
-        #[cfg(test)]
-        RERUN_DIRECTIVE_FORMATS.with(|formats| formats.set(formats.get() + 1));
-        format!("cargo::rerun-if-changed={}", path.display())
-    }))
+    std::iter::once_with(|| format!("cargo::rerun-if-env-changed={DEV_BUILD_FINGERPRINT_ENV}"))
+        .chain(
+            sources
+                .iter()
+                .chain(assets)
+                .map(|path| format!("cargo::rerun-if-changed={}", path.display())),
+        )
 }
 
 impl GenerationLock {
@@ -502,30 +474,10 @@ impl GenerationTransaction {
         })
     }
 
-    fn stage_output(&mut self, relative: &str, contents: &str) -> Result<String, Error> {
-        let (output, unchanged) = self.manifest.record(relative, contents)?;
-        self.stage_named(output, contents, unchanged)
-    }
-
-    fn stage_group_output(
-        &mut self,
-        relative: &str,
-        slug: &str,
-        contents: &str,
-    ) -> Result<String, Error> {
-        let (output, unchanged) = self.manifest.record_group(relative, slug, contents)?;
-        self.stage_named(output, contents, unchanged)
-    }
-
-    fn stage_named(
-        &mut self,
-        output: String,
-        contents: &str,
-        unchanged: bool,
-    ) -> Result<String, Error> {
+    fn stage(&mut self, output: String, relative: &str, contents: &str) -> Result<String, Error> {
         // Existing manifest entries were content-validated when this
         // transaction began; entries added here already have staged output.
-        if unchanged {
+        if self.manifest.record(&output, relative, contents)? {
             return Ok(output);
         }
         let staged = self.staging_directory.join(&output);
@@ -953,14 +905,6 @@ mod tests {
         super::CONTENT_COMPARISON_READS.with(std::cell::Cell::get)
     }
 
-    fn reset_rerun_directive_formats() {
-        super::RERUN_DIRECTIVE_FORMATS.with(|formats| formats.set(0));
-    }
-
-    fn rerun_directive_formats() -> usize {
-        super::RERUN_DIRECTIVE_FORMATS.with(std::cell::Cell::get)
-    }
-
     fn fixture(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
             "ui-lang-build-{name}-{}-{}",
@@ -1042,32 +986,6 @@ mod tests {
     }
 
     #[test]
-    fn rerun_directives_format_paths_as_the_caller_consumes_them() {
-        let sources = [PathBuf::from("src/ui/app.ice")];
-        let assets = [PathBuf::from("assets/icon.rgba")];
-        reset_rerun_directive_formats();
-
-        let mut directives = rerun_directives(&sources, &assets);
-        assert_eq!(rerun_directive_formats(), 0);
-        assert_eq!(
-            directives.next().as_deref(),
-            Some("cargo::rerun-if-env-changed=ICE_DEV_BUILD_FINGERPRINT")
-        );
-        assert_eq!(rerun_directive_formats(), 1);
-        assert_eq!(
-            directives.next().as_deref(),
-            Some("cargo::rerun-if-changed=src/ui/app.ice")
-        );
-        assert_eq!(rerun_directive_formats(), 2);
-        assert_eq!(
-            directives.next().as_deref(),
-            Some("cargo::rerun-if-changed=assets/icon.rgba")
-        );
-        assert_eq!(rerun_directive_formats(), 3);
-        assert_eq!(directives.next(), None);
-    }
-
-    #[test]
     fn generated_paths_use_fixed_length_stable_hashes() {
         let out_dir = Path::new("/target/out");
         let generated = generated_path(out_dir, "src/ui/app.ice").unwrap();
@@ -1091,10 +1009,11 @@ mod tests {
     #[test]
     fn manifest_rejects_output_collisions() {
         let mut manifest = GeneratedManifest::default();
-        let (output, unchanged) = manifest.record("src/ui/app.ice", "first").unwrap();
+        let output = generated_file_name("src/ui/app.ice");
+        let unchanged = manifest.record(&output, "src/ui/app.ice", "first").unwrap();
         assert!(!unchanged);
-        assert!(manifest.record("src/ui/app.ice", "first").unwrap().1);
-        assert!(!manifest.record("src/ui/app.ice", "changed").unwrap().1);
+        assert!(manifest.record(&output, "src/ui/app.ice", "first").unwrap());
+        assert!(!manifest.record(&output, "src/ui/app.ice", "changed").unwrap());
         let error = manifest
             .insert(
                 output,
@@ -1161,10 +1080,18 @@ mod tests {
         fs::write(&outside, "another compile call owns this output").unwrap();
         let mut previous_manifest = GeneratedManifest::default();
         previous_manifest
-            .record("src/ui/fragments/text.ice", "stale")
+            .record(
+                &generated_file_name("src/ui/fragments/text.ice"),
+                "src/ui/fragments/text.ice",
+                "stale",
+            )
             .unwrap();
         previous_manifest
-            .record("other/app.ice", "another compile call owns this output")
+            .record(
+                &generated_file_name("other/app.ice"),
+                "other/app.ice",
+                "another compile call owns this output",
+            )
             .unwrap();
         write_manifest_fixture(&out_dir, &previous_manifest);
         let untracked = stale.parent().unwrap().join("untracked.rs");
