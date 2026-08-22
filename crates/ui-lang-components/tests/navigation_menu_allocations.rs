@@ -28,7 +28,7 @@ const WINDOWS: usize = 4;
 fn clean_window(expected: usize, mut batch: impl FnMut()) -> Stats {
     let mut stats = Region::new(GLOBAL).change();
     for _ in 0..WINDOWS {
-        let mut region = Region::new(GLOBAL);
+        let region = Region::new(GLOBAL);
         batch();
         stats = region.change();
         if stats.allocations == expected {
