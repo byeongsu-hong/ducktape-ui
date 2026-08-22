@@ -10,7 +10,7 @@ publish = false
 # signature as one — so the body has to spell 80 bytes the way the sequencer
 # reads them. Already in the lockfile as a transitive dependency, so naming it
 # costs a line and no build time.
-base64 = "0.22"
+base64 = "0.23"
 ui-lang-components = { workspace = true, features = ["candle-chart"] }
 # Thomas Pornin's reference ECgFp5, pinned by revision. This is the
 # implementation Lighter's own open signer cites as the design and first
