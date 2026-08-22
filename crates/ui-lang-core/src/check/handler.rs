@@ -852,24 +852,8 @@ fn check_task_finality(statement: &Statement, is_final: bool) -> Result<(), Erro
     if is_final {
         return Ok(());
     }
-    let Some(task) = statement.immediate_task() else {
+    let Some((code, name)) = statement.immediate_task() else {
         return Ok(());
-    };
-    let (code, name) = match task {
-        ImmediateTask::Match => ("E141", "handler match"),
-        ImmediateTask::Exit => ("E141", "exit"),
-        ImmediateTask::Run(EffectKind::Future) => ("E141", "run"),
-        ImmediateTask::Run(EffectKind::Task) => ("E141", "task"),
-        ImmediateTask::Run(EffectKind::Stream) => ("E141", "stream"),
-        ImmediateTask::Sip => ("E141", "sip"),
-        ImmediateTask::Flow => ("E141", "flow"),
-        ImmediateTask::Group => ("E141", "task group"),
-        ImmediateTask::Abortable => ("E141", "abortable task"),
-        ImmediateTask::Clipboard => ("E141", "clipboard write"),
-        ImmediateTask::Emit => ("E141", "emit"),
-        ImmediateTask::Widget => ("E172", "widget operation"),
-        ImmediateTask::Window => ("E173", "window task"),
-        ImmediateTask::PaneQuery => ("E188", "pane query"),
     };
     Err(Error::new(
         code,

@@ -302,7 +302,7 @@ fn render_resolved_rich_span(
         write!(
             code,
             ".size({})",
-            resolved_text_clamped_f32(size, "f32::EPSILON", "f32::MAX", program, env)?
+            clamped_f32_code(size, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     } else if let Some(size) = rich_span.utility_style.text_size {
@@ -406,7 +406,7 @@ fn append_resolved_text_options(
         write!(
             code,
             ".size({})",
-            resolved_text_clamped_f32(size, "f32::EPSILON", "f32::MAX", program, env)?
+            clamped_f32_code(size, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     } else if let Some(size) = style.text_size {
@@ -531,24 +531,13 @@ fn resolved_text_line_height_code(
     match line_height {
         ResolvedTextLineHeight::Relative(expression) => Ok(format!(
             "::iced::widget::text::LineHeight::Relative({})",
-            resolved_text_clamped_f32(*expression, "f32::EPSILON", "f32::MAX", program, env)?
+            clamped_f32_code(*expression, "f32::EPSILON", "f32::MAX", program, env)?
         )),
         ResolvedTextLineHeight::Absolute(expression) => Ok(format!(
             "::iced::widget::text::LineHeight::Absolute({}.into())",
-            resolved_text_clamped_f32(*expression, "f32::EPSILON", "f32::MAX", program, env)?
+            clamped_f32_code(*expression, "f32::EPSILON", "f32::MAX", program, env)?
         )),
     }
-}
-
-fn resolved_text_clamped_f32(
-    expression: ResolvedExpressionId,
-    minimum: &str,
-    maximum: &str,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
-    Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
 pub(super) fn resolved_text_background_code(
@@ -627,12 +616,12 @@ pub(super) fn resolved_text_radius_code(
     }
     let base = radius
         .all
-        .map(|value| resolved_text_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| "0.0".into());
     let corner = |value: Option<ResolvedExpressionId>| {
         value
-            .map(|value| resolved_text_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
             .transpose()
     };
     let top_left = corner(radius.top_left)?.unwrap_or_else(|| base.clone());

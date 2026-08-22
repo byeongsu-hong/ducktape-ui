@@ -221,8 +221,8 @@ fn append_resolved_boolean_options(
     if let Some(text_size) = options.text_size {
         write!(
             code,
-            ".text_size((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-            resolved_expr_use_code(program, text_size, env, ValueMode::Owned)?
+            ".text_size({})",
+            clamped_f32_code(text_size, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
@@ -237,8 +237,8 @@ fn append_resolved_boolean_options(
     if let Some(line_height) = options.line_height {
         write!(
             code,
-            ".text_line_height(::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX)))",
-            resolved_expr_use_code(program, line_height, env, ValueMode::Owned)?
+            ".text_line_height(::iced::widget::text::LineHeight::Relative({}))",
+            clamped_f32_code(line_height, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
@@ -275,8 +275,8 @@ fn append_resolved_boolean_options(
             || Ok("None".to_owned()),
             |value| {
                 Ok::<_, Error>(format!(
-                    "Some((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                    resolved_expr_use_code(program, value, env, ValueMode::Owned)?
+                    "Some({}.into())",
+                    clamped_f32_code(value, "f32::EPSILON", "f32::MAX", program, env)?
                 ))
             },
         )?;
@@ -284,8 +284,8 @@ fn append_resolved_boolean_options(
             || Ok("::iced::widget::text::LineHeight::default()".to_owned()),
             |value| {
                 Ok::<_, Error>(format!(
-                    "::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-                    resolved_expr_use_code(program, value, env, ValueMode::Owned)?
+                    "::iced::widget::text::LineHeight::Relative({})",
+                    clamped_f32_code(value, "f32::EPSILON", "f32::MAX", program, env)?
                 ))
             },
         )?;

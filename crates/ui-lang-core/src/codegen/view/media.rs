@@ -431,12 +431,12 @@ fn resolved_tooltip_radius(
     }
     let all = radius
         .all
-        .map(|value| resolved_media_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| "0.0".into());
     let corner = |value: Option<ResolvedExpressionId>| {
         value
-            .map(|value| resolved_media_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
             .transpose()
     };
     let top_left = corner(radius.top_left)?.unwrap_or_else(|| all.clone());
@@ -518,7 +518,7 @@ fn render_resolved_media(
         write!(
             code,
             ".opacity({})",
-            resolved_media_clamped_f32(opacity, "0.0", "1.0", program, env)?
+            clamped_f32_code(opacity, "0.0", "1.0", program, env)?
         )
         .unwrap();
     }
@@ -594,7 +594,7 @@ fn render_resolved_media(
         write!(
             code,
             ".padding({})",
-            resolved_media_clamped_f32(padding, "0.0", "f32::MAX", program, env)?
+            clamped_f32_code(padding, "0.0", "f32::MAX", program, env)?
         )
         .unwrap();
     }
@@ -609,7 +609,7 @@ fn render_resolved_media(
         write!(
             code,
             ".scale_step({})",
-            resolved_media_clamped_f32(step, "f32::EPSILON", "f32::MAX", program, env)?
+            clamped_f32_code(step, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
@@ -617,7 +617,7 @@ fn render_resolved_media(
         write!(
             code,
             ".scale({})",
-            resolved_media_clamped_f32(scale, "f32::EPSILON", "f32::MAX", program, env)?
+            clamped_f32_code(scale, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
@@ -711,17 +711,6 @@ fn resolved_media_svg_style(
     Ok(format!("{}(__theme, __status{suffix})", function.rust_path))
 }
 
-fn resolved_media_clamped_f32(
-    expression: ResolvedExpressionId,
-    minimum: &str,
-    maximum: &str,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
-    Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
-}
-
 fn resolved_media_scale_bound(
     bound: &ResolvedMediaScaleBound,
     program: &LoweredProgram,
@@ -750,12 +739,12 @@ fn resolved_media_radius(
     }
     let all = radius
         .all
-        .map(|value| resolved_media_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| "0.0".into());
     let corner = |value: Option<ResolvedExpressionId>| {
         value
-            .map(|value| resolved_media_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
             .transpose()
     };
     let top_left = corner(radius.top_left)?.unwrap_or_else(|| all.clone());

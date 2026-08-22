@@ -251,11 +251,11 @@ impl Lowerer {
             .transpose()?;
         let border_width = values.optional(options.border_width.as_ref(), &Type::F64)?;
         let radius = ResolvedTooltipRadius {
-            all: values.optional(options.radius.as_ref(), &Type::F64)?,
-            top_left: values.optional(options.radius_top_left.as_ref(), &Type::F64)?,
-            top_right: values.optional(options.radius_top_right.as_ref(), &Type::F64)?,
-            bottom_right: values.optional(options.radius_bottom_right.as_ref(), &Type::F64)?,
-            bottom_left: values.optional(options.radius_bottom_left.as_ref(), &Type::F64)?,
+            all: values.optional(options.radius.all.as_ref(), &Type::F64)?,
+            top_left: values.optional(options.radius.top_left.as_ref(), &Type::F64)?,
+            top_right: values.optional(options.radius.top_right.as_ref(), &Type::F64)?,
+            bottom_right: values.optional(options.radius.bottom_right.as_ref(), &Type::F64)?,
+            bottom_left: values.optional(options.radius.bottom_left.as_ref(), &Type::F64)?,
         };
         let shadow_x = values.optional(options.shadow_x.as_ref(), &Type::F64)?;
         let shadow_y = values.optional(options.shadow_y.as_ref(), &Type::F64)?;

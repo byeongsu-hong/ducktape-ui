@@ -76,7 +76,7 @@ pub(in crate::check) fn infer_media_group(
             for (value, label, min, max) in [
                 (&options.opacity, "opacity", Some(0.0), Some(1.0)),
                 (&options.scale, "scale", Some(f64::EPSILON), None),
-                (&options.radius, "radius", Some(0.0), None),
+                (&options.radius.all, "radius", Some(0.0), None),
             ] {
                 if let Some(value) = value {
                     require_type(&expr_type(value, env, document, span)?, &Type::F64, span)?;
@@ -90,10 +90,10 @@ pub(in crate::check) fn infer_media_group(
                 }
             }
             for value in [
-                &options.radius_top_left,
-                &options.radius_top_right,
-                &options.radius_bottom_right,
-                &options.radius_bottom_left,
+                &options.radius.top_left,
+                &options.radius.top_right,
+                &options.radius.bottom_right,
+                &options.radius.bottom_left,
             ]
             .into_iter()
             .flatten()
@@ -231,11 +231,11 @@ pub(in crate::check) fn infer_media_group(
             }
             for (value, label) in [
                 (&options.border_width, "tooltip border width"),
-                (&options.radius, "tooltip radius"),
-                (&options.radius_top_left, "tooltip radius"),
-                (&options.radius_top_right, "tooltip radius"),
-                (&options.radius_bottom_right, "tooltip radius"),
-                (&options.radius_bottom_left, "tooltip radius"),
+                (&options.radius.all, "tooltip radius"),
+                (&options.radius.top_left, "tooltip radius"),
+                (&options.radius.top_right, "tooltip radius"),
+                (&options.radius.bottom_right, "tooltip radius"),
+                (&options.radius.bottom_left, "tooltip radius"),
                 (&options.shadow_blur, "tooltip shadow blur"),
             ] {
                 if let Some(value) = value {

@@ -209,31 +209,31 @@ impl Lowerer {
         self.require_media_optional_type(expand, &Type::Bool, span)?;
         let radius = ResolvedMediaRadius {
             all: self.take_optional_media_expression(
-                options.radius.as_ref(),
+                options.radius.all.as_ref(),
                 id,
                 &mut expression,
                 span,
             )?,
             top_left: self.take_optional_media_expression(
-                options.radius_top_left.as_ref(),
+                options.radius.top_left.as_ref(),
                 id,
                 &mut expression,
                 span,
             )?,
             top_right: self.take_optional_media_expression(
-                options.radius_top_right.as_ref(),
+                options.radius.top_right.as_ref(),
                 id,
                 &mut expression,
                 span,
             )?,
             bottom_right: self.take_optional_media_expression(
-                options.radius_bottom_right.as_ref(),
+                options.radius.bottom_right.as_ref(),
                 id,
                 &mut expression,
                 span,
             )?,
             bottom_left: self.take_optional_media_expression(
-                options.radius_bottom_left.as_ref(),
+                options.radius.bottom_left.as_ref(),
                 id,
                 &mut expression,
                 span,

@@ -1,5 +1,4 @@
 use super::*;
-use crate::lower::ExternFnId;
 use crate::unqualified_name;
 
 use std::cell::{Cell, RefCell};
@@ -574,66 +573,16 @@ pub(in crate::codegen) fn binding_env_metrics() -> BindingEnvMetrics {
     BINDING_ENV_METRICS.get()
 }
 
-#[derive(Clone, Copy)]
-enum ExprNode {
-    Resolved(ResolvedExpressionNodeId),
-}
+/// A call's normalized arguments. The accessors carry the E196 diagnostics
+/// every builtin emitter relies on; the vocabulary itself is
+/// `ResolvedCallArgument`.
+struct ExprArguments<'a>(&'a [ResolvedCallArgument]);
 
-enum ExprNodeKind<'a> {
-    Bool(bool),
-    I64(i64),
-    F64(f64),
-    Str(&'a str),
-    Bytes(&'a [u8]),
-    List(Vec<ExprNode>),
-    None,
-    SlotProvided(crate::hir::ComponentSlotId),
-    Path(ExprPath<'a>),
-    Call {
-        target: ExprCallTarget<'a>,
-        arguments: ExprArguments,
-    },
-    Unary {
-        op: UnaryOp,
-        value: ExprNode,
-    },
-    Binary {
-        left: ExprNode,
-        op: BinaryOp,
-        right: ExprNode,
-    },
-}
-
-enum ExprPath<'a> {
-    Resolved {
-        root: &'a ResolvedPathRoot,
-        projections: &'a [ResolvedProjection],
-    },
-}
-
-#[derive(Clone, Copy)]
-enum ExprCallTarget<'a> {
-    Builtin(&'a str),
-    Extern(ExternFnId),
-    EnumVariant {
-        enum_rust_name: &'a str,
-        variant_name: &'a str,
-    },
-}
-
-#[derive(Clone, Copy)]
-enum ExprArgument {
-    Value(ExprNode),
-    Binding(ResolvedLocalId),
-}
-
-struct ExprArguments(Vec<ExprArgument>);
-
-impl ExprArguments {
-    fn value(&self, index: usize) -> Result<ExprNode, Error> {
+impl ExprArguments<'_> {
+    fn value(&self, index: usize) -> Result<ResolvedExpressionNodeId, Error> {
         match self.0.get(index) {
-            Some(ExprArgument::Value(value)) => Ok(*value),
-            Some(ExprArgument::Binding(_)) => Err(Error::new(
+            Some(ResolvedCallArgument::Value(value)) => Ok(*value),
+            Some(ResolvedCallArgument::Binding(_)) => Err(Error::new(
                 "E196",
                 &Span::line(1),
                 "normalized expression binding used as a value",
@@ -652,7 +601,7 @@ impl ExprArguments {
         context: &'a ExprEmission<'a>,
     ) -> Result<(&'a str, Option<ResolvedLocalId>), Error> {
         match self.0.get(index) {
-            Some(ExprArgument::Binding(id)) => {
+            Some(ResolvedCallArgument::Binding(id)) => {
                 Ok((&context.program.expressions().local(*id).name, Some(*id)))
             }
             _ => Err(Error::new(
@@ -663,16 +612,16 @@ impl ExprArguments {
         }
     }
 
-    fn get(&self, index: usize) -> Option<ExprArgument> {
-        self.0.get(index).copied()
+    fn get(&self, index: usize) -> Option<&ResolvedCallArgument> {
+        self.0.get(index)
     }
 
-    fn values(&self) -> Result<Vec<ExprNode>, Error> {
+    fn values(&self) -> Result<Vec<ResolvedExpressionNodeId>, Error> {
         self.0
             .iter()
             .map(|argument| match argument {
-                ExprArgument::Value(value) => Ok(*value),
-                ExprArgument::Binding(_) => Err(Error::new(
+                ResolvedCallArgument::Value(value) => Ok(*value),
+                ResolvedCallArgument::Binding(_) => Err(Error::new(
                     "E196",
                     &Span::line(1),
                     "normalized binding reached ordinary argument emission",
@@ -707,111 +656,48 @@ impl<'a> ExprEmission<'a> {
         }
     }
 
-    fn kind(&self, node: ExprNode) -> ExprNodeKind<'a> {
-        match node {
-            ExprNode::Resolved(id) => {
-                let expression = self.program.expressions().expression(id);
-                match &expression.kind {
-                    ResolvedExpressionKind::Bool(value) => ExprNodeKind::Bool(*value),
-                    ResolvedExpressionKind::I64(value) => ExprNodeKind::I64(*value),
-                    ResolvedExpressionKind::F64(value) => ExprNodeKind::F64(*value),
-                    ResolvedExpressionKind::Str(value) => ExprNodeKind::Str(value),
-                    ResolvedExpressionKind::Bytes(values) => ExprNodeKind::Bytes(values),
-                    ResolvedExpressionKind::List(values) => {
-                        ExprNodeKind::List(values.iter().copied().map(ExprNode::Resolved).collect())
-                    }
-                    ResolvedExpressionKind::None => ExprNodeKind::None,
-                    ResolvedExpressionKind::SlotProvided(slot) => ExprNodeKind::SlotProvided(*slot),
-                    ResolvedExpressionKind::Path { root, projections } => {
-                        ExprNodeKind::Path(ExprPath::Resolved { root, projections })
-                    }
-                    ResolvedExpressionKind::Call { target, arguments } => ExprNodeKind::Call {
-                        target: match target {
-                            ResolvedCallTarget::Builtin(name) => ExprCallTarget::Builtin(name),
-                            ResolvedCallTarget::Extern(function) => {
-                                ExprCallTarget::Extern(*function)
-                            }
-                            ResolvedCallTarget::EnumVariant {
-                                enum_rust_name,
-                                variant_name,
-                            } => ExprCallTarget::EnumVariant {
-                                enum_rust_name,
-                                variant_name,
-                            },
-                        },
-                        arguments: ExprArguments(
-                            arguments
-                                .iter()
-                                .map(|argument| match argument {
-                                    ResolvedCallArgument::Value(id) => {
-                                        ExprArgument::Value(ExprNode::Resolved(*id))
-                                    }
-                                    ResolvedCallArgument::Binding(id) => ExprArgument::Binding(*id),
-                                })
-                                .collect(),
-                        ),
-                    },
-                    ResolvedExpressionKind::Unary { operator, value } => ExprNodeKind::Unary {
-                        op: match operator {
-                            ResolvedUnaryOperator::BooleanNot => UnaryOp::Not,
-                            ResolvedUnaryOperator::NumericNegation => UnaryOp::Neg,
-                        },
-                        value: ExprNode::Resolved(*value),
-                    },
-                    ResolvedExpressionKind::Binary {
-                        operator,
-                        left,
-                        right,
-                    } => ExprNodeKind::Binary {
-                        left: ExprNode::Resolved(*left),
-                        op: *operator,
-                        right: ExprNode::Resolved(*right),
-                    },
-                }
-            }
-        }
+    fn kind(&self, node: ResolvedExpressionNodeId) -> &'a ResolvedExpressionKind {
+        &self.program.expressions().expression(node).kind
     }
 
-    fn ty(&self, node: ExprNode, _env: &dyn BindingEnvironment) -> Result<Type, Error> {
-        match node {
-            ExprNode::Resolved(id) => Ok(self.program.expressions().expression(id).ty.clone()),
-        }
+    fn ty(&self, node: ResolvedExpressionNodeId) -> &'a Type {
+        &self.program.expressions().expression(node).ty
     }
 
-    fn literal_i64(&self, node: ExprNode) -> Option<i64> {
+    fn literal_i64(&self, node: ResolvedExpressionNodeId) -> Option<i64> {
         match self.kind(node) {
-            ExprNodeKind::I64(value) => Some(value),
+            ResolvedExpressionKind::I64(value) => Some(*value),
             _ => None,
         }
     }
 
-    fn literal_str(&self, node: ExprNode) -> Option<&'a str> {
+    fn literal_str(&self, node: ResolvedExpressionNodeId) -> Option<&'a str> {
         match self.kind(node) {
-            ExprNodeKind::Str(value) => Some(value),
+            ResolvedExpressionKind::Str(value) => Some(value),
             _ => None,
         }
     }
 
-    fn is_none(&self, node: ExprNode) -> bool {
-        matches!(self.kind(node), ExprNodeKind::None)
+    fn is_none(&self, node: ResolvedExpressionNodeId) -> bool {
+        matches!(self.kind(node), ResolvedExpressionKind::None)
     }
 }
 
 fn expr_node_code(
-    expr: ExprNode,
+    expr: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     mode: ValueMode,
 ) -> Result<String, Error> {
     Ok(match context.kind(expr) {
-        ExprNodeKind::Bool(value) => value.to_string(),
-        ExprNodeKind::I64(value) => value.to_string(),
-        ExprNodeKind::F64(value) => rust_f64(value),
-        ExprNodeKind::Str(value) => match mode {
+        ResolvedExpressionKind::Bool(value) => value.to_string(),
+        ResolvedExpressionKind::I64(value) => value.to_string(),
+        ResolvedExpressionKind::F64(value) => rust_f64(*value),
+        ResolvedExpressionKind::Str(value) => match mode {
             ValueMode::Owned => format!("{}.to_owned()", rust_string(value)),
             ValueMode::Borrowed | ValueMode::TransientBorrowed => rust_string(value),
         },
-        ExprNodeKind::Bytes(values) => format!(
+        ResolvedExpressionKind::Bytes(values) => format!(
             "::std::vec![{}]",
             values
                 .iter()
@@ -819,24 +705,26 @@ fn expr_node_code(
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        ExprNodeKind::List(values) if values.is_empty() => "::std::vec::Vec::new()".into(),
-        ExprNodeKind::List(values) => format!(
+        ResolvedExpressionKind::List(values) if values.is_empty() => {
+            "::std::vec::Vec::new()".into()
+        }
+        ResolvedExpressionKind::List(values) => format!(
             "::std::vec![{}]",
-            expr_node_list_code(&values, env, context)?
+            expr_node_list_code(values, env, context)?
         ),
-        ExprNodeKind::None => "::std::option::Option::None".into(),
-        ExprNodeKind::SlotProvided(slot) => {
-            let slot = context.program.component_slot_name(slot)?;
+        ResolvedExpressionKind::None => "::std::option::Option::None".into(),
+        ResolvedExpressionKind::SlotProvided(slot) => {
+            let slot = context.program.component_slot_name(*slot)?;
             env.contains_key(&format!("\0slot-provided:{slot}"))
                 .to_string()
         }
-        ExprNodeKind::Path(ExprPath::Resolved { root, projections }) => {
+        ResolvedExpressionKind::Path { root, projections } => {
             resolved_path_code(root, projections, env, context, mode)?
         }
-        ExprNodeKind::Call { target, arguments } => {
-            let args = arguments;
+        ResolvedExpressionKind::Call { target, arguments } => {
+            let args = ExprArguments(arguments);
             let name = match target {
-                ExprCallTarget::EnumVariant {
+                ResolvedCallTarget::EnumVariant {
                     enum_rust_name,
                     variant_name,
                 } => {
@@ -847,12 +735,12 @@ fn expr_node_code(
                         expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
                     ));
                 }
-                ExprCallTarget::Extern(id) => {
-                    let function = context.program.extern_function(id);
+                ResolvedCallTarget::Extern(id) => {
+                    let function = context.program.extern_function(*id);
                     let args = expr_node_list_code(&args.values()?, env, context)?;
                     return Ok(format!("{}({args})", function.rust_path));
                 }
-                ExprCallTarget::Builtin(name) => name,
+                ResolvedCallTarget::Builtin(name) => name,
             };
             let name = unqualified_name(name);
             if let Some(code) = expr_builtin_group_1(name, &args, env, context, mode)? {
@@ -870,15 +758,20 @@ fn expr_node_code(
                     .expect("checked builtin or declared extern call")
             }
         }
-        ExprNodeKind::Unary { op, value } => format!(
+        ResolvedExpressionKind::Unary { operator, value } => format!(
             "({}{})",
-            match op {
-                UnaryOp::Not => "!",
-                UnaryOp::Neg => "-",
+            match operator {
+                ResolvedUnaryOperator::BooleanNot => "!",
+                ResolvedUnaryOperator::NumericNegation => "-",
             },
-            expr_node_code(value, env, context, ValueMode::Owned)?
+            expr_node_code(*value, env, context, ValueMode::Owned)?
         ),
-        ExprNodeKind::Binary { left, op, right } => {
+        ResolvedExpressionKind::Binary {
+            operator,
+            left,
+            right,
+        } => {
+            let op = *operator;
             let mode = if matches!(
                 &op,
                 BinaryOp::Eq
@@ -892,16 +785,17 @@ fn expr_node_code(
             } else {
                 ValueMode::Owned
             };
-            let left_ty = context.ty(left, env)?;
-            let right_ty = context.ty(right, env)?;
-            let left = expr_node_code(left, env, context, mode)?;
-            let right = expr_node_code(right, env, context, mode)?;
-            let left = if left_ty == Type::F64 && right_ty == Type::Radians && op == BinaryOp::Mul {
+            let left_ty = context.ty(*left);
+            let right_ty = context.ty(*right);
+            let left = expr_node_code(*left, env, context, mode)?;
+            let right = expr_node_code(*right, env, context, mode)?;
+            let left = if *left_ty == Type::F64 && *right_ty == Type::Radians && op == BinaryOp::Mul
+            {
                 format!("({left}) as f32")
             } else {
                 left
             };
-            let right = if right_ty == Type::F64
+            let right = if *right_ty == Type::F64
                 && matches!(
                     left_ty,
                     Type::Pixels
@@ -942,7 +836,7 @@ fn expr_node_code(
 
 fn expr_builtin_group_1(
     name: &str,
-    args: &ExprArguments,
+    args: &ExprArguments<'_>,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
@@ -1132,7 +1026,7 @@ fn expr_builtin_group_1(
 }
 fn expr_builtin_group_2(
     name: &str,
-    args: &ExprArguments,
+    args: &ExprArguments<'_>,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
@@ -1442,7 +1336,7 @@ fn expr_builtin_group_2(
 }
 fn expr_builtin_group_3(
     name: &str,
-    args: &ExprArguments,
+    args: &ExprArguments<'_>,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     mode: ValueMode,
@@ -1605,7 +1499,7 @@ fn expr_builtin_group_3(
         ),
         "animation.value" => {
             let animation = expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?;
-            if context.ty(args.value(0)?, env)? == Type::Animation(Box::new(Type::F64)) {
+            if *context.ty(args.value(0)?) == Type::Animation(Box::new(Type::F64)) {
                 format!("({animation}).value() as f64")
             } else {
                 format!("({animation}).value()")
@@ -1621,7 +1515,7 @@ fn expr_builtin_group_3(
             let start = expr_node_code(args.value(1)?, env, context, ValueMode::Owned)?;
             let end = expr_node_code(args.value(2)?, env, context, ValueMode::Owned)?;
             let at = expr_animation_at_code(args, 3, env, context)?;
-            if context.ty(args.value(1)?, env)? == Type::F64 {
+            if *context.ty(args.value(1)?) == Type::F64 {
                 format!("({animation}).interpolate(({start}) as f32, ({end}) as f32, {at}) as f64")
             } else {
                 let start = if context.is_none(args.value(1)?) {
@@ -1646,7 +1540,7 @@ fn expr_builtin_group_3(
         ),
         "animation.project" => {
             let animation = expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?;
-            let Type::Animation(inner) = context.ty(args.value(0)?, env)? else {
+            let Type::Animation(inner) = context.ty(args.value(0)?) else {
                 unreachable!("checker requires animation")
             };
             let (binding, binding_id) = args.binding(1, context)?;
@@ -1654,12 +1548,12 @@ fn expr_builtin_group_3(
                 env,
                 binding,
                 Binding {
-                    code: if *inner == Type::F64 {
+                    code: if **inner == Type::F64 {
                         "(__value as f64)".into()
                     } else {
                         "__value".into()
                     },
-                    ty: *inner,
+                    ty: (**inner).clone(),
                     local: true,
                     state: None,
                     owner: binding_id.map(BindingOwner::Local),
@@ -1667,9 +1561,9 @@ fn expr_builtin_group_3(
             );
             let projection =
                 expr_node_code(args.value(2)?, &projection_env, context, ValueMode::Owned)?;
-            let output = context.ty(args.value(2)?, &projection_env)?;
+            let output = context.ty(args.value(2)?);
             let at = expr_animation_at_code(args, 3, env, context)?;
-            if output == Type::F64 {
+            if *output == Type::F64 {
                 format!(
                     "({animation}).interpolate_with(|__value| ({projection}) as f32, {at}) as f64"
                 )
@@ -1800,7 +1694,7 @@ fn expr_builtin_group_3(
 }
 fn expr_builtin_group_4(
     name: &str,
-    args: &ExprArguments,
+    args: &ExprArguments<'_>,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
@@ -2048,7 +1942,7 @@ fn expr_builtin_group_4(
 }
 fn expr_builtin_group_5(
     name: &str,
-    args: &ExprArguments,
+    args: &ExprArguments<'_>,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
@@ -2259,7 +2153,7 @@ fn expr_builtin_group_5(
 }
 fn expr_builtin_group_6(
     name: &str,
-    args: &ExprArguments,
+    args: &ExprArguments<'_>,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
     _mode: ValueMode,
@@ -2343,7 +2237,7 @@ fn expr_builtin_group_6(
 }
 
 fn expr_node_list_code(
-    values: &[ExprNode],
+    values: &[ResolvedExpressionNodeId],
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
@@ -2628,7 +2522,7 @@ pub(crate) fn copy_expression_type(ty: &Type) -> bool {
 }
 
 fn node_unit_f32_code(
-    expr: ExprNode,
+    expr: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
@@ -2637,12 +2531,12 @@ fn node_unit_f32_code(
 }
 
 fn node_pixel_value_code(
-    expr: ExprNode,
+    expr: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
-    Ok(if context.ty(expr, env)? == Type::Pixels {
+    Ok(if *context.ty(expr) == Type::Pixels {
         code
     } else {
         format!("({code}) as f32")
@@ -2650,12 +2544,12 @@ fn node_pixel_value_code(
 }
 
 fn node_pixel_scalar_code(
-    expr: ExprNode,
+    expr: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
-    Ok(if context.ty(expr, env)? == Type::Pixels {
+    Ok(if *context.ty(expr) == Type::Pixels {
         format!("({code}).0")
     } else {
         format!("({code}) as f32")
@@ -2663,12 +2557,12 @@ fn node_pixel_scalar_code(
 }
 
 fn node_radius_value_code(
-    expr: ExprNode,
+    expr: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
-    Ok(if context.ty(expr, env)? == Type::Radius {
+    Ok(if *context.ty(expr) == Type::Radius {
         code
     } else {
         format!("::iced::border::Radius::from(({code}) as f32)")
@@ -2676,12 +2570,12 @@ fn node_radius_value_code(
 }
 
 fn node_radians_value_code(
-    expr: ExprNode,
+    expr: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     let code = expr_node_code(expr, env, context, ValueMode::Owned)?;
-    Ok(if context.ty(expr, env)? == Type::Radians {
+    Ok(if *context.ty(expr) == Type::Radians {
         code
     } else {
         format!("::iced::Radians(({code}) as f32)")
@@ -2689,7 +2583,7 @@ fn node_radians_value_code(
 }
 
 fn node_u32_code(
-    expr: ExprNode,
+    expr: ResolvedExpressionNodeId,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
@@ -2700,15 +2594,17 @@ fn node_u32_code(
 }
 
 fn expr_animation_at_code(
-    args: &ExprArguments,
+    args: &ExprArguments<'_>,
     index: usize,
     env: &dyn BindingEnvironment,
     context: &ExprEmission<'_>,
 ) -> Result<String, Error> {
     match args.get(index) {
         None => Ok("::iced::time::Instant::now()".into()),
-        Some(ExprArgument::Value(at)) => expr_node_code(at, env, context, ValueMode::Owned),
-        Some(ExprArgument::Binding(_)) => Err(Error::new(
+        Some(ResolvedCallArgument::Value(at)) => {
+            expr_node_code(*at, env, context, ValueMode::Owned)
+        }
+        Some(ResolvedCallArgument::Binding(_)) => Err(Error::new(
             "E196",
             &Span::line(1),
             "animation instant resolved to a binding",
@@ -2727,7 +2623,7 @@ pub(in crate::codegen) fn resolved_animation_target_code(
     let expression_use = expressions.expression_use(expression_use);
     let context = ExprEmission::for_resolved(program);
     let code = expr_node_code(
-        ExprNode::Resolved(expression_use.root),
+        expression_use.root,
         &HashMap::new(),
         &context,
         ValueMode::Owned,
@@ -2776,7 +2672,7 @@ fn resolved_expr_use_code_in(
 ) -> Result<String, Error> {
     let expressions = context.program.expressions();
     let expression_use = expressions.expression_use(expression_use);
-    let code = expr_node_code(ExprNode::Resolved(expression_use.root), env, context, mode)?;
+    let code = expr_node_code(expression_use.root, env, context, mode)?;
     Ok(match &expression_use.coercion {
         ResolvedInitializerCoercion::None => code,
         ResolvedInitializerCoercion::ListToCombo { .. } => {
@@ -2855,12 +2751,7 @@ pub(in crate::codegen) fn resolved_expr_node_code(
             "normalized test expression node belongs to another expression use",
         ));
     }
-    expr_node_code(
-        ExprNode::Resolved(node),
-        env,
-        &ExprEmission::for_resolved(program),
-        mode,
-    )
+    expr_node_code(node, env, &ExprEmission::for_resolved(program), mode)
 }
 
 mod binding;

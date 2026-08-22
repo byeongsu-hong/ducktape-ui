@@ -103,12 +103,12 @@ pub(in crate::parser) fn parse_media(
             if media_kind != MediaKind::Image {
                 return Err(error("E085", line, "radius is only available on image"));
             }
-            options.radius = Some(parse_expr(strip_wrapping_parens(value), line)?);
+            options.radius.all = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some((field, value)) = [
-            ("r-tl=", &mut options.radius_top_left),
-            ("r-tr=", &mut options.radius_top_right),
-            ("r-br=", &mut options.radius_bottom_right),
-            ("r-bl=", &mut options.radius_bottom_left),
+            ("r-tl=", &mut options.radius.top_left),
+            ("r-tr=", &mut options.radius.top_right),
+            ("r-br=", &mut options.radius.bottom_right),
+            ("r-bl=", &mut options.radius.bottom_left),
         ]
         .into_iter()
         .find_map(|(prefix, field)| part.strip_prefix(prefix).map(|value| (field, value)))
@@ -220,11 +220,7 @@ pub(in crate::parser) fn parse_tooltip(
         text_color: None,
         border_color: None,
         border_width: None,
-        radius: None,
-        radius_top_left: None,
-        radius_top_right: None,
-        radius_bottom_right: None,
-        radius_bottom_left: None,
+        radius: RadiusOptions::default(),
         shadow_color: None,
         shadow_x: None,
         shadow_y: None,
@@ -287,16 +283,7 @@ pub(in crate::parser) fn parse_tooltip(
             options.border_color = Some(value.to_owned());
         } else if let Some(value) = part.strip_prefix("border-w=") {
             options.border_width = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r=") {
-            options.radius = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-tl=") {
-            options.radius_top_left = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-tr=") {
-            options.radius_top_right = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-br=") {
-            options.radius_bottom_right = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if let Some(value) = part.strip_prefix("r-bl=") {
-            options.radius_bottom_left = Some(parse_expr(strip_wrapping_parens(value), line)?);
+        } else if parse_radius_option(part, &mut options.radius, "", line)? {
         } else if let Some(value) = part.strip_prefix("shadow=") {
             options.shadow_color = Some(value.to_owned());
         } else if let Some(value) = part.strip_prefix("shadow-x=") {

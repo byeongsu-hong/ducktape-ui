@@ -150,7 +150,7 @@ fn resolved_container_border_dash_code(
     let width = container
         .surface
         .border_width
-        .map(|width| resolved_container_clamped_f32(width, "0.0", "f32::MAX", program, env))
+        .map(|width| clamped_f32_code(width, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| format!("{}.0", style.border_width.max(1)));
     let radius = resolved_container_radius_code(&container.surface.radius, program, env)?
@@ -158,7 +158,7 @@ fn resolved_container_border_dash_code(
     let segments = container
         .border_dash
         .iter()
-        .map(|segment| resolved_container_clamped_f32(*segment, "0.0", "f32::MAX", program, env))
+        .map(|segment| clamped_f32_code(*segment, "0.0", "f32::MAX", program, env))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     Ok(format!(
@@ -277,12 +277,12 @@ fn resolved_container_radius_code(
     }
     let base = radius
         .all
-        .map(|value| resolved_container_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| "0.0".into());
     let corner = |value: Option<ResolvedExpressionId>| {
         value
-            .map(|value| resolved_container_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
             .transpose()
     };
     let top_left = corner(radius.top_left)?.unwrap_or_else(|| base.clone());
@@ -418,17 +418,6 @@ fn resolved_container_surface_style_value(
     }
     code.push_str(" __style }");
     Ok(Some(code))
-}
-
-fn resolved_container_clamped_f32(
-    expression: ResolvedExpressionId,
-    minimum: &str,
-    maximum: &str,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
-    Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
 /// A press guard: everything the target does not act on is swallowed rather

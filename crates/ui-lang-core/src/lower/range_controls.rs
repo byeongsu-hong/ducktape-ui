@@ -413,12 +413,12 @@ impl Lowerer {
         )?;
         let radius = Self::resolve_range_radius(
             &mut values,
-            &options.radius,
+            &options.radius.all,
             [
-                &options.radius_top_left,
-                &options.radius_top_right,
-                &options.radius_bottom_right,
-                &options.radius_bottom_left,
+                &options.radius.top_left,
+                &options.radius.top_right,
+                &options.radius.bottom_right,
+                &options.radius.bottom_left,
             ],
             "radius",
             origin,
@@ -596,12 +596,12 @@ impl Lowerer {
         )?;
         let rail_radius = Self::resolve_range_radius(
             values,
-            &source.rail_radius,
+            &source.rail_radius.all,
             [
-                &source.rail_radius_top_left,
-                &source.rail_radius_top_right,
-                &source.rail_radius_bottom_right,
-                &source.rail_radius_bottom_left,
+                &source.rail_radius.top_left,
+                &source.rail_radius.top_right,
+                &source.rail_radius.bottom_right,
+                &source.rail_radius.bottom_left,
             ],
             "rail radius",
             origin,
@@ -614,12 +614,12 @@ impl Lowerer {
         )?;
         let handle_radius = Self::resolve_range_radius(
             values,
-            &source.handle_radius,
+            &source.handle_radius.all,
             [
-                &source.handle_radius_top_left,
-                &source.handle_radius_top_right,
-                &source.handle_radius_bottom_right,
-                &source.handle_radius_bottom_left,
+                &source.handle_radius.top_left,
+                &source.handle_radius.top_right,
+                &source.handle_radius.bottom_right,
+                &source.handle_radius.bottom_left,
             ],
             "handle radius",
             origin,

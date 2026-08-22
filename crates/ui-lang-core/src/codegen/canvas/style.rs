@@ -60,13 +60,13 @@ pub(in crate::codegen) fn canvas_stroke_code(
     let dash = stroke
         .dash
         .iter()
-        .map(|value| canvas_clamped_f32_code(*value, "0.0", "f32::MAX", env, program))
+        .map(|value| clamped_f32_code(*value, "0.0", "f32::MAX", program, env))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
     Ok(format!(
         "::iced::widget::canvas::Stroke {{ style: {}, width: {}, line_cap: ::iced::widget::canvas::LineCap::{cap}, line_join: ::iced::widget::canvas::LineJoin::{join}, line_dash: ::iced::widget::canvas::LineDash {{ segments: &[{dash}], offset: usize::try_from({}).unwrap_or(0) }} }}",
         canvas_style_code(&stroke.style, env, program)?,
-        canvas_clamped_f32_code(stroke.width, "0.0", "f32::MAX", env, program)?,
+        clamped_f32_code(stroke.width, "0.0", "f32::MAX", program, env)?,
         canvas_expr_code(stroke.dash_offset, env, program)?
     ))
 }
@@ -161,8 +161,8 @@ pub(in crate::codegen) fn canvas_size_code(
 ) -> Result<String, Error> {
     Ok(format!(
         "::iced::Size::new({}, {})",
-        canvas_clamped_f32_code(width, "0.0", "f32::MAX", env, program)?,
-        canvas_clamped_f32_code(height, "0.0", "f32::MAX", env, program)?
+        clamped_f32_code(width, "0.0", "f32::MAX", program, env)?,
+        clamped_f32_code(height, "0.0", "f32::MAX", program, env)?
     ))
 }
 
@@ -172,17 +172,4 @@ pub(in crate::codegen) fn canvas_expr_code(
     program: &LoweredProgram,
 ) -> Result<String, Error> {
     resolved_expr_use_code(program, value, env, ValueMode::Owned)
-}
-
-pub(in crate::codegen) fn canvas_clamped_f32_code(
-    value: ResolvedExpressionId,
-    min: &str,
-    max: &str,
-    env: &dyn BindingEnvironment,
-    program: &LoweredProgram,
-) -> Result<String, Error> {
-    Ok(format!(
-        "(({}) as f32).max({min}).min({max})",
-        canvas_expr_code(value, env, program)?
-    ))
 }

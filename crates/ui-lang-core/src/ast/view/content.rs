@@ -6,11 +6,7 @@ pub struct FloatStyleOptions {
     pub shadow_x: Option<Expr>,
     pub shadow_y: Option<Expr>,
     pub shadow_blur: Option<Expr>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
 }
 
 pub(crate) fn float_expression_roots<'a>(
@@ -25,11 +21,11 @@ pub(crate) fn float_expression_roots<'a>(
             &style.shadow_x,
             &style.shadow_y,
             &style.shadow_blur,
-            &style.radius,
-            &style.radius_top_left,
-            &style.radius_top_right,
-            &style.radius_bottom_right,
-            &style.radius_bottom_left,
+            &style.radius.all,
+            &style.radius.top_left,
+            &style.radius.top_right,
+            &style.radius.bottom_right,
+            &style.radius.bottom_left,
         ]
         .into_iter()
         .flatten(),
@@ -45,11 +41,11 @@ pub(crate) fn float_semantic_key(style: &FloatStyleOptions) -> String {
             style.shadow_x.is_some(),
             style.shadow_y.is_some(),
             style.shadow_blur.is_some(),
-            style.radius.is_some(),
-            style.radius_top_left.is_some(),
-            style.radius_top_right.is_some(),
-            style.radius_bottom_right.is_some(),
-            style.radius_bottom_left.is_some(),
+            style.radius.all.is_some(),
+            style.radius.top_left.is_some(),
+            style.radius.top_right.is_some(),
+            style.radius.bottom_right.is_some(),
+            style.radius.bottom_left.is_some(),
         ]
     )
 }
@@ -109,7 +105,7 @@ pub(crate) fn responsive_expression_count(
     breakpoint + dimensions
 }
 
-fn length_semantic_key(length: &Option<LengthValue>) -> String {
+pub(crate) fn length_semantic_key(length: &Option<LengthValue>) -> String {
     match length {
         None => "none".into(),
         Some(LengthValue::Fill) => "fill".into(),
@@ -151,11 +147,7 @@ pub struct MarkdownStyleOptions {
     pub inline_code_padding: PaddingOptions,
     pub inline_code_border_color: Option<String>,
     pub inline_code_border_width: Option<Expr>,
-    pub inline_code_radius: Option<Expr>,
-    pub inline_code_radius_top_left: Option<Expr>,
-    pub inline_code_radius_top_right: Option<Expr>,
-    pub inline_code_radius_bottom_right: Option<Expr>,
-    pub inline_code_radius_bottom_left: Option<Expr>,
+    pub inline_code_radius: RadiusOptions,
     pub span: Option<Span>,
 }
 
@@ -175,11 +167,11 @@ pub(crate) fn markdown_style_expression_roots(style: &MarkdownStyleOptions) -> V
             &style.inline_code_padding.bottom,
             &style.inline_code_padding.left,
             &style.inline_code_border_width,
-            &style.inline_code_radius,
-            &style.inline_code_radius_top_left,
-            &style.inline_code_radius_top_right,
-            &style.inline_code_radius_bottom_right,
-            &style.inline_code_radius_bottom_left,
+            &style.inline_code_radius.all,
+            &style.inline_code_radius.top_left,
+            &style.inline_code_radius.top_right,
+            &style.inline_code_radius.bottom_right,
+            &style.inline_code_radius.bottom_left,
         ]
         .into_iter()
         .flatten(),
@@ -263,11 +255,11 @@ pub(crate) fn markdown_semantic_key(options: &MarkdownOptions) -> String {
             style.inline_code_padding.bottom.is_some(),
             style.inline_code_padding.left.is_some(),
             style.inline_code_border_width.is_some(),
-            style.inline_code_radius.is_some(),
-            style.inline_code_radius_top_left.is_some(),
-            style.inline_code_radius_top_right.is_some(),
-            style.inline_code_radius_bottom_right.is_some(),
-            style.inline_code_radius_bottom_left.is_some(),
+            style.inline_code_radius.all.is_some(),
+            style.inline_code_radius.top_left.is_some(),
+            style.inline_code_radius.top_right.is_some(),
+            style.inline_code_radius.bottom_right.is_some(),
+            style.inline_code_radius.bottom_left.is_some(),
         ],
     )
 }
@@ -403,7 +395,7 @@ pub(crate) fn text_editor_semantic_key(
         disabled.is_some(),
         options.placeholder,
         options.width.is_some(),
-        input_length_semantic_key(&options.height),
+        length_semantic_key(&options.height),
         [
             options.min_height.is_some(),
             options.max_height.is_some(),
@@ -444,22 +436,12 @@ pub struct TableColumn {
 }
 
 pub(crate) fn table_semantic_key(options: &TableOptions, columns: &[TableColumn]) -> String {
-    fn length_key(length: &Option<LengthValue>) -> String {
-        match length {
-            None => "none".into(),
-            Some(LengthValue::Fill) => "fill".into(),
-            Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
-            Some(LengthValue::Shrink) => "shrink".into(),
-            Some(LengthValue::Fixed(_)) => "fixed".into(),
-        }
-    }
-
     let columns = columns
         .iter()
         .map(|column| {
             format!(
                 "{}:{:?}:{:?}",
-                length_key(&column.width),
+                length_semantic_key(&column.width),
                 column.align_x,
                 column.align_y
             )
@@ -468,7 +450,7 @@ pub(crate) fn table_semantic_key(options: &TableOptions, columns: &[TableColumn]
         .join("|");
     format!(
         "table|width={}|metrics={:?}|columns={columns}",
-        length_key(&options.width),
+        length_semantic_key(&options.width),
         [
             options.padding.is_some(),
             options.padding_x.is_some(),
@@ -540,11 +522,11 @@ fn push_input_surface_roots<'a>(roots: &mut Vec<&'a Expr>, surface: &'a Containe
     roots.extend(
         [
             &surface.border_width,
-            &surface.radius,
-            &surface.radius_top_left,
-            &surface.radius_top_right,
-            &surface.radius_bottom_right,
-            &surface.radius_bottom_left,
+            &surface.radius.all,
+            &surface.radius.top_left,
+            &surface.radius.top_right,
+            &surface.radius.bottom_right,
+            &surface.radius.bottom_left,
             &surface.shadow_x,
             &surface.shadow_y,
             &surface.shadow_blur,
@@ -597,16 +579,6 @@ pub(crate) fn input_expression_roots<'a>(
     roots
 }
 
-fn input_length_semantic_key(length: &Option<LengthValue>) -> String {
-    match length {
-        None => "none".into(),
-        Some(LengthValue::Fill) => "fill".into(),
-        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
-        Some(LengthValue::Shrink) => "shrink".into(),
-        Some(LengthValue::Fixed(_)) => "fixed".into(),
-    }
-}
-
 fn input_surface_semantic_key(style: &TextInputStatusStyle) -> String {
     let background = match &style.options.background {
         None => "none".into(),
@@ -633,11 +605,11 @@ fn input_surface_semantic_key(style: &TextInputStatusStyle) -> String {
         ],
         [
             style.options.border_width.is_some(),
-            style.options.radius.is_some(),
-            style.options.radius_top_left.is_some(),
-            style.options.radius_top_right.is_some(),
-            style.options.radius_bottom_right.is_some(),
-            style.options.radius_bottom_left.is_some(),
+            style.options.radius.all.is_some(),
+            style.options.radius.top_left.is_some(),
+            style.options.radius.top_right.is_some(),
+            style.options.radius.bottom_right.is_some(),
+            style.options.radius.bottom_left.is_some(),
             style.options.shadow_x.is_some(),
             style.options.shadow_y.is_some(),
             style.options.shadow_blur.is_some(),
@@ -712,7 +684,7 @@ pub(crate) fn input_semantic_key(
         options.accessibility.label.is_some(),
         options.accessibility.description.is_some(),
         options.secure.is_some(),
-        input_length_semantic_key(&options.width),
+        length_semantic_key(&options.width),
         [
             options.padding.is_some(),
             options.text_size.is_some(),
@@ -781,11 +753,7 @@ pub struct RichSpanOptions {
     pub background: Option<BackgroundValue>,
     pub border: Option<String>,
     pub border_width: Option<Expr>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
     pub padding: PaddingOptions,
     pub underline: Option<Expr>,
     pub strikethrough: Option<Expr>,
@@ -853,11 +821,11 @@ pub(crate) fn push_rich_span_expression_roots<'a>(roots: &mut Vec<&'a Expr>, spa
     roots.extend(
         [
             &span.options.border_width,
-            &span.options.radius,
-            &span.options.radius_top_left,
-            &span.options.radius_top_right,
-            &span.options.radius_bottom_right,
-            &span.options.radius_bottom_left,
+            &span.options.radius.all,
+            &span.options.radius.top_left,
+            &span.options.radius.top_right,
+            &span.options.radius.bottom_right,
+            &span.options.radius.bottom_left,
             &span.options.padding.all,
             &span.options.padding.x,
             &span.options.padding.y,
@@ -899,16 +867,6 @@ pub(crate) fn rich_text_expression_roots<'a>(
     roots
 }
 
-fn text_length_semantic_key(length: &Option<LengthValue>) -> String {
-    match length {
-        None => "none".into(),
-        Some(LengthValue::Fill) => "fill".into(),
-        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
-        Some(LengthValue::Shrink) => "shrink".into(),
-        Some(LengthValue::Fixed(_)) => "fixed".into(),
-    }
-}
-
 fn text_font_semantic_key(font: &Option<FontPreset>) -> String {
     match font {
         None => "none".into(),
@@ -933,8 +891,8 @@ fn text_options_semantic_key(options: &TextOptions) -> String {
     );
     format!(
         "bounds={}:{}|size={}|line={}|font={}|align={:?}:{:?}|shape={:?}|wrap={:?}|tracking={:?}|custom={custom}|underline={}|strike={}",
-        text_length_semantic_key(&options.width),
-        text_length_semantic_key(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         options.size.is_some(),
         text_line_height_semantic_key(&options.line_height),
         text_font_semantic_key(&options.font),
@@ -979,11 +937,11 @@ fn rich_span_semantic_key(span: &RichSpan) -> String {
         span.options.border,
         [
             span.options.border_width.is_some(),
-            span.options.radius.is_some(),
-            span.options.radius_top_left.is_some(),
-            span.options.radius_top_right.is_some(),
-            span.options.radius_bottom_right.is_some(),
-            span.options.radius_bottom_left.is_some(),
+            span.options.radius.all.is_some(),
+            span.options.radius.top_left.is_some(),
+            span.options.radius.top_right.is_some(),
+            span.options.radius.bottom_right.is_some(),
+            span.options.radius.bottom_left.is_some(),
             span.options.padding.all.is_some(),
             span.options.padding.x.is_some(),
             span.options.padding.y.is_some(),
@@ -1140,11 +1098,11 @@ pub(crate) fn button_semantic_key(
             options.shadow_color,
             [
                 options.border_width.is_some(),
-                options.radius.is_some(),
-                options.radius_top_left.is_some(),
-                options.radius_top_right.is_some(),
-                options.radius_bottom_right.is_some(),
-                options.radius_bottom_left.is_some(),
+                options.radius.all.is_some(),
+                options.radius.top_left.is_some(),
+                options.radius.top_right.is_some(),
+                options.radius.bottom_right.is_some(),
+                options.radius.bottom_left.is_some(),
                 options.shadow_color.is_some(),
                 options.shadow_x.is_some(),
                 options.shadow_y.is_some(),
@@ -1185,8 +1143,8 @@ pub(crate) fn button_semantic_key(
         options.expanded.is_some(),
         options.accessibility.label.is_some(),
         options.accessibility.description.is_some(),
-        text_length_semantic_key(&options.width),
-        text_length_semantic_key(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         options.padding.is_some(),
         options.clip.is_some(),
         options.style.preset,
@@ -1301,11 +1259,7 @@ pub struct CheckboxStatusStyle {
     pub text_color: Option<String>,
     pub border_color: Option<String>,
     pub border_width: Option<Expr>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
     pub span: Option<Span>,
 }
 
@@ -1344,11 +1298,11 @@ pub(crate) fn checkbox_status_expression_roots(status: &CheckboxStatusStyle) -> 
     roots.extend(
         [
             &status.border_width,
-            &status.radius,
-            &status.radius_top_left,
-            &status.radius_top_right,
-            &status.radius_bottom_right,
-            &status.radius_bottom_left,
+            &status.radius.all,
+            &status.radius.top_left,
+            &status.radius.top_right,
+            &status.radius.bottom_right,
+            &status.radius.bottom_left,
         ]
         .into_iter()
         .flatten(),
@@ -1395,11 +1349,7 @@ pub struct TogglerStatusStyle {
     pub foreground_border_color: Option<String>,
     pub foreground_border_width: Option<Expr>,
     pub text_color: Option<String>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
     pub padding_ratio: Option<Expr>,
     pub span: Option<Span>,
 }
@@ -1441,11 +1391,11 @@ pub(crate) fn toggler_status_expression_roots(status: &TogglerStatusStyle) -> Ve
     roots.extend(status.foreground_border_width.as_ref());
     roots.extend(
         [
-            &status.radius,
-            &status.radius_top_left,
-            &status.radius_top_right,
-            &status.radius_bottom_right,
-            &status.radius_bottom_left,
+            &status.radius.all,
+            &status.radius.top_left,
+            &status.radius.top_right,
+            &status.radius.bottom_right,
+            &status.radius.bottom_left,
             &status.padding_ratio,
         ]
         .into_iter()

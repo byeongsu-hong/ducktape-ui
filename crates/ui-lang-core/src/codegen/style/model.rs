@@ -68,19 +68,24 @@ pub(in crate::codegen) fn container_style_value(style: &ResolvedStyle) -> Option
 
 pub(in crate::codegen) fn resolved_theme_color(color: &ResolvedThemeColor) -> String {
     let value = match color.base {
-        ResolvedThemeColorBase::White => color_code("#ffffff", None),
-        ResolvedThemeColorBase::Black => color_code("#000000", None),
-        ResolvedThemeColorBase::Transparent => color_code("#00000000", None),
+        ResolvedThemeColorBase::White => {
+            "::iced::Color::from_rgba8(255, 255, 255, 1.000000)".into()
+        }
+        ResolvedThemeColorBase::Black => "::iced::Color::from_rgba8(0, 0, 0, 1.000000)".into(),
+        ResolvedThemeColorBase::Transparent => {
+            "::iced::Color::from_rgba8(0, 0, 0, 0.000000)".into()
+        }
         ResolvedThemeColorBase::Token(token) => {
             format!("__ice_palette.colors[{}]", token.index)
         }
     };
-    color.opacity.map_or(value.clone(), |opacity| {
-        format!(
-            "{{ let mut __color = {value}; __color.a = {:.6}; __color }}",
-            opacity as f32 / 100.0
-        )
-    })
+    let Some(opacity) = color.opacity else {
+        return value;
+    };
+    format!(
+        "{{ let mut __color = {value}; __color.a = {:.6}; __color }}",
+        opacity as f32 / 100.0
+    )
 }
 
 pub(in crate::codegen) fn resolved_theme_preset_code(
@@ -174,21 +179,6 @@ pub(in crate::codegen) fn resolved_background_code(
             code
         }
     })
-}
-
-pub(in crate::codegen) fn color_code(value: &str, opacity: Option<u8>) -> String {
-    let hex = value.trim_start_matches('#');
-    let byte = |range: std::ops::Range<usize>| u8::from_str_radix(&hex[range], 16).unwrap_or(0);
-    let alpha = opacity
-        .map(|value| value as f32 / 100.0)
-        .or_else(|| (hex.len() == 8).then(|| byte(6..8) as f32 / 255.0))
-        .unwrap_or(1.0);
-    format!(
-        "::iced::Color::from_rgba8({}, {}, {}, {alpha:.6})",
-        byte(0..2),
-        byte(2..4),
-        byte(4..6)
-    )
 }
 
 pub(in crate::codegen) fn rust_string(value: &str) -> String {

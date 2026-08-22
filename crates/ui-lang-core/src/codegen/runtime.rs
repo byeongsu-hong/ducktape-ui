@@ -189,6 +189,11 @@ pub(crate) struct __IceWidgetTarget {
     translation_x: ::std::option::Option<f64>,
     translation_y: ::std::option::Option<f64>,
 }
+"#,
+    );
+    if program_uses_widget_selector(program) {
+        out.push_str(
+            r#"
 fn __ice_widget_target(
     kind: &str,
     id: ::std::option::Option<::iced::widget::Id>,
@@ -218,11 +223,6 @@ fn __ice_widget_target(
         translation_y: translation.map(|translation| translation.y as f64),
     }
 }
-"#,
-    );
-    if program_uses_widget_selector(program) {
-        out.push_str(
-            r#"
 fn __ice_widget_target_from_target(value: ::iced::widget::selector::Target) -> __IceWidgetTarget {
     use ::iced::widget::selector::Target;
     match value {

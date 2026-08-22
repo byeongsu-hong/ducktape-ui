@@ -409,24 +409,24 @@ impl Lowerer {
         let border_width =
             values.optional(style.border_width.as_ref(), &Type::F64, "border width")?;
         let radius = ResolvedContainerRadius {
-            all: values.optional(style.radius.as_ref(), &Type::F64, "radius")?,
+            all: values.optional(style.radius.all.as_ref(), &Type::F64, "radius")?,
             top_left: values.optional(
-                style.radius_top_left.as_ref(),
+                style.radius.top_left.as_ref(),
                 &Type::F64,
                 "radius top-left",
             )?,
             top_right: values.optional(
-                style.radius_top_right.as_ref(),
+                style.radius.top_right.as_ref(),
                 &Type::F64,
                 "radius top-right",
             )?,
             bottom_right: values.optional(
-                style.radius_bottom_right.as_ref(),
+                style.radius.bottom_right.as_ref(),
                 &Type::F64,
                 "radius bottom-right",
             )?,
             bottom_left: values.optional(
-                style.radius_bottom_left.as_ref(),
+                style.radius.bottom_left.as_ref(),
                 &Type::F64,
                 "radius bottom-left",
             )?,

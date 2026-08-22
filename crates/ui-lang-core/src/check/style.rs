@@ -1052,11 +1052,7 @@ fn has_padding(options: &PaddingOptions) -> bool {
 }
 
 fn has_radius(options: &ContainerStyleOptions) -> bool {
-    options.radius.is_some()
-        || options.radius_top_left.is_some()
-        || options.radius_top_right.is_some()
-        || options.radius_bottom_right.is_some()
-        || options.radius_bottom_left.is_some()
+    options.radius.any()
 }
 
 pub(in crate::check) fn base_utility(style: &str) -> &str {

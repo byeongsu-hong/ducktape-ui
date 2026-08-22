@@ -34,16 +34,7 @@ pub(in crate::parser) fn parse_float(
             style.shadow_y = Some(parse(value)?);
         } else if let Some(value) = part.strip_prefix("shadow-blur=") {
             style.shadow_blur = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r=") {
-            style.radius = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-tl=") {
-            style.radius_top_left = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-tr=") {
-            style.radius_top_right = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-br=") {
-            style.radius_bottom_right = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-bl=") {
-            style.radius_bottom_left = Some(parse(value)?);
+        } else if parse_radius_option(part, &mut style.radius, "", line)? {
         } else {
             return Err(error(
                 "E089",

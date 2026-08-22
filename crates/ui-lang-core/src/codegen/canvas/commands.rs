@@ -55,7 +55,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                 ..
             } => {
                 let point = canvas_point_code(*x, *y, env, program)?;
-                let radius = canvas_clamped_f32_code(*radius, "0.0", "f32::MAX", env, program)?;
+                let radius = clamped_f32_code(*radius, "0.0", "f32::MAX", program, env)?;
                 write!(
                     code,
                     " {{ let __path = ::iced::widget::canvas::Path::circle({point}, {radius}); {} }}",
@@ -104,25 +104,23 @@ pub(in crate::codegen) fn canvas_commands_code(
                 let position = canvas_point_code(*x, *y, env, program)?;
                 let max_width = max_width
                     .as_ref()
-                    .map(|value| canvas_clamped_f32_code(*value, "0.0", "f32::MAX", env, program))
+                    .map(|value| clamped_f32_code(*value, "0.0", "f32::MAX", program, env))
                     .transpose()?
                     .unwrap_or_else(|| "f32::INFINITY".into());
                 let color = resolved_theme_color(color);
                 let size = size
                     .as_ref()
-                    .map(|value| {
-                        canvas_clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", env, program)
-                    })
+                    .map(|value| clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", program, env))
                     .transpose()?
                     .unwrap_or_else(|| "16.0".into());
                 let line_height = match line_height {
                     Some(ResolvedCanvasLineHeight::Relative(value)) => format!(
                         "::iced::widget::text::LineHeight::Relative({})",
-                        canvas_clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", env, program)?
+                        clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", program, env)?
                     ),
                     Some(ResolvedCanvasLineHeight::Absolute(value)) => format!(
                         "::iced::widget::text::LineHeight::Absolute(::iced::Pixels({}))",
-                        canvas_clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", env, program)?
+                        clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", program, env)?
                     ),
                     None => "::iced::widget::text::LineHeight::default()".into(),
                 };
@@ -183,7 +181,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                     canvas_size_code(*width, *height, env, program)?,
                     canvas_expr_code(*rotation, env, program)?,
                     canvas_radius_code(radius, env, program)?,
-                    canvas_clamped_f32_code(*opacity, "0.0", "1.0", env, program)?,
+                    clamped_f32_code(*opacity, "0.0", "1.0", program, env)?,
                     canvas_expr_code(*snap, env, program)?
                 )
                 .unwrap();
@@ -235,7 +233,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                     canvas_point_code(*x, *y, env, program)?,
                     canvas_size_code(*width, *height, env, program)?,
                     canvas_expr_code(*rotation, env, program)?,
-                    canvas_clamped_f32_code(*opacity, "0.0", "1.0", env, program)?
+                    clamped_f32_code(*opacity, "0.0", "1.0", program, env)?
                 )
                 .unwrap();
             }
@@ -288,7 +286,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                     write!(
                         body,
                         " __frame.scale({});",
-                        canvas_clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", env, program)?
+                        clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", program, env)?
                     )
                     .unwrap();
                 }
@@ -297,13 +295,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                         .scale_x
                         .as_ref()
                         .map(|value| {
-                            canvas_clamped_f32_code(
-                                *value,
-                                "f32::EPSILON",
-                                "f32::MAX",
-                                env,
-                                program,
-                            )
+                            clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", program, env)
                         })
                         .transpose()?
                         .unwrap_or_else(|| "1.0".into());
@@ -311,13 +303,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                         .scale_y
                         .as_ref()
                         .map(|value| {
-                            canvas_clamped_f32_code(
-                                *value,
-                                "f32::EPSILON",
-                                "f32::MAX",
-                                env,
-                                program,
-                            )
+                            clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", program, env)
                         })
                         .transpose()?
                         .unwrap_or_else(|| "1.0".into());

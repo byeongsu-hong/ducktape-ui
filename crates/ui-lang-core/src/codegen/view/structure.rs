@@ -85,9 +85,7 @@ pub(in crate::codegen) fn render_structure(
             let builder = match &responsive.kind {
                 ResolvedResponsiveKind::Breakpoint { breakpoint } => {
                     let breakpoint =
-                        resolved_expr_use_code(program, *breakpoint, env, ValueMode::Owned)?;
-                    let breakpoint =
-                        format!("(({breakpoint}) as f32).max(f32::EPSILON).min(f32::MAX)");
+                        clamped_f32_code(*breakpoint, "f32::EPSILON", "f32::MAX", program, env)?;
                     // The `move` closure would move a shared scope local out
                     // of the enclosing render (a component's scope binding);
                     // rebind the chain to a closure-owned string instead.
@@ -482,8 +480,7 @@ pub(in crate::codegen) fn render_resolved_float(
             resolved_expr_use_code(program, expression, env, ValueMode::Owned)?
         ))
     };
-    let scale = resolved_expr_use_code(program, float.scale, env, ValueMode::Owned)?;
-    let scale = format!("(({scale}) as f32).max(f32::EPSILON).min(f32::MAX)");
+    let scale = clamped_f32_code(float.scale, "f32::EPSILON", "f32::MAX", program, env)?;
     let mut translate_env = ScopedBindingEnv::new(env);
     for (geometry, code) in float.geometry.iter().zip([
         "(__original.x as f64)",

@@ -384,31 +384,31 @@ impl Lowerer {
             )?,
             inline_code_radius: ResolvedContainerRadius {
                 all: values.optional(
-                    style.inline_code_radius.as_ref(),
+                    style.inline_code_radius.all.as_ref(),
                     &Type::F64,
                     "inline code radius",
                     true,
                 )?,
                 top_left: values.optional(
-                    style.inline_code_radius_top_left.as_ref(),
+                    style.inline_code_radius.top_left.as_ref(),
                     &Type::F64,
                     "inline code top-left radius",
                     true,
                 )?,
                 top_right: values.optional(
-                    style.inline_code_radius_top_right.as_ref(),
+                    style.inline_code_radius.top_right.as_ref(),
                     &Type::F64,
                     "inline code top-right radius",
                     true,
                 )?,
                 bottom_right: values.optional(
-                    style.inline_code_radius_bottom_right.as_ref(),
+                    style.inline_code_radius.bottom_right.as_ref(),
                     &Type::F64,
                     "inline code bottom-right radius",
                     true,
                 )?,
                 bottom_left: values.optional(
-                    style.inline_code_radius_bottom_left.as_ref(),
+                    style.inline_code_radius.bottom_left.as_ref(),
                     &Type::F64,
                     "inline code bottom-left radius",
                     true,

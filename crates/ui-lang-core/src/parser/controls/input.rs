@@ -367,16 +367,7 @@ pub(in crate::parser) fn parse_checkbox_status_style(
             style.border_color = Some(value.to_owned());
         } else if let Some(value) = part.strip_prefix("border-w=") {
             style.border_width = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r=") {
-            style.radius = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-tl=") {
-            style.radius_top_left = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-tr=") {
-            style.radius_top_right = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-br=") {
-            style.radius_bottom_right = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-bl=") {
-            style.radius_bottom_left = Some(parse(value)?);
+        } else if parse_radius_option(part, &mut style.radius, "", line)? {
         } else {
             return Err(error(
                 "E067",
@@ -500,16 +491,7 @@ pub(in crate::parser) fn parse_toggler_status_style(
             style.foreground_border_width = Some(parse(value)?);
         } else if let Some(value) = part.strip_prefix("text=") {
             style.text_color = Some(value.to_owned());
-        } else if let Some(value) = part.strip_prefix("r=") {
-            style.radius = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-tl=") {
-            style.radius_top_left = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-tr=") {
-            style.radius_top_right = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-br=") {
-            style.radius_bottom_right = Some(parse(value)?);
-        } else if let Some(value) = part.strip_prefix("r-bl=") {
-            style.radius_bottom_left = Some(parse(value)?);
+        } else if parse_radius_option(part, &mut style.radius, "", line)? {
         } else if let Some(value) = part.strip_prefix("p-ratio=") {
             style.padding_ratio = Some(parse(value)?);
         } else {

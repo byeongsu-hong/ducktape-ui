@@ -597,24 +597,24 @@ impl Lowerer {
             "span border width",
         )?;
         let radius = ResolvedContainerRadius {
-            all: values.optional(span.options.radius.as_ref(), &Type::F64, "span radius")?,
+            all: values.optional(span.options.radius.all.as_ref(), &Type::F64, "span radius")?,
             top_left: values.optional(
-                span.options.radius_top_left.as_ref(),
+                span.options.radius.top_left.as_ref(),
                 &Type::F64,
                 "span top-left radius",
             )?,
             top_right: values.optional(
-                span.options.radius_top_right.as_ref(),
+                span.options.radius.top_right.as_ref(),
                 &Type::F64,
                 "span top-right radius",
             )?,
             bottom_right: values.optional(
-                span.options.radius_bottom_right.as_ref(),
+                span.options.radius.bottom_right.as_ref(),
                 &Type::F64,
                 "span bottom-right radius",
             )?,
             bottom_left: values.optional(
-                span.options.radius_bottom_left.as_ref(),
+                span.options.radius.bottom_left.as_ref(),
                 &Type::F64,
                 "span bottom-left radius",
             )?,

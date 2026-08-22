@@ -234,12 +234,12 @@ impl Lowerer {
         };
         let radius = Self::resolve_primitive_radius(
             &mut values,
-            &options.radius,
+            &options.radius.all,
             [
-                &options.radius_top_left,
-                &options.radius_top_right,
-                &options.radius_bottom_right,
-                &options.radius_bottom_left,
+                &options.radius.top_left,
+                &options.radius.top_right,
+                &options.radius.bottom_right,
+                &options.radius.bottom_left,
             ],
             "radius",
         )?;

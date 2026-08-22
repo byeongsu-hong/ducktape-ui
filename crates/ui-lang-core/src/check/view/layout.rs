@@ -346,11 +346,11 @@ pub(in crate::check) fn infer_layout_group(
             }
             for value in [
                 &options.style.region_border_width,
-                &options.style.region_radius,
-                &options.style.region_radius_top_left,
-                &options.style.region_radius_top_right,
-                &options.style.region_radius_bottom_right,
-                &options.style.region_radius_bottom_left,
+                &options.style.region_radius.all,
+                &options.style.region_radius.top_left,
+                &options.style.region_radius.top_right,
+                &options.style.region_radius.bottom_right,
+                &options.style.region_radius.bottom_left,
                 &options.style.hovered_split_width,
                 &options.style.picked_split_width,
             ]

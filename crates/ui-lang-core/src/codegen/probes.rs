@@ -113,7 +113,7 @@ pub(in crate::codegen) fn generate_extern_probes(
         writeln!(
             out,
             "{}",
-            source_marker_for_origin(program, item.declaration.origin)
+            source_marker_origin(program, item.declaration.origin)
         )
         .unwrap();
         writeln!(
@@ -141,7 +141,7 @@ pub(in crate::codegen) fn generate_extern_probes(
         writeln!(
             out,
             "{}",
-            source_marker_for_origin(program, item.declaration.origin)
+            source_marker_origin(program, item.declaration.origin)
         )
         .unwrap();
         let params = item
@@ -353,12 +353,7 @@ pub(in crate::codegen) fn generate_extern_probes(
     }
 
     for declaration in component_declarations {
-        writeln!(
-            out,
-            "{}",
-            source_marker_for_origin(program, declaration.origin)
-        )
-        .unwrap();
+        writeln!(out, "{}", source_marker_origin(program, declaration.origin)).unwrap();
         let borrowed = declaration
             .parameters
             .iter()

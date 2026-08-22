@@ -115,12 +115,12 @@ pub(in crate::codegen) fn render_text_editor(
     if let Some(line_height) = &editor.line_height {
         let line_height = match line_height {
             ResolvedTextLineHeight::Relative(value) => format!(
-                "::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
+                "::iced::widget::text::LineHeight::Relative({})",
+                clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", program, env)?
             ),
             ResolvedTextLineHeight::Absolute(value) => format!(
-                "::iced::widget::text::LineHeight::Absolute((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
+                "::iced::widget::text::LineHeight::Absolute({}.into())",
+                clamped_f32_code(*value, "f32::EPSILON", "f32::MAX", program, env)?
             ),
         };
         write!(code, ".line_height({line_height})").unwrap();

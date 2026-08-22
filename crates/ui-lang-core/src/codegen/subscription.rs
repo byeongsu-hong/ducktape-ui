@@ -74,7 +74,7 @@ pub(in crate::codegen) fn generate_subscription(
         writeln!(
             out,
             "{}",
-            source_marker_for_origin(program, subscription.origin)
+            source_marker_origin(program, subscription.origin)
         )
         .unwrap();
         let source_arity = subscription.source_payloads.len();

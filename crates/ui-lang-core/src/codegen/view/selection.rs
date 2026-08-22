@@ -48,16 +48,16 @@ pub(in crate::codegen) fn render_pick_list(
     if let Some(size) = pick.text_size {
         write!(
             widget,
-            ".text_size((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-            resolved_expr_use_code(program, size, env, ValueMode::Owned)?
+            ".text_size({})",
+            clamped_f32_code(size, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
     if let Some(line_height) = pick.line_height {
         write!(
             widget,
-            ".text_line_height(::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX)))",
-            resolved_expr_use_code(program, line_height, env, ValueMode::Owned)?
+            ".text_line_height(::iced::widget::text::LineHeight::Relative({}))",
+            clamped_f32_code(line_height, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
@@ -152,16 +152,16 @@ pub(in crate::codegen) fn render_combo_box(
     if let Some(size) = combo.text_size {
         write!(
             widget,
-            ".size((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-            resolved_expr_use_code(program, size, env, ValueMode::Owned)?
+            ".size({})",
+            clamped_f32_code(size, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
     if let Some(line_height) = combo.line_height {
         write!(
             widget,
-            ".line_height(::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX)))",
-            resolved_expr_use_code(program, line_height, env, ValueMode::Owned)?
+            ".line_height(::iced::widget::text::LineHeight::Relative({}))",
+            clamped_f32_code(line_height, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
@@ -289,8 +289,8 @@ fn resolved_pick_handle_code(
                 || Ok("::std::option::Option::None".to_owned()),
                 |value| {
                     Ok::<_, Error>(format!(
-                        "::std::option::Option::Some((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                        resolved_expr_use_code(program, value, env, ValueMode::Owned)?
+                        "::std::option::Option::Some({}.into())",
+                        clamped_f32_code(value, "f32::EPSILON", "f32::MAX", program, env)?
                     ))
                 },
             )?;
@@ -323,8 +323,8 @@ fn resolved_pick_icon_code(
         || Ok("::std::option::Option::None".to_owned()),
         |value| {
             Ok::<_, Error>(format!(
-                "::std::option::Option::Some((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
+                "::std::option::Option::Some({}.into())",
+                clamped_f32_code(value, "f32::EPSILON", "f32::MAX", program, env)?
             ))
         },
     )?;
@@ -332,8 +332,8 @@ fn resolved_pick_icon_code(
         || Ok("::iced::widget::text::LineHeight::default()".to_owned()),
         |value| {
             Ok::<_, Error>(format!(
-                "::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-                resolved_expr_use_code(program, value, env, ValueMode::Owned)?
+                "::iced::widget::text::LineHeight::Relative({})",
+                clamped_f32_code(value, "f32::EPSILON", "f32::MAX", program, env)?
             ))
         },
     )?;

@@ -5,11 +5,7 @@ pub struct RuleOptions {
     pub style: Option<RuleStyle>,
     pub fill: Option<RuleFill>,
     pub color: Option<String>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
     pub snap: Option<Expr>,
 }
 
@@ -38,20 +34,12 @@ pub struct SliderStyle {
     pub rail_width: Option<Expr>,
     pub rail_border_color: Option<String>,
     pub rail_border_width: Option<Expr>,
-    pub rail_radius: Option<Expr>,
-    pub rail_radius_top_left: Option<Expr>,
-    pub rail_radius_top_right: Option<Expr>,
-    pub rail_radius_bottom_right: Option<Expr>,
-    pub rail_radius_bottom_left: Option<Expr>,
+    pub rail_radius: RadiusOptions,
     pub handle_shape: Option<SliderHandleShape>,
     pub handle_color: Option<BackgroundValue>,
     pub handle_border_color: Option<String>,
     pub handle_border_width: Option<Expr>,
-    pub handle_radius: Option<Expr>,
-    pub handle_radius_top_left: Option<Expr>,
-    pub handle_radius_top_right: Option<Expr>,
-    pub handle_radius_bottom_right: Option<Expr>,
-    pub handle_radius_bottom_left: Option<Expr>,
+    pub handle_radius: RadiusOptions,
 }
 
 #[derive(Clone, Debug)]
@@ -70,11 +58,7 @@ pub struct ProgressOptions {
     pub bar: Option<BackgroundValue>,
     pub border_color: Option<String>,
     pub border_width: Option<Expr>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,16 +68,6 @@ pub enum ProgressStyle {
     Success,
     Warning,
     Danger,
-}
-
-fn range_length_semantic_key(length: &Option<LengthValue>) -> String {
-    match length {
-        None => "none".into(),
-        Some(LengthValue::Fill) => "fill".into(),
-        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
-        Some(LengthValue::Shrink) => "shrink".into(),
-        Some(LengthValue::Fixed(_)) => "fixed".into(),
-    }
 }
 
 fn range_background_semantic_key(background: &Option<BackgroundValue>) -> String {
@@ -166,17 +140,17 @@ fn slider_status_semantic_key(style: &SliderStyle) -> String {
         [
             style.rail_width.is_some(),
             style.rail_border_width.is_some(),
-            style.rail_radius.is_some(),
-            style.rail_radius_top_left.is_some(),
-            style.rail_radius_top_right.is_some(),
-            style.rail_radius_bottom_right.is_some(),
-            style.rail_radius_bottom_left.is_some(),
+            style.rail_radius.all.is_some(),
+            style.rail_radius.top_left.is_some(),
+            style.rail_radius.top_right.is_some(),
+            style.rail_radius.bottom_right.is_some(),
+            style.rail_radius.bottom_left.is_some(),
             style.handle_border_width.is_some(),
-            style.handle_radius.is_some(),
-            style.handle_radius_top_left.is_some(),
-            style.handle_radius_top_right.is_some(),
-            style.handle_radius_bottom_right.is_some(),
-            style.handle_radius_bottom_left.is_some(),
+            style.handle_radius.all.is_some(),
+            style.handle_radius.top_left.is_some(),
+            style.handle_radius.top_right.is_some(),
+            style.handle_radius.bottom_right.is_some(),
+            style.handle_radius.bottom_left.is_some(),
         ],
     ) + &format!(
         "|handle-color={}",
@@ -220,17 +194,17 @@ pub(crate) fn slider_expression_roots<'a>(
             [
                 &status.rail_width,
                 &status.rail_border_width,
-                &status.rail_radius,
-                &status.rail_radius_top_left,
-                &status.rail_radius_top_right,
-                &status.rail_radius_bottom_right,
-                &status.rail_radius_bottom_left,
+                &status.rail_radius.all,
+                &status.rail_radius.top_left,
+                &status.rail_radius.top_right,
+                &status.rail_radius.bottom_right,
+                &status.rail_radius.bottom_left,
                 &status.handle_border_width,
-                &status.handle_radius,
-                &status.handle_radius_top_left,
-                &status.handle_radius_top_right,
-                &status.handle_radius_bottom_right,
-                &status.handle_radius_bottom_left,
+                &status.handle_radius.all,
+                &status.handle_radius.top_left,
+                &status.handle_radius.top_right,
+                &status.handle_radius.bottom_right,
+                &status.handle_radius.bottom_left,
             ]
             .into_iter()
             .flatten()
@@ -272,8 +246,8 @@ pub(crate) fn slider_semantic_key(
         "slider|axis={vertical}|default={}|shift={}|w={}|h={}|custom={custom}|statuses={statuses}|styles={styles:?}|change={}|release={}",
         options.default.is_some(),
         options.shift_step.is_some(),
-        range_length_semantic_key(&options.width),
-        range_length_semantic_key(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         range_route_semantic_key(Some(route)),
         range_route_semantic_key(release.as_ref()),
     )
@@ -297,11 +271,11 @@ pub(crate) fn progress_expression_roots<'a>(
     roots.extend(
         [
             &options.border_width,
-            &options.radius,
-            &options.radius_top_left,
-            &options.radius_top_right,
-            &options.radius_bottom_right,
-            &options.radius_bottom_left,
+            &options.radius.all,
+            &options.radius.top_left,
+            &options.radius.top_right,
+            &options.radius.bottom_right,
+            &options.radius.bottom_left,
         ]
         .into_iter()
         .flatten()
@@ -321,19 +295,19 @@ pub(crate) fn progress_semantic_key(
     );
     format!(
         "progress|axis={vertical}|length={}|girth={}|preset={:?}|custom={custom}|bg={}|bar={}|border={:?}|fields={:?}|styles={styles:?}",
-        range_length_semantic_key(&options.length),
-        range_length_semantic_key(&options.girth),
+        length_semantic_key(&options.length),
+        length_semantic_key(&options.girth),
         options.style,
         range_background_semantic_key(&options.background),
         range_background_semantic_key(&options.bar),
         options.border_color,
         [
             options.border_width.is_some(),
-            options.radius.is_some(),
-            options.radius_top_left.is_some(),
-            options.radius_top_right.is_some(),
-            options.radius_bottom_right.is_some(),
-            options.radius_bottom_left.is_some(),
+            options.radius.all.is_some(),
+            options.radius.top_left.is_some(),
+            options.radius.top_right.is_some(),
+            options.radius.bottom_right.is_some(),
+            options.radius.bottom_left.is_some(),
         ],
     )
 }
@@ -362,11 +336,11 @@ pub(crate) fn rule_expression_roots<'a>(
     }
     roots.extend(
         [
-            &options.radius,
-            &options.radius_top_left,
-            &options.radius_top_right,
-            &options.radius_bottom_right,
-            &options.radius_bottom_left,
+            &options.radius.all,
+            &options.radius.top_left,
+            &options.radius.top_right,
+            &options.radius.bottom_right,
+            &options.radius.bottom_left,
             &options.snap,
         ]
         .into_iter()
@@ -394,11 +368,11 @@ pub(crate) fn rule_semantic_key(axis: Axis, options: &RuleOptions, styles: &[Str
         options.style,
         options.color,
         [
-            options.radius.is_some(),
-            options.radius_top_left.is_some(),
-            options.radius_top_right.is_some(),
-            options.radius_bottom_right.is_some(),
-            options.radius_bottom_left.is_some(),
+            options.radius.all.is_some(),
+            options.radius.top_left.is_some(),
+            options.radius.top_right.is_some(),
+            options.radius.bottom_right.is_some(),
+            options.radius.bottom_left.is_some(),
         ],
         options.snap.is_some(),
     )
@@ -462,8 +436,8 @@ pub(crate) fn space_semantic_key(
 ) -> String {
     format!(
         "space|width={}|height={}|styles={styles:?}",
-        range_length_semantic_key(width),
-        range_length_semantic_key(height),
+        length_semantic_key(width),
+        length_semantic_key(height),
     )
 }
 
@@ -580,11 +554,11 @@ fn push_selection_surface_roots<'a>(roots: &mut Vec<&'a Expr>, surface: &'a Cont
     roots.extend(
         [
             &surface.border_width,
-            &surface.radius,
-            &surface.radius_top_left,
-            &surface.radius_top_right,
-            &surface.radius_bottom_right,
-            &surface.radius_bottom_left,
+            &surface.radius.all,
+            &surface.radius.top_left,
+            &surface.radius.top_right,
+            &surface.radius.bottom_right,
+            &surface.radius.bottom_left,
             &surface.shadow_x,
             &surface.shadow_y,
             &surface.shadow_blur,
@@ -769,11 +743,11 @@ fn selection_surface_key(surface: &ContainerStyleOptions) -> String {
         ],
         [
             surface.border_width.is_some(),
-            surface.radius.is_some(),
-            surface.radius_top_left.is_some(),
-            surface.radius_top_right.is_some(),
-            surface.radius_bottom_right.is_some(),
-            surface.radius_bottom_left.is_some(),
+            surface.radius.all.is_some(),
+            surface.radius.top_left.is_some(),
+            surface.radius.top_right.is_some(),
+            surface.radius.bottom_right.is_some(),
+            surface.radius.bottom_left.is_some(),
             surface.shadow_x.is_some(),
             surface.shadow_y.is_some(),
             surface.shadow_blur.is_some(),
@@ -1000,11 +974,7 @@ pub struct MediaOptions {
     pub filter: Option<ImageFilter>,
     pub scale: Option<Expr>,
     pub expand: Option<Expr>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
     pub crop: Option<[Expr; 4]>,
     pub padding: Option<Expr>,
     pub min_scale: Option<Expr>,
@@ -1033,11 +1003,7 @@ pub struct TooltipOptions {
     pub text_color: Option<String>,
     pub border_color: Option<String>,
     pub border_width: Option<Expr>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
     pub shadow_color: Option<String>,
     pub shadow_x: Option<Expr>,
     pub shadow_y: Option<Expr>,
@@ -1184,16 +1150,7 @@ pub(crate) fn media_expression_roots<'a>(
     }
     roots.extend(options.scale.iter());
     roots.extend(options.expand.iter());
-    for value in [
-        &options.radius,
-        &options.radius_top_left,
-        &options.radius_top_right,
-        &options.radius_bottom_right,
-        &options.radius_bottom_left,
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for value in options.radius.iter() {
         roots.push(value);
     }
     if let Some(crop) = &options.crop {
@@ -1249,11 +1206,11 @@ pub(crate) fn media_semantic_key(kind: MediaKind, options: &MediaOptions) -> Str
         options.filter,
         present(options.scale.is_some()),
         present(options.expand.is_some()),
-        present(options.radius.is_some()),
-        present(options.radius_top_left.is_some()),
-        present(options.radius_top_right.is_some()),
-        present(options.radius_bottom_right.is_some()),
-        present(options.radius_bottom_left.is_some()),
+        present(options.radius.all.is_some()),
+        present(options.radius.top_left.is_some()),
+        present(options.radius.top_right.is_some()),
+        present(options.radius.bottom_right.is_some()),
+        present(options.radius.bottom_left.is_some()),
         present(options.crop.is_some()),
         present(options.padding.is_some()),
         present(options.min_scale.is_some()),
@@ -1278,11 +1235,11 @@ pub(crate) fn tooltip_expression_roots(options: &TooltipOptions) -> Vec<&Expr> {
     }
     for value in [
         &options.border_width,
-        &options.radius,
-        &options.radius_top_left,
-        &options.radius_top_right,
-        &options.radius_bottom_right,
-        &options.radius_bottom_left,
+        &options.radius.all,
+        &options.radius.top_left,
+        &options.radius.top_right,
+        &options.radius.bottom_right,
+        &options.radius.bottom_left,
         &options.shadow_x,
         &options.shadow_y,
         &options.shadow_blur,
@@ -1320,11 +1277,11 @@ pub(crate) fn tooltip_semantic_key(options: &TooltipOptions) -> String {
         options.text_color,
         options.border_color,
         present(options.border_width.is_some()),
-        present(options.radius.is_some()),
-        present(options.radius_top_left.is_some()),
-        present(options.radius_top_right.is_some()),
-        present(options.radius_bottom_right.is_some()),
-        present(options.radius_bottom_left.is_some()),
+        present(options.radius.all.is_some()),
+        present(options.radius.top_left.is_some()),
+        present(options.radius.top_right.is_some()),
+        present(options.radius.bottom_right.is_some()),
+        present(options.radius.bottom_left.is_some()),
         options.shadow_color,
         present(options.shadow_x.is_some()),
         present(options.shadow_y.is_some()),
