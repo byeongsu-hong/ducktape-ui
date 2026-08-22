@@ -253,7 +253,10 @@ impl Statement {
         }
     }
 
-    pub(crate) fn immediate_task(&self) -> Option<ImmediateTask> {
+    /// The task-finality classifier: the diagnostic code and the prose label
+    /// for a statement that must close a handler, or None if it may sit
+    /// mid-handler. `check::handler` is the only reader of the pair.
+    pub(crate) fn immediate_task(&self) -> Option<(&'static str, &'static str)> {
         match self {
             Self::Let { .. }
             | Self::Assign { .. }
@@ -264,45 +267,36 @@ impl Statement {
             | Self::Abort { .. }
             | Self::DebugStart { .. }
             | Self::DebugFinish { .. } => None,
-            Self::Match { .. } => Some(ImmediateTask::Match),
-            Self::Exit { .. } => Some(ImmediateTask::Exit),
-            Self::Run { kind, .. } => Some(ImmediateTask::Run(*kind)),
-            Self::Sip { .. } => Some(ImmediateTask::Sip),
-            Self::TaskFlow { .. } => Some(ImmediateTask::Flow),
-            Self::TaskGroup { .. } => Some(ImmediateTask::Group),
-            Self::Abortable { .. } => Some(ImmediateTask::Abortable),
-            Self::ClipboardWrite { .. } => Some(ImmediateTask::Clipboard),
-            Self::Emit { .. } => Some(ImmediateTask::Emit),
+            Self::Match { .. } => Some(("E141", "handler match")),
+            Self::Exit { .. } => Some(("E141", "exit")),
+            Self::Run { kind, .. } => Some((
+                "E141",
+                match kind {
+                    EffectKind::Future => "run",
+                    EffectKind::Task => "task",
+                    EffectKind::Stream => "stream",
+                },
+            )),
+            Self::Sip { .. } => Some(("E141", "sip")),
+            Self::TaskFlow { .. } => Some(("E141", "flow")),
+            Self::TaskGroup { .. } => Some(("E141", "task group")),
+            Self::Abortable { .. } => Some(("E141", "abortable task")),
+            Self::ClipboardWrite { .. } => Some(("E141", "clipboard write")),
+            Self::Emit { .. } => Some(("E141", "emit")),
             // A SLICE IS A PUBLICATION, not the handler's closing act: it
             // hands a payload on and the handler keeps going. Its message is
             // accumulated and batched with whatever task the handler does
             // end on, so a guard below one cannot swallow it.
             Self::Slice { .. } => None,
-            Self::WidgetOperation { .. } => Some(ImmediateTask::Widget),
-            Self::WindowOperation { .. } => Some(ImmediateTask::Window),
+            Self::WidgetOperation { .. } => Some(("E172", "widget operation")),
+            Self::WindowOperation { .. } => Some(("E173", "window task")),
             Self::PaneOperation {
                 operation: PaneOperation::Maximized | PaneOperation::Adjacent { .. },
                 ..
-            } => Some(ImmediateTask::PaneQuery),
+            } => Some(("E188", "pane query")),
             Self::PaneOperation { .. } => None,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ImmediateTask {
-    Match,
-    Exit,
-    Run(EffectKind),
-    Sip,
-    Flow,
-    Group,
-    Abortable,
-    Clipboard,
-    Emit,
-    Widget,
-    Window,
-    PaneQuery,
 }
 
 #[derive(Clone, Debug)]
