@@ -762,16 +762,24 @@ pub async fn keep_wallet() -> Result<Entry, CustodyFault> {
                 },
                 &failure.message,
             )),
-            Ok(()) => Ok(Entry::saying(
-                Session::Locked,
-                &format!(
-                    "{address} is on this Mac now, behind Touch ID. Enrol the networks you want \
-                     to trade and this app can sign for itself.",
-                ),
-            )),
+            Ok(()) => Ok(wallet_stored(&address)),
         }
     })
     .await
+}
+
+/// What a kept wallet answers with: the address, and the act it unblocks.
+///
+/// Split out of `keep_wallet` so `demo_wallet_kept` is this sentence rather
+/// than a copy of it that can drift away from it.
+fn wallet_stored(address: &str) -> Entry {
+    Entry::saying(
+        Session::Locked,
+        &format!(
+            "{address} is on this Mac now, behind Touch ID. Enrol the networks you want to trade \
+             and this app can sign for itself.",
+        ),
+    )
 }
 
 /// How long this app holds a Lighter key before asking for it again.
@@ -2020,6 +2028,17 @@ fn entered(account: &str) -> Session {
             account: account.to_owned(),
         },
     )
+}
+
+/// What a Mac answers when the keychain kept the key.
+///
+/// The one custody answer no Linux runner can produce: a build with no keychain
+/// refuses the store and answers `Unavailable`, so the screen on the far side
+/// of a *successful* one has no other way to be driven. Built by the same
+/// constructor the real store returns, so a fixture cannot say something the
+/// app would not.
+pub fn demo_wallet_kept(address: String) -> Entry {
+    wallet_stored(&address)
 }
 
 pub fn demo_session_unenrolled() -> Session {

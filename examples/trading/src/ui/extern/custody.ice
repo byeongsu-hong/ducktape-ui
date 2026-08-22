@@ -63,6 +63,10 @@ extern crate::custody
   pure pending_wallet() -> str
   pure forget_wallet() -> Session
   keep_wallet() -> Entry ! CustodyFault
+  // The answer a Mac gives when the keychain kept it. Here for the same reason
+  // the demo sessions below are: a build with no keychain refuses every store,
+  // so the screen on the far side of one has no other way to be reached.
+  pure demo_wallet_kept(address:str) -> Entry
   // What one enrolment sheet authorises, every network named with its kind.
   // The owner's rule is that a master signature never happens without a sheet
   // just answered and a naming of everything it covers; one prompt for four

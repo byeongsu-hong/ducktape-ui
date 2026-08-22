@@ -875,10 +875,46 @@ on store_wallet
   run every keep_wallet() -> wallet_kept _ | custody_failed _
 
 on wallet_kept(entry)
+  let kept = import_address
+  session = entry.session
+  import_note = entry.note
+  // The address leaves the panel on both arms, because the key does:
+  // `keep_wallet` takes the waiting key before it tries, so a store that failed
+  // has spent it too and there is nothing left for a second press to keep.
   create_made = false
   import_address = ""
-  import_note = entry.note
-  session = entry.session
+  // A store that could not happen leaves the step standing with the platform's
+  // own words in it. That surface is the typed door, and on this arm that is
+  // the honest one: nothing was written, and typing a phrase is the way on.
+  return if !session_unlockable(entry.session)
+  // Stored, and emptying the step in place was the whole of the bug. A step
+  // with no address and no made phrase in it *is* the typed import door — the
+  // same box, the same CHECK, retitled "Import a wallet" — so the press that
+  // finished making a wallet redrew the screen the reader had just left, over
+  // the account it had that second stored.
+  import_open = false
+  import_note = ""
+  // The sentence follows the act it points at: enrolling is what comes next,
+  // and the custody panel is where that button is.
+  unlock_note = entry.note
+  // An import made from Settings already has an account on screen and does not
+  // move a reader off it. One made at the gate has none, and the account just
+  // stored is the one this app is for — so it opens on it rather than leaving
+  // a first-run reader back at the door they came through.
+  return if !empty(address)
+  address = kept
+  draft = kept
+  gate = false
+  status = "Loading"
+  tape = tape_focus(tape, coin, interval)
+  parallel
+    run every venue_symbols(venue) -> symbols_loaded _ | failed _
+    run every venue_candles(venue, tape, coin, interval) -> candles_loaded _ | failed _
+    run every venue_account(venue, kept) -> account_loaded _ | account_failed _
+    run every venue_orders(venue, kept) -> orders_loaded _ | orders_failed _
+    run every venue_portfolio(venue, kept) -> portfolio_loaded _ | portfolio_failed _
+    stream replace lane=market_feed venue_market_feed(venue, tape) -> market_ticked _ | feed_failed _
+    stream replace lane=fill_feed venue_fill_feed(venue, kept) -> fills_streamed _ | fills_failed _
 
 // One Touch ID, every network the registry lists, each named on the panel
 // before it is pressed.

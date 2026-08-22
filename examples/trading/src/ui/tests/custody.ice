@@ -634,3 +634,53 @@ test trading_a_creation_that_did_not_derive_does_not_become_an_import
   expect exists close
   expect text "Make a wallet"
   expect no text "Import a wallet"
+
+// A stored wallet is not an import waiting to be typed.
+//
+// The step emptied itself in place on the way out, and an emptied step *is* the
+// typed import door: no address and no made phrase is the same condition the
+// phrase box and CHECK are drawn under, beneath the title "Import a wallet". So
+// the press that finished making a wallet redrew the screen the reader had just
+// left, over the account it had that second stored. What a store leaves is an
+// account this machine holds the key for, and the app opens on it.
+//
+// Dispatched rather than clicked because no runner here can reach it: a build
+// with no keychain refuses every store and answers `Unavailable`, which is the
+// other arm — held by `trading_an_import_answers_the_account_and_one_press_spends_it`,
+// which presses the real button.
+test trading_a_stored_wallet_opens_on_the_account_rather_than_the_import_door
+  preset created_address
+  viewport 1440 900
+  target step = #import
+  expect exists step
+  expect gate
+  expect empty(address)
+  dispatch wallet_kept(demo_wallet_kept(import_address))
+  // Gone, rather than emptied into the door it is not.
+  expect !import_open
+  expect missing step
+  expect no text "Import a wallet"
+  expect no text "Make a wallet"
+  // And what it left behind is the account those words make.
+  expect address == "0x9858effd232b4033e47d90003d41ec34ecaeda94"
+  expect !gate
+  expect empty(import_address)
+  expect !create_made
+  // The sentence follows the act it points at, onto the panel that act's
+  // button lives on.
+  expect unlock_note == "0x9858effd232b4033e47d90003d41ec34ecaeda94 is on this Mac now, behind Touch ID. Enrol the networks you want to trade and this app can sign for itself."
+
+// The same store, made from Settings over an account already on screen. The
+// step still closes — it is finished either way — but a reader who was reading
+// one account does not get moved onto another by a press about custody.
+test trading_a_store_over_an_open_account_closes_the_step_and_stays_put
+  preset held
+  viewport 1660 900
+  target step = #import
+  dispatch open_import
+  expect exists step
+  dispatch wallet_kept(demo_wallet_kept("0x9858effd232b4033e47d90003d41ec34ecaeda94"))
+  expect missing step
+  expect !import_open
+  expect address == "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+  expect !gate
