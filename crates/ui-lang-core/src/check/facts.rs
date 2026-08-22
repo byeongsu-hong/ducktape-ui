@@ -307,14 +307,14 @@ pub(crate) enum CheckedViewFlow {
         semantic_key: String,
         expression_count: u32,
         breakpoint: CheckedExprUseId,
-        dimensions: [CheckedResponsiveLength; 2],
+        dimensions: [CheckedLength; 2],
     },
     ResponsiveSize {
         semantic_key: String,
         expression_count: u32,
         width: CheckedLocalId,
         height: CheckedLocalId,
-        dimensions: [CheckedResponsiveLength; 2],
+        dimensions: [CheckedLength; 2],
     },
     Float {
         semantic_key: String,
@@ -334,7 +334,7 @@ pub(crate) struct CheckedLazyKeyBinding {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CheckedKeyedLength {
+pub(crate) enum CheckedLength {
     None,
     Fill,
     FillPortion(u16),
@@ -346,7 +346,7 @@ pub(crate) enum CheckedKeyedLength {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct CheckedKeyedPadding {
+pub(crate) struct CheckedPadding {
     pub(crate) all: Option<CheckedExprUseId>,
     pub(crate) x: Option<CheckedExprUseId>,
     pub(crate) y: Option<CheckedExprUseId>,
@@ -359,30 +359,18 @@ pub(crate) struct CheckedKeyedPadding {
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedKeyedLayout {
     pub(crate) semantic_key: String,
-    pub(crate) width: CheckedKeyedLength,
-    pub(crate) height: CheckedKeyedLength,
+    pub(crate) width: CheckedLength,
+    pub(crate) height: CheckedLength,
     pub(crate) spacing: Option<CheckedExprUseId>,
-    pub(crate) padding: CheckedKeyedPadding,
+    pub(crate) padding: CheckedPadding,
     pub(crate) max_width: Option<CheckedExprUseId>,
     pub(crate) virtual_row: Option<CheckedExprUseId>,
     pub(crate) align: Option<FlexAlignment>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum CheckedTableLength {
-    None,
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    Fixed {
-        expression: CheckedExprUseId,
-        source: Type,
-    },
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct CheckedTableColumn {
-    pub(crate) width: CheckedTableLength,
+    pub(crate) width: CheckedLength,
     pub(crate) align_x: Option<InputAlignment>,
     pub(crate) align_y: Option<VerticalAlignment>,
     pub(crate) origin: OriginId,
@@ -391,7 +379,7 @@ pub(crate) struct CheckedTableColumn {
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedTableLayout {
     pub(crate) semantic_key: String,
-    pub(crate) width: CheckedTableLength,
+    pub(crate) width: CheckedLength,
     pub(crate) padding: Option<CheckedExprUseId>,
     pub(crate) padding_x: Option<CheckedExprUseId>,
     pub(crate) padding_y: Option<CheckedExprUseId>,
@@ -416,18 +404,6 @@ pub(crate) enum CheckedPaneConfiguration {
         ratio: f32,
         a: Box<CheckedPaneConfiguration>,
         b: Box<CheckedPaneConfiguration>,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum CheckedPaneLength {
-    None,
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    Fixed {
-        expression: CheckedExprUseId,
-        source: Type,
     },
 }
 
@@ -469,20 +445,9 @@ pub(crate) struct CheckedPaneSurface {
     pub(crate) pixel_snap: Option<CheckedExprUseId>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct CheckedPanePadding {
-    pub(crate) all: Option<CheckedExprUseId>,
-    pub(crate) x: Option<CheckedExprUseId>,
-    pub(crate) y: Option<CheckedExprUseId>,
-    pub(crate) top: Option<CheckedExprUseId>,
-    pub(crate) right: Option<CheckedExprUseId>,
-    pub(crate) bottom: Option<CheckedExprUseId>,
-    pub(crate) left: Option<CheckedExprUseId>,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedPaneTitle {
-    pub(crate) padding: CheckedPanePadding,
+    pub(crate) padding: CheckedPadding,
     pub(crate) always_show_controls: bool,
     pub(crate) has_controls: bool,
     pub(crate) has_compact_controls: bool,
@@ -540,8 +505,8 @@ pub(crate) struct CheckedPaneGrid {
     pub(crate) id: ViewId,
     pub(crate) name: String,
     pub(crate) configuration: CheckedPaneConfiguration,
-    pub(crate) width: CheckedPaneLength,
-    pub(crate) height: CheckedPaneLength,
+    pub(crate) width: CheckedLength,
+    pub(crate) height: CheckedLength,
     pub(crate) spacing: Option<CheckedExprUseId>,
     pub(crate) min_size: Option<CheckedExprUseId>,
     pub(crate) resize_leeway: Option<CheckedExprUseId>,
@@ -553,18 +518,6 @@ pub(crate) struct CheckedPaneGrid {
     pub(crate) templates: Vec<CheckedPaneTemplate>,
     pub(crate) expression_count: u32,
     pub(crate) origin: OriginId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CheckedResponsiveLength {
-    None,
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    Fixed {
-        expression: CheckedExprUseId,
-        source: Type,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -1995,7 +1948,7 @@ impl CheckedFacts {
         &mut self,
         view: ViewId,
         index: usize,
-        replacement: CheckedResponsiveLength,
+        replacement: CheckedLength,
     ) {
         let dimensions = match &mut self.views[view.0 as usize].flow {
             CheckedViewFlow::ResponsiveBreakpoint { dimensions, .. }
@@ -2035,8 +1988,7 @@ impl CheckedFacts {
             | CheckedViewFlow::ResponsiveSize { dimensions, .. } => dimensions,
             _ => panic!("test view must be responsive"),
         };
-        let CheckedResponsiveLength::Fixed { expression, .. } = &mut dimensions[target_index]
-        else {
+        let CheckedLength::Fixed { expression, .. } = &mut dimensions[target_index] else {
             panic!("test dimension must be fixed");
         };
         *expression = source;
@@ -6616,12 +6568,12 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
         expression_count: &mut u32,
-    ) -> Result<CheckedPaneLength, Error> {
+    ) -> Result<CheckedLength, Error> {
         Ok(match length {
-            None => CheckedPaneLength::None,
-            Some(LengthValue::Fill) => CheckedPaneLength::Fill,
-            Some(LengthValue::FillPortion(portion)) => CheckedPaneLength::FillPortion(*portion),
-            Some(LengthValue::Shrink) => CheckedPaneLength::Shrink,
+            None => CheckedLength::None,
+            Some(LengthValue::Fill) => CheckedLength::Fill,
+            Some(LengthValue::FillPortion(portion)) => CheckedLength::FillPortion(*portion),
+            Some(LengthValue::Shrink) => CheckedLength::Shrink,
             Some(LengthValue::Fixed(expression)) => {
                 let expression = self.push_interaction_expression(
                     pane,
@@ -6633,7 +6585,7 @@ impl<'a> FactsBuilder<'a> {
                     parent,
                 )?;
                 let source = self.facts.expression_use(expression).source.clone();
-                CheckedPaneLength::Fixed { expression, source }
+                CheckedLength::Fixed { expression, source }
             }
         })
     }
@@ -6841,7 +6793,7 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
         expression_count: &mut u32,
-    ) -> Result<CheckedPanePadding, Error> {
+    ) -> Result<CheckedPadding, Error> {
         let mut take = |value: Option<&Expr>| {
             self.lower_pane_optional_expression(
                 pane,
@@ -6853,7 +6805,7 @@ impl<'a> FactsBuilder<'a> {
                 expression_count,
             )
         };
-        Ok(CheckedPanePadding {
+        Ok(CheckedPadding {
             all: take(padding.all.as_ref())?,
             x: take(padding.x.as_ref())?,
             y: take(padding.y.as_ref())?,
@@ -9471,7 +9423,7 @@ impl<'a> FactsBuilder<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn lower_responsive_length(
+    fn lower_length(
         &mut self,
         view: ViewId,
         value: &Option<LengthValue>,
@@ -9479,14 +9431,12 @@ impl<'a> FactsBuilder<'a> {
         env: &dyn FactEnvironment,
         span: &Span,
         parent: OriginId,
-    ) -> Result<CheckedResponsiveLength, Error> {
+    ) -> Result<CheckedLength, Error> {
         Ok(match value {
-            None => CheckedResponsiveLength::None,
-            Some(LengthValue::Fill) => CheckedResponsiveLength::Fill,
-            Some(LengthValue::FillPortion(portion)) => {
-                CheckedResponsiveLength::FillPortion(*portion)
-            }
-            Some(LengthValue::Shrink) => CheckedResponsiveLength::Shrink,
+            None => CheckedLength::None,
+            Some(LengthValue::Fill) => CheckedLength::Fill,
+            Some(LengthValue::FillPortion(portion)) => CheckedLength::FillPortion(*portion),
+            Some(LengthValue::Shrink) => CheckedLength::Shrink,
             Some(LengthValue::Fixed(expression)) => {
                 let expression = self.push_view_expression(
                     CheckedExprOwner::View { view, role },
@@ -9498,115 +9448,17 @@ impl<'a> FactsBuilder<'a> {
                 )?;
                 let source = self.facts.expression_use(expression).source.clone();
                 if !matches!(source, Type::F64 | Type::Length) {
-                    return Err(self.invariant(
-                        span,
-                        "responsive dimension type diverged after semantic checking",
-                    ));
+                    return Err(
+                        self.invariant(span, "dimension type diverged after semantic checking")
+                    );
                 }
-                CheckedResponsiveLength::Fixed { expression, source }
+                CheckedLength::Fixed { expression, source }
             }
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn lower_keyed_length(
-        &mut self,
-        view: ViewId,
-        value: &Option<LengthValue>,
-        role: CheckedViewExprRole,
-        env: &dyn FactEnvironment,
-        span: &Span,
-        parent: OriginId,
-    ) -> Result<CheckedKeyedLength, Error> {
-        Ok(match value {
-            None => CheckedKeyedLength::None,
-            Some(LengthValue::Fill) => CheckedKeyedLength::Fill,
-            Some(LengthValue::FillPortion(portion)) => CheckedKeyedLength::FillPortion(*portion),
-            Some(LengthValue::Shrink) => CheckedKeyedLength::Shrink,
-            Some(LengthValue::Fixed(expression)) => {
-                let expression = self.push_view_expression(
-                    CheckedExprOwner::View { view, role },
-                    expression,
-                    None,
-                    env,
-                    span,
-                    parent,
-                )?;
-                let source = self.facts.expression_use(expression).source.clone();
-                if !matches!(source, Type::F64 | Type::Length) {
-                    return Err(self.invariant(
-                        span,
-                        "keyed dimension type diverged after semantic checking",
-                    ));
-                }
-                CheckedKeyedLength::Fixed { expression, source }
-            }
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn lower_keyed_metric(
-        &mut self,
-        view: ViewId,
-        value: &Option<Expr>,
-        role: CheckedViewExprRole,
-        env: &dyn FactEnvironment,
-        span: &Span,
-        parent: OriginId,
-    ) -> Result<Option<CheckedExprUseId>, Error> {
-        value
-            .as_ref()
-            .map(|expression| {
-                self.push_view_expression(
-                    CheckedExprOwner::View { view, role },
-                    expression,
-                    Some(&Type::F64),
-                    env,
-                    span,
-                    parent,
-                )
-            })
-            .transpose()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn lower_table_length(
-        &mut self,
-        view: ViewId,
-        value: &Option<LengthValue>,
-        role: CheckedViewExprRole,
-        env: &dyn FactEnvironment,
-        span: &Span,
-        parent: OriginId,
-    ) -> Result<CheckedTableLength, Error> {
-        Ok(match value {
-            None => CheckedTableLength::None,
-            Some(LengthValue::Fill) => CheckedTableLength::Fill,
-            Some(LengthValue::FillPortion(portion)) => CheckedTableLength::FillPortion(*portion),
-            Some(LengthValue::Shrink) => CheckedTableLength::Shrink,
-            Some(LengthValue::Fixed(expression)) => {
-                let expression = self.push_view_expression(
-                    CheckedExprOwner::View { view, role },
-                    expression,
-                    None,
-                    env,
-                    span,
-                    parent,
-                )?;
-                let source = self.facts.expression_use(expression).source.clone();
-                if !matches!(source, Type::F64 | Type::Length) {
-                    return Err(self.invariant(
-                        span,
-                        "table dimension type diverged after semantic checking",
-                    ));
-                }
-                CheckedTableLength::Fixed { expression, source }
-            }
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn lower_table_metric(
+    fn lower_metric(
         &mut self,
         view: ViewId,
         value: &Option<Expr>,
@@ -10104,7 +9956,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let width = self.lower_keyed_length(
+                let width = self.lower_length(
                     view,
                     &options.width,
                     CheckedViewExprRole::KeyedWidth,
@@ -10112,7 +9964,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let height = self.lower_keyed_length(
+                let height = self.lower_length(
                     view,
                     &options.height,
                     CheckedViewExprRole::KeyedHeight,
@@ -10120,7 +9972,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let spacing = self.lower_keyed_metric(
+                let spacing = self.lower_metric(
                     view,
                     &options.spacing,
                     CheckedViewExprRole::KeyedSpacing,
@@ -10128,8 +9980,8 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let padding = CheckedKeyedPadding {
-                    all: self.lower_keyed_metric(
+                let padding = CheckedPadding {
+                    all: self.lower_metric(
                         view,
                         &options.padding.all,
                         CheckedViewExprRole::KeyedPaddingAll,
@@ -10137,7 +9989,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    x: self.lower_keyed_metric(
+                    x: self.lower_metric(
                         view,
                         &options.padding.x,
                         CheckedViewExprRole::KeyedPaddingX,
@@ -10145,7 +9997,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    y: self.lower_keyed_metric(
+                    y: self.lower_metric(
                         view,
                         &options.padding.y,
                         CheckedViewExprRole::KeyedPaddingY,
@@ -10153,7 +10005,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    top: self.lower_keyed_metric(
+                    top: self.lower_metric(
                         view,
                         &options.padding.top,
                         CheckedViewExprRole::KeyedPaddingTop,
@@ -10161,7 +10013,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    right: self.lower_keyed_metric(
+                    right: self.lower_metric(
                         view,
                         &options.padding.right,
                         CheckedViewExprRole::KeyedPaddingRight,
@@ -10169,7 +10021,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    bottom: self.lower_keyed_metric(
+                    bottom: self.lower_metric(
                         view,
                         &options.padding.bottom,
                         CheckedViewExprRole::KeyedPaddingBottom,
@@ -10177,7 +10029,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    left: self.lower_keyed_metric(
+                    left: self.lower_metric(
                         view,
                         &options.padding.left,
                         CheckedViewExprRole::KeyedPaddingLeft,
@@ -10186,7 +10038,7 @@ impl<'a> FactsBuilder<'a> {
                         origin,
                     )?,
                 };
-                let max_width = self.lower_keyed_metric(
+                let max_width = self.lower_metric(
                     view,
                     &options.max_width,
                     CheckedViewExprRole::KeyedMaxWidth,
@@ -10194,7 +10046,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let virtual_row = self.lower_keyed_metric(
+                let virtual_row = self.lower_metric(
                     view,
                     &options.virtual_row,
                     CheckedViewExprRole::KeyedVirtualRow,
@@ -10354,7 +10206,7 @@ impl<'a> FactsBuilder<'a> {
                     value: (CheckedPathRoot::Local(local), *row_ty),
                 };
                 record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
-                let width = self.lower_table_length(
+                let width = self.lower_length(
                     view,
                     &options.width,
                     CheckedViewExprRole::TableWidth,
@@ -10362,7 +10214,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let padding = self.lower_table_metric(
+                let padding = self.lower_metric(
                     view,
                     &options.padding,
                     CheckedViewExprRole::TablePadding,
@@ -10370,7 +10222,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let padding_x = self.lower_table_metric(
+                let padding_x = self.lower_metric(
                     view,
                     &options.padding_x,
                     CheckedViewExprRole::TablePaddingX,
@@ -10378,7 +10230,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let padding_y = self.lower_table_metric(
+                let padding_y = self.lower_metric(
                     view,
                     &options.padding_y,
                     CheckedViewExprRole::TablePaddingY,
@@ -10386,7 +10238,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let separator = self.lower_table_metric(
+                let separator = self.lower_metric(
                     view,
                     &options.separator,
                     CheckedViewExprRole::TableSeparator,
@@ -10394,7 +10246,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let separator_x = self.lower_table_metric(
+                let separator_x = self.lower_metric(
                     view,
                     &options.separator_x,
                     CheckedViewExprRole::TableSeparatorX,
@@ -10402,7 +10254,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let separator_y = self.lower_table_metric(
+                let separator_y = self.lower_metric(
                     view,
                     &options.separator_y,
                     CheckedViewExprRole::TableSeparatorY,
@@ -10413,7 +10265,7 @@ impl<'a> FactsBuilder<'a> {
                 let mut checked_columns = Vec::with_capacity(columns.len());
                 for (index, column) in columns.iter().enumerate() {
                     let column_origin = self.origins.push(&column.span, Some(origin));
-                    let width = self.lower_table_length(
+                    let width = self.lower_length(
                         view,
                         &column.width,
                         CheckedViewExprRole::TableColumnWidth(index as u32),
@@ -10478,7 +10330,7 @@ impl<'a> FactsBuilder<'a> {
                 let expression_count =
                     crate::ast::responsive_expression_count(content, width, height);
                 let dimensions = [
-                    self.lower_responsive_length(
+                    self.lower_length(
                         view,
                         width,
                         CheckedViewExprRole::ResponsiveWidthDimension,
@@ -10486,7 +10338,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    self.lower_responsive_length(
+                    self.lower_length(
                         view,
                         height,
                         CheckedViewExprRole::ResponsiveHeightDimension,
@@ -14107,10 +13959,10 @@ view
             panic!("root must retain responsive breakpoint facts");
         };
         assert_eq!(*expression_count, 2);
-        assert_eq!(dimensions[0], CheckedResponsiveLength::Fill);
+        assert_eq!(dimensions[0], CheckedLength::Fill);
         assert!(matches!(
             dimensions[1],
-            CheckedResponsiveLength::Fixed {
+            CheckedLength::Fixed {
                 source: Type::F64,
                 ..
             }
@@ -14270,8 +14122,8 @@ view
                 role: CheckedViewLocalRole::KeyedItem,
             }
         );
-        assert!(matches!(layout.width, CheckedKeyedLength::FillPortion(2)));
-        assert!(matches!(layout.height, CheckedKeyedLength::Fixed { .. }));
+        assert!(matches!(layout.width, CheckedLength::FillPortion(2)));
+        assert!(matches!(layout.height, CheckedLength::Fixed { .. }));
         assert!(layout.spacing.is_some());
         assert!(layout.padding.all.is_some());
         assert!(layout.max_width.is_some());

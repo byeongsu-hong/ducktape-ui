@@ -180,18 +180,16 @@ impl Lowerer {
         &self,
         view: ViewId,
         scope: CheckedViewScope,
-        length: CheckedTableLength,
+        length: CheckedLength,
         role: CheckedViewExprRole,
         span: &Span,
     ) -> Result<Option<ResolvedTableLength>, Error> {
         Ok(match length {
-            CheckedTableLength::None => None,
-            CheckedTableLength::Fill => Some(ResolvedTableLength::Fill),
-            CheckedTableLength::FillPortion(portion) => {
-                Some(ResolvedTableLength::FillPortion(portion))
-            }
-            CheckedTableLength::Shrink => Some(ResolvedTableLength::Shrink),
-            CheckedTableLength::Fixed { expression, source } => {
+            CheckedLength::None => None,
+            CheckedLength::Fill => Some(ResolvedTableLength::Fill),
+            CheckedLength::FillPortion(portion) => Some(ResolvedTableLength::FillPortion(portion)),
+            CheckedLength::Shrink => Some(ResolvedTableLength::Shrink),
+            CheckedLength::Fixed { expression, source } => {
                 let actual = self.validate_table_expression(view, scope, expression, role, span)?;
                 if actual != source {
                     return Err(self.invariant(span, "table length type contract diverged"));
