@@ -9005,6 +9005,10 @@ impl<'a> FactsBuilder<'a> {
                         )?;
                     }
                 }
+                WidgetOperation::ScrollToKey { target, key } => {
+                    self.lower_widget_target(target, statement_id, operand, env, span)?;
+                    self.statement_operand(statement_id, operand, key, None, env, span)?;
+                }
                 WidgetOperation::Find { selector, .. } => {
                     self.lower_widget_selector(selector, statement_id, operand, env, span)?;
                 }

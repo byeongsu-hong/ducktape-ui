@@ -68,7 +68,8 @@
 //! memoized row and hands every measured height to its neighbour. Mounting is
 //! still a window over the viewport; keys decide only whose state is whose.
 
-use iced::advanced::widget::operation::Focusable;
+use iced::advanced::widget::operation::scrollable::AbsoluteOffset;
+use iced::advanced::widget::operation::{Focusable, Outcome};
 use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
@@ -208,6 +209,23 @@ struct State {
     live: Live,
     estimated_height: f32,
     spacing: f32,
+    /// A row [`scroll_to_key`] asked to land at the top of the viewport, kept
+    /// until the rows measured on the way there stop moving it.
+    reveal: Option<Reveal>,
+}
+
+/// How many layout passes a reveal may re-aim the scrollable before it lets
+/// go. Landing takes about three: the jump itself, the pass that measures
+/// the row and its overscan neighbours (which moves the row's top), and the
+/// pass that lands on the measured tops. A row the scrollable clamps short of
+/// (the last screenful) never settles, and the cap is what stops it asking
+/// forever.
+const REVEAL_ATTEMPTS: u8 = 6;
+
+#[derive(Clone, Copy, Debug)]
+struct Reveal {
+    key: u64,
+    attempts: u8,
 }
 
 impl State {
@@ -217,6 +235,44 @@ impl State {
             .copied()
             .flatten()
             .unwrap_or(estimate)
+    }
+
+    /// Where row `index` starts, in this column's own coordinates — measured
+    /// heights where a row has one, the estimate where it does not, exactly as
+    /// `layout` places it.
+    fn row_top(&self, index: usize) -> f32 {
+        (0..index)
+            .map(|row| self.height_of(row, self.estimated_height) + self.spacing)
+            .sum()
+    }
+
+    /// Where the pending reveal wants the viewport's top, in this column's
+    /// coordinates, or `None` when it has landed, ran out of attempts, or
+    /// names a row that is no longer here. Each answer spends one attempt.
+    fn reveal_offset(&mut self) -> Option<f32> {
+        let reveal = self.reveal?;
+        let Some(index) = self.keys.iter().position(|key| *key == reveal.key) else {
+            self.reveal = None;
+            return None;
+        };
+        let top = self.row_top(index);
+        // A top summed from estimates is not a landing: the pass that mounts
+        // the row measures it and the overscan rows above it, and that is
+        // what moves it. Landed means those rows are measured AND the viewport
+        // sits on the top they give.
+        let measured_up_to_row = (index.saturating_sub(OVERSCAN_ROWS)..=index)
+            .all(|row| self.measured.get(row).is_some_and(Option::is_some));
+        let landed = measured_up_to_row && (self.viewport.y - top).abs() < 0.5;
+        let exhausted = reveal.attempts >= REVEAL_ATTEMPTS;
+        if landed || exhausted {
+            self.reveal = None;
+            return None;
+        }
+        self.reveal = Some(Reveal {
+            attempts: reveal.attempts + 1,
+            ..reveal
+        });
+        Some(top)
     }
 
     /// Finds the rows intersecting a viewport without storing every row top.
@@ -306,15 +362,64 @@ where
     content
         .as_widget_mut()
         .operate(tree, layout, renderer, &mut sync);
+    // A column still revealing a row re-aims the scrollable from here: the
+    // sync is the only pass that sees both the scrollable's translation and
+    // the row tops the last layout measured, and the caller lays out again
+    // on `true`, which is when the next measurements land.
+    if let Some(offset) = sync.reveal {
+        content.as_widget_mut().operate(
+            tree,
+            layout,
+            renderer,
+            &mut ApplyScroll {
+                offset: Some(offset),
+            },
+        );
+    }
     sync.needs_layout
 }
 
 #[derive(Default)]
 struct SyncAfterWheel {
     viewport: Option<Rectangle>,
+    /// The first scrollable's untranslated top: where its content's y = 0 is.
+    origin: f32,
     nested_scrollable: bool,
     skip_virtual_children: bool,
     needs_layout: bool,
+    /// The absolute offset a revealing column asked the scrollable for.
+    reveal: Option<f32>,
+}
+
+/// Scrolls the first scrollable it meets to an absolute vertical offset. The
+/// second half of a reveal: `SyncAfterWheel` learns the offset below the
+/// scrollable, after its own `scrollable` callback has already passed.
+struct ApplyScroll {
+    /// Taken by the first scrollable; a nested one must not chase it too.
+    offset: Option<f32>,
+}
+
+impl Operation for ApplyScroll {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        _id: Option<&Id>,
+        _bounds: Rectangle,
+        _content_bounds: Rectangle,
+        _translation: Vector,
+        state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        let Some(offset) = self.offset.take() else {
+            return;
+        };
+        state.scroll_to(AbsoluteOffset {
+            x: None,
+            y: Some(offset),
+        });
+    }
 }
 
 impl Operation for SyncAfterWheel {
@@ -339,6 +444,7 @@ impl Operation for SyncAfterWheel {
         if self.viewport.is_some() {
             self.nested_scrollable = true;
         } else {
+            self.origin = bounds.y;
             self.viewport = Some(Rectangle {
                 x: bounds.x + translation.x,
                 y: bounds.y + translation.y,
@@ -352,9 +458,101 @@ impl Operation for SyncAfterWheel {
             return;
         };
         self.needs_layout |= state.sync_viewport(viewport, bounds);
+        if let Some(top) = state.reveal_offset() {
+            self.reveal = Some(bounds.y - self.origin + top);
+            self.needs_layout = true;
+        }
         // The viewport sync is the operation's whole purpose. Do not walk the
         // mounted rows just to discover that none of them are virtual columns.
         self.skip_virtual_children = true;
+    }
+}
+
+/// The task behind `task widget scroll-to-key`: lands the row keyed `key` of
+/// the first virtual column inside the `scroll` named `target` at the top of
+/// its viewport.
+///
+/// The first jump aims at the row's top as the column currently places it —
+/// estimates for rows nobody has measured. Landing there measures the row and
+/// its overscan neighbours, which moves it; the column keeps the reveal and
+/// `virtual_scroll`'s layout re-aims the scrollable on each pass until the row
+/// stops moving, so the frame that draws has the row's measured top at the
+/// viewport's top. A key the column does not hold does nothing.
+pub fn scroll_to_key<Message: Send + 'static>(target: Id, key: u64) -> iced::Task<Message> {
+    iced::advanced::widget::operate(ScrollToKey {
+        target,
+        key,
+        origin: None,
+        entering: false,
+        offset: None,
+    })
+}
+
+struct ScrollToKey {
+    target: Id,
+    key: u64,
+    /// The target scrollable's untranslated top while its subtree is walked.
+    origin: Option<f32>,
+    /// Set by the target's `scrollable` callback for the `traverse` that
+    /// follows it — the walk into that scrollable's own content.
+    entering: bool,
+    /// The absolute offset the first jump chains into.
+    offset: Option<f32>,
+}
+
+impl<T: 'static> Operation<T> for ScrollToKey {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
+        let inside_target = std::mem::take(&mut self.entering);
+        operate(self);
+        if inside_target {
+            self.origin = None;
+        }
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&Id>,
+        bounds: Rectangle,
+        _content_bounds: Rectangle,
+        _translation: Vector,
+        _state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if id == Some(&self.target) {
+            self.origin = Some(bounds.y);
+            self.entering = true;
+        }
+    }
+
+    fn custom(&mut self, _id: Option<&Id>, bounds: Rectangle, state: &mut dyn std::any::Any) {
+        let (Some(origin), None) = (self.origin, self.offset) else {
+            return;
+        };
+        let Some(state) = state.downcast_mut::<State>() else {
+            return;
+        };
+        let Some(index) = state.keys.iter().position(|key| *key == self.key) else {
+            return;
+        };
+        state.reveal = Some(Reveal {
+            key: self.key,
+            attempts: 0,
+        });
+        self.offset = Some(bounds.y - origin + state.row_top(index));
+    }
+
+    fn finish(&self) -> Outcome<T> {
+        match self.offset {
+            Some(y) => Outcome::Chain(Box::new(
+                iced::advanced::widget::operation::scrollable::scroll_to(
+                    self.target.clone(),
+                    AbsoluteOffset {
+                        x: None,
+                        y: Some(y),
+                    },
+                ),
+            )),
+            None => Outcome::None,
+        }
     }
 }
 
@@ -1547,6 +1745,164 @@ mod tests {
         assert!(
             draws.get() > 0,
             "a rapid wheel burst scrolled beyond every mounted virtual row"
+        );
+    }
+
+    /// A fixed-height child that reports its laid-out bounds under an id, so
+    /// a probe can read where the column really put it.
+    struct Reporting {
+        id: Id,
+        height: f32,
+    }
+
+    impl Widget<(), iced::Theme, iced_test::renderer::Renderer> for Reporting {
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fixed(self.height))
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &iced_test::renderer::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(Size::new(limits.max().width, self.height))
+        }
+
+        fn operate(
+            &mut self,
+            _tree: &mut Tree,
+            layout: Layout<'_>,
+            _renderer: &iced_test::renderer::Renderer,
+            operation: &mut dyn Operation,
+        ) {
+            operation.container(Some(&self.id), layout.bounds());
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut iced_test::renderer::Renderer,
+            _theme: &iced::Theme,
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    /// Reads the first scrollable's untranslated top and translation, and the
+    /// laid-out bounds of the row named `row`.
+    struct Probe {
+        row: Id,
+        scrollable: Option<(f32, f32)>,
+        row_bounds: Option<Rectangle>,
+    }
+
+    impl Operation for Probe {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+
+        fn scrollable(
+            &mut self,
+            _id: Option<&Id>,
+            bounds: Rectangle,
+            _content_bounds: Rectangle,
+            translation: Vector,
+            _state: &mut dyn iced::advanced::widget::operation::Scrollable,
+        ) {
+            self.scrollable.get_or_insert((bounds.y, translation.y));
+        }
+
+        fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
+            if id == Some(&self.row) {
+                self.row_bounds = Some(bounds);
+            }
+        }
+    }
+
+    /// `scroll-to-key` lands a row on its MEASURED top, not its estimated one.
+    /// The first jump can only aim where the estimates put the row; landing
+    /// there measures the row and its overscan neighbours, which moves it, and
+    /// the column keeps re-aiming the scrollable through `virtual_scroll`'s
+    /// layout until the row stops moving. A single chained `scroll_to` — the
+    /// obvious implementation — leaves the viewport on the estimated top
+    /// while the row sits below it by everything its neighbours measured over
+    /// their estimates.
+    #[test]
+    fn scroll_to_key_lands_the_row_on_its_measured_top() {
+        const COUNT: u64 = 100;
+        const ESTIMATE: f32 = 20.0;
+        const HEADER: f32 = 30.0;
+        const TARGET: u64 = 50;
+        const VIEWPORT: Size = Size::new(240.0, 100.0);
+        fn height(key: u64) -> f32 {
+            ESTIMATE + (key % 4) as f32 * 15.0
+        }
+        let rows: Vec<(
+            u64,
+            Element<'_, (), iced::Theme, iced_test::renderer::Renderer>,
+        )> = (0..COUNT)
+            .map(|key| {
+                (
+                    key,
+                    Element::new(Reporting {
+                        id: Id::from(format!("row-{key}")),
+                        height: height(key),
+                    }),
+                )
+            })
+            .collect();
+        let list = Id::new("list");
+        let content = iced::widget::column![
+            iced::widget::space().height(HEADER),
+            virtual_keyed_children(rows, ESTIMATE),
+        ];
+        let mut renderer = headless_renderer();
+        let mut ui = UserInterface::build(
+            crate::virtual_scroll(iced::widget::scrollable(content).id(list.clone())),
+            VIEWPORT,
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+
+        let mut operation: Box<dyn Operation<()>> = Box::new(ScrollToKey {
+            target: list,
+            key: TARGET,
+            origin: None,
+            entering: false,
+            offset: None,
+        });
+        loop {
+            ui.operate(&renderer, operation.as_mut());
+            match operation.finish() {
+                Outcome::Chain(next) => operation = next,
+                Outcome::None | Outcome::Some(()) => break,
+            }
+        }
+        // The frame after the jump: the scrollable moved, and the layout it
+        // draws is where the reveal settles.
+        let mut ui = ui.relayout(VIEWPORT, &mut renderer);
+
+        let mut probe = Probe {
+            row: Id::from(format!("row-{TARGET}")),
+            scrollable: None,
+            row_bounds: None,
+        };
+        ui.operate(&renderer, &mut probe);
+        let (origin, translation) = probe.scrollable.expect("the scrollable");
+        let row = probe.row_bounds.expect("the landed row is mounted");
+        let row_top = row.y - origin;
+        assert!(
+            (row_top - translation).abs() < 0.5,
+            "the row's measured top {row_top} sits at the viewport's top {translation}"
+        );
+        let estimated_top = HEADER + TARGET as f32 * ESTIMATE;
+        assert!(
+            translation > estimated_top,
+            "the landing {translation} moved past the estimated top {estimated_top}, so it read measured rows"
         );
     }
 }

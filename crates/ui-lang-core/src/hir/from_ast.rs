@@ -1315,6 +1315,9 @@ pub(crate) fn handler_operation_contract(
                 WidgetOperation::ScrollBy { target: value, .. } => {
                     CheckedWidgetOperation::ScrollBy(target(value))
                 }
+                WidgetOperation::ScrollToKey { target: value, .. } => {
+                    CheckedWidgetOperation::ScrollToKey(target(value))
+                }
                 WidgetOperation::Find {
                     selector: value,
                     all,

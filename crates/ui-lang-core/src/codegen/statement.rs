@@ -1051,6 +1051,13 @@ pub(in crate::codegen) fn generate_statements(
                         value(*x, "f32")?,
                         value(*y, "f32")?
                     ),
+                    ResolvedWidgetOperation::ScrollToKey { target, key } => {
+                        let key = resolved_expr_use_code(program, *key, env, ValueMode::Owned)?;
+                        format!(
+                            "::ui_lang_runtime::scroll_to_key::<{message}>({}, ::ui_lang_runtime::VirtualKey::virtual_key({key}))",
+                            id(target)?
+                        )
+                    }
                     ResolvedWidgetOperation::Find { selector, all } => {
                         let route = route.as_ref().expect("checker requires selector route");
                         let (selector, conversion) =

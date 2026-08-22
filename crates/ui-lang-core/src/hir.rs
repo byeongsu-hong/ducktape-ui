@@ -1026,6 +1026,7 @@ pub(crate) enum CheckedWidgetOperation {
     SnapEnd(CheckedWidgetTarget),
     ScrollTo(CheckedWidgetTarget),
     ScrollBy(CheckedWidgetTarget),
+    ScrollToKey(CheckedWidgetTarget),
     Find {
         selector: CheckedWidgetSelector,
         all: bool,

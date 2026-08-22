@@ -5086,6 +5086,7 @@ task widget cursor #search 3
 task widget select #search 0 5
 task widget snap #results 0.0 1.0
 task widget scroll-by #results 0.0 24.0
+task widget scroll-to-key #results selected
 ```
 
 Targets use the same hierarchy as the rendered component tree. Write the
@@ -5136,6 +5137,14 @@ snap/end; and absolute scroll-to/scroll-by. Effects have no route and
 `focused` requires a `bool` route. Cursor and selection positions are
 non-negative `i64`; relative offsets are `f64` in `0.0..=1.0`; absolute
 offsets are unrestricted `f64`.
+
+`scroll-to-key` is the runtime's own: it lands the `keyed` row whose `by=`
+value equals the key at the top of the scroll it names. The key is bool/i64/
+f64 like a keyed row's. The scroll must hold a `virtual-row=` keyed column —
+only a virtualized column knows its rows' tops — and a key no row carries does
+nothing. The landing is exact on the frame that draws: the first jump aims at
+the row's estimated top, and the column re-aims the scroll as it measures the
+row and its neighbours, until the row stops moving.
 
 In a daemon whose graph keeps `lifetime mounted` component state, every
 rendered id is qualified by the window that drew it, so one window's render
