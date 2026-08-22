@@ -1,5 +1,6 @@
 use super::*;
 use crate::Warning;
+use crate::hir::view_children;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -635,70 +636,10 @@ pub(in crate::check) fn unreachable_component_warnings(
 }
 
 fn component_references(node: &ViewNode, output: &mut VecDeque<String>) {
-    match node {
-        ViewNode::Component { name, slots, .. } => {
-            output.push_back(name.clone());
-            for slot in slots {
-                component_references(&slot.content, output);
-            }
-        }
-        ViewNode::Layout { children, .. }
-        | ViewNode::If { children, .. }
-        | ViewNode::For { children, .. } => {
-            for child in children {
-                component_references(child, output);
-            }
-        }
-        ViewNode::Match { arms, .. } => {
-            for child in arms.iter().flat_map(|arm| &arm.children) {
-                component_references(child, output);
-            }
-        }
-        ViewNode::Button {
-            content: Some(content),
-            ..
-        }
-        | ViewNode::MouseArea { content, .. }
-        | ViewNode::ResizeHandle { content, .. }
-        | ViewNode::Container { content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. }
-        | ViewNode::Sensor { content, .. }
-        | ViewNode::KeyedColumn { child: content, .. }
-        | ViewNode::Lazy { child: content, .. } => component_references(content, output),
-        ViewNode::Tooltip { content, tip, .. } => {
-            component_references(content, output);
-            component_references(tip, output);
-        }
-        ViewNode::Overlay { content, layer, .. } => {
-            component_references(content, output);
-            component_references(layer, output);
-        }
-        ViewNode::PaneGrid {
-            panes, templates, ..
-        } => {
-            for child in panes
-                .iter()
-                .flat_map(PaneView::nodes)
-                .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-            {
-                component_references(child, output);
-            }
-        }
-        ViewNode::Table { columns, .. } => {
-            for column in columns {
-                component_references(&column.header, output);
-                component_references(&column.cell, output);
-            }
-        }
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                component_references(narrow, output);
-                component_references(wide, output);
-            }
-            ResponsiveContent::Size { content, .. } => component_references(content, output),
-        },
-        _ => {}
+    if let ViewNode::Component { name, .. } = node {
+        output.push_back(name.clone());
+    }
+    for child in view_children(node) {
+        component_references(child, output);
     }
 }

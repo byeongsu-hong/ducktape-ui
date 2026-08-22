@@ -1,4 +1,5 @@
 use super::*;
+use crate::hir::view_children;
 
 #[derive(Clone)]
 enum ControlledBinding {
@@ -466,98 +467,24 @@ fn controlled_bindings(document: &Document, editors: bool) -> Result<ControlledO
 }
 
 pub(in crate::check) fn pane_grid_span(node: &ViewNode) -> Option<&Span> {
-    match node {
-        ViewNode::PaneGrid { span, .. } => Some(span),
-        ViewNode::Layout { children, .. }
-        | ViewNode::If { children, .. }
-        | ViewNode::For { children, .. } => children.iter().find_map(pane_grid_span),
-        ViewNode::Match { arms, .. } => arms
-            .iter()
-            .flat_map(|arm| &arm.children)
-            .find_map(pane_grid_span),
-        ViewNode::Button {
-            content: Some(content),
-            ..
-        }
-        | ViewNode::MouseArea { content, .. }
-        | ViewNode::ResizeHandle { content, .. }
-        | ViewNode::Container { content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. }
-        | ViewNode::Sensor { content, .. }
-        | ViewNode::KeyedColumn { child: content, .. }
-        | ViewNode::Lazy { child: content, .. } => pane_grid_span(content),
-        ViewNode::Tooltip { content, tip, .. } => {
-            pane_grid_span(content).or_else(|| pane_grid_span(tip))
-        }
-        ViewNode::Overlay { content, layer, .. } => {
-            pane_grid_span(content).or_else(|| pane_grid_span(layer))
-        }
-        ViewNode::Table { columns, .. } => columns.iter().find_map(|column| {
-            pane_grid_span(&column.header).or_else(|| pane_grid_span(&column.cell))
-        }),
-        ViewNode::Component { slots, .. } => {
-            slots.iter().find_map(|slot| pane_grid_span(&slot.content))
-        }
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                pane_grid_span(narrow).or_else(|| pane_grid_span(wide))
-            }
-            ResponsiveContent::Size { content, .. } => pane_grid_span(content),
-        },
-        _ => None,
+    if let ViewNode::PaneGrid { span, .. } = node {
+        return Some(span);
     }
+    view_children(node).into_iter().find_map(pane_grid_span)
 }
 
 pub(in crate::check) fn repeated_pane_grid_span(node: &ViewNode) -> Option<&Span> {
     match node {
+        // Below a repeating scope any pane grid counts, not just one repeated
+        // directly, so the search widens here and never narrows again.
         ViewNode::For { children, .. } => children.iter().find_map(pane_grid_span),
         ViewNode::KeyedColumn { child, .. } | ViewNode::Lazy { child, .. } => pane_grid_span(child),
         ViewNode::Table { columns, .. } => columns.iter().find_map(|column| {
             pane_grid_span(&column.header).or_else(|| pane_grid_span(&column.cell))
         }),
-        ViewNode::Layout { children, .. } | ViewNode::If { children, .. } => {
-            children.iter().find_map(repeated_pane_grid_span)
-        }
-        ViewNode::Match { arms, .. } => arms
-            .iter()
-            .flat_map(|arm| &arm.children)
+        _ => view_children(node)
+            .into_iter()
             .find_map(repeated_pane_grid_span),
-        ViewNode::Button {
-            content: Some(content),
-            ..
-        }
-        | ViewNode::MouseArea { content, .. }
-        | ViewNode::ResizeHandle { content, .. }
-        | ViewNode::Container { content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. }
-        | ViewNode::Sensor { content, .. } => repeated_pane_grid_span(content),
-        ViewNode::Tooltip { content, tip, .. } => {
-            repeated_pane_grid_span(content).or_else(|| repeated_pane_grid_span(tip))
-        }
-        ViewNode::Overlay { content, layer, .. } => {
-            repeated_pane_grid_span(content).or_else(|| repeated_pane_grid_span(layer))
-        }
-        ViewNode::PaneGrid {
-            panes, templates, ..
-        } => panes
-            .iter()
-            .flat_map(PaneView::nodes)
-            .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-            .find_map(repeated_pane_grid_span),
-        ViewNode::Component { slots, .. } => slots
-            .iter()
-            .find_map(|slot| repeated_pane_grid_span(&slot.content)),
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                repeated_pane_grid_span(narrow).or_else(|| repeated_pane_grid_span(wide))
-            }
-            ResponsiveContent::Size { content, .. } => repeated_pane_grid_span(content),
-        },
-        _ => None,
     }
 }
 

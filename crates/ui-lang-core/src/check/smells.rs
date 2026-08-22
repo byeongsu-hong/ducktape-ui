@@ -1,5 +1,6 @@
 use super::*;
 use crate::Warning;
+use crate::hir::view_children;
 
 pub(in crate::check) fn semantic_smell_warnings(
     document: &Document,
@@ -142,8 +143,8 @@ fn view_smells(node: &ViewNode, warnings: &mut Vec<Warning>) {
     match node {
         ViewNode::If {
             condition: Expr::Bool(value),
-            children,
             span,
+            ..
         } => {
             let (message, hint) = if *value {
                 (
@@ -157,10 +158,11 @@ fn view_smells(node: &ViewNode, warnings: &mut Vec<Warning>) {
                 )
             };
             warnings.push(Warning::new("W012", span, message).hint(hint));
-            if *value {
-                for child in children {
-                    view_smells(child, warnings);
-                }
+            // A dead subtree is reported once, at its gate. Walking into it
+            // would report every smell inside the code the user is being told
+            // to delete.
+            if !*value {
+                return;
             }
         }
         ViewNode::For { items, span, .. }
@@ -175,69 +177,12 @@ fn view_smells(node: &ViewNode, warnings: &mut Vec<Warning>) {
                 )
                 .hint("remove the dead subtree or provide a non-empty list"),
             );
+            return;
         }
-        ViewNode::Layout { children, .. }
-        | ViewNode::If { children, .. }
-        | ViewNode::For { children, .. } => {
-            for child in children {
-                view_smells(child, warnings);
-            }
-        }
-        ViewNode::Match { arms, .. } => {
-            for child in arms.iter().flat_map(|arm| &arm.children) {
-                view_smells(child, warnings);
-            }
-        }
-        ViewNode::Container { content, .. }
-        | ViewNode::Lazy { child: content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. }
-        | ViewNode::Sensor { content, .. }
-        | ViewNode::MouseArea { content, .. }
-        | ViewNode::ResizeHandle { content, .. }
-        | ViewNode::KeyedColumn { child: content, .. } => view_smells(content, warnings),
-        ViewNode::Button {
-            content: Some(content),
-            ..
-        } => view_smells(content, warnings),
-        ViewNode::Overlay { content, layer, .. } => {
-            view_smells(content, warnings);
-            view_smells(layer, warnings);
-        }
-        ViewNode::PaneGrid {
-            panes, templates, ..
-        } => {
-            for child in panes
-                .iter()
-                .flat_map(PaneView::nodes)
-                .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-            {
-                view_smells(child, warnings);
-            }
-        }
-        ViewNode::Table { columns, .. } => {
-            for column in columns {
-                view_smells(&column.header, warnings);
-                view_smells(&column.cell, warnings);
-            }
-        }
-        ViewNode::Component { slots, .. } => {
-            for slot in slots {
-                view_smells(&slot.content, warnings);
-            }
-        }
-        ViewNode::Tooltip { content, tip, .. } => {
-            view_smells(content, warnings);
-            view_smells(tip, warnings);
-        }
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                view_smells(narrow, warnings);
-                view_smells(wide, warnings);
-            }
-            ResponsiveContent::Size { content, .. } => view_smells(content, warnings),
-        },
         _ => {}
+    }
+
+    for child in view_children(node) {
+        view_smells(child, warnings);
     }
 }

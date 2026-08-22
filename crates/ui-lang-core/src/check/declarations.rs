@@ -1,4 +1,5 @@
 use super::*;
+use crate::hir::view_children;
 
 pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), Error> {
     let known = document
@@ -664,75 +665,16 @@ pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
 
 pub(in crate::check) fn slots(node: &ViewNode) -> Vec<(&str, bool, &Span)> {
     fn collect<'a>(node: &'a ViewNode, output: &mut Vec<(&'a str, bool, &'a Span)>) {
-        match node {
-            ViewNode::Slot {
-                name,
-                optional,
-                span,
-            } => output.push((name, *optional, span)),
-            ViewNode::Layout { children, .. }
-            | ViewNode::If { children, .. }
-            | ViewNode::For { children, .. } => {
-                for child in children {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Match { arms, .. } => {
-                for child in arms.iter().flat_map(|arm| &arm.children) {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Button {
-                content: Some(content),
-                ..
-            }
-            | ViewNode::MouseArea { content, .. }
-            | ViewNode::ResizeHandle { content, .. }
-            | ViewNode::Container { content, .. }
-            | ViewNode::Theme { content, .. }
-            | ViewNode::Float { content, .. }
-            | ViewNode::Pin { content, .. }
-            | ViewNode::Sensor { content, .. }
-            | ViewNode::KeyedColumn { child: content, .. }
-            | ViewNode::Lazy { child: content, .. } => collect(content, output),
-            ViewNode::Tooltip { content, tip, .. } => {
-                collect(content, output);
-                collect(tip, output);
-            }
-            ViewNode::Overlay { content, layer, .. } => {
-                collect(content, output);
-                collect(layer, output);
-            }
-            ViewNode::PaneGrid {
-                panes, templates, ..
-            } => {
-                for child in panes
-                    .iter()
-                    .flat_map(PaneView::nodes)
-                    .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-                {
-                    collect(child, output);
-                }
-            }
-            ViewNode::Table { columns, .. } => {
-                for column in columns {
-                    collect(&column.header, output);
-                    collect(&column.cell, output);
-                }
-            }
-            ViewNode::Component { slots, .. } => {
-                for slot in slots {
-                    collect(&slot.content, output);
-                }
-            }
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, output);
-                    collect(wide, output);
-                }
-                ResponsiveContent::Size { content, .. } => collect(content, output),
-            },
-            _ => {}
+        if let ViewNode::Slot {
+            name,
+            optional,
+            span,
+        } = node
+        {
+            output.push((name, *optional, span));
+        }
+        for child in view_children(node) {
+            collect(child, output);
         }
     }
 

@@ -1,5 +1,6 @@
 use super::*;
 use crate::Warning;
+use crate::hir::view_children;
 use std::collections::VecDeque;
 
 #[derive(Debug, Default)]
@@ -292,49 +293,16 @@ fn push_routes<'a>(
 
 pub(in crate::check) fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut Vec<&'a Route>) {
     match node {
-        ViewNode::Layout {
-            options, children, ..
-        } => {
+        ViewNode::Layout { options, .. } => {
             if let Some(scroll) = &options.scroll {
                 push_routes(
                     [scroll.route.as_ref(), scroll.viewport_route.as_ref()],
                     output,
                 );
             }
-            for child in children {
-                collect_view_routes(child, output);
-            }
         }
-        ViewNode::Container { content, .. }
-        | ViewNode::Lazy { child: content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. } => collect_view_routes(content, output),
-        ViewNode::Overlay {
-            options,
-            content,
-            layer,
-            ..
-        } => {
-            push_route(options.dismiss.as_ref(), output);
-            collect_view_routes(content, output);
-            collect_view_routes(layer, output);
-        }
-        ViewNode::PaneGrid {
-            options,
-            panes,
-            templates,
-            ..
-        } => {
-            push_route(options.click.as_ref(), output);
-            for child in panes
-                .iter()
-                .flat_map(PaneView::nodes)
-                .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-            {
-                collect_view_routes(child, output);
-            }
-        }
+        ViewNode::Overlay { options, .. } => push_route(options.dismiss.as_ref(), output),
+        ViewNode::PaneGrid { options, .. } => push_route(options.click.as_ref(), output),
         ViewNode::RichText { route, .. }
         | ViewNode::ExternComponent { route, .. }
         | ViewNode::Themer { route, .. }
@@ -347,13 +315,8 @@ pub(in crate::check) fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut
             ],
             output,
         ),
-        ViewNode::Button { content, route, .. } => {
-            output.push(route);
-            if let Some(content) = content {
-                collect_view_routes(content, output);
-            }
-        }
-        ViewNode::Checkbox { route, .. }
+        ViewNode::Button { route, .. }
+        | ViewNode::Checkbox { route, .. }
         | ViewNode::Toggler { route, .. }
         | ViewNode::Radio { route, .. }
         | ViewNode::Markdown { route, .. } => output.push(route),
@@ -384,79 +347,40 @@ pub(in crate::check) fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut
                 output,
             );
         }
-        ViewNode::If { children, .. } | ViewNode::For { children, .. } => {
-            for child in children {
-                collect_view_routes(child, output);
-            }
-        }
-        ViewNode::Match { arms, .. } => {
-            for child in arms.iter().flat_map(|arm| &arm.children) {
-                collect_view_routes(child, output);
-            }
-        }
-        ViewNode::KeyedColumn { child, .. } => collect_view_routes(child, output),
         ViewNode::TextEditor { options, .. } => {
             push_route(options.key_binding_route.as_ref(), output);
         }
-        ViewNode::Table { columns, .. } => {
-            for column in columns {
-                collect_view_routes(&column.header, output);
-                collect_view_routes(&column.cell, output);
-            }
-        }
-        ViewNode::Component {
-            slots,
-            events,
-            route,
-            ..
-        } => {
+        ViewNode::Component { events, route, .. } => {
             push_route(route.as_ref(), output);
             for event in events {
                 push_route(event.route.as_ref(), output);
             }
-            for slot in slots {
-                collect_view_routes(&slot.content, output);
-            }
         }
-        ViewNode::Tooltip { content, tip, .. } => {
-            collect_view_routes(content, output);
-            collect_view_routes(tip, output);
-        }
-        ViewNode::MouseArea {
-            options, content, ..
-        } => {
-            push_routes(
-                [
-                    options.press.as_ref(),
-                    options.press_at.as_ref(),
-                    options.release.as_ref(),
-                    options.double_click.as_ref(),
-                    options.right_press.as_ref(),
-                    options.right_release.as_ref(),
-                    options.middle_press.as_ref(),
-                    options.middle_release.as_ref(),
-                    options.enter.as_ref(),
-                    options.move_route.as_ref(),
-                    options.scroll.as_ref(),
-                    options.exit.as_ref(),
-                ],
-                output,
-            );
-            collect_view_routes(content, output);
-        }
-        ViewNode::ResizeHandle {
-            options, content, ..
-        } => {
-            push_routes(
-                [
-                    options.drag.as_ref(),
-                    options.press.as_ref(),
-                    options.release.as_ref(),
-                ],
-                output,
-            );
-            collect_view_routes(content, output);
-        }
+        ViewNode::MouseArea { options, .. } => push_routes(
+            [
+                options.press.as_ref(),
+                options.press_at.as_ref(),
+                options.release.as_ref(),
+                options.double_click.as_ref(),
+                options.right_press.as_ref(),
+                options.right_release.as_ref(),
+                options.middle_press.as_ref(),
+                options.middle_release.as_ref(),
+                options.enter.as_ref(),
+                options.move_route.as_ref(),
+                options.scroll.as_ref(),
+                options.exit.as_ref(),
+            ],
+            output,
+        ),
+        ViewNode::ResizeHandle { options, .. } => push_routes(
+            [
+                options.drag.as_ref(),
+                options.press.as_ref(),
+                options.release.as_ref(),
+            ],
+            output,
+        ),
         ViewNode::Canvas {
             options, events, ..
         } => {
@@ -481,32 +405,38 @@ pub(in crate::check) fn collect_view_routes<'a>(node: &'a ViewNode, output: &mut
                 }
             }
         }
-        ViewNode::Sensor {
-            options, content, ..
-        } => {
-            push_routes(
-                [
-                    options.show.as_ref(),
-                    options.resize.as_ref(),
-                    options.hide.as_ref(),
-                ],
-                output,
-            );
-            collect_view_routes(content, output);
-        }
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                collect_view_routes(narrow, output);
-                collect_view_routes(wide, output);
-            }
-            ResponsiveContent::Size { content, .. } => collect_view_routes(content, output),
-        },
-        ViewNode::Text { .. }
+        ViewNode::Sensor { options, .. } => push_routes(
+            [
+                options.show.as_ref(),
+                options.resize.as_ref(),
+                options.hide.as_ref(),
+            ],
+            output,
+        ),
+        // Route-free: listed so a widget that grows a route has to come back
+        // here rather than quietly dropping it from reachability.
+        ViewNode::Container { .. }
+        | ViewNode::Lazy { .. }
+        | ViewNode::Theme { .. }
+        | ViewNode::Float { .. }
+        | ViewNode::Pin { .. }
+        | ViewNode::If { .. }
+        | ViewNode::For { .. }
+        | ViewNode::Match { .. }
+        | ViewNode::KeyedColumn { .. }
+        | ViewNode::Table { .. }
+        | ViewNode::Tooltip { .. }
+        | ViewNode::Responsive { .. }
+        | ViewNode::Text { .. }
         | ViewNode::Progress { .. }
         | ViewNode::Rule { .. }
         | ViewNode::QrCode { .. }
         | ViewNode::Space { .. }
         | ViewNode::Slot { .. }
         | ViewNode::Media { .. } => {}
+    }
+
+    for child in view_children(node) {
+        collect_view_routes(child, output);
     }
 }
