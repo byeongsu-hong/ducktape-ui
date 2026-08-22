@@ -110,11 +110,11 @@ jobs:
           echo "::notice::breaking Ice API change accepted for this head by the api-breaking-approved label event"
       - name: Check standalone UI feature on native and wasm
         run: |
-          cargo check --locked -p ui-lang-runtime --no-default-features --features data-grid,virtual-list,x11
+          cargo check --locked -p ui-lang-runtime --no-default-features --features data-grid,x11
           cargo check --locked -p ui-lang-components --no-default-features --features button,data-grid,tree-view,virtual-list,x11
           cargo check --locked -p ui-lang-components --no-default-features --features log-timeline,x11
           rustup target add wasm32-unknown-unknown
-          cargo check --locked -p ui-lang-runtime --target wasm32-unknown-unknown --no-default-features --features data-grid,virtual-list
+          cargo check --locked -p ui-lang-runtime --target wasm32-unknown-unknown --no-default-features --features data-grid
           cargo check --locked -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features button,data-grid,tree-view,virtual-list
           cargo check --locked -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features log-timeline
       - name: Test native WGPU smoke harness

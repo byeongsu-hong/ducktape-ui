@@ -176,7 +176,7 @@ iced = { version = "=0.14.0", default-features = false, features = ["advanced"],
 # every consumer's whole graph onto one patch release (the ducktape app resolves
 # 1.52.3 and could not build against it).
 tokio = { version = "1", optional = true, features = ["sync", "time"] }
-ui-lang-runtime = { path = "../ui-lang-runtime", version = "0.1.0", optional = true, default-features = false, features = ["virtual-list"] }
+ui-lang-runtime = { path = "../ui-lang-runtime", version = "0.1.0", optional = true, default-features = false }
 
 [dev-dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["thread-pool", "tiny-skia", "wgpu", "x11"] }

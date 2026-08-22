@@ -1076,14 +1076,14 @@ pub fn step<T>(test_name: &'static str, source: Location, operation: impl FnOnce
 }
 
 #[derive(Debug, Clone)]
-pub struct SurfacePaint {
+struct SurfacePaint {
     pub background: Background,
     pub border: Border,
     pub shadow: Shadow,
 }
 
 #[derive(Debug, Clone)]
-pub struct TextPaint {
+struct TextPaint {
     pub content: Option<String>,
     pub bounds: Rectangle,
     pub color: Color,
@@ -1094,7 +1094,7 @@ pub struct TextPaint {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ImagePaint {
+struct ImagePaint {
     pub bounds: Rectangle,
     /// The svg tint, when the primitive is a vector image drawn with one.
     pub color: Option<Color>,
@@ -1119,29 +1119,10 @@ struct AccessibilityData {
 pub struct Target {
     pub id: String,
     pub kind: String,
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-    pub left: f64,
-    pub top: f64,
-    pub right: f64,
-    pub bottom: f64,
-    pub center_x: f64,
-    pub center_y: f64,
-    pub visible: bool,
-    pub visible_x: Option<f64>,
-    pub visible_y: Option<f64>,
-    pub visible_width: Option<f64>,
-    pub visible_height: Option<f64>,
-    pub content_width: Option<f64>,
-    pub content_height: Option<f64>,
-    pub content_x: Option<f64>,
-    pub content_y: Option<f64>,
-    pub translation_x: Option<f64>,
-    pub translation_y: Option<f64>,
-    pub scroll_x: Option<f64>,
-    pub scroll_y: Option<f64>,
+    bounds: Rectangle,
+    visible: Option<Rectangle>,
+    content: Option<Rectangle>,
+    translation: Option<iced::Vector>,
     value: Option<String>,
     test_name: &'static str,
     source: Location,
@@ -1204,95 +1185,126 @@ impl Target {
     }
 
     pub fn x(&self) -> f64 {
-        self.x
+        self.bounds.x.into()
     }
 
     pub fn y(&self) -> f64 {
-        self.y
+        self.bounds.y.into()
     }
 
     pub fn width(&self) -> f64 {
-        self.width
+        self.bounds.width.into()
     }
 
     pub fn height(&self) -> f64 {
-        self.height
+        self.bounds.height.into()
     }
 
     pub fn left(&self) -> f64 {
-        self.left
+        self.bounds.x.into()
     }
 
     pub fn top(&self) -> f64 {
-        self.top
+        self.bounds.y.into()
     }
 
+    /// Adds in `f32` and widens after, as the renderer does: widening first
+    /// and adding in `f64` moves the low bits, and these numbers land in the
+    /// ice-test artifact manifests and in `expect root.right == root.x +
+    /// root.width` assertions.
     pub fn right(&self) -> f64 {
-        self.right
+        (self.bounds.x + self.bounds.width).into()
     }
 
     pub fn bottom(&self) -> f64 {
-        self.bottom
+        (self.bounds.y + self.bounds.height).into()
     }
 
     pub fn center_x(&self) -> f64 {
-        self.center_x
+        self.bounds.center_x().into()
     }
 
     pub fn center_y(&self) -> f64 {
-        self.center_y
+        self.bounds.center_y().into()
     }
 
     pub fn visible(&self) -> bool {
-        self.visible
+        self.visible.is_some()
     }
 
     pub fn visible_x(&self) -> f64 {
-        self.required_number("visible_x", self.visible_x)
+        self.required_number("visible_x", self.visible.map(|bounds| bounds.x.into()))
     }
 
     pub fn visible_y(&self) -> f64 {
-        self.required_number("visible_y", self.visible_y)
+        self.required_number("visible_y", self.visible.map(|bounds| bounds.y.into()))
     }
 
     pub fn visible_width(&self) -> f64 {
-        self.required_number("visible_width", self.visible_width)
+        self.required_number(
+            "visible_width",
+            self.visible.map(|bounds| bounds.width.into()),
+        )
     }
 
     pub fn visible_height(&self) -> f64 {
-        self.required_number("visible_height", self.visible_height)
+        self.required_number(
+            "visible_height",
+            self.visible.map(|bounds| bounds.height.into()),
+        )
     }
 
     pub fn content_x(&self) -> f64 {
-        self.required_number("content_x", self.content_x)
+        self.required_number("content_x", self.content.map(|bounds| bounds.x.into()))
     }
 
     pub fn content_y(&self) -> f64 {
-        self.required_number("content_y", self.content_y)
+        self.required_number("content_y", self.content.map(|bounds| bounds.y.into()))
     }
 
     pub fn content_width(&self) -> f64 {
-        self.required_number("content_width", self.content_width)
+        self.required_number(
+            "content_width",
+            self.content.map(|bounds| bounds.width.into()),
+        )
     }
 
     pub fn content_height(&self) -> f64 {
-        self.required_number("content_height", self.content_height)
+        self.required_number(
+            "content_height",
+            self.content.map(|bounds| bounds.height.into()),
+        )
     }
 
     pub fn translation_x(&self) -> f64 {
-        self.required_number("translation_x", self.translation_x)
+        self.required_number(
+            "translation_x",
+            self.translation.map(|translation| translation.x.into()),
+        )
     }
 
     pub fn translation_y(&self) -> f64 {
-        self.required_number("translation_y", self.translation_y)
+        self.required_number(
+            "translation_y",
+            self.translation.map(|translation| translation.y.into()),
+        )
     }
 
+    /// Reads the same retained transform as [`Self::translation_x`], but names
+    /// `scroll_x` so the "cannot inspect" panic quotes the field the author
+    /// wrote.
     pub fn scroll_x(&self) -> f64 {
-        self.required_number("scroll_x", self.scroll_x)
+        self.required_number(
+            "scroll_x",
+            self.translation.map(|translation| translation.x.into()),
+        )
     }
 
     pub fn scroll_y(&self) -> f64 {
-        self.required_number("scroll_y", self.scroll_y)
+        self.required_number(
+            "scroll_y",
+            self.translation.map(|translation| translation.y.into()),
+        )
     }
 
     pub fn line_height(&self) -> iced::widget::text::LineHeight {
@@ -1317,21 +1329,6 @@ impl Target {
     pub fn image_count(&self) -> usize {
         self.require_paint("image_count");
         self.images.len()
-    }
-
-    pub fn surfaces(&self) -> &[SurfacePaint] {
-        self.require_paint("surfaces");
-        &self.surfaces
-    }
-
-    pub fn texts(&self) -> &[TextPaint] {
-        self.require_paint("texts");
-        &self.texts
-    }
-
-    pub fn images(&self) -> &[ImagePaint] {
-        self.require_paint("images");
-        &self.images
     }
 
     pub fn text_x(&self) -> f64 {
@@ -1387,7 +1384,7 @@ impl Target {
     }
 
     pub fn pixel_aligned(&self) -> bool {
-        rectangle_pixel_aligned(self.bounds(), self.scale_factor)
+        rectangle_pixel_aligned(self.bounds, self.scale_factor)
     }
 
     pub fn focused(&self) -> bool {
@@ -1482,20 +1479,6 @@ impl Target {
         })
     }
 
-    fn bounds(&self) -> Rectangle {
-        Rectangle::new(
-            Point::new(self.x as f32, self.y as f32),
-            Size::new(self.width as f32, self.height as f32),
-        )
-    }
-
-    fn visible_bounds(&self) -> Option<Rectangle> {
-        Some(Rectangle::new(
-            Point::new(self.visible_x? as f32, self.visible_y? as f32),
-            Size::new(self.visible_width? as f32, self.visible_height? as f32),
-        ))
-    }
-
     fn surface(&self, field: &str) -> &SurfacePaint {
         if let Some(reason) = self.paint_error {
             self.fail(
@@ -1585,7 +1568,7 @@ impl Target {
             reason,
             self.source.statement,
             self.id,
-            self.bounds(),
+            self.bounds,
         )
     }
 }
@@ -2618,7 +2601,7 @@ where
                         self.known_ids_display()
                     )
                 },
-                |target| format!("bounds: {:?}", target.bounds()),
+                |target| format!("bounds: {:?}", target.bounds),
             );
             panic!(
                 "{source}: test `{}` target presence expectation failed\nstatement: {}\nselector: {id}\nexpected: {}\nactual: {}\n{details}",
@@ -2640,7 +2623,8 @@ where
     ) {
         self.redraw(source);
         let within = within.map(|id| self.require_target(id, false, source));
-        let actual = self.drawn_text_exists(value, within.as_ref().map(Target::bounds), source);
+        let actual =
+            self.drawn_text_exists(value, within.as_ref().map(|target| target.bounds), source);
         if actual == negated {
             let selector = within.as_ref().map_or_else(
                 || format!("visible text {value:?}"),
@@ -2648,7 +2632,7 @@ where
             );
             let bounds = within.as_ref().map_or_else(
                 || format!("viewport: {:?}", self.size),
-                |target| format!("bounds: {:?}", target.bounds()),
+                |target| format!("bounds: {:?}", target.bounds),
             );
             panic!(
                 "{source}: test `{}` text expectation failed\nstatement: {}\nselector: {selector}\nexpected: {}\nactual: {}\n{bounds}",
@@ -2768,7 +2752,12 @@ where
         expected: &str,
         source: Location,
     ) {
-        let target = self.target(id, source);
+        // Every value below comes from the selector walk, so the frame this
+        // pump delivers is for the statements after it, not this one:
+        // `Target::accessibility` never calls `require_paint`, and drawing
+        // the frame only to scan its quads would be dead work.
+        let target = self.require_target(id, false, source);
+        self.redraw(source);
         let actual = match property {
             AccessibilityProperty::Role => target.accessibility_role_name(),
             AccessibilityProperty::Name => target.accessibility_name(),
@@ -2798,7 +2787,12 @@ where
         expected: bool,
         source: Location,
     ) {
-        let target = self.target(id, source);
+        // Every value below comes from the selector walk, so the frame this
+        // pump delivers is for the statements after it, not this one:
+        // `Target::accessibility` never calls `require_paint`, and drawing
+        // the frame only to scan its quads would be dead work.
+        let target = self.require_target(id, false, source);
+        self.redraw(source);
         let actual = match property {
             AccessibilityProperty::Checked => target.accessibility_checked(),
             AccessibilityProperty::Expanded => target.accessibility_expanded(),
@@ -2829,7 +2823,12 @@ where
         expected: bool,
         source: Location,
     ) {
-        let target = self.target(id, source);
+        // Every value below comes from the selector walk, so the frame this
+        // pump delivers is for the statements after it, not this one:
+        // `Target::accessibility` never calls `require_paint`, and drawing
+        // the frame only to scan its quads would be dead work.
+        let target = self.require_target(id, false, source);
+        self.redraw(source);
         let actual = match action {
             AccessibilityAction::Click => target.accessibility_supports_activate(),
             AccessibilityAction::Focus => target.accessibility_supports_focus(),
@@ -3031,14 +3030,6 @@ where
         self.set_cursor(Point::new(x, y), true, source);
     }
 
-    pub fn hover(&mut self, id: &str, source: Location) {
-        self.move_to(id, source);
-    }
-
-    pub fn click(&mut self, id: &str, source: Location) {
-        self.click_with(id, MouseButton::Left, 1, source);
-    }
-
     pub fn click_with(&mut self, id: &str, button: MouseButton, count: u8, source: Location) {
         let bounds = self.interaction_bounds("click", id, source);
         self.set_cursor(bounds.center(), true, source);
@@ -3063,18 +3054,10 @@ where
         self.click_current(button, count, source);
     }
 
-    pub fn press(&mut self, id: &str, source: Location) {
-        self.press_with(id, MouseButton::Left, source);
-    }
-
     pub fn press_with(&mut self, id: &str, button: MouseButton, source: Location) {
         let bounds = self.interaction_bounds("press", id, source);
         self.set_cursor(bounds.center(), true, source);
         self.press_current(button, source);
-    }
-
-    pub fn release(&mut self, source: Location) {
-        self.release_button(MouseButton::Left, source);
     }
 
     pub fn release_button(&mut self, button: MouseButton, source: Location) {
@@ -3092,10 +3075,6 @@ where
             ))],
             source,
         );
-    }
-
-    pub fn wheel(&mut self, x: f32, y: f32, source: Location) {
-        self.wheel_delta(WheelDelta::Pixels { x, y }, source);
     }
 
     pub fn wheel_lines(&mut self, x: f32, y: f32, source: Location) {
@@ -3802,7 +3781,7 @@ where
         let resolved_theme = self.theme();
         let screenshot = self.screenshot_with_theme(&resolved_theme, Some(source));
         for target in &mut targets {
-            match inspect_paint(&mut self.renderer, target.bounds()) {
+            match inspect_paint(&mut self.renderer, target.bounds) {
                 Ok(paint) => {
                     target.paint_error = None;
                     target.surfaces = paint.surfaces;
@@ -3904,18 +3883,9 @@ where
         }
     }
 
-    pub fn exists(&mut self, id: &str, source: Location) -> bool {
-        self.inspect(id, false, source).is_some()
-    }
-
     #[track_caller]
     pub fn target(&mut self, id: &str, source: Location) -> Target {
         self.require_target(id, true, source)
-    }
-
-    pub fn text_exists(&mut self, text: &str, within: Option<&Target>, source: Location) -> bool {
-        self.redraw(source);
-        self.drawn_text_exists(text, within.map(Target::bounds), source)
     }
 
     fn require_target(&mut self, id: &str, paint: bool, source: Location) -> Target {
@@ -4044,38 +4014,45 @@ where
         }
     }
 
+    /// Every walk runs against one interface. `with_interface` rebuilds the
+    /// view and re-lays it out on each call, so asking per id — once for the
+    /// layout and twice for capabilities — cost the fuzz loop `1 + 3n` view
+    /// builds per generated action where one does.
     fn interaction_inventory(&mut self) -> Vec<trace::InteractionTarget> {
-        self.known_ids()
-            .into_iter()
-            .filter_map(|id| {
-                let mut layouts = self.with_interface(|interface, renderer, _| {
-                    find_targets::<P::Message, P::Renderer>(interface, renderer, &id)
-                });
-                normalize_target_matches(&mut layouts);
-                let [layout] = layouts.as_slice() else {
-                    return None;
-                };
-                let visible = layout.visible_bounds.is_some();
-                let scrollable = layout.translation.is_some()
-                    && self.has_widget_capability(&id, WidgetCapability::Scrollable);
-                let focusable = layout.accessibility.as_ref().is_some_and(|accessibility| {
-                    accessibility.supports_focus && !accessibility.disabled
-                }) || self.has_widget_capability(&id, WidgetCapability::Focusable);
-                Some(trace::InteractionTarget {
-                    id,
-                    visible,
-                    scrollable,
-                    focusable,
-                })
-            })
-            .collect()
-    }
-
-    fn has_widget_capability(&mut self, id: &str, capability: WidgetCapability) -> bool {
         self.with_interface(|interface, renderer, _| {
-            let mut operation = MatchingWidgetIds::new(id, capability).find_all();
-            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
-            matches!(operation.finish(), Outcome::Some(ids) if ids.len() == 1)
+            collect_known_ids::<P::Message, P::Renderer>(interface, renderer)
+                .into_iter()
+                .filter_map(|id| {
+                    let mut layouts =
+                        find_targets::<P::Message, P::Renderer>(interface, renderer, &id);
+                    normalize_target_matches(&mut layouts);
+                    let [layout] = layouts.as_slice() else {
+                        return None;
+                    };
+                    let visible = layout.visible_bounds.is_some();
+                    let scrollable = layout.translation.is_some()
+                        && widget_capability::<P::Message, P::Renderer>(
+                            interface,
+                            renderer,
+                            &id,
+                            WidgetCapability::Scrollable,
+                        );
+                    let focusable = layout.accessibility.as_ref().is_some_and(|accessibility| {
+                        accessibility.supports_focus && !accessibility.disabled
+                    }) || widget_capability::<P::Message, P::Renderer>(
+                        interface,
+                        renderer,
+                        &id,
+                        WidgetCapability::Focusable,
+                    );
+                    Some(trace::InteractionTarget {
+                        id,
+                        visible,
+                        scrollable,
+                        focusable,
+                    })
+                })
+                .collect()
         })
     }
 
@@ -4107,18 +4084,9 @@ where
     }
 
     fn known_ids(&mut self) -> Vec<String> {
-        let mut ids = self.with_interface(|interface, renderer, _| {
-            let mut operation = KnownIds::<P::Message>::new().find_all();
-            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
-            match operation.finish() {
-                Outcome::Some(ids) => ids,
-                _ => Vec::new(),
-            }
-        });
-        ids.retain(|id| !internal_auto_id(id));
-        ids.sort();
-        ids.dedup();
-        ids
+        self.with_interface(|interface, renderer, _| {
+            collect_known_ids::<P::Message, P::Renderer>(interface, renderer)
+        })
     }
 
     fn known_ids_display(&mut self) -> String {
@@ -4127,12 +4095,12 @@ where
 
     fn interaction_bounds(&mut self, action: &str, id: &str, source: Location) -> Rectangle {
         let target = self.require_target(id, false, source);
-        target.visible_bounds().unwrap_or_else(|| {
+        target.visible.unwrap_or_else(|| {
             panic!(
                 "{source}: test `{}` cannot {action} hidden target `{id}`\nstatement: {}\nselector: {id}\nexpected: visible target\nactual: hidden target\nbounds: {:?}",
                 self.test_name,
                 source.statement,
-                target.bounds(),
+                target.bounds,
             )
         })
     }
@@ -4203,7 +4171,7 @@ where
 
     fn require_scroll_target(&mut self, id: &str, source: Location) -> widget::Id {
         let target = self.require_target(id, false, source);
-        if target.translation_x.is_none() || target.translation_y.is_none() {
+        if target.translation.is_none() {
             self.invalid_action(
                 "scroll",
                 "a scrollable target",
@@ -5002,6 +4970,41 @@ where
     }
 }
 
+fn collect_known_ids<Message: 'static, Renderer>(
+    interface: &mut UserInterface<'_, Message, impl theme::Base, Renderer>,
+    renderer: &Renderer,
+) -> Vec<String>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    let mut operation = KnownIds::<Message>::new().find_all();
+    interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+    let mut ids = match operation.finish() {
+        Outcome::Some(ids) => ids,
+        _ => Vec::new(),
+    };
+    ids.retain(|id| !internal_auto_id(id));
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Asks the whole tree, not one node: a duplicated id answers `false`, which
+/// is what keeps an ambiguous selector out of the fuzz inventory.
+fn widget_capability<Message: 'static, Renderer>(
+    interface: &mut UserInterface<'_, Message, impl theme::Base, Renderer>,
+    renderer: &Renderer,
+    id: &str,
+    capability: WidgetCapability,
+) -> bool
+where
+    Renderer: iced::advanced::Renderer,
+{
+    let mut operation = MatchingWidgetIds::new(id, capability).find_all();
+    interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+    matches!(operation.finish(), Outcome::Some(ids) if ids.len() == 1)
+}
+
 fn normalize_target_matches(targets: &mut Vec<LayoutTarget>) {
     let mut normalized: Vec<LayoutTarget> = Vec::with_capacity(targets.len());
     for target in targets.drain(..) {
@@ -5069,10 +5072,6 @@ fn target_from_layout(
     paint: Result<PaintInspection, &'static str>,
     scale_factor: f32,
 ) -> Target {
-    let bounds = layout.bounds;
-    let visible = layout.visible_bounds;
-    let content = layout.content_bounds;
-    let translation = layout.translation;
     let (paint_error, paint) = match paint {
         Ok(paint) => (None, paint),
         Err(error) => (Some(error), PaintInspection::default()),
@@ -5080,29 +5079,10 @@ fn target_from_layout(
     Target {
         id,
         kind: layout.kind,
-        x: bounds.x.into(),
-        y: bounds.y.into(),
-        width: bounds.width.into(),
-        height: bounds.height.into(),
-        left: bounds.x.into(),
-        top: bounds.y.into(),
-        right: (bounds.x + bounds.width).into(),
-        bottom: (bounds.y + bounds.height).into(),
-        center_x: bounds.center_x().into(),
-        center_y: bounds.center_y().into(),
-        visible: visible.is_some(),
-        visible_x: visible.map(|bounds| bounds.x.into()),
-        visible_y: visible.map(|bounds| bounds.y.into()),
-        visible_width: visible.map(|bounds| bounds.width.into()),
-        visible_height: visible.map(|bounds| bounds.height.into()),
-        content_width: content.map(|bounds| bounds.width.into()),
-        content_height: content.map(|bounds| bounds.height.into()),
-        content_x: content.map(|bounds| bounds.x.into()),
-        content_y: content.map(|bounds| bounds.y.into()),
-        translation_x: translation.map(|translation| translation.x.into()),
-        translation_y: translation.map(|translation| translation.y.into()),
-        scroll_x: translation.map(|translation| translation.x.into()),
-        scroll_y: translation.map(|translation| translation.y.into()),
+        bounds: layout.bounds,
+        visible: layout.visible_bounds,
+        content: layout.content_bounds,
+        translation: layout.translation,
         value: layout.value,
         test_name,
         source,
@@ -5802,38 +5782,38 @@ fn target_manifest(target: &Target) -> serde_json::Value {
             "column": source.column,
         })),
         "geometry": {
-            "x": target.x,
-            "y": target.y,
-            "width": target.width,
-            "height": target.height,
-            "left": target.left,
-            "top": target.top,
-            "right": target.right,
-            "bottom": target.bottom,
-            "center_x": target.center_x,
-            "center_y": target.center_y,
+            "x": target.x(),
+            "y": target.y(),
+            "width": target.width(),
+            "height": target.height(),
+            "left": target.left(),
+            "top": target.top(),
+            "right": target.right(),
+            "bottom": target.bottom(),
+            "center_x": target.center_x(),
+            "center_y": target.center_y(),
             "pixel_aligned": target.pixel_aligned(),
         },
         "visible": {
-            "present": target.visible,
-            "x": target.visible_x,
-            "y": target.visible_y,
-            "width": target.visible_width,
-            "height": target.visible_height,
+            "present": target.visible.is_some(),
+            "x": target.visible.map(|bounds| f64::from(bounds.x)),
+            "y": target.visible.map(|bounds| f64::from(bounds.y)),
+            "width": target.visible.map(|bounds| f64::from(bounds.width)),
+            "height": target.visible.map(|bounds| f64::from(bounds.height)),
         },
         "content": {
-            "x": target.content_x,
-            "y": target.content_y,
-            "width": target.content_width,
-            "height": target.content_height,
+            "x": target.content.map(|bounds| f64::from(bounds.x)),
+            "y": target.content.map(|bounds| f64::from(bounds.y)),
+            "width": target.content.map(|bounds| f64::from(bounds.width)),
+            "height": target.content.map(|bounds| f64::from(bounds.height)),
         },
         "translation": {
-            "x": target.translation_x,
-            "y": target.translation_y,
+            "x": target.translation.map(|translation| f64::from(translation.x)),
+            "y": target.translation.map(|translation| f64::from(translation.y)),
         },
         "scroll": {
-            "x": target.scroll_x,
-            "y": target.scroll_y,
+            "x": target.translation.map(|translation| f64::from(translation.x)),
+            "y": target.translation.map(|translation| f64::from(translation.y)),
         },
         "value": target.value,
         "focused": target.focused(),
@@ -6560,18 +6540,18 @@ mod tests {
         assert_eq!(driver.state().redraws, 1);
         driver.check_text("0", Some("App/root/count"), false, HERE);
         driver.check_text("missing", None, true, HERE);
-        assert_eq!(driver.target("App/root", HERE).width, 240.0);
-        driver.hover("App/root/increment", HERE);
-        driver.press("App/root/increment", HERE);
-        driver.release(HERE);
+        assert_eq!(driver.target("App/root", HERE).width(), 240.0);
+        driver.move_to("App/root/increment", HERE);
+        driver.press_with("App/root/increment", MouseButton::Left, HERE);
+        driver.release_button(MouseButton::Left, HERE);
         assert_eq!(driver.state().count, 1);
-        driver.click("App/root/increment", HERE);
+        driver.click_with("App/root/increment", MouseButton::Left, 1, HERE);
         assert_eq!(driver.state().count, 2);
-        driver.click("App/root/input", HERE);
+        driver.click_with("App/root/input", MouseButton::Left, 1, HERE);
         driver.typewrite("iced", HERE);
         assert_eq!(driver.target("App/root/input", HERE).value(), "iced");
         driver.key(Key::named(keyboard::key::Named::Escape), HERE);
-        assert!(driver.text_exists("2", None, HERE));
+        driver.check_text("2", None, false, HERE);
         driver.resize(640.0, 480.0, HERE);
         assert_eq!(driver.viewport(), Size::new(640.0, 480.0));
         let scroll = driver.target("App/root/scroll", HERE);
@@ -6900,11 +6880,10 @@ mod tests {
             Config::new("layered_text").viewport(320.0, 240.0),
         );
 
-        assert!(driver.text_exists("beneath the layer", None, HERE));
-        assert!(driver.text_exists("inside the layer", None, HERE));
-        assert!(!driver.text_exists("nowhere on this screen", None, HERE));
-        let panel = driver.target("Layer/panel", HERE);
-        assert!(driver.text_exists("inside the layer", Some(&panel), HERE));
+        driver.check_text("beneath the layer", None, false, HERE);
+        driver.check_text("inside the layer", None, false, HERE);
+        driver.check_text("nowhere on this screen", None, true, HERE);
+        driver.check_text("inside the layer", Some("Layer/panel"), false, HERE);
     }
 
     #[test]
@@ -6999,7 +6978,7 @@ mod tests {
             iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
             Config::new("tap_touch_ids").viewport(320.0, 240.0),
         );
-        let position = driver.target("App/root", HERE).bounds().center();
+        let position = driver.target("App/root", HERE).bounds.center();
         driver.touch(TouchPhase::Down, 0, position.x, position.y, HERE);
         driver.tap("App/root/increment", 2, HERE);
         assert_eq!(driver.touches, HashMap::from([(0, position)]));
@@ -7058,7 +7037,7 @@ mod tests {
         );
 
         let button = driver.target("App/root/increment", HERE);
-        let button_center = Point::new(button.center_x as f32, button.center_y as f32);
+        let button_center = Point::new(button.bounds.center_x(), button.bounds.center_y());
         driver.perform_action(Action::Enter("App/root/increment".to_owned()), HERE);
         driver.perform_action(Action::MoveTo("App/root/input".to_owned()), HERE);
         driver.perform_action(Action::MoveToPoint(Point::new(8.0, 8.0)), HERE);
@@ -8409,9 +8388,6 @@ mod tests {
             panic_message(|| _ = target.surface_count()),
             panic_message(|| _ = target.text_count()),
             panic_message(|| _ = target.image_count()),
-            panic_message(|| _ = target.surfaces()),
-            panic_message(|| _ = target.texts()),
-            panic_message(|| _ = target.images()),
         ] {
             assert!(
                 unavailable.contains("expected: structured tiny-skia paint"),
