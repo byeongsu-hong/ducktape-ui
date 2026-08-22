@@ -77,8 +77,10 @@ jobs:
     # codesign/ditto/hdiutil sequence behind `cargo ice bundle`, the status
     # item whose platform module compiles nowhere else, and the Metal first
     # frame. A pull request no longer pays for a macOS runner, so this is the
-    # gate that keeps a tag from publishing a broken one — `app` needs it, and
-    # `publish` needs `app`.
+    # gate that keeps a tag from publishing a broken one. `publish` needs it
+    # rather than `app`: what must not happen is a release going out, and
+    # gating the disk image instead would only put this job's uncached run in
+    # front of a build it runs beside for free.
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
     timeout-minutes: 60
@@ -174,7 +176,6 @@ jobs:
     # exercised first. Pull requests skip it — nothing on a pull request is
     # worth two macOS release builds.
     if: github.event_name != 'pull_request'
-    needs: macos
     runs-on: macos-latest
     # Two architectures through the release profile's fat LTO and single
     # codegen unit, with no compiler cache, is the whole cost of this job.
@@ -316,7 +317,7 @@ jobs:
   publish:
     name: Publish GitHub release
     if: github.event_name == 'push'
-    needs: [app, build, package, packages]
+    needs: [app, build, macos, package, packages]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
