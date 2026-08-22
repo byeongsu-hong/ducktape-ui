@@ -4035,6 +4035,74 @@ impl<'a> FactsBuilder<'a> {
         }
     }
 
+    /// Every checked expression reaches the fact store through here: the eleven
+    /// call sites differ only in which analysis store they took `analysis` out
+    /// of, how `source` relates to `expected`, and the noun in their invariants.
+    #[allow(clippy::too_many_arguments)]
+    fn push_analyzed_expression(
+        &mut self,
+        owner: CheckedExprOwner,
+        analysis: ExprTypeAnalysis,
+        expr: &Expr,
+        expected: Option<&Type>,
+        mode: SourceMode,
+        noun: &'static str,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        origin: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
+            self.invariant(
+                span,
+                format!("missing retained {noun} expression root type"),
+            )
+        })?;
+        let (source, coercion) = match mode {
+            SourceMode::Raw => (inferred, CheckedInitializerCoercion::None),
+            SourceMode::Contextual => (
+                resolve_erased_type(&contextual_type(inferred, expected)),
+                CheckedInitializerCoercion::None,
+            ),
+            SourceMode::Initializer => initializer_source_context(
+                &inferred,
+                expected.ok_or_else(|| {
+                    self.invariant(span, format!("{noun} initializer has no destination type"))
+                })?,
+            ),
+        };
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
+        if self.facts.expressions[root.0 as usize].ty != source {
+            return Err(self.invariant(
+                span,
+                format!("{noun} expression source type does not match its checked root"),
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            destination: expected.cloned().unwrap_or_else(|| source.clone()),
+            source,
+            coercion,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, format!("duplicate checked {noun} expression owner")));
+        }
+        Ok(id)
+    }
+
     fn push_test_expression(
         &mut self,
         owner: CheckedExprOwner,
@@ -4051,41 +4119,17 @@ impl<'a> FactsBuilder<'a> {
                 self.invariant(span, "missing authoritative test expression analysis")
             })?;
         self.record_analysis_metrics(&analysis);
-        let source = analysis
-            .type_of(expression)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained test expression root type"))?;
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "test expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: source,
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expression,
+            None,
+            SourceMode::Raw,
+            "test",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked test expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn lower_container_facts(
@@ -5804,40 +5848,18 @@ impl<'a> FactsBuilder<'a> {
                 })?;
             record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
             self.record_analysis_metrics(&analysis);
-            let source = analysis.type_of(expression).cloned().ok_or_else(|| {
-                self.invariant(span, "missing retained media expression root type")
-            })?;
-            let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
             let origin = self.origins.push(span, Some(parent));
-            let lowering = ExpressionLowering {
-                analysis: &analysis,
-                owner: id,
-                origin,
-                span,
-            };
-            let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-            if self.facts.expression(root).ty != source {
-                return Err(self.invariant(
-                    span,
-                    "media expression source type does not match its checked root",
-                ));
-            }
-            self.facts.expression_uses.push(CheckedExprUse {
+            self.push_analyzed_expression(
                 owner,
-                root,
-                source: source.clone(),
-                destination: source,
-                coercion: CheckedInitializerCoercion::None,
+                analysis,
+                expression,
+                None,
+                SourceMode::Raw,
+                "media",
+                env,
+                span,
                 origin,
-            });
-            if self
-                .facts
-                .expression_uses_by_owner
-                .insert(owner, id)
-                .is_some()
-            {
-                return Err(self.invariant(span, "duplicate checked media expression owner"));
-            }
+            )?;
         }
         let remaining = self
             .analyses
@@ -5909,40 +5931,18 @@ impl<'a> FactsBuilder<'a> {
                 })?;
             record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
             self.record_analysis_metrics(&analysis);
-            let source = analysis.type_of(expression).cloned().ok_or_else(|| {
-                self.invariant(span, "missing retained tooltip expression root type")
-            })?;
-            let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
             let origin = self.origins.push(span, Some(parent));
-            let lowering = ExpressionLowering {
-                analysis: &analysis,
-                owner: id,
-                origin,
-                span,
-            };
-            let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-            if self.facts.expression(root).ty != source {
-                return Err(self.invariant(
-                    span,
-                    "tooltip expression source type does not match its checked root",
-                ));
-            }
-            self.facts.expression_uses.push(CheckedExprUse {
+            self.push_analyzed_expression(
                 owner,
-                root,
-                source: source.clone(),
-                destination: source,
-                coercion: CheckedInitializerCoercion::None,
+                analysis,
+                expression,
+                None,
+                SourceMode::Raw,
+                "tooltip",
+                env,
+                span,
                 origin,
-            });
-            if self
-                .facts
-                .expression_uses_by_owner
-                .insert(owner, id)
-                .is_some()
-            {
-                return Err(self.invariant(span, "duplicate checked tooltip expression owner"));
-            }
+            )?;
         }
         let remaining = self
             .analyses
@@ -6081,42 +6081,18 @@ impl<'a> FactsBuilder<'a> {
             })?;
         record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
         self.record_analysis_metrics(&analysis);
-        let source = analysis
-            .type_of(expression)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained float expression root type"))?;
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expression(root).ty != source {
-            return Err(self.invariant(
-                span,
-                "float expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: source,
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expression,
+            None,
+            SourceMode::Raw,
+            "float",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked float expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6171,42 +6147,18 @@ impl<'a> FactsBuilder<'a> {
             .ok_or_else(|| self.invariant(span, "missing authoritative pin expression analysis"))?;
         record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
         self.record_analysis_metrics(&analysis);
-        let source = analysis
-            .type_of(expression)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained pin expression root type"))?;
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expression(root).ty != source {
-            return Err(self.invariant(
-                span,
-                "pin expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: source,
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expression,
+            None,
+            SourceMode::Raw,
+            "pin",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked pin expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6495,42 +6447,18 @@ impl<'a> FactsBuilder<'a> {
                 )
             })?;
         self.record_analysis_metrics(&analysis);
-        let inferred = analysis.type_of(expression).cloned().ok_or_else(|| {
-            self.invariant(span, "missing retained interaction expression root type")
-        })?;
-        let source = resolve_erased_type(&contextual_type(inferred, destination));
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expression(root).ty != source {
-            return Err(self.invariant(
-                span,
-                "interaction expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            destination: destination.cloned().unwrap_or_else(|| source.clone()),
-            source,
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expression,
+            destination,
+            SourceMode::Contextual,
+            "interaction",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked interaction expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -7707,52 +7635,22 @@ impl<'a> FactsBuilder<'a> {
                 self.invariant(span, "missing authoritative canvas expression analysis")
             })?;
         self.record_analysis_metrics(&analysis);
-        let inferred = analysis
-            .type_of(expression)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained canvas expression root type"))?;
-        let (source, coercion) = if initializer {
-            initializer_source_context(
-                &inferred,
-                destination.ok_or_else(|| {
-                    self.invariant(span, "canvas initializer has no destination type")
-                })?,
-            )
-        } else {
-            (inferred, CheckedInitializerCoercion::None)
-        };
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expression(root).ty != source {
-            return Err(self.invariant(
-                span,
-                "canvas expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: destination.cloned().unwrap_or(source),
-            coercion,
+            analysis,
+            expression,
+            destination,
+            if initializer {
+                SourceMode::Initializer
+            } else {
+                SourceMode::Raw
+            },
+            "canvas",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked canvas expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn lower_handler(
@@ -7872,43 +7770,18 @@ impl<'a> FactsBuilder<'a> {
             })?;
         record_fact_metric!(self.facts.metrics.handler_authoritative_analyses += 1);
         self.record_analysis_metrics(&analysis);
-        let inferred = analysis
-            .type_of(expr)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained handler expression root type"))?;
-        let source = resolve_erased_type(&contextual_type(inferred, expected));
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "handler expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: expected.cloned().unwrap_or(source),
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expr,
+            expected,
+            SourceMode::Contextual,
+            "handler",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked handler expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn statement_operand(
@@ -9319,7 +9192,6 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
     ) -> Result<CheckedExprUseId, Error> {
         let owner = CheckedExprOwner::Subscription { subscription, role };
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let analysis = self.analyses.remove(owner).ok_or_else(|| {
             self.invariant(
                 span,
@@ -9328,45 +9200,22 @@ impl<'a> FactsBuilder<'a> {
         })?;
         record_fact_metric!(self.facts.metrics.subscription_analysis_passes += 1);
         self.record_analysis_metrics(&analysis);
-        let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
-            self.invariant(span, "missing retained subscription expression root type")
-        })?;
-        let source = resolve_erased_type(&contextual_type(inferred, expected));
         let parent = self
             .declarations
             .subscription(subscription.0 as usize)
             .origin;
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "subscription expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: expected.cloned().unwrap_or(source),
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expr,
+            expected,
+            SourceMode::Contextual,
+            "subscription",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked subscription expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn push_view_expression(
@@ -9378,48 +9227,23 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
     ) -> Result<CheckedExprUseId, Error> {
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let analysis = self.analyses.remove(owner).ok_or_else(|| {
             self.invariant(span, "missing authoritative view expression analysis")
         })?;
         record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
         self.record_analysis_metrics(&analysis);
-        let inferred = analysis
-            .type_of(expr)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained view expression root type"))?;
-        let source = resolve_erased_type(&contextual_type(inferred, expected));
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "view expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: expected.cloned().unwrap_or(source),
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expr,
+            expected,
+            SourceMode::Contextual,
+            "view",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked view expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -9491,7 +9315,6 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
     ) -> Result<CheckedExprUseId, Error> {
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let analysis = self.analyses.remove(owner).ok_or_else(|| {
             self.invariant(
                 span,
@@ -9500,41 +9323,18 @@ impl<'a> FactsBuilder<'a> {
         })?;
         record_fact_metric!(self.facts.metrics.app_setting_analysis_passes += 1);
         self.record_analysis_metrics(&analysis);
-        let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
-            self.invariant(span, "missing retained app-setting expression root type")
-        })?;
-        let source = resolve_erased_type(&contextual_type(inferred, Some(expected)));
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "app-setting expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source,
-            destination: expected.clone(),
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expr,
+            Some(expected),
+            SourceMode::Contextual,
+            "app-setting",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked app-setting expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn push_local(
@@ -11775,6 +11575,12 @@ fn initializer_source_context(
         (Type::Str, Type::Editor) => (Type::Str, CheckedInitializerCoercion::StrToEditor),
         _ => (destination.clone(), CheckedInitializerCoercion::None),
     }
+}
+
+enum SourceMode {
+    Raw,
+    Contextual,
+    Initializer,
 }
 
 fn contextual_type(inferred: Type, expected: Option<&Type>) -> Type {
