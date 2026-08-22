@@ -25,6 +25,13 @@ on:
 permissions:
   contents: read
 
+# Without this a branch's pushes stacked Release runs that all ran to
+# completion; a tag keeps its own group, so a release is never cancelled by
+# one for another version.
+concurrency:
+  group: release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   # apt bounds and retries its own downloads with these; without them a
