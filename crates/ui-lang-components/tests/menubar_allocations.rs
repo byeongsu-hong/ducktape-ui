@@ -2,12 +2,11 @@
 
 mod common;
 
-use common::GLOBAL;
+use common::clean_window;
 
 use std::hint::black_box;
 
 use iced::Element;
-use stats_alloc::Region;
 use ui_lang_components::ui::direction::Direction;
 use ui_lang_components::ui::menu::MenuState;
 use ui_lang_components::ui::menubar::{MenubarMenu, MenubarState, menubar};
@@ -38,11 +37,11 @@ fn performance_contract_menubar_reverses_trigger_storage_in_place() {
     let menu_state = MenuState::default();
 
     render(&menus, &state, &menu_state);
-    let region = Region::new(GLOBAL);
-    for _ in 0..RENDERS {
-        render(&menus, &state, &menu_state);
-    }
-    let stats = region.change();
+    let stats = clean_window((167_424, 47_547_648), || {
+        for _ in 0..RENDERS {
+            render(&menus, &state, &menu_state);
+        }
+    });
 
     eprintln!(
         "{RENDERS} RTL menubar renders with {MENUS} triggers: {} allocations / {} reallocations / {} bytes",

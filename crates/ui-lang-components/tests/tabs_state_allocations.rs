@@ -2,9 +2,8 @@
 
 mod common;
 
-use common::GLOBAL;
+use common::clean_window;
 
-use stats_alloc::Region;
 use ui_lang_components::ui::tabs::{TabsEvent, TabsState};
 
 #[test]
@@ -14,11 +13,11 @@ fn performance_contract_tabs_skip_equal_state_replacement() {
     let event = TabsEvent::Select("account".to_owned());
 
     assert!(!state.apply(&event));
-    let region = Region::new(GLOBAL);
-    for _ in 0..UPDATES {
-        assert!(!state.apply(&event));
-    }
-    let stats = region.change();
+    let stats = clean_window((0, 0), || {
+        for _ in 0..UPDATES {
+            assert!(!state.apply(&event));
+        }
+    });
 
     eprintln!(
         "{UPDATES} equal tabs state updates: {} allocations / {} reallocations / \

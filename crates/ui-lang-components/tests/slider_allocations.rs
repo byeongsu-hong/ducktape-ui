@@ -2,11 +2,10 @@
 
 mod common;
 
-use common::GLOBAL;
+use common::clean_window_allocations;
 
 use std::hint::black_box;
 
-use stats_alloc::Region;
 use ui_lang_components::ui::slider::{SliderCommand, SliderSpec, reduce_thumb};
 
 #[test]
@@ -22,16 +21,16 @@ fn performance_contract_slider_keyboard_update_reuses_normalized_values() {
         spec,
     )));
 
-    let region = Region::new(GLOBAL);
-    for _ in 0..UPDATES {
-        drop(black_box(reduce_thumb(
-            black_box(&values),
-            1,
-            SliderCommand::Increment,
-            spec,
-        )));
-    }
-    let stats = region.change();
+    let stats = clean_window_allocations(UPDATES, || {
+        for _ in 0..UPDATES {
+            drop(black_box(reduce_thumb(
+                black_box(&values),
+                1,
+                SliderCommand::Increment,
+                spec,
+            )));
+        }
+    });
 
     eprintln!(
         "{UPDATES} slider keyboard updates: {} allocations / {} reallocations / {} bytes",

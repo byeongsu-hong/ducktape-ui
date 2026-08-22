@@ -2,12 +2,11 @@
 
 mod common;
 
-use common::GLOBAL;
+use common::clean_window;
 
 use std::hint::black_box;
 
 use iced::Element;
-use stats_alloc::Region;
 use ui_lang_components::ui::calendar::{
     CalendarSelection, CalendarState, Month, controlled_calendar,
 };
@@ -33,11 +32,11 @@ fn performance_contract_calendar_reuses_rtl_caption_storage() {
     );
 
     render(&state);
-    let region = Region::new(GLOBAL);
-    for _ in 0..RENDERS {
-        render(&state);
-    }
-    let stats = region.change();
+    let stats = clean_window((122_112, 34_757_888), || {
+        for _ in 0..RENDERS {
+            render(&state);
+        }
+    });
 
     eprintln!(
         "{RENDERS} RTL dropdown calendar renders: {} allocations / {} reallocations / {} bytes",

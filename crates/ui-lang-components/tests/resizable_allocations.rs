@@ -2,12 +2,11 @@
 
 mod common;
 
-use common::GLOBAL;
+use common::clean_window;
 
 use iced::advanced::{Layout, Shell, clipboard, layout, mouse, renderer::Headless as _, widget};
 use iced::widget::{container, text};
 use iced::{Element, Event, Point, Rectangle, Size, touch};
-use stats_alloc::Region;
 use ui_lang_components::ui::resizable::resizable;
 use ui_lang_components::ui::theme::LIGHT;
 
@@ -92,16 +91,16 @@ fn performance_contract_resizable_drag_reuses_state() {
         iced::event::Status::Captured
     );
     assert_eq!(send!(event(110.0)), iced::event::Status::Captured);
-    messages.clear();
 
-    let region = Region::new(GLOBAL);
-    for index in 0..UPDATES {
-        assert_eq!(
-            send!(event(if index % 2 == 0 { 120.0 } else { 130.0 })),
-            iced::event::Status::Captured
-        );
-    }
-    let stats = region.change();
+    let stats = clean_window((UPDATES, UPDATES * 2 * size_of::<f32>()), || {
+        messages.clear();
+        for index in 0..UPDATES {
+            assert_eq!(
+                send!(event(if index % 2 == 0 { 120.0 } else { 130.0 })),
+                iced::event::Status::Captured
+            );
+        }
+    });
 
     eprintln!(
         "{UPDATES} warmed resizable drag updates: {} allocations / {} reallocations / {} bytes",

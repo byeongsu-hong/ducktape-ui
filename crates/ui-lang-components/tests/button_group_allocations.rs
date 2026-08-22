@@ -2,13 +2,12 @@
 
 mod common;
 
-use common::GLOBAL;
+use common::clean_window_allocations;
 
 use std::hint::black_box;
 
 use iced::Element;
 use iced::widget::text;
-use stats_alloc::Region;
 use ui_lang_components::ui::button_group::{ButtonGroupOrientation, button_group};
 use ui_lang_components::ui::theme::LIGHT;
 
@@ -30,11 +29,11 @@ fn performance_contract_button_group_streams_child_storage() {
     const CHILDREN: usize = 64;
 
     render(CHILDREN);
-    let region = Region::new(GLOBAL);
-    for _ in 0..RENDERS {
-        render(CHILDREN);
-    }
-    let stats = region.change();
+    let stats = clean_window_allocations(17_152, || {
+        for _ in 0..RENDERS {
+            render(CHILDREN);
+        }
+    });
 
     eprintln!(
         "{RENDERS} button group renders with {CHILDREN} children: {} allocations / {} reallocations / {} bytes / {} reallocated bytes",

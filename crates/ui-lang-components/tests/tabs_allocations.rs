@@ -2,12 +2,11 @@
 
 mod common;
 
-use common::GLOBAL;
+use common::clean_window;
 
 use std::hint::black_box;
 
 use iced::widget::{self, text};
-use stats_alloc::Region;
 use ui_lang_components::ui::tabs::{
     TabsActivation, TabsOrientation, TabsState, TabsVariant, tab, tabs,
 };
@@ -41,11 +40,11 @@ fn performance_contract_tabs_reuse_trigger_storage() {
     let state = TabsState::new(0);
 
     render(&ids, &state);
-    let region = Region::new(GLOBAL);
-    for _ in 0..RENDERS {
-        render(&ids, &state);
-    }
-    let stats = region.change();
+    let stats = clean_window((150_272, 47_652_864), || {
+        for _ in 0..RENDERS {
+            render(&ids, &state);
+        }
+    });
 
     eprintln!(
         "{RENDERS} tab renders with {TABS} triggers: {} allocations / {} reallocations / {} bytes",
