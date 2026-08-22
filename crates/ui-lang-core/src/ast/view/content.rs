@@ -109,7 +109,7 @@ pub(crate) fn responsive_expression_count(
     breakpoint + dimensions
 }
 
-fn length_semantic_key(length: &Option<LengthValue>) -> String {
+pub(crate) fn length_semantic_key(length: &Option<LengthValue>) -> String {
     match length {
         None => "none".into(),
         Some(LengthValue::Fill) => "fill".into(),
@@ -403,7 +403,7 @@ pub(crate) fn text_editor_semantic_key(
         disabled.is_some(),
         options.placeholder,
         options.width.is_some(),
-        input_length_semantic_key(&options.height),
+        length_semantic_key(&options.height),
         [
             options.min_height.is_some(),
             options.max_height.is_some(),
@@ -444,22 +444,12 @@ pub struct TableColumn {
 }
 
 pub(crate) fn table_semantic_key(options: &TableOptions, columns: &[TableColumn]) -> String {
-    fn length_key(length: &Option<LengthValue>) -> String {
-        match length {
-            None => "none".into(),
-            Some(LengthValue::Fill) => "fill".into(),
-            Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
-            Some(LengthValue::Shrink) => "shrink".into(),
-            Some(LengthValue::Fixed(_)) => "fixed".into(),
-        }
-    }
-
     let columns = columns
         .iter()
         .map(|column| {
             format!(
                 "{}:{:?}:{:?}",
-                length_key(&column.width),
+                length_semantic_key(&column.width),
                 column.align_x,
                 column.align_y
             )
@@ -468,7 +458,7 @@ pub(crate) fn table_semantic_key(options: &TableOptions, columns: &[TableColumn]
         .join("|");
     format!(
         "table|width={}|metrics={:?}|columns={columns}",
-        length_key(&options.width),
+        length_semantic_key(&options.width),
         [
             options.padding.is_some(),
             options.padding_x.is_some(),
@@ -597,16 +587,6 @@ pub(crate) fn input_expression_roots<'a>(
     roots
 }
 
-fn input_length_semantic_key(length: &Option<LengthValue>) -> String {
-    match length {
-        None => "none".into(),
-        Some(LengthValue::Fill) => "fill".into(),
-        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
-        Some(LengthValue::Shrink) => "shrink".into(),
-        Some(LengthValue::Fixed(_)) => "fixed".into(),
-    }
-}
-
 fn input_surface_semantic_key(style: &TextInputStatusStyle) -> String {
     let background = match &style.options.background {
         None => "none".into(),
@@ -712,7 +692,7 @@ pub(crate) fn input_semantic_key(
         options.accessibility.label.is_some(),
         options.accessibility.description.is_some(),
         options.secure.is_some(),
-        input_length_semantic_key(&options.width),
+        length_semantic_key(&options.width),
         [
             options.padding.is_some(),
             options.text_size.is_some(),
@@ -899,16 +879,6 @@ pub(crate) fn rich_text_expression_roots<'a>(
     roots
 }
 
-fn text_length_semantic_key(length: &Option<LengthValue>) -> String {
-    match length {
-        None => "none".into(),
-        Some(LengthValue::Fill) => "fill".into(),
-        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
-        Some(LengthValue::Shrink) => "shrink".into(),
-        Some(LengthValue::Fixed(_)) => "fixed".into(),
-    }
-}
-
 fn text_font_semantic_key(font: &Option<FontPreset>) -> String {
     match font {
         None => "none".into(),
@@ -933,8 +903,8 @@ fn text_options_semantic_key(options: &TextOptions) -> String {
     );
     format!(
         "bounds={}:{}|size={}|line={}|font={}|align={:?}:{:?}|shape={:?}|wrap={:?}|tracking={:?}|custom={custom}|underline={}|strike={}",
-        text_length_semantic_key(&options.width),
-        text_length_semantic_key(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         options.size.is_some(),
         text_line_height_semantic_key(&options.line_height),
         text_font_semantic_key(&options.font),
@@ -1185,8 +1155,8 @@ pub(crate) fn button_semantic_key(
         options.expanded.is_some(),
         options.accessibility.label.is_some(),
         options.accessibility.description.is_some(),
-        text_length_semantic_key(&options.width),
-        text_length_semantic_key(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         options.padding.is_some(),
         options.clip.is_some(),
         options.style.preset,

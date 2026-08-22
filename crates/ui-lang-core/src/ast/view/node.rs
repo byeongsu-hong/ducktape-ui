@@ -370,16 +370,6 @@ pub(crate) fn themer_semantic_key(function: &str, args: &[Expr], route: &Option<
     )
 }
 
-fn extern_view_length_semantic_key(length: &Option<LengthValue>) -> String {
-    match length {
-        None => "none".into(),
-        Some(LengthValue::Fill) => "fill".into(),
-        Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
-        Some(LengthValue::Shrink) => "shrink".into(),
-        Some(LengthValue::Fixed(_)) => "fixed".into(),
-    }
-}
-
 pub(crate) fn shader_semantic_key(
     function: &str,
     args: &[Expr],
@@ -390,8 +380,8 @@ pub(crate) fn shader_semantic_key(
     format!(
         "shader|function={function}|arguments={}|width={}|height={}|route={}",
         args.len(),
-        extern_view_length_semantic_key(width),
-        extern_view_length_semantic_key(height),
+        length_semantic_key(width),
+        length_semantic_key(height),
         route.is_some()
     )
 }

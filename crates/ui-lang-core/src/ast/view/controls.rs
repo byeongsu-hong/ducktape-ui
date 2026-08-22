@@ -86,16 +86,6 @@ pub enum ProgressStyle {
     Danger,
 }
 
-fn range_length_semantic_key(length: &Option<LengthValue>) -> String {
-    match length {
-        None => "none".into(),
-        Some(LengthValue::Fill) => "fill".into(),
-        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
-        Some(LengthValue::Shrink) => "shrink".into(),
-        Some(LengthValue::Fixed(_)) => "fixed".into(),
-    }
-}
-
 fn range_background_semantic_key(background: &Option<BackgroundValue>) -> String {
     match background {
         None => "none".into(),
@@ -272,8 +262,8 @@ pub(crate) fn slider_semantic_key(
         "slider|axis={vertical}|default={}|shift={}|w={}|h={}|custom={custom}|statuses={statuses}|styles={styles:?}|change={}|release={}",
         options.default.is_some(),
         options.shift_step.is_some(),
-        range_length_semantic_key(&options.width),
-        range_length_semantic_key(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         range_route_semantic_key(Some(route)),
         range_route_semantic_key(release.as_ref()),
     )
@@ -321,8 +311,8 @@ pub(crate) fn progress_semantic_key(
     );
     format!(
         "progress|axis={vertical}|length={}|girth={}|preset={:?}|custom={custom}|bg={}|bar={}|border={:?}|fields={:?}|styles={styles:?}",
-        range_length_semantic_key(&options.length),
-        range_length_semantic_key(&options.girth),
+        length_semantic_key(&options.length),
+        length_semantic_key(&options.girth),
         options.style,
         range_background_semantic_key(&options.background),
         range_background_semantic_key(&options.bar),
@@ -462,8 +452,8 @@ pub(crate) fn space_semantic_key(
 ) -> String {
     format!(
         "space|width={}|height={}|styles={styles:?}",
-        range_length_semantic_key(width),
-        range_length_semantic_key(height),
+        length_semantic_key(width),
+        length_semantic_key(height),
     )
 }
 

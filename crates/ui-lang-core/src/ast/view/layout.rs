@@ -172,16 +172,6 @@ pub(crate) fn layout_routes(options: &LayoutOptions) -> Vec<&Route> {
 }
 
 pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> String {
-    fn length(length: &Option<LengthValue>) -> String {
-        match length {
-            None => "none".into(),
-            Some(LengthValue::Fill) => "fill".into(),
-            Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
-            Some(LengthValue::Shrink) => "shrink".into(),
-            Some(LengthValue::Fixed(_)) => "fixed".into(),
-        }
-    }
-
     fn background(background: &Option<BackgroundValue>) -> String {
         match background {
             None => "none".into(),
@@ -255,7 +245,7 @@ pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> Stri
         None => "none".into(),
         Some(GridSizing::AspectRatio { .. }) => "aspect".into(),
         Some(GridSizing::EvenlyDistribute(length_value)) => {
-            format!("even:{}", length(&Some(length_value.clone())))
+            format!("even:{}", length_semantic_key(&Some(length_value.clone())))
         }
     };
     let scroll = options.scroll.as_ref().map_or_else(
@@ -291,8 +281,8 @@ pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> Stri
             format!(
                 "{:?}:{}:{}:{}:{:?}:{:?}:{}{}{}{}{}:route={}:viewport={}:custom={custom}:styles={styles}",
                 scroll.direction,
-                length(&scroll.width),
-                length(&scroll.height),
+                length_semantic_key(&scroll.width),
+                length_semantic_key(&scroll.height),
                 scroll.hidden_bar,
                 scroll.anchor_x,
                 scroll.anchor_y,
@@ -310,8 +300,8 @@ pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> Stri
         "layout:{kind:?}|columns={}|clip={}|size={}:{}|spacing={}|padding={:?}|max={}{}|virtual-row={}|align={:?}|wrap={}:{:?}:{}|flex={flexbox}|cell={}{}|grid-height={grid_height}|under={}|scroll={scroll}",
         options.columns.is_some(),
         options.clip.is_some(),
-        length(&options.width),
-        length(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         options.spacing.is_some(),
         [
             options.padding.all.is_some(),
@@ -336,20 +326,10 @@ pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> Stri
 }
 
 pub(crate) fn keyed_column_semantic_key(options: &LayoutOptions) -> String {
-    fn length_key(length: &Option<LengthValue>) -> String {
-        match length {
-            None => "none".into(),
-            Some(LengthValue::Fill) => "fill".into(),
-            Some(LengthValue::FillPortion(portion)) => format!("fill-portion:{portion}"),
-            Some(LengthValue::Shrink) => "shrink".into(),
-            Some(LengthValue::Fixed(_)) => "fixed".into(),
-        }
-    }
-
     format!(
         "keyed|width={}|height={}|spacing={}|padding={:?}|max-width={}|virtual-row={}|align={:?}",
-        length_key(&options.width),
-        length_key(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         options.spacing.is_some(),
         [
             options.padding.all.is_some(),
@@ -468,13 +448,6 @@ pub(crate) fn container_expression_roots(options: &ContainerOptions) -> Vec<&Exp
 
 pub(crate) fn container_semantic_key(options: &ContainerOptions) -> String {
     let present = |value: bool| if value { '1' } else { '0' };
-    let length = |value: &Option<LengthValue>| match value {
-        None => "none".into(),
-        Some(LengthValue::Fill) => "fill".into(),
-        Some(LengthValue::FillPortion(portion)) => format!("fill:{portion}"),
-        Some(LengthValue::Shrink) => "shrink".into(),
-        Some(LengthValue::Fixed(_)) => "fixed".into(),
-    };
     let background = match &options.style.background {
         None => "none".into(),
         Some(BackgroundValue::Color(color)) => format!("color:{color}"),
@@ -518,8 +491,8 @@ pub(crate) fn container_semantic_key(options: &ContainerOptions) -> String {
         .into_iter()
         .map(present)
         .collect::<String>(),
-        length(&options.width),
-        length(&options.height),
+        length_semantic_key(&options.width),
+        length_semantic_key(&options.height),
         present(options.max_width.is_some()),
         present(options.max_height.is_some()),
         options.align_x,
