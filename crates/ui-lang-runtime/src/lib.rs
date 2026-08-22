@@ -10,7 +10,6 @@ pub mod dev;
 mod dynamic_themer;
 mod flex;
 mod hover_reveal;
-mod live_surface;
 #[cfg(feature = "virtual-list")]
 mod log_timeline;
 mod memo_lazy;
@@ -49,7 +48,6 @@ pub use data_grid::*;
 pub use dynamic_themer::*;
 pub use flex::*;
 pub use hover_reveal::*;
-pub use live_surface::*;
 #[cfg(feature = "virtual-list")]
 pub use log_timeline::*;
 pub use memo_lazy::*;
