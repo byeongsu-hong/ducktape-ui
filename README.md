@@ -255,6 +255,8 @@ call handlers. A row that carries an indented block is a submenu, to any
 depth; it names no route, because the platform opens it rather than delivering
 it. The platform owns the menu's opening, placement and dismissal, so a
 program declares no window for it and carries no tray state.
+A row's trailing `when` takes it out of the menu while false — removed, not
+disabled, a submenu with the rows it owns — and puts it back in its place.
 `expect tray label|icon|item|command` asserts what the program decided the
 item should show, and `tray choose` runs a menu row the way the platform does
 — a nested row by its text like any other, since the row table is flat at

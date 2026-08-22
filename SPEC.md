@@ -351,7 +351,7 @@ tray_setting   = "icon-rgba" string u32 u32 ("when" expr)?
                | ("label" | "tooltip") expr
                | tray_menu
 tray_menu      = "menu" INDENT tray_row+
-tray_row       = "separator" | expr ("->" name)? (INDENT tray_row+)?
+tray_row       = "separator" | expr ("->" name)? ("when" expr)? (INDENT tray_row+)?
 window_decl    = "window" name? INDENT window_setting*
 window_setting = ("size" | "min-size" | "max-size") number number
                | "icon-rgba" string u32 u32
@@ -1548,8 +1548,22 @@ at every depth — it is the checked-expression id, the snapshot slot, the nativ
 item and the row-to-handler entry all at once, and nesting the storage would
 have made four places agree on a tree walk instead of on a number.
 
-The row count is fixed when the program compiles; only the text changes. There
-is deliberately no way to generate rows from a list. Rows whose number varies
+A row may carry a trailing `when` guard, a `bool` expression re-evaluated and
+diffed like its text. While the guard is false the row is not in the menu: the
+native item is removed, not disabled, so a reader sees neither a grey stat nor
+a dead command, and a submenu row takes the rows it owns with it. When the
+guard holds again the item is put back at its place among the siblings that
+are showing. `separator` takes no guard — a divider has nothing to hide; guard
+the rows it separates. `expect tray item`, `expect tray command` and
+`tray choose` see only rows that are present: a hidden row fails them as a
+missing one, and the failure names the guard.
+
+The row set is fixed when the program compiles; only the text changes, and
+whether a declared row is present. A guard chooses among declared rows, it
+does not generate one, which is what keeps the diff above the platform seam
+whole: the platform hears one removal or one insertion when a guard flips, and
+nothing while it holds. There is deliberately no way to generate rows from a
+list. Rows whose number varies
 would make every update rebuild the native menu, since the platform has no
 cheap reordering, and that is the whole of what the diff above the platform
 seam buys. A figure about a collection is composed by a `pure` extern into the

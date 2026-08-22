@@ -6,6 +6,7 @@ daemon Demo
         menu
             describe(count)
             separator
+            "Reset" -> reset when count > 1
             "Quit" -> quit
 extern crate::backend
     pure describe(value:i64) -> str
@@ -20,6 +21,8 @@ palette app for AppTheme
     primary #333333
     danger #ff0000
 state
+    count = 1
+on reset
     count = 1
 on quit
     exit

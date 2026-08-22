@@ -640,12 +640,45 @@ pub enum TrayField {
 /// two rows is what grouping makes likely — two submenus can each hold a
 /// `Close` — and picking the earlier one would run the wrong handler while the
 /// test passed, which is the failure a row-to-handler table exists to stop.
+///
+/// A row a `when` guard has taken out of the menu is not in the table the
+/// reader sees, so it is not here either — choosing it is what the platform
+/// could not do, and [`Driver::check_tray`] reports it as missing.
 fn tray_rows_containing(tray: &crate::tray::TraySnapshot, value: &str) -> Vec<usize> {
     tray.items
         .iter()
         .enumerate()
-        .filter(|(_, item)| !item.is_empty() && item.contains(value))
+        .filter(|(index, item)| {
+            !item.is_empty() && item.contains(value) && tray_visible(tray, *index)
+        })
         .map(|(index, _)| index)
+        .collect()
+}
+
+/// A snapshot with no `hidden` entry for a row — one built by hand — has
+/// hidden nothing.
+fn tray_visible(tray: &crate::tray::TraySnapshot, index: usize) -> bool {
+    !tray.hidden.get(index).copied().unwrap_or(false)
+}
+
+fn hidden_rows_note(hidden: &[String]) -> String {
+    match hidden.is_empty() {
+        true => String::new(),
+        false => format!("\nhidden by a `when` guard: {hidden:?}"),
+    }
+}
+
+/// The rows carrying `value` that a `when` guard has hidden, for the failure
+/// that names them: a test asserting a row that exists but is not showing
+/// should be told which of the two it is looking at.
+fn tray_hidden_rows_containing(tray: &crate::tray::TraySnapshot, value: &str) -> Vec<String> {
+    tray.items
+        .iter()
+        .enumerate()
+        .filter(|(index, item)| {
+            !item.is_empty() && item.contains(value) && !tray_visible(tray, *index)
+        })
+        .map(|(_, item)| item.clone())
         .collect()
 }
 
@@ -2651,16 +2684,21 @@ where
         let actual = match field {
             TrayField::Label => tray.label.contains(value),
             TrayField::Icon => tray.icon == Some(value),
-            TrayField::Item => tray.items.iter().any(|item| item.contains(value)),
+            TrayField::Item => !tray_rows_containing(&tray, value).is_empty(),
             TrayField::Command => crate::tray::is_command(self.tray_row(&tray, value, source)),
         };
         if actual == negated {
             let (selector, shown) = match field {
                 TrayField::Label => ("tray label containing", format!("{:?}", tray.label)),
                 TrayField::Icon => ("tray icon", format!("{:?}", tray.icon)),
-                TrayField::Item | TrayField::Command => {
-                    ("a tray row containing", format!("{:?}", tray.items))
-                }
+                TrayField::Item | TrayField::Command => (
+                    "a tray row containing",
+                    format!(
+                        "{:?}{}",
+                        tray.items,
+                        hidden_rows_note(&tray_hidden_rows_containing(&tray, value))
+                    ),
+                ),
             };
             panic!(
                 "{source}: test `{}` tray expectation failed\nstatement: {}\nselector: {selector} {value:?}\nexpected: {}\nactual: {shown}",
@@ -2713,11 +2751,13 @@ where
 
     #[track_caller]
     fn tray_row_missing(&self, value: &str, source: Location) -> ! {
+        let tray = crate::tray::rendered();
         panic!(
-            "{source}: test `{}` found no tray row containing {value:?}\nstatement: {}\nactual: {:?}",
+            "{source}: test `{}` found no tray row containing {value:?}\nstatement: {}\nactual: {:?}{}",
             self.test_name,
             source.statement,
-            crate::tray::rendered().items,
+            tray.items,
+            hidden_rows_note(&tray_hidden_rows_containing(&tray, value)),
         )
     }
 

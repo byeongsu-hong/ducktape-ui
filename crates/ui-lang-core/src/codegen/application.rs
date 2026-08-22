@@ -498,6 +498,23 @@ pub(in crate::codegen) fn generate_tray(
             .unwrap();
         }
     }
+    // A guarded row is put into or taken out of the native menu by its guard,
+    // diffed like every other value: the platform hears nothing while the
+    // guard holds still.
+    for (index, row) in tray.menu.iter().enumerate() {
+        if let ResolvedTrayRow::Item {
+            when: Some(guard), ..
+        } = row
+        {
+            let value = resolved_expr_use_code(program, guard.expression, &env, ValueMode::Owned)?;
+            writeln!(out, "{}", source_marker_for_origin(program, guard.origin)).unwrap();
+            writeln!(
+                out,
+                "::ui_lang_runtime::tray::set_visible({index}usize, {value});\n{SOURCE_MARKER_END}"
+            )
+            .unwrap();
+        }
+    }
     writeln!(out, "}}").unwrap();
     Ok(())
 }

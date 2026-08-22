@@ -3770,9 +3770,10 @@ impl<'a> FactsBuilder<'a> {
                 }
             }
             for (index, row) in tray.menu.iter().enumerate() {
-                if let TrayRow::Item { text, .. } = row
-                    && tray_text_is_reactive(text)
-                {
+                let TrayRow::Item { text, when, .. } = row else {
+                    continue;
+                };
+                if tray_text_is_reactive(text) {
                     lower(
                         self,
                         AppSettingExprId::TrayMenuRow(index as u32),
@@ -3780,6 +3781,16 @@ impl<'a> FactsBuilder<'a> {
                         &Type::Str,
                         &app_env,
                         &text.span,
+                    )?;
+                }
+                if let Some(guard) = when {
+                    lower(
+                        self,
+                        AppSettingExprId::TrayRowGuard(index as u32),
+                        &guard.value,
+                        &Type::Bool,
+                        &app_env,
+                        &guard.span,
                     )?;
                 }
             }
