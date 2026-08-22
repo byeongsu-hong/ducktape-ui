@@ -961,7 +961,7 @@ mod tests {
         fs::write(&rust_source, "fn main() {}\n").unwrap();
         let graph = CargoInputGraph::workspace(root);
         let mut dependencies = vec![source.clone(), fragment.clone()];
-        let mut current = dev_stamps_with_cargo_inputs(root, &dependencies, &[], &graph);
+        let mut current = dev_stamps_with_cargo_inputs(&dependencies, &[], &graph);
         let mut watcher = fallback_watcher(
             &dependencies,
             &[],
@@ -984,7 +984,6 @@ mod tests {
             "metadata polling must leave content verification to the existing stamp path"
         );
         current = settled_dev_stamps_with_cargo_inputs(
-            root,
             &dependencies,
             &[],
             &graph,
@@ -998,7 +997,6 @@ mod tests {
         watcher.update(&dependencies, &[], &graph);
         expect_full_rescan(&mut watcher);
         current = settled_dev_stamps_with_cargo_inputs(
-            root,
             &dependencies,
             &[],
             &graph,
@@ -1014,7 +1012,6 @@ mod tests {
         force_poll(&mut watcher);
         expect_full_rescan(&mut watcher);
         current = settled_dev_stamps_with_cargo_inputs(
-            root,
             &dependencies,
             &[],
             &graph,
@@ -1026,7 +1023,6 @@ mod tests {
         force_poll(&mut watcher);
         expect_full_rescan(&mut watcher);
         current = settled_dev_stamps_with_cargo_inputs(
-            root,
             &dependencies,
             &[],
             &graph,
@@ -1039,7 +1035,6 @@ mod tests {
         force_poll(&mut watcher);
         expect_full_rescan(&mut watcher);
         current = settled_dev_stamps_with_cargo_inputs(
-            root,
             &dependencies,
             &[],
             &graph,
@@ -1051,7 +1046,6 @@ mod tests {
         force_poll(&mut watcher);
         expect_full_rescan(&mut watcher);
         current = settled_dev_stamps_with_cargo_inputs(
-            root,
             &dependencies,
             &[],
             &graph,
@@ -1064,7 +1058,6 @@ mod tests {
         force_poll(&mut watcher);
         expect_full_rescan(&mut watcher);
         let removed = settled_dev_stamps_with_cargo_inputs(
-            root,
             &dependencies,
             &[],
             &graph,
