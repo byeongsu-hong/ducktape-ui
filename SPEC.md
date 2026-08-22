@@ -155,13 +155,16 @@ UTF-8 .ice source graph
   -> name resolution + type inference + semantic checks
   -> CheckedDocument
   -> private normalized LoweredProgram
-  -> iced Rust backend
+  -> iced Rust backend + published view template
   -> rustc
 ```
 
 `ui-lang-core` owns the parser, AST, checker, formatter, and backend.
 `ui-lang-build` is the Cargo build-script adapter, `ui-lang` is the include-only
-proc macro, and `cargo-ice` owns workspace tooling. There is no runtime parser.
+proc macro, `ui-lang-template` is the single definition of the published view
+format the backend writes and the runtime reads, and `cargo-ice` owns workspace
+tooling. There is no runtime parser: the runtime deserializes that template,
+never Ice source.
 
 A consuming package declares `ui-lang-build` as a build dependency and compiles
 its Ice source directory through Cargo's standard build-script phase:
@@ -602,7 +605,6 @@ statement      = "let" name "=" expr
                | "task widget" widget_operation ("->" route)?
                | "pane" "#" name pane_operation ("->" route)?
                | window_task
-               | tray_task
                | emit_statement
                | slice_statement
                | handler_match
@@ -648,7 +650,6 @@ native_task    = "task time now" "->" route
                | "task widget" widget_operation ("->" route)?
                | "pane" "#" name pane_operation ("->" route)?
                | window_task
-               | tray_task
 widget_operation = ("focus-prev" | "focus-next"
                  | ("focus" | "focused" | "cursor-front" | "cursor-end"
                    | "select-all" | "snap-end") widget_target
@@ -816,17 +817,18 @@ test_key_up_option
                | "location=" ("standard" | "left" | "right" | "numpad")
                | "physical=" test_key_name
 
-node           = layout | text | input | button | checkbox | toggler
+node           = node_form (INDENT node_metadata)?
+node_form      = layout | text | input | button | checkbox | toggler
                | slider | progress | radio | pick_list | combo_box
                | rule | qr_code | space | float | pin | sensor | responsive
                | media | tooltip | mouse_area | resize_handle | canvas
-               | theme_boundary
+               | theme_boundary | hover_area
                | component_call | slot | extern_component_call | themer_view
                | shader_view
                | if_node | match_node | for_node
                | keyed_column | lazy_node | markdown_view | table_view
                | editor_view | box | overlay | rich_text | pane_grid
-node_metadata  = "with" INDENT (property | style_utility)+
+node_metadata  = "with" INDENT (property | styles)+
 layout         = "col" id? column_property* styles? (INDENT node+)?
                | "row" id? flex_property* styles? (INDENT node+)?
                | "flex" id? css_flex_property* styles? (INDENT node+)?
@@ -1392,7 +1394,7 @@ property       = "hint=" string | "disabled=" expr | "checked=" expr
 styles         = "@" utility+
 id             = static_id | "#" kebab_name "(" expr ")"
 static_id      = "#" kebab_name
-route          = name | name "(" route_arg_list? ")"
+route          = name (route_arg* | "(" (route_arg ("," route_arg)*)? ")")
 route_arg      = expr | "_"
 ```
 
@@ -6179,6 +6181,9 @@ with a property its grapheme row cannot honour (`wrap=`, `align-x=justified`,
 `E176` rejects a `border-dash=` with no `border=` colour for its stroke to draw
 or a statically all-zero pattern.
 
+`E196` is the internal-invariant code: it reports a compiler bug, never a
+mistake in an `.ice` source, so no Ice program can be edited to avoid it.
+
 The implemented families are:
 
 | Range | Meaning |
@@ -6186,11 +6191,12 @@ The implemented families are:
 | `E000-E019` | document, indentation, theme |
 | `E020-E039` | extern, type, and state syntax |
 | `E040-E079` | component, statement, view, expression, and style rules |
+| `E080-E099` | media, selection, container, and content view nodes, and subscription sources |
 | `E100-E119` | duplicate declarations and theme semantics |
 | `E120-E139` | view, action, and route resolution |
 | `E140-E159` | handler and expression types |
 | `E160-E179` | IDs and backend lowering constraints |
-| `E180-E199` | file imports and source loading |
+| `E180-E199` | file imports, source loading, and later view, canvas, match, and test rules |
 
 Successful analysis may also emit stable semantic warnings:
 
@@ -6338,9 +6344,22 @@ draw returns. The candidate becomes accepted only after the runner reads the
 exact token and confirms that the process is still alive; then it terminates
 the previous process and deletes its staged executable. Parse, check, build,
 startup, early-exit, and readiness failures discard the candidate and leave the
-previous process running. Every successful edit therefore starts fresh
-application, window, and widget state instead of maintaining a second runtime
-implementation of Ice.
+previous process running.
+
+An accepted edit is offered to the running process as an in-place view reload
+before any of that. The runner re-runs parse, check, and lowering, so the edit
+is diagnosed exactly as before, and republishes the view as data. When the
+running binary still fills the slot table the new view asks for and the
+published template actually changed, rewriting that file is the whole reload:
+the runner emits the INFO tracing event `view reloaded in place`, and the app
+renders the change on its next frame with application, window, and widget state
+untouched. Structure, literals, colors, spacing, and accessibility segments
+reload this way; reading new state, adding a handler, or using a node the
+template vocabulary does not model does not, and neither does a view that
+publishes no template at all. Every other accepted edit takes the shadow
+candidate path above and therefore starts fresh application, window, and widget
+state. Both tiers run the one renderer that ships in release, so neither is a
+second runtime implementation of Ice.
 
 An app reports readiness through its root view. A daemon uses the same boundary
 after one of its windows draws. A windowless daemon candidate has no draw event,
