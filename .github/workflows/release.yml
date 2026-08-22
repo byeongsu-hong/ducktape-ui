@@ -71,22 +71,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            archive: tar.gz
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            archive: tar.gz
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-            archive: tar.gz
-          - runner: macos-latest
-            target: aarch64-apple-darwin
-            archive: tar.gz
-          - runner: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive: zip
+        # A tag builds all five targets; a pull request builds the three cheap
+        # ones. The two macOS legs are uncached release builds through this
+        # profile's fat LTO — measured over one week they were 424 of the 836
+        # macOS minutes CI spent, against a five-slot macOS runner allowance
+        # that left other jobs queueing up to two hours. Their only product is
+        # a tag's archive, and `Workspace (macos-latest)` in CI already checks
+        # the workspace on arm macOS every commit, so they wait for the tag.
+        include: >-
+          ${{ github.event_name == 'pull_request'
+          && fromJSON('[{"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","archive":"tar.gz"},{"runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","archive":"tar.gz"},{"runner":"windows-latest","target":"x86_64-pc-windows-msvc","archive":"zip"}]')
+          || fromJSON('[{"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","archive":"tar.gz"},{"runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","archive":"tar.gz"},{"runner":"macos-15-intel","target":"x86_64-apple-darwin","archive":"tar.gz"},{"runner":"macos-latest","target":"aarch64-apple-darwin","archive":"tar.gz"},{"runner":"windows-latest","target":"x86_64-pc-windows-msvc","archive":"zip"}]') }}
     steps:
       - uses: actions/checkout@v7
       - name: Validate tag
