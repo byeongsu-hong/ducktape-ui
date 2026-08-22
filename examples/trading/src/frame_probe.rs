@@ -1328,3 +1328,124 @@ impl ProbeClone for Trading {
         state
     }
 }
+
+/// What a window resize costs against an idle frame at the same size.
+///
+/// A drag is a stream of these, one per display frame, so the number that
+/// decides whether the window moves smoothly is what ONE resize costs — not
+/// what the settled frame either side of the drag costs.
+///
+/// The two axes are not one measurement. A height change moves every panel and
+/// re-aims every virtual column, and nothing on the screen changes shape. A
+/// width change does that *and* re-shapes every text run on it, which is the
+/// half a reader drags a corner through. Both are measured against the same
+/// screen with no rows on it, because the rows are what the columns re-aim.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints resize costs, asserts nothing"]
+fn resize_cost() {
+    let mut full = Driver::new(
+        Trading::__program(),
+        Config::new("resize_cost").viewport(VIEWPORT.0, VIEWPORT.1),
+    );
+    *full.state_mut() = app(DENSE);
+    let mut bare = Driver::new(
+        Trading::__program(),
+        Config::new("resize_cost").viewport(VIEWPORT.0, VIEWPORT.1),
+    );
+    let mut empty = app(DENSE);
+    for (label, edit) in ABLATIONS {
+        if *label == "without any rows" {
+            edit(&mut empty);
+        }
+    }
+    *bare.state_mut() = empty;
+
+    // Three pixels a frame, which is roughly what a hand crossing a screen in a
+    // second puts through a 120Hz compositor. One pixel a frame measures the
+    // same code and reads as a slower drag than anyone performs.
+    const STEP: f32 = 3.0;
+    let size = |round: usize, wide: bool, tall: bool| {
+        let travel = (round % 8) as f32 * STEP;
+        (
+            VIEWPORT.0 - if wide { travel } else { 0.0 },
+            VIEWPORT.1 - if tall { travel } else { 0.0 },
+        )
+    };
+
+    for round in 0..WARMUP {
+        let (w, h) = size(round, true, true);
+        full.resize(w, h, here());
+        bare.resize(w, h, here());
+        full.redraw(here());
+        bare.redraw(here());
+    }
+
+    let mut idle = Vec::with_capacity(ROUNDS);
+    let mut tall = Vec::with_capacity(ROUNDS);
+    let mut wide = Vec::with_capacity(ROUNDS);
+    let mut corner = Vec::with_capacity(ROUNDS);
+    let mut corner_bare = Vec::with_capacity(ROUNDS);
+    for round in 0..ROUNDS {
+        // Settled means settled. A redraw taken straight after a resize is the
+        // frame the virtual columns re-aim on, so timing one of those as the
+        // baseline hides exactly the difference this probe is looking for.
+        full.resize(VIEWPORT.0, VIEWPORT.1, here());
+        full.redraw(here());
+        full.redraw(here());
+        let started = Instant::now();
+        full.redraw(here());
+        idle.push(started.elapsed().as_micros());
+
+        let (_, h) = size(round, false, true);
+        let started = Instant::now();
+        full.resize(VIEWPORT.0, h, here());
+        tall.push(started.elapsed().as_micros());
+
+        let (w, _) = size(round, true, false);
+        let started = Instant::now();
+        full.resize(w, VIEWPORT.1, here());
+        wide.push(started.elapsed().as_micros());
+
+        // The corner, paired against the same drag over a screen with nothing
+        // on it, order alternating so the allocator's warmth lands on both.
+        let (w, h) = size(round, true, true);
+        let (heavy, light) = if round % 2 == 0 {
+            let started = Instant::now();
+            full.resize(w, h, here());
+            let heavy = started.elapsed().as_micros();
+            let started = Instant::now();
+            bare.resize(w, h, here());
+            (heavy, started.elapsed().as_micros())
+        } else {
+            let started = Instant::now();
+            bare.resize(w, h, here());
+            let light = started.elapsed().as_micros();
+            let started = Instant::now();
+            full.resize(w, h, here());
+            (started.elapsed().as_micros(), light)
+        };
+        corner.push(heavy);
+        corner_bare.push(light);
+    }
+
+    eprintln!(
+        "\ndense terminal, {}x{}, dragged {STEP} pixels per frame",
+        VIEWPORT.0, VIEWPORT.1
+    );
+    let settled = report("idle redraw, settled", idle);
+    report("resize, height only", tall);
+    report("resize, width only", wide);
+    let moving = report("resize, corner", corner);
+    let stripped = report("resize, corner, no rows", corner_bare);
+    eprintln!(
+        "{:<32} {:>7}us  ({:.1}x an idle frame)",
+        "what a corner drag costs",
+        moving.saturating_sub(settled),
+        moving as f64 / settled.max(1) as f64
+    );
+    eprintln!(
+        "{:<32} {:>7}us",
+        "what the rows cost on a drag",
+        moving.saturating_sub(stripped)
+    );
+}
