@@ -3351,55 +3351,6 @@ impl ExprTypeEnv for ScopedFactEnv<'_> {
     }
 }
 
-struct HandlerFactEnv<'a> {
-    base: &'a dyn FactEnvironment,
-    locals: FactEnv,
-}
-
-impl<'a> HandlerFactEnv<'a> {
-    fn new(base: &'a dyn FactEnvironment) -> Self {
-        Self {
-            base,
-            locals: FactEnv::default(),
-        }
-    }
-
-    fn insert(&mut self, name: String, root: CheckedPathRoot, ty: Type) {
-        self.locals.insert(name, root, ty);
-    }
-}
-
-impl ExprTypeEnv for HandlerFactEnv<'_> {
-    fn get_type(&self, name: &str) -> Option<&Type> {
-        self.locals
-            .paths
-            .get(name)
-            .map(|(_, ty)| ty)
-            .or_else(|| self.base.get(name).map(|(_, ty)| ty))
-    }
-
-    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
-        self.base.visit_types(visitor);
-        self.locals.visit_types(visitor);
-    }
-
-    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
-        self.locals
-            .type_with_prefix(prefix)
-            .or_else(|| self.base.type_with_prefix(prefix))
-    }
-}
-
-impl FactEnvironment for HandlerFactEnv<'_> {
-    fn get(&self, name: &str) -> Option<&(CheckedPathRoot, Type)> {
-        self.locals.paths.get(name).or_else(|| self.base.get(name))
-    }
-
-    fn slot(&self, name: &str) -> Option<ComponentSlotId> {
-        self.locals.slot(name).or_else(|| self.base.slot(name))
-    }
-}
-
 #[derive(Clone, Copy)]
 struct ExpressionLowering<'a> {
     analysis: &'a ExprTypeAnalysis,
@@ -7435,7 +7386,7 @@ impl<'a> FactsBuilder<'a> {
 
         let empty = FactEnv::default();
         let mut state_locals = Vec::with_capacity(locals.len());
-        let mut canvas_env = HandlerFactEnv::new(env);
+        let mut canvas_env = ScopedFactEnv::new(env);
         for (index, local) in locals.iter().enumerate() {
             let local_id = CanvasLocalId {
                 canvas,
@@ -7532,7 +7483,7 @@ impl<'a> FactsBuilder<'a> {
             let payloads = native_subscription_payloads(&event.source, false).ok_or_else(|| {
                 self.invariant(&event.span, "canvas event has no native payload contract")
             })?;
-            let mut event_env = HandlerFactEnv::new(&canvas_env);
+            let mut event_env = ScopedFactEnv::new(&canvas_env);
             for (index, (name, ty)) in event.bindings.iter().zip(&payloads).enumerate() {
                 let local = self.push_local(
                     name,
@@ -7915,7 +7866,7 @@ impl<'a> FactsBuilder<'a> {
         handler: &Handler,
         base_env: &FactEnv,
     ) -> Result<(), Error> {
-        let mut env = HandlerFactEnv::new(base_env);
+        let mut env = ScopedFactEnv::new(base_env);
         let declaration = self
             .declarations
             .handlers()
@@ -8209,7 +8160,7 @@ impl<'a> FactsBuilder<'a> {
         &mut self,
         statement: &Statement,
         statement_id: StatementId,
-        env: &mut HandlerFactEnv<'_>,
+        env: &mut ScopedFactEnv<'_>,
     ) -> Result<(), Error> {
         let declaration = self.declarations.statement(statement_id).clone();
         let writable_targets = self.checked_writable_targets(statement, env)?;
@@ -8323,7 +8274,7 @@ impl<'a> FactsBuilder<'a> {
                 }
                 let mut children = declaration.children.iter().copied();
                 for arm in arms {
-                    let mut child_env = HandlerFactEnv::new(&*env);
+                    let mut child_env = ScopedFactEnv::new(&*env);
                     for child in &arm.statements {
                         let child_id = children.next().ok_or_else(|| {
                             self.invariant(span, "handler match child ID is missing")
@@ -8474,7 +8425,7 @@ impl<'a> FactsBuilder<'a> {
                 }
                 for (child, child_id) in statements.iter().zip(declaration.children.iter().copied())
                 {
-                    let mut child_env = HandlerFactEnv::new(env);
+                    let mut child_env = ScopedFactEnv::new(env);
                     self.lower_handler_statement(child, child_id, &mut child_env)?;
                 }
             }
@@ -8489,7 +8440,7 @@ impl<'a> FactsBuilder<'a> {
                 let [child] = declaration.children.as_slice() else {
                     return Err(self.invariant(span, "abortable task child arena diverged"));
                 };
-                let mut child_env = HandlerFactEnv::new(env);
+                let mut child_env = ScopedFactEnv::new(env);
                 self.lower_handler_statement(task, *child, &mut child_env)?;
             }
             Statement::Abort { .. }
