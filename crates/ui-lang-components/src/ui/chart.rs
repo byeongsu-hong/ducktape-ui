@@ -44,7 +44,9 @@ impl ChartColor {
             Self::Warning => theme.palette.warning,
             Self::Destructive => theme.palette.destructive,
             Self::LightDark { light, dark } => {
-                if luminance(theme.palette.background) < luminance(theme.palette.foreground) {
+                if theme.palette.background.relative_luminance()
+                    < theme.palette.foreground.relative_luminance()
+                {
                     dark
                 } else {
                     light
@@ -2035,7 +2037,7 @@ pub fn tooltip_style(theme: &UiTheme) -> iced::widget::container::Style {
         shadow: Shadow {
             color: alpha(
                 Color::BLACK,
-                if luminance(theme.palette.background) < 0.5 {
+                if theme.palette.background.relative_luminance() < 0.5 {
                     0.35
                 } else {
                     0.12
@@ -2208,17 +2210,6 @@ fn format_number(value: f32) -> String {
             .trim_end_matches('.')
             .to_owned()
     }
-}
-
-fn luminance(color: Color) -> f32 {
-    let channel = |value: f32| {
-        if value <= 0.04045 {
-            value / 12.92
-        } else {
-            ((value + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
 }
 
 #[cfg(test)]

@@ -169,23 +169,13 @@ const fn metrics(size: SwitchSize) -> Metrics {
 }
 
 fn unchecked_thumb(theme: &Theme) -> Color {
-    if luminance(theme.palette.background) >= luminance(theme.palette.foreground) {
+    if theme.palette.background.relative_luminance()
+        >= theme.palette.foreground.relative_luminance()
+    {
         theme.palette.background
     } else {
         theme.palette.foreground
     }
-}
-
-fn luminance(color: Color) -> f32 {
-    let channel = |value: f32| {
-        if value <= 0.04045 {
-            value / 12.92
-        } else {
-            ((value + 0.055) / 1.055).powf(2.4)
-        }
-    };
-
-    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
 }
 
 fn thumb_style(color: Color) -> iced::widget::container::Style {
@@ -227,7 +217,13 @@ mod tests {
 
         for theme in [LIGHT, DARK] {
             let focused = style(&theme, true, Status::Focused);
-            assert!(contrast(focused.focus_ring.color, theme.palette.background) >= 3.0);
+            assert!(
+                focused
+                    .focus_ring
+                    .color
+                    .relative_contrast(theme.palette.background)
+                    >= 3.0
+            );
             assert_eq!(focused.focus_offset, 0.0);
 
             let disabled = style(&theme, false, Status::Disabled);
@@ -266,10 +262,5 @@ mod tests {
     fn unchecked_thumb_follows_light_and_dark_semantics() {
         assert_eq!(unchecked_thumb(&LIGHT), LIGHT.palette.background);
         assert_eq!(unchecked_thumb(&DARK), DARK.palette.foreground);
-    }
-
-    fn contrast(a: Color, b: Color) -> f32 {
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
 }
