@@ -71,6 +71,48 @@ jobs:
             exit 1
           fi
 
+  macos:
+    name: macOS gate
+    # Everything macOS-only that CI used to run on every commit: the
+    # codesign/ditto/hdiutil sequence behind `cargo ice bundle`, the status
+    # item whose platform module compiles nowhere else, and the Metal first
+    # frame. A pull request no longer pays for a macOS runner, so this is the
+    # gate that keeps a tag from publishing a broken one — `app` needs it, and
+    # `publish` needs `app`.
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: "0"
+      ICED_TEST_BACKEND: tiny-skia
+      WGPU_BACKEND: metal
+    steps:
+      - uses: actions/checkout@v7
+      - run: cargo check --workspace --locked
+      - name: Test development runner discovery
+        run: |
+          cargo test --locked -p cargo-ice package_selection_discovers_its_ice_root
+          cargo test --locked -p cargo-ice cargo_build_discovers_rustc_and_build_script_inputs
+      - name: Test macOS bundling
+        run: cargo test --locked -p cargo-ice a_signed_bundle_becomes_a_disk_image
+      - name: Test native editor interactions
+        run: |
+          cargo test --locked -p ui-lang-runtime rich_text_editor --lib
+          cargo test --locked -p markdown-example -- --test-threads=1
+      - name: Test the macOS status item
+        run: cargo test --locked -p ui-lang-runtime tray --lib
+      - name: Run baseline-free selected review smoke
+        run: |
+          cargo ice review examples/showcase/src/ui/app.ice \
+            --package showcase \
+            --test generated_control_accessibility \
+            --output target/platform-review
+      - name: Draw first frame through Metal
+        run: |
+          cargo build --locked -p markdown-example
+          rustc --edition=2024 -D warnings scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke
+          target/native-wgpu-smoke target/debug/markdown-example
+
   build:
     name: cargo-ice (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
@@ -83,8 +125,8 @@ jobs:
         # profile's fat LTO — measured over one week they were 424 of the 836
         # macOS minutes CI spent, against a five-slot macOS runner allowance
         # that left other jobs queueing up to two hours. Their only product is
-        # a tag's archive, and `Workspace (macos-latest)` in CI already checks
-        # the workspace on arm macOS every commit, so they wait for the tag.
+        # a tag's archive, and the `macOS gate` job above already checks the
+        # workspace on arm macOS before one ships, so they wait for the tag.
         include: >-
           ${{ github.event_name == 'pull_request'
           && fromJSON('[{"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","archive":"tar.gz"},{"runner":"ubuntu-24.04-arm","target":"aarch64-unknown-linux-gnu","archive":"tar.gz"},{"runner":"windows-latest","target":"x86_64-pc-windows-msvc","archive":"zip"}]')
@@ -129,9 +171,10 @@ jobs:
   app:
     name: Showcase disk image
     # A tag publishes it; a manual run is how a packaging change gets
-    # exercised first. Pull requests skip it — the macOS bundling steps are
-    # covered by `Workspace (macos-latest)` in CI, without two release builds.
+    # exercised first. Pull requests skip it — nothing on a pull request is
+    # worth two macOS release builds.
     if: github.event_name != 'pull_request'
+    needs: macos
     runs-on: macos-latest
     # Two architectures through the release profile's fat LTO and single
     # codegen unit, with no compiler cache, is the whole cost of this job.

@@ -340,13 +340,12 @@ jobs:
       - run: cargo +1.88.0 check --workspace --locked
 
   platforms:
-    name: Workspace (${{ matrix.runner }})
-    runs-on: ${{ matrix.runner }}
+    name: Workspace (windows-latest)
+    # macOS moved to the `macOS gate` job in the release workflow: the legs
+    # here were 412 of the 836 macOS minutes a week against a five-slot
+    # allowance, and everything they proved is now proved before a tag ships.
+    runs-on: windows-latest
     timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
       - uses: mozilla-actions/sccache-action@v0.0.11
@@ -360,31 +359,15 @@ jobs:
           echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
       # Measured exception to the sccache-only rule: this job builds many dev
       # test targets, where a restored `target/` lets cargo fingerprint-skip
-      # compilation and linking outright. Without it the macOS leg ran 9-26m
-      # against a 3.5m baseline (PR #551 runs 1-2); warm sccache still pays
-      # the graph walk and every link.
+      # compilation and linking outright. Without it the job ran 9-26m against
+      # a 3.5m baseline (PR #551 runs 1-2); warm sccache still pays the graph
+      # walk and every link.
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --locked
-      - name: Test development runner discovery
-        if: matrix.runner == 'macos-latest'
-        run: |
-          cargo test --locked -p cargo-ice package_selection_discovers_its_ice_root
-          cargo test --locked -p cargo-ice cargo_build_discovers_rustc_and_build_script_inputs
-      # The codesign/ditto/hdiutil sequence behind `cargo ice bundle` exists
-      # nowhere else, and a release tag is a bad place to discover it is wrong.
-      - name: Test macOS bundling
-        if: matrix.runner == 'macos-latest'
-        run: cargo test --locked -p cargo-ice a_signed_bundle_becomes_a_disk_image
       - name: Test native editor interactions
         run: |
           cargo test --locked -p ui-lang-runtime rich_text_editor --lib
-          cargo test --locked -p markdown-example ${{ matrix.runner == 'macos-latest' && '-- --test-threads=1' || '' }}
-      # The tray's platform module is compiled only on macOS, so the assertion
-      # that a guard-driven icon swap still asks for template rendering exists
-      # nowhere else. The Linux job never builds that code at all.
-      - name: Test the macOS status item
-        if: matrix.runner == 'macos-latest'
-        run: cargo test --locked -p ui-lang-runtime tray --lib
+          cargo test --locked -p markdown-example
       - name: Run baseline-free selected review smoke
         shell: bash
         run: |
@@ -436,13 +419,6 @@ jobs:
             helper: target/native-wgpu-smoke
             backend: vulkan
             required_draw: virtual-list,tree-view,data-grid
-          - label: macOS
-            runner: macos-latest
-            package: markdown-example
-            executable: target/debug/markdown-example
-            helper: target/native-wgpu-smoke
-            backend: metal
-            required_draw: ""
           - label: Windows
             runner: windows-latest
             package: showcase
