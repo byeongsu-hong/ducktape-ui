@@ -684,3 +684,111 @@ test trading_a_store_over_an_open_account_closes_the_step_and_stays_put
   expect !import_open
   expect address == "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
   expect !gate
+// A build the Secure Enclave will not serve keeps its keys in a file it
+// encrypts itself, and the press that finds that out must not spend anything
+// finding it out.
+//
+// `-34018` is a Mac deciding a binary is unsigned, and no runner here is one —
+// a build with no keychain at all takes the other road and says `Unavailable`,
+// which `trading_a_build_with_no_keychain_says_so_instead_of_offering_a_prompt`
+// already holds. So the answer is dispatched. What it proves is this side of
+// the seam: that the question reaches the screen as a box rather than as a
+// refusal, and that the key and the address it derived are still there to be
+// spent by the press that follows.
+test trading_a_build_with_no_enclave_asks_for_a_passphrase_and_spends_nothing
+  preset created_address
+  viewport 1440 900
+  target step = #import
+  target shown = step/import-address
+  target keep = step/import-keep
+  target asked = step/import-vault
+  target field = asked/import-vault-phrase
+  expect missing asked
+  expect !vault_wanted
+  dispatch wallet_kept(demo_vault_asks())
+  // The step is exactly where it was. Nothing here may have moved: the key is
+  // still waiting in Rust, and this address is the one it derived.
+  expect import_open
+  expect exists step
+  expect create_made
+  expect import_address == "0x9858effd232b4033e47d90003d41ec34ecaeda94"
+  expect exists shown
+  expect exists keep
+  // And the box the press is asking for.
+  expect vault_wanted
+  expect exists asked
+  expect exists field
+  expect a11y field role "password-input"
+  expect a11y field name "Passphrase for this machine's key file"
+  // Said as the weaker thing it is, rather than as a second kind of Touch ID.
+  expect text "This build cannot reach the Secure Enclave, so the key is sealed into a file with this passphrase instead. It is weaker than Touch ID and nothing here can recover it — write it down with the words."
+  capture import_step_passphrase
+
+// What is typed into it is a `secret`, which is a compile-time claim rather
+// than this test's: `expect vault_phrase == "…"` is a type error against the
+// declaration. What is left to hold is everything Ice is allowed to know —
+// that something is in it, how much, and that nothing anywhere paints it.
+test trading_the_passphrase_is_as_unreadable_as_the_recovery_phrase
+  preset created_address
+  viewport 1440 900
+  target step = #import
+  target field = step/import-vault/import-vault-phrase
+  dispatch wallet_kept(demo_vault_asks())
+  focus field
+  replace "correct horse battery staple"
+  expect !empty(vault_phrase)
+  expect len(vault_phrase) == 28
+  expect no text "correct horse battery staple"
+  // And leaving wipes it, the way leaving wipes the recovery phrase: `= ""` on
+  // a secret is a zeroizing write rather than a rebinding.
+  dispatch close_import
+  expect empty(vault_phrase)
+
+// The other surface that spends it. ENROL ALL and UNLOCK both take the box as
+// it stands, so the box belongs above them rather than beside either one.
+test trading_the_custody_panel_carries_the_passphrase_both_its_buttons_spend
+  preset held
+  viewport 1660 900
+  target app = #app
+  target settings = app/settings
+  target custody = settings/settings-content/custody
+  target asked = custody/vault
+  target field = asked/vault-phrase
+  dispatch navigate(Page.settings)
+  scroll-to settings 0.0 700.0
+  expect missing asked
+  dispatch custody_answered(demo_vault_asks())
+  expect vault_wanted
+  expect exists asked
+  expect exists field
+  expect a11y field role "password-input"
+  // The trade this machine is making, said on the panel rather than left for a
+  // reader to infer from the absence of the word Touch ID.
+  expect text "The Secure Enclave will not make a key for an unsigned build, so this app keeps its keys in a file it encrypts itself. This passphrase is the whole of what opens that file — weaker than Touch ID, which is the trade this machine is making, and nothing here can recover it if it is forgotten."
+  // Asking is not the session moving. A panel that read this as a refusal would
+  // put UNLOCK out of reach at the moment the reader is being asked for the one
+  // thing that would make it work.
+  expect session_unlockable(session)
+  capture custody_passphrase
+
+// And an act that got somewhere empties the box. The file's version of a sheet
+// is one answer per act, rather than a passphrase left in the process for the
+// rest of the session.
+test trading_a_passphrase_that_did_its_work_does_not_stay_in_the_process
+  preset held
+  viewport 1660 900
+  target app = #app
+  target settings = app/settings
+  target field = settings/settings-content/custody/vault/vault-phrase
+  dispatch navigate(Page.settings)
+  scroll-to settings 0.0 700.0
+  dispatch custody_answered(demo_vault_asks())
+  focus field
+  replace "correct horse"
+  expect !empty(vault_phrase)
+  // Any answer that is not another question.
+  dispatch custody_answered(demo_vault_answers())
+  expect empty(vault_phrase)
+  // The box stays: this build still keeps keys in a file, and the next act
+  // needs an answer of its own.
+  expect vault_wanted

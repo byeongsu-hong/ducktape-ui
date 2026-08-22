@@ -10,6 +10,7 @@ mod portfolio;
 mod seed;
 mod session;
 mod signing;
+mod vault;
 mod venue;
 
 ui_lang::include_app!("src/ui/app.ice");

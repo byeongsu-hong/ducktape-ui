@@ -13,7 +13,12 @@
 // line as the rest.
 extern crate::custody
   Session()
-  Entry(session:Session, note:str)
+  // `wants_passphrase` is the one thing an entry carries that is a question
+  // rather than an outcome: a build the Secure Enclave will not serve keeps its
+  // keys in a file this app encrypts, and the screen owes it a box. A flag
+  // rather than a sentence to read, because a panel deciding what to draw off
+  // the wording of a note is one rephrasing away from drawing nothing.
+  Entry(session:Session, note:str, wants_passphrase:bool)
   CustodyFault(message:str)
   pure session_start() -> Session
   pure lock_agent() -> Session
@@ -62,7 +67,16 @@ extern crate::custody
   read_made_wallet(phrase:str) -> Entry ! CustodyFault
   pure pending_wallet() -> str
   pure forget_wallet() -> Session
-  keep_wallet() -> Entry ! CustodyFault
+  // Every act that touches a key takes the passphrase box as it stands. On a
+  // Mac that can reach the Enclave nothing reads it and the box is not drawn;
+  // where it cannot, this is the file's version of the sheet — one answer per
+  // act, never remembered between them.
+  keep_wallet(passphrase:secret) -> Entry ! CustodyFault
+  // Whether this machine already has a key file, so a reader who set a
+  // passphrase last time finds the box already on the panel rather than after
+  // a press that could not work. `sync` because it is one look at the
+  // filesystem with nothing to await.
+  sync vault_occupied() -> bool
   // The answer a Mac gives when the keychain kept it. Here for the same reason
   // the demo sessions below are: a build with no keychain refuses every store,
   // so the screen on the far side of one has no other way to be reached.
@@ -72,8 +86,8 @@ extern crate::custody
   // just answered and a naming of everything it covers; one prompt for four
   // networks is one explicit act, four prompts saying "approve a key" is not.
   pure enrolment_plan(address:str) -> str
-  enrol_all(address:str) -> Entry ! CustodyFault
-  unlock_agent(venue:Venue, address:str) -> Entry ! CustodyFault
+  enrol_all(address:str, passphrase:secret) -> Entry ! CustodyFault
+  unlock_agent(venue:Venue, address:str, passphrase:secret) -> Entry ! CustodyFault
   // Why the send is dead, or nothing when it is live. One sentence over both
   // halves of the question — whether this session may sign at all, and whether
   // the order as typed is one a venue would take — because the button has one
@@ -97,6 +111,13 @@ extern crate::custody
   // Sessions a preset can be drawn in. Each is built by driving the real state
   // machine rather than by naming a variant, so a fixture cannot be a state the
   // machine would never reach.
+  // The answer a build with no Secure Enclave gives: a question, with nothing
+  // spent asking it. `-34018` is a Mac deciding a binary is unsigned and no
+  // runner here is one, so this arm has no other way to be driven.
+  pure demo_vault_asks() -> Entry
+  // The same seam answering rather than asking, which is every act that got
+  // somewhere. The pair is what decides how long the box holds what was typed.
+  pure demo_vault_answers() -> Entry
   pure demo_session_unenrolled() -> Session
   pure demo_session_unavailable() -> Session
   pure demo_session_unapproved() -> Session

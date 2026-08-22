@@ -246,6 +246,13 @@ state
   // without this the panel draws the same thing for "you cancelled" and "you
   // have not asked".
   unlock_note = ""
+  // Whether this build keeps keys in a file it encrypts itself, which is what
+  // it has instead of Touch ID when the Secure Enclave will not serve it. Not
+  // guessed and not configured: the platform refusing `-34018` says so, and so
+  // does a key file already sitting on this machine from the last time it did.
+  // What it changes on screen is that the passphrase box is there and the
+  // panels say which custody this is.
+  vault_wanted = false
 
 // What the owner types on the import door, held by the runtime rather than by
 // this app. These are not state and cannot become state: nothing here can be
@@ -261,6 +268,13 @@ state
 // was handed, so no fact about the shape ever needs a name on this side.
 secret import_phrase
 secret import_passphrase
+// What opens this machine's key file, on a build the Secure Enclave will not
+// serve. A `secret` for the reason the two above are: it is the whole of the
+// protection over an account key, so nothing that clones, captures or prints
+// app state may be able to reach it. It is not remembered between acts either
+// — every store, enrolment and unlock takes the box as it stands, which is the
+// passphrase file's version of a sheet raised per act.
+secret vault_phrase
 
 derived
   visible = filter_symbols(symbols, query, coin)

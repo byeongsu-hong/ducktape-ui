@@ -30,10 +30,11 @@ scripts/sign-dev.sh -p trading-example
 `cargo run` is enough for everything that only reads: markets, candles, the
 book, and any address watched read-only. Custody is the half that is not — the
 Secure Enclave and the data-protection keychain serve signed code only, so on
-an unsigned build the first key this app tries to make comes back `-34018` and
-the import refuses rather than storing a wallet it cannot seal. See [what needs
-a Mac](#what-needs-a-mac) for what the signature takes and why nothing cheaper
-does.
+an unsigned build the first key this app tries to make comes back `-34018`.
+Signing is the answer that keeps the hardware; the other one is a passphrase,
+and the app takes that road on its own when the Enclave turns it away — see
+[a machine that is not going to be signed](#a-machine-that-is-not-going-to-be-signed)
+and [what needs a Mac](#what-needs-a-mac).
 
 The app opens on a gate that leads with **Import a wallet** — see [where
 onboarding starts](#where-onboarding-starts). One press behind it, **Watch an
@@ -1216,15 +1217,114 @@ it — and every keychain and Enclave call composes its message there, because
 the entitlement is not specific to the wrapping key. Every other status keeps
 the platform's own words, which for every other status are the true ones.
 
-**What an unsigned build does with a wallet: nothing.** `store_sealed` seals
-before it files, so a build that cannot reach the Enclave has no path that
-writes an unsealed secret — the import refuses and names the fix. That refusal
-is the property #532 bought, and it is worth being explicit that the
-alternative was considered and rejected: an "unsealed anyway, labelled" option
-would put the account's own key in a keychain item at the exact moment the app
-has just proven it cannot protect it, in exchange for letting somebody skip a
-signing step. A phrase is written down; the convenience is not worth the other
-outcome.
+**What an unsigned build never does with a wallet: write it in the clear.**
+`store_sealed` seals before it files, so a build that cannot reach the Enclave
+has no path that writes an unsealed secret. That property is what #532 bought,
+and it is worth being explicit that one alternative was considered and
+rejected: an "unsealed anyway, labelled" option would put the account's own key
+in a keychain item at the exact moment the app has just proven it cannot
+protect it, in exchange for letting somebody skip a signing step. A phrase is
+written down; the convenience is not worth the other outcome. That option is
+still rejected, and what the next section adds is not it.
+
+### A machine that is not going to be signed
+
+Signing is the answer that keeps the hardware, and for a machine that is going
+to be signed it is the only one worth having. This is the other answer, decided
+by the repository owner on 2026-08-22 for a machine where an Apple Development
+identity is not on the table: **when the Enclave answers `-34018`, the same
+secret is sealed under a passphrase and kept in a file instead.**
+
+Nothing about it is chosen in a build flag or a setting. `-34018` is a fact
+about the binary rather than a preference, so the app finds it out the way a
+reader does — by trying — and `custody.rs`'s `or_vault` is the single place that
+status becomes the file's turn. Every other status keeps the platform's own
+words and stays the platform's problem, and a build with **no keychain at all**
+— every runner in this repository, and Linux generally — is not this case: it
+answers `Unavailable`, the panel says so, and nothing is written anywhere.
+`only_an_unsigned_binary_is_the_files_turn` holds exactly that line, because
+widening it by one arm would quietly turn every CI job into one keeping account
+keys in a file.
+
+**What the file is.** `~/Library/Application Support/dev.ducktape.trading/keys.json`,
+holding one entry per item — the wallet under `wallet:0x…`, a trading key under
+each `hyperliquid-mainnet:0x…` — and the same names the keychain files them
+under, so the two roads hold the same shape. Every part of the sealing is
+`ring`'s, which is already in this tree under rustls:
+
+| | |
+| --- | --- |
+| key | PBKDF2-HMAC-SHA512, 210,000 rounds, over a 16-byte salt made once per file |
+| item | ChaCha20-Poly1305, a fresh 12-byte nonce per write |
+| associated data | the item's own name, so a blob moved to another account's slot stops opening |
+| written | beside and renamed over, so a crash leaves the previous file rather than half of one |
+| mode | the file `0600` and its directory `0700`, set at creation rather than after |
+
+The nonce is random rather than counted because a counter would have to survive
+the file being copied, and this file holds one wallet and four trading keys and
+is rewritten by hand.
+
+The mode is not what protects the blob — the passphrase and the 210,000 rounds
+are — but a plain `std::fs::write` lands at `0644` under the usual umask, and
+that is the difference between an attacker on this machine needing to be *this*
+user and needing only to be *a* user: a world-readable copy is one they can work
+on offline, at their leisure, leaving no trace in this app. It is set when the
+staging file is created rather than afterwards, because a `chmod` on the far
+side leaves a window where the file exists, holds the blob and is readable; the
+rename then moves the inode, so the mode arrives with it. `nothing_readable_is_written_to_the_file` searches the
+bytes on disk for the secret and for its base64, because the one thing this
+module exists to prevent is exactly the thing a passing round-trip test would
+not notice.
+
+**What it costs, said on the panel rather than left to be inferred.** The
+keychain's protection is the platform's judgement about who may read an item,
+enforced by hardware. This is one passphrase and a key derivation, enforced by
+arithmetic. It is strictly weaker, both surfaces say so in those words, and the
+badge does not start claiming Touch ID.
+
+**One passphrase per machine, and one answer per act.** The box is on the import
+step and on the custody panel, and every act takes it as it stands — a store, an
+enrolment, an unlock — rather than holding it for the session. That is the
+file's version of a sheet raised per act, and it is why `vault_phrase` is a
+`secret` like the recovery phrase beside it: nothing that clones, captures or
+prints app state can reach it, and `= ""` after each act is a zeroizing write.
+Writing a second passphrase into a file that already holds items is refused
+rather than allowed, because the alternative is one file holding items from two
+passphrases, half of which the owner can no longer open and nothing on screen
+saying which half.
+
+**A forgotten passphrase is a lost file, and the refusal says so** — it names
+the path, because that file is the only thing holding those keys and deleting it
+is the only way on. There is no button for that: a press that destroys an
+account's key belongs behind more friction than a press.
+
+**A question is not a refusal.** Being asked for a passphrase leaves the session
+exactly where it was and spends nothing: `keep_wallet` peeks at the waiting key
+rather than taking it, so the press that discovers this build needs a passphrase
+does not cost the import. `Entry.wants_passphrase` is a flag rather than a
+sentence for the screen to read, because a panel deciding what to draw from the
+wording of a note is one rephrasing away from drawing nothing.
+
+**What no runner here reaches.** `-34018` is a Mac deciding a binary is
+unsigned, and there is no such machine in CI. So the seam is split at exactly
+that line: the sealing, the file, the passphrase rules and the routing
+predicate are all tested on Linux, and the arm that produces the status is the
+same one every other Enclave call already went through. The honest claim is
+unchanged in shape from the rest of this section — the logic is tested and the
+platform half is compiled, reviewed and unrun. Add to the experiments below: a
+store on an unsigned Mac landing in the file and reading back after a restart,
+and a Mac that is signed *later* finding what it wrote before it was.
+
+**And one specific thing a Mac has to confirm.** `-34018` was reported from
+`make_wrap_key` — the Enclave declining to make a key. A *trading* key takes a
+different call: a guarded add to the data-protection keychain, with no Enclave
+key in it. TN3137 says the data-protection keychain is entitlement-gated for
+every operation, so that add should come back with the same status and reach
+the file by the same arm — but that is read off Apple's documentation and has
+not been executed. If a real unsigned Mac reports something else there, ENROL
+ALL is the press that finds out, and the fix is one line: the status belongs
+beside `MISSING_ENTITLEMENT` in `session.rs`, which is the only place a code
+becomes `Cause::Unsigned`.
 
 What is still open, and now needs a *signed* Mac rather than a Mac: all sixteen
 experiments above, none of which an unsigned build can reach. And one new one —
