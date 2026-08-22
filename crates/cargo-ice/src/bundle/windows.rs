@@ -310,13 +310,17 @@ mod tests {
 
         let expected = upgrade_code("dev.ducktape.ui.showcase");
         let _profiler = dhat::Profiler::builder().testing().build();
-        for _ in 0..CODES {
-            assert_eq!(upgrade_code("dev.ducktape.ui.showcase"), expected);
-        }
-        let stats = dhat::HeapStats::get();
+        let measured = crate::allocation::clean_window((CODES, CODES * 36), || {
+            for _ in 0..CODES {
+                assert_eq!(upgrade_code("dev.ducktape.ui.showcase"), expected);
+            }
+        });
 
-        assert_eq!(stats.total_blocks, CODES, "{stats:?}");
-        assert_eq!(stats.total_bytes, CODES * 36, "{stats:?}");
+        assert_eq!(
+            measured,
+            (CODES, CODES * 36),
+            "upgrade code allocations: {measured:?}"
+        );
     }
 
     #[test]

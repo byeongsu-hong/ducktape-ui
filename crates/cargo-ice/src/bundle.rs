@@ -627,17 +627,23 @@ mod tests {
             options: BundleOptions::default(),
         };
 
+        const EXPECTED: (u64, u64) = (9_838, 2_135_435);
+        let mut resolved = None;
         let _profiler = dhat::Profiler::builder().testing().build();
-        let meta = BundleMeta::resolve(&package, Platform::MacOs).expect("resolve identity");
-        let stats = dhat::HeapStats::get();
+        let measured = crate::allocation::clean_window(EXPECTED, || {
+            resolved = Some(BundleMeta::resolve(&package, Platform::MacOs).expect("resolve"));
+        });
+        let meta = resolved.expect("resolve identity");
 
         assert_eq!(meta.name, "Allocation");
         assert_eq!(meta.identifier, "dev.ducktape.allocation");
-        assert_eq!(stats.total_blocks, 9_838, "{stats:?}");
-        assert_eq!(stats.total_bytes, 2_135_435, "{stats:?}");
+        assert_eq!(
+            measured, EXPECTED,
+            "bundle identity allocations: {measured:?}"
+        );
         eprintln!(
             "{STATES}-state bundle identity: {} heap blocks / {} bytes",
-            stats.total_blocks, stats.total_bytes
+            measured.0, measured.1
         );
     }
 

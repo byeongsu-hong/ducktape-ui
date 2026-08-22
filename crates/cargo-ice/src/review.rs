@@ -1416,17 +1416,21 @@ mod tests {
             "1.5".into(),
         ];
 
+        const EXPECTED: (u64, u64) = (256, 1_792);
         let _profiler = dhat::Profiler::builder().testing().build();
-        for _ in 0..RUNS {
-            std::hint::black_box(parse_review(&args).unwrap());
-        }
-        let stats = dhat::HeapStats::get();
+        let measured = crate::allocation::clean_window(EXPECTED, || {
+            for _ in 0..RUNS {
+                std::hint::black_box(parse_review(&args).unwrap());
+            }
+        });
 
-        assert_eq!(stats.total_blocks, 256, "{stats:?}");
-        assert_eq!(stats.total_bytes, 1_792, "{stats:?}");
+        assert_eq!(
+            measured, EXPECTED,
+            "threshold parse allocations: {measured:?}"
+        );
         eprintln!(
             "{RUNS} threshold parses: {} heap blocks / {} bytes",
-            stats.total_blocks, stats.total_bytes
+            measured.0, measured.1
         );
     }
 

@@ -5378,17 +5378,22 @@ mod tests {
         assert_eq!(warm["activeParameter"], 1);
         db.take_metrics();
 
+        let expected = (REQUESTS as u64 * 59, REQUESTS as u64 * 5_474);
         let _profiler = dhat::Profiler::builder().testing().build();
-        for _ in 0..REQUESTS {
-            let signature = signature_help_at_with_db(&mut db, &documents, &position).unwrap();
-            assert_eq!(signature["activeParameter"], 1);
-        }
-        let heap = dhat::HeapStats::get();
-        assert_eq!(heap.total_blocks, REQUESTS as u64 * 59, "{heap:?}");
-        assert_eq!(heap.total_bytes, REQUESTS as u64 * 5_474, "{heap:?}");
+        let measured = crate::allocation::clean_window(expected, || {
+            for _ in 0..REQUESTS {
+                let signature = signature_help_at_with_db(&mut db, &documents, &position).unwrap();
+                assert_eq!(signature["activeParameter"], 1);
+            }
+        });
+
+        assert_eq!(
+            measured, expected,
+            "signature help allocations: {measured:?}"
+        );
         eprintln!(
             "{REQUESTS} signature-help requests allocated {} blocks / {} bytes",
-            heap.total_blocks, heap.total_bytes,
+            measured.0, measured.1,
         );
     }
 
@@ -6067,21 +6072,22 @@ mod tests {
         assert_eq!(count(super::top_level_positions(SOURCE, ',')), 3);
 
         let _profiler = dhat::Profiler::builder().testing().build();
-        for _ in 0..CALLS {
-            assert_eq!(
-                count(std::hint::black_box(super::top_level_positions(
-                    std::hint::black_box(SOURCE),
-                    std::hint::black_box(','),
-                ))),
-                3
-            );
-        }
-        let heap = dhat::HeapStats::get();
+        let measured = crate::allocation::clean_window((0, 0), || {
+            for _ in 0..CALLS {
+                assert_eq!(
+                    count(std::hint::black_box(super::top_level_positions(
+                        std::hint::black_box(SOURCE),
+                        std::hint::black_box(','),
+                    ))),
+                    3
+                );
+            }
+        });
 
-        assert_eq!(heap.total_blocks, 0, "position scan allocations: {heap:?}");
+        assert_eq!(measured, (0, 0), "position scan allocations: {measured:?}");
         eprintln!(
             "{CALLS} top-level position scans: {} heap blocks / {} bytes",
-            heap.total_blocks, heap.total_bytes
+            measured.0, measured.1
         );
     }
 

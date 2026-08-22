@@ -800,20 +800,28 @@ mod tests {
     fn allocation_contract_capture_manifest_deserialization_borrows_json() {
         let manifest = valid_manifest();
 
+        const EXPECTED: (u64, u64) = (6, 123);
+        let mut result = None;
         let _profiler = dhat::Profiler::builder().testing().build();
-        let result = validate_capture_manifest(Path::new("other.json"), &manifest);
-        let stats = dhat::HeapStats::get();
+        let measured = crate::allocation::clean_window(EXPECTED, || {
+            result = Some(validate_capture_manifest(
+                Path::new("other.json"),
+                &manifest,
+            ));
+        });
 
         assert!(
             result
-                .as_ref()
+                .expect("validated")
                 .is_err_and(|error| error.contains("does not match its filename"))
         );
-        assert_eq!(stats.total_blocks, 6, "{stats:?}");
-        assert_eq!(stats.total_bytes, 123, "{stats:?}");
+        assert_eq!(
+            measured, EXPECTED,
+            "manifest validation allocations: {measured:?}"
+        );
         eprintln!(
             "capture manifest validation: {} heap blocks / {} bytes",
-            stats.total_blocks, stats.total_bytes
+            measured.0, measured.1
         );
     }
 
