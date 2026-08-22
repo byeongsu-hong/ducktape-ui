@@ -468,8 +468,8 @@ runtime and `ui-lang-components` boundary.
 The showcase consumes it through a typed Ice extern and first-class tiny-skia
 capture; direct `ui-lang-runtime` and `ui-lang-components` minimal-feature checks cover
 native X11 and wasm, and the extracted runtime package repeats the direct native
-`virtual-list,x11` contract. Bare `virtual-list` intentionally leaves native
-platform selection to the caller. The
+`data-grid,x11` contract. Bare `default-features = false` intentionally leaves
+native platform selection to the caller. The
 Windows native WGPU job requires a renderer primitive from a measured mounted
 row subtree before accepting the first frame. Runtime coverage also exercises
 `VirtualListConfig::measured` plus `VirtualListEvent::RowsMeasured`, including
@@ -478,7 +478,7 @@ The Ice v1 boundary explicitly excludes variable-height measurement,
 scrolling-ancestor touch transforms, and new Ice syntax.
 
 Fixed-height `LogTimeline` composes that exact `VirtualListState` boundary
-under the existing runtime `virtual-list` feature. Focused tests cover default
+in the runtime crate's base. Focused tests cover default
 tail following, exact live-edge synchronization, pause after upward native
 scroll and historical keyboard navigation, explicit-only resume, saturating
 unread append accounting, stable selectors across append, typed-key scrolling,

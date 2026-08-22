@@ -10,9 +10,8 @@ rust-version.workspace = true
 
 [features]
 default = ["full-runtime", "test-runtime"]
-full-runtime = ["data-grid", "virtual-list"]
-data-grid = ["virtual-list"]
-virtual-list = []
+full-runtime = ["data-grid"]
+data-grid = []
 wgpu = ["iced/wgpu"]
 tiny-skia = ["iced/tiny-skia"]
 x11 = ["iced/x11", "thread-pool"]

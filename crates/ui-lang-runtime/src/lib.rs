@@ -10,7 +10,6 @@ pub mod dev;
 mod dynamic_themer;
 mod flex;
 mod hover_reveal;
-#[cfg(feature = "virtual-list")]
 mod log_timeline;
 mod memo_lazy;
 mod press_area;
@@ -31,14 +30,10 @@ pub mod testing;
 #[path = "testing_minimal.rs"]
 pub mod testing;
 pub mod tray;
-#[cfg(feature = "virtual-list")]
 mod tree_view;
-#[cfg(feature = "virtual-list")]
 mod virtual_children;
 mod virtual_list;
-#[cfg(feature = "virtual-list")]
 mod virtual_scroll;
-#[cfg(feature = "virtual-list")]
 mod virtualization;
 mod zstack;
 
@@ -48,7 +43,6 @@ pub use data_grid::*;
 pub use dynamic_themer::*;
 pub use flex::*;
 pub use hover_reveal::*;
-#[cfg(feature = "virtual-list")]
 pub use log_timeline::*;
 pub use memo_lazy::*;
 pub use press_area::*;
@@ -60,12 +54,9 @@ pub use scroll_anchor::*;
 pub use secret::{Secret, SecretStore};
 pub use selectable_text::*;
 pub use stack_relief::*;
-#[cfg(feature = "virtual-list")]
 pub use tree_view::*;
-#[cfg(feature = "virtual-list")]
 pub use virtual_children::*;
 pub use virtual_list::*;
-#[cfg(feature = "virtual-list")]
 pub use virtual_scroll::*;
 pub use zstack::*;
 

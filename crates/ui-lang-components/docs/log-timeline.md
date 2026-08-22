@@ -71,7 +71,7 @@ whose height changes, new-turn peek anchors, or preserved prepend position; use
 log merely to obtain tail following; use `LogTimeline`.
 
 The `ui-lang-components/log-timeline` feature enables `virtual-list` transitively and
-therefore uses the renderer-only `ui-lang-runtime/virtual-list` boundary. It
+therefore uses the renderer-only `ui-lang-runtime` boundary. It
 selects no native platform backend, remains compatible with wasm, and inherits
 the same bounded-height/no-vertical-scrolling-ancestor requirement documented
 for `VirtualList`.

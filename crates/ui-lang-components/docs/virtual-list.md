@@ -117,18 +117,18 @@ variable-height virtualization and nested vertical scrolling need separate
 measurement, anchoring, and coordinate-context evidence before admission.
 
 The `ui-lang-components` feature enables only the renderer-side
-`ui-lang-runtime/virtual-list` boundary and therefore compiles for
+`ui-lang-runtime` boundary and therefore compiles for
 `wasm32-unknown-unknown`. Direct native runtime consumers that disable default
 features must also select a platform backend, for example:
 
 ```toml
-ui-lang-runtime = { version = "0.1.0", default-features = false, features = ["virtual-list", "x11"] }
+ui-lang-runtime = { version = "0.1.0", default-features = false, features = ["x11"] }
 ```
 
 `wayland` is the Linux alternative; both enable `thread-pool`. The runtime also
 exposes `wgpu` and `tiny-skia` passthrough features, aligned with
-`ui-lang-components`. Bare `virtual-list` deliberately chooses no Linux window backend
-and is sufficient for `wasm32-unknown-unknown`. The full native Ice headless
+`ui-lang-components`. Bare `default-features = false` deliberately chooses no
+Linux window backend and is sufficient for `wasm32-unknown-unknown`. The full native Ice headless
 driver remains the runtime crate's default `test-runtime` feature. Release CI measures unchanged
 100,000-row frames, a showcase-equivalent `update_snapshot` plus `Scrolled`
 reducer step, and explicit 100,000-key reconciliation separately, with p50/p95
