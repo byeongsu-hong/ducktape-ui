@@ -717,24 +717,24 @@ impl Lowerer {
                 "surface border width",
             )?,
             radius: ResolvedContainerRadius {
-                all: values.optional(style.radius.as_ref(), &Type::F64, "surface radius")?,
+                all: values.optional(style.radius.all.as_ref(), &Type::F64, "surface radius")?,
                 top_left: values.optional(
-                    style.radius_top_left.as_ref(),
+                    style.radius.top_left.as_ref(),
                     &Type::F64,
                     "surface top-left radius",
                 )?,
                 top_right: values.optional(
-                    style.radius_top_right.as_ref(),
+                    style.radius.top_right.as_ref(),
                     &Type::F64,
                     "surface top-right radius",
                 )?,
                 bottom_right: values.optional(
-                    style.radius_bottom_right.as_ref(),
+                    style.radius.bottom_right.as_ref(),
                     &Type::F64,
                     "surface bottom-right radius",
                 )?,
                 bottom_left: values.optional(
-                    style.radius_bottom_left.as_ref(),
+                    style.radius.bottom_left.as_ref(),
                     &Type::F64,
                     "surface bottom-left radius",
                 )?,

@@ -66,11 +66,11 @@ pub(crate) fn layout_expression_roots(options: &LayoutOptions) -> Vec<&Expr> {
         roots.extend(
             [
                 &surface.border_width,
-                &surface.radius,
-                &surface.radius_top_left,
-                &surface.radius_top_right,
-                &surface.radius_bottom_right,
-                &surface.radius_bottom_left,
+                &surface.radius.all,
+                &surface.radius.top_left,
+                &surface.radius.top_right,
+                &surface.radius.bottom_right,
+                &surface.radius.bottom_left,
                 &surface.shadow_x,
                 &surface.shadow_y,
                 &surface.shadow_blur,
@@ -196,11 +196,11 @@ pub(crate) fn layout_semantic_key(kind: Layout, options: &LayoutOptions) -> Stri
             surface.shadow_color,
             [
                 surface.border_width.is_some(),
-                surface.radius.is_some(),
-                surface.radius_top_left.is_some(),
-                surface.radius_top_right.is_some(),
-                surface.radius_bottom_right.is_some(),
-                surface.radius_bottom_left.is_some(),
+                surface.radius.all.is_some(),
+                surface.radius.top_left.is_some(),
+                surface.radius.top_right.is_some(),
+                surface.radius.bottom_right.is_some(),
+                surface.radius.bottom_left.is_some(),
                 surface.shadow_x.is_some(),
                 surface.shadow_y.is_some(),
                 surface.shadow_blur.is_some(),
@@ -399,11 +399,11 @@ pub(crate) fn container_expression_roots(options: &ContainerOptions) -> Vec<&Exp
     roots.extend(
         [
             &options.style.border_width,
-            &options.style.radius,
-            &options.style.radius_top_left,
-            &options.style.radius_top_right,
-            &options.style.radius_bottom_right,
-            &options.style.radius_bottom_left,
+            &options.style.radius.all,
+            &options.style.radius.top_left,
+            &options.style.radius.top_right,
+            &options.style.radius.bottom_right,
+            &options.style.radius.bottom_left,
             &options.style.shadow_x,
             &options.style.shadow_y,
             &options.style.shadow_blur,
@@ -501,12 +501,12 @@ pub(crate) fn container_semantic_key(options: &ContainerOptions) -> String {
         options.style.text_color,
         options.style.border_color,
         present(options.style.border_width.is_some()),
-        present(options.style.radius.is_some()),
-        present(options.style.radius_top_left.is_some()),
-        present(options.style.radius_top_right.is_some()),
-        present(options.style.radius_bottom_right.is_some()),
+        present(options.style.radius.all.is_some()),
+        present(options.style.radius.top_left.is_some()),
+        present(options.style.radius.top_right.is_some()),
+        present(options.style.radius.bottom_right.is_some()),
         options.style.shadow_color,
-        present(options.style.radius_bottom_left.is_some()),
+        present(options.style.radius.bottom_left.is_some()),
         present(options.style.shadow_x.is_some()),
         present(options.style.shadow_y.is_some()),
         present(options.style.shadow_blur.is_some()),
@@ -740,11 +740,7 @@ pub struct PaneGridStyle {
     pub region_background: Option<BackgroundValue>,
     pub region_border: Option<String>,
     pub region_border_width: Option<Expr>,
-    pub region_radius: Option<Expr>,
-    pub region_radius_top_left: Option<Expr>,
-    pub region_radius_top_right: Option<Expr>,
-    pub region_radius_bottom_right: Option<Expr>,
-    pub region_radius_bottom_left: Option<Expr>,
+    pub region_radius: RadiusOptions,
     pub hovered_split: Option<String>,
     pub hovered_split_width: Option<Expr>,
     pub picked_split: Option<String>,
@@ -775,11 +771,7 @@ pub struct ContainerStyleOptions {
     pub text_color: Option<String>,
     pub border_color: Option<String>,
     pub border_width: Option<Expr>,
-    pub radius: Option<Expr>,
-    pub radius_top_left: Option<Expr>,
-    pub radius_top_right: Option<Expr>,
-    pub radius_bottom_right: Option<Expr>,
-    pub radius_bottom_left: Option<Expr>,
+    pub radius: RadiusOptions,
     pub shadow_color: Option<String>,
     pub shadow_x: Option<Expr>,
     pub shadow_y: Option<Expr>,
@@ -796,6 +788,35 @@ pub struct PaddingOptions {
     pub right: Option<Expr>,
     pub bottom: Option<Expr>,
     pub left: Option<Expr>,
+}
+
+/// The `r=` / `r-tl=` / `r-tr=` / `r-br=` / `r-bl=` quintuple every styled
+/// widget carries. `all` is the shorthand; a corner overrides it.
+#[derive(Clone, Debug, Default)]
+pub struct RadiusOptions {
+    pub all: Option<Expr>,
+    pub top_left: Option<Expr>,
+    pub top_right: Option<Expr>,
+    pub bottom_right: Option<Expr>,
+    pub bottom_left: Option<Expr>,
+}
+
+impl RadiusOptions {
+    pub fn any(&self) -> bool {
+        self.iter().next().is_some()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Expr> {
+        [
+            &self.all,
+            &self.top_left,
+            &self.top_right,
+            &self.bottom_right,
+            &self.bottom_left,
+        ]
+        .into_iter()
+        .flatten()
+    }
 }
 
 #[derive(Clone, Debug)]

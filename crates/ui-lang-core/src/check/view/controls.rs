@@ -288,11 +288,11 @@ pub(in crate::check) fn infer_controls_group(
             }
             for (value, label) in [
                 (&options.border_width, "progress border width"),
-                (&options.radius, "progress radius"),
-                (&options.radius_top_left, "progress radius"),
-                (&options.radius_top_right, "progress radius"),
-                (&options.radius_bottom_right, "progress radius"),
-                (&options.radius_bottom_left, "progress radius"),
+                (&options.radius.all, "progress radius"),
+                (&options.radius.top_left, "progress radius"),
+                (&options.radius.top_right, "progress radius"),
+                (&options.radius.bottom_right, "progress radius"),
+                (&options.radius.bottom_left, "progress radius"),
             ] {
                 if let Some(value) = value {
                     require_nonnegative_f64(value, env, document, label, span)?;
@@ -527,16 +527,7 @@ pub(in crate::check) fn infer_controls_group(
             if let Some(color) = &options.color {
                 require_theme_color(color, document, span, "E129", "rule")?;
             }
-            for radius in [
-                &options.radius,
-                &options.radius_top_left,
-                &options.radius_top_right,
-                &options.radius_bottom_right,
-                &options.radius_bottom_left,
-            ]
-            .into_iter()
-            .flatten()
-            {
+            for radius in options.radius.iter() {
                 require_nonnegative_f64(radius, env, document, "rule radius", span)?;
             }
             if let Some(snap) = &options.snap {

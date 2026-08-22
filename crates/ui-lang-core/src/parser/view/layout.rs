@@ -366,15 +366,15 @@ pub(in crate::parser) fn parse_container_style_option(
     } else if let Some(value) = part.strip_prefix("border-w=") {
         style.border_width = Some(parse(value)?);
     } else if let Some(value) = part.strip_prefix("r=") {
-        style.radius = Some(parse(value)?);
+        style.radius.all = Some(parse(value)?);
     } else if let Some(value) = part.strip_prefix("r-tl=") {
-        style.radius_top_left = Some(parse(value)?);
+        style.radius.top_left = Some(parse(value)?);
     } else if let Some(value) = part.strip_prefix("r-tr=") {
-        style.radius_top_right = Some(parse(value)?);
+        style.radius.top_right = Some(parse(value)?);
     } else if let Some(value) = part.strip_prefix("r-br=") {
-        style.radius_bottom_right = Some(parse(value)?);
+        style.radius.bottom_right = Some(parse(value)?);
     } else if let Some(value) = part.strip_prefix("r-bl=") {
-        style.radius_bottom_left = Some(parse(value)?);
+        style.radius.bottom_left = Some(parse(value)?);
     } else if let Some(value) = part.strip_prefix("shadow=") {
         style.shadow_color = Some(value.to_owned());
     } else if let Some(value) = part.strip_prefix("shadow-x=") {
@@ -857,15 +857,15 @@ pub(in crate::parser) fn parse_pane_grid_style(line: &Line) -> Result<PaneGridSt
                     } else if let Some(value) = part.strip_prefix("border-w=") {
                         style.region_border_width = Some(parse(value)?);
                     } else if let Some(value) = part.strip_prefix("r=") {
-                        style.region_radius = Some(parse(value)?);
+                        style.region_radius.all = Some(parse(value)?);
                     } else if let Some(value) = part.strip_prefix("r-tl=") {
-                        style.region_radius_top_left = Some(parse(value)?);
+                        style.region_radius.top_left = Some(parse(value)?);
                     } else if let Some(value) = part.strip_prefix("r-tr=") {
-                        style.region_radius_top_right = Some(parse(value)?);
+                        style.region_radius.top_right = Some(parse(value)?);
                     } else if let Some(value) = part.strip_prefix("r-br=") {
-                        style.region_radius_bottom_right = Some(parse(value)?);
+                        style.region_radius.bottom_right = Some(parse(value)?);
                     } else if let Some(value) = part.strip_prefix("r-bl=") {
-                        style.region_radius_bottom_left = Some(parse(value)?);
+                        style.region_radius.bottom_left = Some(parse(value)?);
                     } else {
                         return Err(error(
                             "E187",

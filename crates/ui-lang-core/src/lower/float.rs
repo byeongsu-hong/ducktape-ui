@@ -136,11 +136,11 @@ impl Lowerer {
         let shadow_y = values.optional(style.shadow_y.as_ref())?;
         let shadow_blur = values.optional(style.shadow_blur.as_ref())?;
         let radius = ResolvedFloatRadius {
-            all: values.optional(style.radius.as_ref())?,
-            top_left: values.optional(style.radius_top_left.as_ref())?,
-            top_right: values.optional(style.radius_top_right.as_ref())?,
-            bottom_right: values.optional(style.radius_bottom_right.as_ref())?,
-            bottom_left: values.optional(style.radius_bottom_left.as_ref())?,
+            all: values.optional(style.radius.all.as_ref())?,
+            top_left: values.optional(style.radius.top_left.as_ref())?,
+            top_right: values.optional(style.radius.top_right.as_ref())?,
+            bottom_right: values.optional(style.radius.bottom_right.as_ref())?,
+            bottom_left: values.optional(style.radius.bottom_left.as_ref())?,
         };
         values.finish(*expression_count)?;
 

@@ -306,11 +306,11 @@ pub(in crate::check) fn check_container_style_options(
     }
     for value in [
         &style.border_width,
-        &style.radius,
-        &style.radius_top_left,
-        &style.radius_top_right,
-        &style.radius_bottom_right,
-        &style.radius_bottom_left,
+        &style.radius.all,
+        &style.radius.top_left,
+        &style.radius.top_right,
+        &style.radius.bottom_right,
+        &style.radius.bottom_left,
         &style.shadow_blur,
     ]
     .into_iter()
@@ -371,14 +371,10 @@ pub(in crate::check) fn check_markdown_style(
         style.inline_code_padding.bottom.as_ref(),
         style.inline_code_padding.left.as_ref(),
         style.inline_code_border_width.as_ref(),
-        style.inline_code_radius.as_ref(),
-        style.inline_code_radius_top_left.as_ref(),
-        style.inline_code_radius_top_right.as_ref(),
-        style.inline_code_radius_bottom_right.as_ref(),
-        style.inline_code_radius_bottom_left.as_ref(),
     ]
     .into_iter()
     .flatten()
+    .chain(style.inline_code_radius.iter())
     {
         require_nonnegative_f64(value, env, document, "markdown style metric", span)?;
     }
@@ -394,16 +390,10 @@ pub(in crate::check) fn check_float_style_options(
     if let Some(color) = &style.shadow_color {
         require_theme_color(color, document, span, "E128", "float shadow")?;
     }
-    for value in [
-        &style.shadow_blur,
-        &style.radius,
-        &style.radius_top_left,
-        &style.radius_top_right,
-        &style.radius_bottom_right,
-        &style.radius_bottom_left,
-    ]
-    .into_iter()
-    .flatten()
+    for value in [&style.shadow_blur]
+        .into_iter()
+        .flatten()
+        .chain(style.radius.iter())
     {
         require_nonnegative_f64(value, env, document, "float style metric", span)?;
     }
@@ -515,16 +505,10 @@ pub(in crate::check) fn check_checkbox_styles(
                 require_theme_color(color, document, span, "E129", label)?;
             }
         }
-        for value in [
-            &style.border_width,
-            &style.radius,
-            &style.radius_top_left,
-            &style.radius_top_right,
-            &style.radius_bottom_right,
-            &style.radius_bottom_left,
-        ]
-        .into_iter()
-        .flatten()
+        for value in [&style.border_width]
+            .into_iter()
+            .flatten()
+            .chain(style.radius.iter())
         {
             require_nonnegative_f64(value, env, document, "checkbox style metric", span)?;
         }
@@ -570,14 +554,10 @@ pub(in crate::check) fn check_toggler_styles(
         for value in [
             &style.background_border_width,
             &style.foreground_border_width,
-            &style.radius,
-            &style.radius_top_left,
-            &style.radius_top_right,
-            &style.radius_bottom_right,
-            &style.radius_bottom_left,
         ]
         .into_iter()
         .flatten()
+        .chain(style.radius.iter())
         {
             require_nonnegative_f64(value, env, document, "toggler style metric", span)?;
         }
@@ -834,17 +814,17 @@ pub(in crate::check) fn check_slider_styles(
         for (value, label) in [
             (&style.rail_width, "slider rail width"),
             (&style.rail_border_width, "slider rail border width"),
-            (&style.rail_radius, "slider rail radius"),
-            (&style.rail_radius_top_left, "slider rail radius"),
-            (&style.rail_radius_top_right, "slider rail radius"),
-            (&style.rail_radius_bottom_right, "slider rail radius"),
-            (&style.rail_radius_bottom_left, "slider rail radius"),
+            (&style.rail_radius.all, "slider rail radius"),
+            (&style.rail_radius.top_left, "slider rail radius"),
+            (&style.rail_radius.top_right, "slider rail radius"),
+            (&style.rail_radius.bottom_right, "slider rail radius"),
+            (&style.rail_radius.bottom_left, "slider rail radius"),
             (&style.handle_border_width, "slider handle border width"),
-            (&style.handle_radius, "slider handle radius"),
-            (&style.handle_radius_top_left, "slider handle radius"),
-            (&style.handle_radius_top_right, "slider handle radius"),
-            (&style.handle_radius_bottom_right, "slider handle radius"),
-            (&style.handle_radius_bottom_left, "slider handle radius"),
+            (&style.handle_radius.all, "slider handle radius"),
+            (&style.handle_radius.top_left, "slider handle radius"),
+            (&style.handle_radius.top_right, "slider handle radius"),
+            (&style.handle_radius.bottom_right, "slider handle radius"),
+            (&style.handle_radius.bottom_left, "slider handle radius"),
         ] {
             if let Some(value) = value {
                 require_nonnegative_f64(value, env, document, label, span)?;
@@ -853,12 +833,7 @@ pub(in crate::check) fn check_slider_styles(
         if let Some(SliderHandleShape::Circle(radius)) = &style.handle_shape {
             require_nonnegative_f64(radius, env, document, "slider handle radius", span)?;
         }
-        let has_handle_radius = style.handle_radius.is_some()
-            || style.handle_radius_top_left.is_some()
-            || style.handle_radius_top_right.is_some()
-            || style.handle_radius_bottom_right.is_some()
-            || style.handle_radius_bottom_left.is_some();
-        if has_handle_radius
+        if style.handle_radius.any()
             && !matches!(
                 &style.handle_shape,
                 Some(SliderHandleShape::Rectangle { .. })

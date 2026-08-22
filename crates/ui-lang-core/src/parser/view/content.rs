@@ -431,11 +431,11 @@ pub(in crate::parser) fn parse_markdown_style(line: &Line) -> Result<MarkdownSty
             "inline-code-pl" => style.inline_code_padding.left = Some(parse(value)?),
             "inline-code-border" => style.inline_code_border_color = Some(value.to_owned()),
             "inline-code-border-w" => style.inline_code_border_width = Some(parse(value)?),
-            "inline-code-r" => style.inline_code_radius = Some(parse(value)?),
-            "inline-code-r-tl" => style.inline_code_radius_top_left = Some(parse(value)?),
-            "inline-code-r-tr" => style.inline_code_radius_top_right = Some(parse(value)?),
-            "inline-code-r-br" => style.inline_code_radius_bottom_right = Some(parse(value)?),
-            "inline-code-r-bl" => style.inline_code_radius_bottom_left = Some(parse(value)?),
+            "inline-code-r" => style.inline_code_radius.all = Some(parse(value)?),
+            "inline-code-r-tl" => style.inline_code_radius.top_left = Some(parse(value)?),
+            "inline-code-r-tr" => style.inline_code_radius.top_right = Some(parse(value)?),
+            "inline-code-r-br" => style.inline_code_radius.bottom_right = Some(parse(value)?),
+            "inline-code-r-bl" => style.inline_code_radius.bottom_left = Some(parse(value)?),
             _ => {
                 return Err(error(
                     "E097",

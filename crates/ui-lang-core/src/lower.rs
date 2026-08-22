@@ -13503,7 +13503,7 @@ view
         options.custom_style.as_mut().unwrap().args[0] = Expr::Bool(true);
         let active = options.style.active.as_mut().unwrap();
         active.options.border_width = Some(Expr::F64(999.0));
-        active.options.radius = Some(Expr::F64(999.0));
+        active.options.radius.all = Some(Expr::F64(999.0));
         let actual =
             crate::codegen::generate(&lower(checked).unwrap(), "checked-input.ice").unwrap();
         assert_eq!(actual, expected);
@@ -14134,7 +14134,7 @@ view
         options.style.custom.as_mut().unwrap().args[0] = Expr::Bool(true);
         let active = options.style.active.as_mut().unwrap();
         active.options.border_width = Some(Expr::F64(999.0));
-        active.options.radius = Some(Expr::F64(999.0));
+        active.options.radius.all = Some(Expr::F64(999.0));
         active.options.shadow_x = Some(Expr::F64(999.0));
         active.options.pixel_snap = Some(Expr::Bool(false));
         let actual =
@@ -15625,7 +15625,7 @@ view
         options.style.inline_code_padding = PaddingOptions::default();
         options.style.inline_code_border_color = Some("fg".into());
         options.style.inline_code_border_width = Some(Expr::F64(99.0));
-        options.style.inline_code_radius = Some(Expr::F64(99.0));
+        options.style.inline_code_radius.all = Some(Expr::F64(99.0));
         route.handler = "poisoned".into();
         program
             .document
@@ -22209,7 +22209,7 @@ test stable_flow
         };
         *thickness = Expr::F64(999.0);
         options.fill = Some(RuleFill::Percent(Expr::F64(999.0)));
-        options.radius = Some(Expr::F64(999.0));
+        options.radius.all = Some(Expr::F64(999.0));
         options.snap = Some(Expr::Bool(true));
         let ViewNode::QrCode {
             payload, cell_size, ..

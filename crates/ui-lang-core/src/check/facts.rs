@@ -6509,12 +6509,12 @@ impl<'a> FactsBuilder<'a> {
         )?;
         let radius = self.lower_pane_radius(
             pane,
-            style.radius.as_ref(),
+            style.radius.all.as_ref(),
             [
-                style.radius_top_left.as_ref(),
-                style.radius_top_right.as_ref(),
-                style.radius_bottom_right.as_ref(),
-                style.radius_bottom_left.as_ref(),
+                style.radius.top_left.as_ref(),
+                style.radius.top_right.as_ref(),
+                style.radius.bottom_right.as_ref(),
+                style.radius.bottom_left.as_ref(),
             ],
             env,
             span,
@@ -6806,12 +6806,12 @@ impl<'a> FactsBuilder<'a> {
         )?;
         let region_radius = self.lower_pane_radius(
             pane,
-            options.style.region_radius.as_ref(),
+            options.style.region_radius.all.as_ref(),
             [
-                options.style.region_radius_top_left.as_ref(),
-                options.style.region_radius_top_right.as_ref(),
-                options.style.region_radius_bottom_right.as_ref(),
-                options.style.region_radius_bottom_left.as_ref(),
+                options.style.region_radius.top_left.as_ref(),
+                options.style.region_radius.top_right.as_ref(),
+                options.style.region_radius.bottom_right.as_ref(),
+                options.style.region_radius.bottom_left.as_ref(),
             ],
             env,
             span,
