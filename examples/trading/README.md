@@ -783,6 +783,18 @@ prompt. Nothing is derived and nothing is stored until it passes. Past it, the
 two doors are one path: the phrase derives, the address is shown, THIS IS MINE
 stores it, and ENROL ALL registers the networks.
 
+**And a stored wallet is where the step ends.** It used to empty itself in
+place, which is not the same as closing: a step holding no address and no made
+phrase *is* the typed import door — the same box, the same CHECK, retitled
+"Import a wallet" — so the press that finished making a wallet drew the screen
+its reader had just left, over the account it had that second stored. Now the
+step closes, and a reader who arrived at the gate with nothing lands on the
+account those words make, with the sentence about enrolling waiting on the panel
+whose button does it. A store made from Settings over an account already on
+screen closes the same way and does not move the reader off it. A store that
+*failed* leaves the step standing with the platform's own words in it, and on
+that arm the typed door is the honest surface: nothing was written.
+
 ### What the keychain actually holds
 
 **The owner's requirement, 2026-08-10: the stored form is ciphertext.**
