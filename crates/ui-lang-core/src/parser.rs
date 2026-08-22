@@ -452,6 +452,45 @@ pub(crate) fn parse_interface_with_symbols_and_namespaces(
     parse_document(source, namespaces, true)
 }
 
+/// Every `extern` child keyword, the kind it declares, and whether its
+/// signature is implicitly `-> unit`. Keys are whitespace-terminated distinct
+/// words, so lookup order carries no meaning.
+const EXTERN_ITEMS: &[(&str, ExternKind, bool)] = &[
+    ("component", ExternKind::Component, false),
+    ("shader", ExternKind::Shader, false),
+    ("task", ExternKind::Task, false),
+    ("stream", ExternKind::Stream, false),
+    ("sip", ExternKind::Sip, false),
+    ("recipe", ExternKind::Recipe, false),
+    ("selector", ExternKind::Selector, false),
+    ("event-filter", ExternKind::EventFilter, false),
+    ("pure", ExternKind::Pure, false),
+    ("sync", ExternKind::Sync, false),
+    ("subscription", ExternKind::Subscription, false),
+    ("theme", ExternKind::Theme, true),
+    ("themer", ExternKind::Themer, false),
+    ("window", ExternKind::Window, false),
+    ("markdown-viewer", ExternKind::MarkdownViewer, false),
+    ("editor-binding", ExternKind::EditorBinding, false),
+    ("editor-action", ExternKind::EditorAction, true),
+    ("editor-highlighter", ExternKind::EditorHighlighter, true),
+    ("editor-style", ExternKind::EditorStyle, true),
+    ("text-style", ExternKind::TextStyle, true),
+    ("slider-style", ExternKind::SliderStyle, true),
+    ("progress-style", ExternKind::ProgressStyle, true),
+    ("button-style", ExternKind::ButtonStyle, true),
+    ("checkbox-style", ExternKind::CheckboxStyle, true),
+    ("toggler-style", ExternKind::TogglerStyle, true),
+    ("radio-style", ExternKind::RadioStyle, true),
+    ("box-style", ExternKind::ContainerStyle, true),
+    ("svg-style", ExternKind::SvgStyle, true),
+    ("input-style", ExternKind::InputStyle, true),
+    ("scroll-style", ExternKind::ScrollStyle, true),
+    ("pick-list-style", ExternKind::PickListStyle, true),
+    ("menu-style", ExternKind::MenuStyle, true),
+    ("panes-style", ExternKind::PaneGridStyle, true),
+];
+
 fn parse_document(
     source: &str,
     namespaces: &[Option<String>],
@@ -529,193 +568,31 @@ fn parse_document(
         } else if let Some(path) = line.text.strip_prefix("extern ") {
             let path = rust_path(path.trim(), line)?;
             for item in &line.children {
-                if let Some(source) = item.text.strip_prefix("component ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Component)?);
-                } else if let Some(source) = item.text.strip_prefix("shader ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Shader)?);
-                } else if let Some(source) = item.text.strip_prefix("task ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Task)?);
-                } else if let Some(source) = item.text.strip_prefix("stream ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Stream)?);
-                } else if let Some(source) = item.text.strip_prefix("sip ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Sip)?);
-                } else if let Some(source) = item.text.strip_prefix("recipe ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Recipe)?);
-                } else if let Some(source) = item.text.strip_prefix("selector ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Selector)?);
-                } else if let Some(source) = item.text.strip_prefix("event-filter ") {
-                    let function = parse_extern_fn(source, item, &path, ExternKind::EventFilter)?;
-                    if !function.params.is_empty() {
-                        return Err(error(
-                            "E022",
-                            item,
+                let keyword = item.text.split_once(' ').map_or("", |(word, _)| word);
+                if let Some(&(_, kind, unit)) =
+                    EXTERN_ITEMS.iter().find(|(word, ..)| *word == keyword)
+                {
+                    let source = &item.text[keyword.len() + 1..];
+                    let function = if unit {
+                        parse_extern_fn(&format!("{source} -> unit"), item, &path, kind)?
+                    } else {
+                        parse_extern_fn(source, item, &path, kind)?
+                    };
+                    let implicit = match kind {
+                        ExternKind::EventFilter => Some(
                             "event filters receive the iced runtime event implicitly and declare no parameters",
-                        ));
-                    }
-                    functions.push(function);
-                } else if let Some(source) = item.text.strip_prefix("pure ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Pure)?);
-                } else if let Some(source) = item.text.strip_prefix("sync ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Sync)?);
-                } else if let Some(source) = item.text.strip_prefix("subscription ") {
-                    functions.push(parse_extern_fn(
-                        source,
-                        item,
-                        &path,
-                        ExternKind::Subscription,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("theme ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::Theme,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("themer ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Themer)?);
-                } else if let Some(source) = item.text.strip_prefix("window ") {
-                    functions.push(parse_extern_fn(source, item, &path, ExternKind::Window)?);
-                } else if let Some(source) = item.text.strip_prefix("markdown-viewer ") {
-                    functions.push(parse_extern_fn(
-                        source,
-                        item,
-                        &path,
-                        ExternKind::MarkdownViewer,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("editor-binding ") {
-                    functions.push(parse_extern_fn(
-                        source,
-                        item,
-                        &path,
-                        ExternKind::EditorBinding,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("editor-action ") {
-                    let function = parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::EditorAction,
-                    )?;
-                    if !function.params.is_empty() {
-                        return Err(error(
-                            "E022",
-                            item,
+                        ),
+                        ExternKind::EditorAction => Some(
                             "editor actions receive content and action implicitly and declare no parameters",
-                        ));
+                        ),
+                        _ => None,
+                    };
+                    if let Some(message) = implicit
+                        && !function.params.is_empty()
+                    {
+                        return Err(error("E022", item, message));
                     }
                     functions.push(function);
-                } else if let Some(source) = item.text.strip_prefix("editor-highlighter ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::EditorHighlighter,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("editor-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::EditorStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("text-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::TextStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("slider-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::SliderStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("progress-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::ProgressStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("button-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::ButtonStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("checkbox-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::CheckboxStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("toggler-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::TogglerStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("radio-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::RadioStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("box-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::ContainerStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("svg-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::SvgStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("input-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::InputStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("scroll-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::ScrollStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("pick-list-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::PickListStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("menu-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::MenuStyle,
-                    )?);
-                } else if let Some(source) = item.text.strip_prefix("panes-style ") {
-                    functions.push(parse_extern_fn(
-                        &format!("{source} -> unit"),
-                        item,
-                        &path,
-                        ExternKind::PaneGridStyle,
-                    )?);
                 } else if item.text.chars().next().is_some_and(char::is_uppercase) {
                     structs.push(parse_extern_struct(item, &path)?);
                 } else {
