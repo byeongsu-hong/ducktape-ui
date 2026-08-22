@@ -917,6 +917,10 @@ pub(in crate::parser) fn parse_widget_operation(
                 x: expr(2)?,
                 y: expr(3)?,
             },
+            Some("scroll-to-key") if parts.len() == 3 => WidgetOperation::ScrollToKey {
+                target: target(1)?,
+                key: expr(2)?,
+            },
             _ => {
                 return Err(error(
                     "E052",

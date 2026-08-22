@@ -51,6 +51,9 @@ on scroll_to
 on scroll_by
   task widget scroll-by #list(selected) -4.0 8.0
 
+on scroll_to_key
+  task widget scroll-to-key #list(selected) selected
+
 test dynamic_widget_operations_behavior
   dispatch select(2, "second")
   expect selected == 2
@@ -68,6 +71,7 @@ test dynamic_widget_operations_behavior
   dispatch snap_end
   dispatch scroll_to
   dispatch scroll_by
+  dispatch scroll_to_key
 
 view
   col

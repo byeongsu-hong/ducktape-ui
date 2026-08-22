@@ -1192,6 +1192,10 @@ pub(crate) enum ResolvedWidgetOperation {
         x: CheckedExprUseId,
         y: CheckedExprUseId,
     },
+    ScrollToKey {
+        target: ResolvedWidgetTarget,
+        key: CheckedExprUseId,
+    },
     Find {
         selector: ResolvedWidgetSelector,
         all: bool,
@@ -2011,6 +2015,9 @@ fn resolved_handler_operation_contract(
                 ResolvedWidgetOperation::ScrollBy { target: value, .. } => {
                     CheckedWidgetOperation::ScrollBy(target(value))
                 }
+                ResolvedWidgetOperation::ScrollToKey { target: value, .. } => {
+                    CheckedWidgetOperation::ScrollToKey(target(value))
+                }
                 ResolvedWidgetOperation::Find { selector, all } => CheckedWidgetOperation::Find {
                     selector: match selector {
                         ResolvedWidgetSelector::Id(value) => {
@@ -2530,6 +2537,10 @@ impl LoweredProgram {
                     | ResolvedWidgetOperation::ScrollBy { target, x, y } => {
                         widget_target_operands(target, &mut operands);
                         operands.extend([*x, *y]);
+                    }
+                    ResolvedWidgetOperation::ScrollToKey { target, key } => {
+                        widget_target_operands(target, &mut operands);
+                        operands.push(*key);
                     }
                     ResolvedWidgetOperation::Find { selector, .. } => match selector {
                         ResolvedWidgetSelector::Id(target) => {
@@ -9044,6 +9055,12 @@ impl Lowerer {
                 x: self.checked_statement_expression(statement, operand, span)?,
                 y: self.checked_statement_expression(statement, operand, span)?,
             },
+            WidgetOperation::ScrollToKey { target: value, .. } => {
+                ResolvedWidgetOperation::ScrollToKey {
+                    target: target(value, operand)?,
+                    key: self.checked_statement_expression(statement, operand, span)?,
+                }
+            }
             WidgetOperation::Find { selector, all } => ResolvedWidgetOperation::Find {
                 selector: self.lower_widget_selector(selector, statement, operand, span)?,
                 all: *all,

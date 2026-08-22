@@ -464,7 +464,8 @@ fn check_handler_statements(
                     | WidgetOperation::Snap { target, .. }
                     | WidgetOperation::SnapEnd { target }
                     | WidgetOperation::ScrollTo { target, .. }
-                    | WidgetOperation::ScrollBy { target, .. } => Some(target),
+                    | WidgetOperation::ScrollBy { target, .. }
+                    | WidgetOperation::ScrollToKey { target, .. } => Some(target),
                 };
                 // A component handler carries its instance scope — window
                 // included — with the route that dispatched it; an app or
@@ -583,6 +584,22 @@ fn check_handler_statements(
                             "relative scroll offset",
                             span,
                         )?;
+                    }
+                }
+                // The key names a `keyed` row, and those are keyed by
+                // bool/i64/f64 — the same set a widget target's key segment
+                // takes, minus `str`, which no keyed column accepts.
+                if let WidgetOperation::ScrollToKey { key, .. } = operation {
+                    let ty = expr_type(key, &env, document, span)?;
+                    if !matches!(ty, Type::Bool | Type::I64 | Type::F64) {
+                        return Err(Error::new(
+                            "E172",
+                            span,
+                            format!(
+                                "a keyed row's key is bool, i64, or f64, found {}",
+                                ty.display()
+                            ),
+                        ));
                     }
                 }
             }

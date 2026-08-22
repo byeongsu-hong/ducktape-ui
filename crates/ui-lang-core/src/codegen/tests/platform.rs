@@ -573,6 +573,8 @@ on scroll_to
   task widget scroll-to #list 0.0 24.0
 on scroll_by
   task widget scroll-by #list -4.0 8.0
+on scroll_to_key
+  task widget scroll-to-key #list 42
 view
   col
     input "Value" #field <-> value
@@ -594,6 +596,7 @@ view
         "snap_to_end",
         "scroll_to::<",
         "scroll_by::<",
+        "scroll_to_key::<",
     ] {
         assert!(generated.contains(function), "missing {function}");
     }
@@ -649,6 +652,8 @@ on scroll_to
   task widget scroll-to #list(selected) 0.0 24.0
 on scroll_by
   task widget scroll-by #list(selected) -4.0 8.0
+on scroll_to_key
+  task widget scroll-to-key #list(selected) selected
 view
   col
     for id in ids

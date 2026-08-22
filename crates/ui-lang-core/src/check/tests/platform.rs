@@ -329,6 +329,8 @@ on scroll_to
   task widget scroll-to #list 0.0 24.0
 on scroll_by
   task widget scroll-by #list -4.0 8.0
+on scroll_to_key
+  task widget scroll-to-key #list 42
 view
   col
     input "Value" #field <-> value
@@ -346,6 +348,15 @@ view
     let error = analyze(&source.replace("focus #field", "focus #missing")).unwrap_err();
     assert_eq!(error.code, "E172");
     assert!(error.message.contains("#missing"));
+
+    let error = analyze(&source.replace("scroll-to-key #list 42", "scroll-to-key #list \"42\""))
+        .unwrap_err();
+    assert_eq!(error.code, "E172");
+    assert!(
+        error
+            .message
+            .contains("a keyed row's key is bool, i64, or f64, found str")
+    );
 
     let error = analyze(&source.replace("snap #list 0.0 1.0", "snap #list 0.0 1.1")).unwrap_err();
     assert_eq!(error.code, "E128");
@@ -393,6 +404,8 @@ on scroll_to
   task widget scroll-to #list(selected) 0.0 24.0
 on scroll_by
   task widget scroll-by #list(selected) -4.0 8.0
+on scroll_to_key
+  task widget scroll-to-key #list(selected) selected
 view
   col
     for id in ids

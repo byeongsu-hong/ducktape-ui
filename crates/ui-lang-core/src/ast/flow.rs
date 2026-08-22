@@ -444,6 +444,12 @@ pub enum WidgetOperation {
         x: Expr,
         y: Expr,
     },
+    /// Lands the keyed row `key` of the virtual column inside the scroll
+    /// `target` at the top of its viewport.
+    ScrollToKey {
+        target: WidgetTarget,
+        key: Expr,
+    },
     Find {
         selector: WidgetSelector,
         all: bool,

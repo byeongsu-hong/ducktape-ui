@@ -1414,6 +1414,7 @@ fn component_handler_statement_supported(statement: &Statement) -> bool {
                 | WidgetOperation::SnapEnd { .. }
                 | WidgetOperation::ScrollTo { .. }
                 | WidgetOperation::ScrollBy { .. }
+                | WidgetOperation::ScrollToKey { .. }
                 | WidgetOperation::Find {
                     selector: WidgetSelector::Id(_),
                     ..
