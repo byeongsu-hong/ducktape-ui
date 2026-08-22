@@ -101,61 +101,28 @@ struct Builder<'a> {
     source_path: &'a str,
 }
 
+macro_rules! slot_pusher {
+    ($name:ident, $field:ident, $ty:ident, $call:literal) => {
+        fn $name(&mut self, code: String) -> $ty {
+            let index = self.counts.$field;
+            self.counts.$field += 1;
+            self.slots.push(format!("__ice_slots.{}({code});", $call));
+            $ty(index)
+        }
+    };
+}
+
 impl Builder<'_> {
     // One push per slot kind. Each hands back the index type its table is
     // addressed by, so a node built from the wrong one does not compile.
 
-    fn push_text(&mut self, code: String) -> TextSlot {
-        let index = self.counts.texts;
-        self.counts.texts += 1;
-        self.slots.push(format!("__ice_slots.texts.push({code});"));
-        TextSlot(index)
-    }
-
-    fn push_state(&mut self, code: String) -> StateSlot {
-        let index = self.counts.states;
-        self.counts.states += 1;
-        self.slots.push(format!("__ice_slots.states.push({code});"));
-        StateSlot(index)
-    }
-
-    fn push_message(&mut self, code: String) -> MessageSlot {
-        let index = self.counts.messages;
-        self.counts.messages += 1;
-        self.slots
-            .push(format!("__ice_slots.messages.push({code});"));
-        MessageSlot(index)
-    }
-
-    fn push_handler(&mut self, code: String) -> HandlerSlot {
-        let index = self.counts.handlers;
-        self.counts.handlers += 1;
-        self.slots
-            .push(format!("__ice_slots.handlers.push({code});"));
-        HandlerSlot(index)
-    }
-
-    fn push_subtree(&mut self, code: String) -> SubtreeSlot {
-        let index = self.counts.subtrees;
-        self.counts.subtrees += 1;
-        self.slots
-            .push(format!("__ice_slots.push_subtree({code});"));
-        SubtreeSlot(index)
-    }
-
-    fn push_bool(&mut self, code: String) -> BoolSlot {
-        let index = self.counts.bools;
-        self.counts.bools += 1;
-        self.slots.push(format!("__ice_slots.bools.push({code});"));
-        BoolSlot(index)
-    }
-
-    fn push_group(&mut self, code: String) -> GroupSlot {
-        let index = self.counts.groups;
-        self.counts.groups += 1;
-        self.slots.push(format!("__ice_slots.push_group({code});"));
-        GroupSlot(index)
-    }
+    slot_pusher!(push_text, texts, TextSlot, "texts.push");
+    slot_pusher!(push_state, states, StateSlot, "states.push");
+    slot_pusher!(push_message, messages, MessageSlot, "messages.push");
+    slot_pusher!(push_handler, handlers, HandlerSlot, "handlers.push");
+    slot_pusher!(push_subtree, subtrees, SubtreeSlot, "push_subtree");
+    slot_pusher!(push_bool, bools, BoolSlot, "bools.push");
+    slot_pusher!(push_group, groups, GroupSlot, "push_group");
 
     /// Interns a `.ice` path and returns its index in the emitted table.
     fn path_index(&mut self, path: String) -> usize {
