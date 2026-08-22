@@ -7,7 +7,6 @@ publish = false
 [dependencies]
 iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tokio", "wgpu", "x11"] }
 shell-words = "=1.1.1"
-tokio = { version = "=1.53.1", features = ["sync", "time"] }
 ui-lang-components = { path = "../../crates/ui-lang-components", default-features = false, features = ["terminal"] }
 ui-lang.workspace = true
 ui-lang-runtime.workspace = true
