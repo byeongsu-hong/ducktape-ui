@@ -1926,6 +1926,46 @@ view
 }
 
 #[test]
+fn handler_emit_of_a_unit_event_names_the_variant_bare() {
+    // A zero-payload event is a UNIT variant on the app message, so the
+    // handler's `emit(cancel)` must name it bare: `Variant()` is a call on a
+    // unit variant and does not compile (E0618). The view route form
+    // already names it bare; the handler form must match.
+    let source = r#"app UnitEmit
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  closed = false
+component Sheet()
+  lifetime retained
+  on dismiss
+    emit(cancel)
+  emits
+    cancel()
+  button "Cancel" -> dismiss
+on cancelled
+  closed = true
+view
+  col
+    Sheet #sheet
+      events
+        cancel -> cancelled
+    text "body"
+"#;
+    let generated = compile(source, "unit-emit.ice").unwrap();
+    assert!(generated.contains("::iced::Task::done(__UnitEmitMessage::Cancelled)"));
+    assert!(!generated.contains("__UnitEmitMessage::Cancelled()"));
+}
+
+#[test]
 fn a_slice_delivers_to_the_instance_its_key_names() {
     // ducktape-ui#698: the app keeps its one subscription and its route, and
     // hands each payload on to the ONE instance the key names — a scope
