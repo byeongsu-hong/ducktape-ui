@@ -13,7 +13,7 @@ use super::focus_control::{self, FocusControl, Status};
 use super::menu::MENU_PANEL_PADDING;
 use super::popover::{
     Alignment, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement, focus_within,
-    panel, panel_style,
+    panel, panel_style, translated_bounds,
 };
 use super::theme::{Theme, alpha, mix};
 use super::tooltip::{event_time, redraw_time};
@@ -1216,10 +1216,6 @@ where
             hover_delay: self.hover_delay,
         })))
     }
-}
-
-fn translated_bounds(bounds: Rectangle, translation: Vector) -> Rectangle {
-    Rectangle::new(bounds.position() + translation, bounds.size())
 }
 
 fn trigger_bounds(layout: Layout<'_>, translation: Vector) -> Vec<Rectangle> {

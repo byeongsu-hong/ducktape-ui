@@ -5,20 +5,19 @@
 //! trigger key handling without claiming browser or DOM `<select>` semantics.
 
 use super::direction::Direction;
-use super::focus_control::State as FocusState;
-use super::theme::{Theme, alpha};
+use super::focus_control::{State as FocusState, is_pointer_press};
+use super::theme::{Theme, alpha, menu_style};
 use iced::advanced::text::Renderer as _;
 use iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, overlay, renderer, text, widget,
 };
 use iced::alignment;
 use iced::keyboard::{self, key};
-use iced::widget::overlay::menu;
 use iced::widget::pick_list;
 use iced::widget::pick_list::{Handle, PickList};
 use iced::{
-    Background, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Shadow,
-    Size, Vector, touch, window,
+    Background, Border, Color, Element, Event, Length, Padding, Pixels, Point, Rectangle, Size,
+    Vector, touch, window,
 };
 use std::borrow::Borrow;
 use std::rc::Rc;
@@ -682,14 +681,6 @@ fn key_command(key: &keyboard::Key) -> Option<NativeSelectCommand> {
     }
 }
 
-fn is_pointer_press(event: &Event) -> bool {
-    matches!(
-        event,
-        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-            | Event::Touch(touch::Event::FingerPressed { .. })
-    )
-}
-
 fn press_is_over(event: &Event, cursor: mouse::Cursor, bounds: Rectangle) -> bool {
     match event {
         Event::Touch(touch::Event::FingerPressed { position, .. }) => bounds.contains(*position),
@@ -792,25 +783,6 @@ pub fn state_style(
     }
 }
 
-pub fn menu_style(theme: &Theme) -> menu::Style {
-    menu::Style {
-        background: Background::Color(theme.palette.popover),
-        border: Border {
-            color: theme.palette.border,
-            width: 1.0,
-            radius: theme.radius.button.into(),
-        },
-        text_color: theme.palette.popover_foreground,
-        selected_text_color: theme.palette.accent_foreground,
-        selected_background: Background::Color(theme.palette.accent),
-        shadow: Shadow {
-            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.14),
-            offset: Vector::new(0.0, 4.0),
-            blur_radius: 12.0,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::theme::LIGHT;
@@ -837,20 +809,14 @@ mod tests {
     }
 
     #[test]
-    fn opened_select_uses_ring_and_accent_roles() {
+    fn opened_select_uses_ring_role() {
         let field = style(
             &LIGHT,
             iced::widget::pick_list::Status::Opened { is_hovered: false },
         );
-        let menu = menu_style(&LIGHT);
 
         assert_eq!(field.border.color, LIGHT.palette.ring);
         assert_eq!(field.border.width, 2.0);
-        assert_eq!(
-            menu.selected_background,
-            Background::Color(LIGHT.palette.accent)
-        );
-        assert_eq!(menu.selected_text_color, LIGHT.palette.accent_foreground);
     }
 
     #[test]

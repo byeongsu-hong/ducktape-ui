@@ -778,7 +778,7 @@ fn activation_key(key: &keyboard::Key) -> Option<Press> {
     }
 }
 
-fn translated_bounds(bounds: Rectangle, translation: Vector) -> Rectangle {
+pub(crate) fn translated_bounds(bounds: Rectangle, translation: Vector) -> Rectangle {
     Rectangle::new(bounds.position() + translation, bounds.size())
 }
 

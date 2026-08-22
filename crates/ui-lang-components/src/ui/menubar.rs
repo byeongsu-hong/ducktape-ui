@@ -9,6 +9,7 @@ use super::menu::{
 };
 use super::popover::{
     Alignment, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement, panel,
+    translated_bounds,
 };
 use super::theme::{Theme, alpha, mix};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
@@ -659,10 +660,6 @@ where
             on_event: self.on_event.as_ref(),
         })))
     }
-}
-
-fn translated_bounds(bounds: Rectangle, translation: Vector) -> Rectangle {
-    Rectangle::new(bounds.position() + translation, bounds.size())
 }
 
 struct MenubarOverlay<'a, 'b, Message> {
