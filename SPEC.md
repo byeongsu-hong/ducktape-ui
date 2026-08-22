@@ -5140,11 +5140,13 @@ offsets are unrestricted `f64`.
 
 `scroll-to-key` is the runtime's own: it lands the `keyed` row whose `by=`
 value equals the key at the top of the scroll it names. The key is bool/i64/
-f64 like a keyed row's. The scroll must hold a `virtual-row=` keyed column —
-only a virtualized column knows its rows' tops — and a key no row carries does
-nothing. The landing is exact on the frame that draws: the first jump aims at
-the row's estimated top, and the column re-aims the scroll as it measures the
-row and its neighbours, until the row stops moving.
+f64 like a keyed row's. Only a `virtual-row=` keyed column knows its rows'
+tops, so the row is looked up in the scroll's virtualized keyed columns in
+tree order, and the first column holding the key is the one scrolled to; a
+key no column carries does nothing. The landing is exact on the frame that
+draws: the first jump aims at the row's estimated top, and the column re-aims
+the scroll as it measures the row and its neighbours, until the row stops
+moving.
 
 In a daemon whose graph keeps `lifetime mounted` component state, every
 rendered id is qualified by the window that drew it, so one window's render

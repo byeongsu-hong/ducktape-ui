@@ -468,9 +468,11 @@ impl Operation for SyncAfterWheel {
     }
 }
 
-/// The task behind `task widget scroll-to-key`: lands the row keyed `key` of
-/// the first virtual column inside the `scroll` named `target` at the top of
-/// its viewport.
+/// The task behind `task widget scroll-to-key`: lands the row keyed `key` at
+/// the top of the `scroll` named `target`'s viewport. The row is looked up in
+/// every virtual column under the scroll, in tree order, and the first column
+/// holding the key is the one scrolled to — a page's diff and its discussion
+/// can share one scroll without the diff's column swallowing the request.
 ///
 /// The first jump aims at the row's top as the column currently places it —
 /// estimates for rows nobody has measured. Landing there measures the row and
@@ -1823,7 +1825,8 @@ mod tests {
         }
     }
 
-    /// `scroll-to-key` lands a row on its MEASURED top, not its estimated one.
+    /// `scroll-to-key` lands a row on its MEASURED top, not its estimated one,
+    /// and finds it past a virtual column that does not hold the key.
     /// The first jump can only aim where the estimates put the row; landing
     /// there measures the row and its overscan neighbours, which moves it, and
     /// the column keeps re-aiming the scrollable through `virtual_scroll`'s
@@ -1855,9 +1858,23 @@ mod tests {
                 )
             })
             .collect();
+        // A first virtual column whose keys are all somewhere else: the
+        // request must walk past it rather than stop at the first column.
+        let other_rows = (1_000..1_003u64)
+            .map(|key| {
+                (
+                    key,
+                    Element::new(Reporting {
+                        id: Id::from(format!("other-{key}")),
+                        height: ESTIMATE,
+                    }),
+                )
+            })
+            .collect();
         let list = Id::new("list");
         let content = iced::widget::column![
             iced::widget::space().height(HEADER),
+            virtual_keyed_children(other_rows, ESTIMATE),
             virtual_keyed_children(rows, ESTIMATE),
         ];
         let mut renderer = headless_renderer();
