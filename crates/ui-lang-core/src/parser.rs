@@ -99,36 +99,42 @@ impl Line {
                     .is_some_and(|range| range.line == line.number && range.start_column == column)
             })
         };
-        let fallback = relative.and_then(|relative| {
-            let mut candidate = None;
-            let mut candidate_count = 0;
-            let mut assigned = None;
-            let mut assigned_count = 0;
-            for offset in line
-                .text
-                .match_indices(source)
-                .map(|(offset, _)| offset + relative)
-                .filter(|offset| {
-                    !used(*offset) && !line.text[*offset + source_name.len()..].starts_with('=')
-                })
-            {
-                candidate = Some(offset);
-                candidate_count += 1;
-                if line.text[..offset].trim_end().ends_with('=') {
-                    assigned = Some(offset);
-                    assigned_count += 1;
-                }
-            }
-            match (assigned_count, candidate_count) {
-                (1, _) => assigned,
-                (0, 1) => candidate,
-                _ => None,
-            }
-        });
         let range = relative
             .and_then(|relative| direct.map(|offset| offset + relative))
             .filter(|offset| !used(*offset))
-            .or(fallback)
+            // Scanning the line for every occurrence of `source` costs one
+            // full-document symbol scan per candidate offset, so it only runs
+            // when the direct slice-into-`line.text` offset is absent or
+            // already taken.
+            .or_else(|| {
+                relative.and_then(|relative| {
+                    let mut candidate = None;
+                    let mut candidate_count = 0;
+                    let mut assigned = None;
+                    let mut assigned_count = 0;
+                    for offset in line
+                        .text
+                        .match_indices(source)
+                        .map(|(offset, _)| offset + relative)
+                        .filter(|offset| {
+                            !used(*offset)
+                                && !line.text[*offset + source_name.len()..].starts_with('=')
+                        })
+                    {
+                        candidate = Some(offset);
+                        candidate_count += 1;
+                        if line.text[..offset].trim_end().ends_with('=') {
+                            assigned = Some(offset);
+                            assigned_count += 1;
+                        }
+                    }
+                    match (assigned_count, candidate_count) {
+                        (1, _) => assigned,
+                        (0, 1) => candidate,
+                        _ => None,
+                    }
+                })
+            })
             .map(|offset| {
                 let start_column = line.indent + line.text[..offset].chars().count() + 1;
                 SourceRange {
