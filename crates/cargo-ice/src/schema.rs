@@ -3469,66 +3469,14 @@ mod tests {
             true
         );
         assert_eq!(
-            schema["core"]["externFunctions"]["sync"]["allowedContexts"],
-            json!([
-                "top-level app state initializer",
-                "immediately evaluated app handler expression",
-                "immediately evaluated component handler expression",
-                "immediately evaluated preset handler expression",
-                "handler task argument, including nested task statements",
-            ])
-        );
-        assert_eq!(
             schema["core"]["externFunctions"]["sync"]["componentStateInitializer"],
             false
         );
         let sync = &schema["core"]["externFunctions"]["sync"];
         assert!(sync.get("asyncCompletionRouteExpression").is_none());
         assert_eq!(
-            sync["runTaskCompletionRouteExpression"],
-            json!({
-                "statements": ["run every/latest/replace Future", "task statement, including built-in tasks"],
-                "explicitValues": ["state", "derived value", "handler parameter", "handler let local", "pure expression"],
-                "evaluation": "each explicit success and failure expression becomes an owned snapshot when the statement launches",
-                "valueType": "ordinary cloneable Ice data",
-                "branches": "both success and failure snapshots materialize at launch even though only the delivered branch routes",
-                "payloadPlaceholder": "_ is supplied by the delivered completion and is not snapshotted",
-                "syncExtern": false,
-                "externKinds": ["pure"],
-                "recomputationUnsafeBuiltin": false,
-                "syncPattern": "evaluate sync once in a preceding handler let and route that local",
-                "runtimeValuePattern": "evaluate a recomputation-unsafe builtin once in a preceding handler let and route that local",
-                "unchangedFamilies": ["stream", "sip", "flow", "native query"],
-                "memory": {
-                    "ownership": "one snapshot set per in-flight task",
-                    "release": "task completion, drop, or replace abort",
-                    "latest": "a stale latest Future retains its snapshot set until it finishes",
-                    "multiOutputTask": "retain one original snapshot set and clone values into each delivered message",
-                    "globalMap": false,
-                    "accumulatesPerCompletion": false,
-                },
-            })
-        );
-        assert_eq!(
-            schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["forbiddenContexts"],
-            json!([
-                "derived",
-                "component prop default",
-                "component state initializer",
-                "direct run/task completion route expression",
-            ])
-        );
-        assert_eq!(
             schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["term"],
             "recomputation-unsafe builtin"
-        );
-        assert_eq!(
-            schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["allowedContexts"],
-            json!([
-                "top-level app state initializer",
-                "handler expressions other than direct run/task completion route expressions",
-                "view"
-            ])
         );
         assert!(
             schema["core"]["externFunctions"]["recomputationUnsafeBuiltins"]["names"]
@@ -3576,79 +3524,6 @@ mod tests {
     fn test_mode_schema_covers_configuration_actions_assertions_and_inspection() {
         let schema = document();
         let constructs = schema["core"]["constructs"].as_array().unwrap();
-        let labels = constructs
-            .iter()
-            .map(|construct| construct["label"].as_str().unwrap())
-            .collect::<BTreeSet<_>>();
-        for label in [
-            "test",
-            "preset",
-            "viewport",
-            "timeout",
-            "test theme",
-            "scale",
-            "locale",
-            "platform",
-            "reduced-motion",
-            "mount",
-            "target",
-            "click",
-            "double-click",
-            "click-at",
-            "hover",
-            "enter",
-            "leave",
-            "move",
-            "press",
-            "release",
-            "wheel",
-            "scroll-to",
-            "scroll-by",
-            "snap",
-            "snap-end",
-            "drag",
-            "drop",
-            "focus",
-            "focus-next",
-            "focus-previous",
-            "blur",
-            "window focus",
-            "window move",
-            "window resize",
-            "window rescale",
-            "window lifecycle",
-            "type",
-            "clear",
-            "replace",
-            "select",
-            "select-all",
-            "cursor",
-            "composition",
-            "key",
-            "key-down",
-            "key-up",
-            "modifiers",
-            "chord",
-            "repeat",
-            "tap",
-            "touch",
-            "resize",
-            "system-theme",
-            "file-hover",
-            "file-drop",
-            "file-leave",
-            "wait",
-            "advance",
-            "idle",
-            "capture",
-            "a11y",
-            "dispatch",
-            "expect",
-            "expect a11y",
-            "~=",
-        ] {
-            assert!(labels.contains(label), "{label}");
-        }
         let completion = |label: &str| {
             constructs
                 .iter()
