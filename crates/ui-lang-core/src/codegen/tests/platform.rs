@@ -466,6 +466,7 @@ view
     for source in [app_state, canvas_state] {
         let generated = compile(source, "selector_state.ice").unwrap();
         assert!(generated.contains("struct __IceWidgetTarget"));
+        assert!(!generated.contains("fn __ice_widget_target("));
     }
 }
 
