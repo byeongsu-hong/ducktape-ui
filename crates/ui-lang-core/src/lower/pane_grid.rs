@@ -294,17 +294,15 @@ impl Lowerer {
 
     fn resolve_pane_length(
         &self,
-        length: &CheckedPaneLength,
+        length: &CheckedLength,
         span: &Span,
     ) -> Result<Option<ResolvedPaneLength>, Error> {
         Ok(match length {
-            CheckedPaneLength::None => None,
-            CheckedPaneLength::Fill => Some(ResolvedPaneLength::Fill),
-            CheckedPaneLength::FillPortion(portion) => {
-                Some(ResolvedPaneLength::FillPortion(*portion))
-            }
-            CheckedPaneLength::Shrink => Some(ResolvedPaneLength::Shrink),
-            CheckedPaneLength::Fixed { expression, source } => {
+            CheckedLength::None => None,
+            CheckedLength::Fill => Some(ResolvedPaneLength::Fill),
+            CheckedLength::FillPortion(portion) => Some(ResolvedPaneLength::FillPortion(*portion)),
+            CheckedLength::Shrink => Some(ResolvedPaneLength::Shrink),
+            CheckedLength::Fixed { expression, source } => {
                 self.require_pane_expression_type(*expression, source, span)?;
                 match source {
                     Type::F64 => Some(ResolvedPaneLength::FixedF64(*expression)),
@@ -589,7 +587,7 @@ impl Lowerer {
         span: &Span,
     ) -> Result<ResolvedPaneTitle, Error> {
         self.require_origin_parent(title.origin, parent, span)?;
-        for expression in pane_padding_ids(&title.padding) {
+        for expression in padding_ids(&title.padding) {
             self.require_pane_expression_type(expression, &Type::F64, span)?;
         }
         Ok(ResolvedPaneTitle {
@@ -935,7 +933,7 @@ fn pane_surface_ids(surface: &CheckedPaneSurface) -> Vec<CheckedExprUseId> {
         .collect()
 }
 
-fn pane_padding_ids(padding: &CheckedPanePadding) -> Vec<CheckedExprUseId> {
+fn padding_ids(padding: &CheckedPadding) -> Vec<CheckedExprUseId> {
     [
         padding.all,
         padding.x,
@@ -977,7 +975,7 @@ fn add_pane_view_local_contracts(
         add_allowed(contracts, expression, allowed, span)?;
     }
     if let Some(title) = &pane.title {
-        for expression in pane_padding_ids(&title.padding)
+        for expression in padding_ids(&title.padding)
             .into_iter()
             .chain(pane_surface_ids(&title.surface))
         {

@@ -198,18 +198,16 @@ impl Lowerer {
         &self,
         view: ViewId,
         scope: CheckedViewScope,
-        length: CheckedKeyedLength,
+        length: CheckedLength,
         role: CheckedViewExprRole,
         span: &Span,
     ) -> Result<Option<ResolvedKeyedLength>, Error> {
         Ok(match length {
-            CheckedKeyedLength::None => None,
-            CheckedKeyedLength::Fill => Some(ResolvedKeyedLength::Fill),
-            CheckedKeyedLength::FillPortion(portion) => {
-                Some(ResolvedKeyedLength::FillPortion(portion))
-            }
-            CheckedKeyedLength::Shrink => Some(ResolvedKeyedLength::Shrink),
-            CheckedKeyedLength::Fixed { expression, source } => {
+            CheckedLength::None => None,
+            CheckedLength::Fill => Some(ResolvedKeyedLength::Fill),
+            CheckedLength::FillPortion(portion) => Some(ResolvedKeyedLength::FillPortion(portion)),
+            CheckedLength::Shrink => Some(ResolvedKeyedLength::Shrink),
+            CheckedLength::Fixed { expression, source } => {
                 let actual =
                     self.validate_keyed_expression(view, scope, expression, role, false, span)?;
                 if actual != source {

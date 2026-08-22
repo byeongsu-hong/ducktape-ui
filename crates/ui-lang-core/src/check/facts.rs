@@ -307,14 +307,14 @@ pub(crate) enum CheckedViewFlow {
         semantic_key: String,
         expression_count: u32,
         breakpoint: CheckedExprUseId,
-        dimensions: [CheckedResponsiveLength; 2],
+        dimensions: [CheckedLength; 2],
     },
     ResponsiveSize {
         semantic_key: String,
         expression_count: u32,
         width: CheckedLocalId,
         height: CheckedLocalId,
-        dimensions: [CheckedResponsiveLength; 2],
+        dimensions: [CheckedLength; 2],
     },
     Float {
         semantic_key: String,
@@ -334,7 +334,7 @@ pub(crate) struct CheckedLazyKeyBinding {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CheckedKeyedLength {
+pub(crate) enum CheckedLength {
     None,
     Fill,
     FillPortion(u16),
@@ -346,7 +346,7 @@ pub(crate) enum CheckedKeyedLength {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct CheckedKeyedPadding {
+pub(crate) struct CheckedPadding {
     pub(crate) all: Option<CheckedExprUseId>,
     pub(crate) x: Option<CheckedExprUseId>,
     pub(crate) y: Option<CheckedExprUseId>,
@@ -359,30 +359,18 @@ pub(crate) struct CheckedKeyedPadding {
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedKeyedLayout {
     pub(crate) semantic_key: String,
-    pub(crate) width: CheckedKeyedLength,
-    pub(crate) height: CheckedKeyedLength,
+    pub(crate) width: CheckedLength,
+    pub(crate) height: CheckedLength,
     pub(crate) spacing: Option<CheckedExprUseId>,
-    pub(crate) padding: CheckedKeyedPadding,
+    pub(crate) padding: CheckedPadding,
     pub(crate) max_width: Option<CheckedExprUseId>,
     pub(crate) virtual_row: Option<CheckedExprUseId>,
     pub(crate) align: Option<FlexAlignment>,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum CheckedTableLength {
-    None,
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    Fixed {
-        expression: CheckedExprUseId,
-        source: Type,
-    },
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct CheckedTableColumn {
-    pub(crate) width: CheckedTableLength,
+    pub(crate) width: CheckedLength,
     pub(crate) align_x: Option<InputAlignment>,
     pub(crate) align_y: Option<VerticalAlignment>,
     pub(crate) origin: OriginId,
@@ -391,7 +379,7 @@ pub(crate) struct CheckedTableColumn {
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedTableLayout {
     pub(crate) semantic_key: String,
-    pub(crate) width: CheckedTableLength,
+    pub(crate) width: CheckedLength,
     pub(crate) padding: Option<CheckedExprUseId>,
     pub(crate) padding_x: Option<CheckedExprUseId>,
     pub(crate) padding_y: Option<CheckedExprUseId>,
@@ -416,18 +404,6 @@ pub(crate) enum CheckedPaneConfiguration {
         ratio: f32,
         a: Box<CheckedPaneConfiguration>,
         b: Box<CheckedPaneConfiguration>,
-    },
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum CheckedPaneLength {
-    None,
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    Fixed {
-        expression: CheckedExprUseId,
-        source: Type,
     },
 }
 
@@ -469,20 +445,9 @@ pub(crate) struct CheckedPaneSurface {
     pub(crate) pixel_snap: Option<CheckedExprUseId>,
 }
 
-#[derive(Clone, Debug, Default)]
-pub(crate) struct CheckedPanePadding {
-    pub(crate) all: Option<CheckedExprUseId>,
-    pub(crate) x: Option<CheckedExprUseId>,
-    pub(crate) y: Option<CheckedExprUseId>,
-    pub(crate) top: Option<CheckedExprUseId>,
-    pub(crate) right: Option<CheckedExprUseId>,
-    pub(crate) bottom: Option<CheckedExprUseId>,
-    pub(crate) left: Option<CheckedExprUseId>,
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct CheckedPaneTitle {
-    pub(crate) padding: CheckedPanePadding,
+    pub(crate) padding: CheckedPadding,
     pub(crate) always_show_controls: bool,
     pub(crate) has_controls: bool,
     pub(crate) has_compact_controls: bool,
@@ -540,8 +505,8 @@ pub(crate) struct CheckedPaneGrid {
     pub(crate) id: ViewId,
     pub(crate) name: String,
     pub(crate) configuration: CheckedPaneConfiguration,
-    pub(crate) width: CheckedPaneLength,
-    pub(crate) height: CheckedPaneLength,
+    pub(crate) width: CheckedLength,
+    pub(crate) height: CheckedLength,
     pub(crate) spacing: Option<CheckedExprUseId>,
     pub(crate) min_size: Option<CheckedExprUseId>,
     pub(crate) resize_leeway: Option<CheckedExprUseId>,
@@ -553,18 +518,6 @@ pub(crate) struct CheckedPaneGrid {
     pub(crate) templates: Vec<CheckedPaneTemplate>,
     pub(crate) expression_count: u32,
     pub(crate) origin: OriginId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CheckedResponsiveLength {
-    None,
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    Fixed {
-        expression: CheckedExprUseId,
-        source: Type,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -1995,7 +1948,7 @@ impl CheckedFacts {
         &mut self,
         view: ViewId,
         index: usize,
-        replacement: CheckedResponsiveLength,
+        replacement: CheckedLength,
     ) {
         let dimensions = match &mut self.views[view.0 as usize].flow {
             CheckedViewFlow::ResponsiveBreakpoint { dimensions, .. }
@@ -2035,8 +1988,7 @@ impl CheckedFacts {
             | CheckedViewFlow::ResponsiveSize { dimensions, .. } => dimensions,
             _ => panic!("test view must be responsive"),
         };
-        let CheckedResponsiveLength::Fixed { expression, .. } = &mut dimensions[target_index]
-        else {
+        let CheckedLength::Fixed { expression, .. } = &mut dimensions[target_index] else {
             panic!("test dimension must be fixed");
         };
         *expression = source;
@@ -2772,6 +2724,38 @@ pub(in crate::check) fn build(
     FactsBuilder::new(document, declarations, origins, analyses).build()
 }
 
+/// The per-widget analysis stores were eight parallel maps with one key shape;
+/// the site tag moved into the key so one map, one `retain`, and one leftover
+/// scan serve them all.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum AnalysisSite {
+    Canvas,
+    Media,
+    Tooltip,
+    Float,
+    Pin,
+    Interaction,
+}
+
+impl AnalysisSite {
+    fn label(self) -> &'static str {
+        match self {
+            AnalysisSite::Canvas => "canvas",
+            AnalysisSite::Media => "media",
+            AnalysisSite::Tooltip => "tooltip",
+            AnalysisSite::Float => "float",
+            AnalysisSite::Pin => "pin",
+            AnalysisSite::Interaction => "interaction",
+        }
+    }
+
+    /// Canvases and interaction widgets are the only sites whose expressions
+    /// may carry route payload contracts.
+    fn keeps_routes(self) -> bool {
+        matches!(self, AnalysisSite::Canvas | AnalysisSite::Interaction)
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct CheckedAnalyses {
     entries: HashMap<CheckedExprOwner, ExprTypeAnalysis>,
@@ -2784,14 +2768,8 @@ pub(super) struct CheckedAnalyses {
     pub(super) view_scope_env_full_clones: usize,
     subscriptions: HashMap<SubscriptionId, CheckedSubscriptionAnalysis>,
     test_entries: HashMap<usize, ExprTypeAnalysis>,
-    canvas_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    canvas_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
-    media_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    tooltip_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    float_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    pin_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    interaction_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    interaction_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
+    site_entries: HashMap<(AnalysisSite, ViewId, usize), ExprTypeAnalysis>,
+    site_route_inputs: HashMap<(AnalysisSite, ViewId, usize), super::expr::CapturedRouteInputs>,
 }
 
 impl CheckedAnalyses {
@@ -2829,14 +2807,22 @@ impl CheckedAnalyses {
             && self.preset_handlers.is_empty()
             && self.subscriptions.is_empty()
             && self.test_entries.is_empty()
-            && self.canvas_entries.is_empty()
-            && self.canvas_route_inputs.is_empty()
-            && self.media_entries.is_empty()
-            && self.tooltip_entries.is_empty()
-            && self.float_entries.is_empty()
-            && self.pin_entries.is_empty()
-            && self.interaction_entries.is_empty()
-            && self.interaction_route_inputs.is_empty()
+            && self.site_entries.is_empty()
+            && self.site_route_inputs.is_empty()
+    }
+
+    fn site_expressions(&self, site: AnalysisSite, view: ViewId) -> usize {
+        self.site_entries
+            .keys()
+            .filter(|(entry, owner, _)| *entry == site && *owner == view)
+            .count()
+    }
+
+    fn site_routes(&self, site: AnalysisSite, view: ViewId) -> usize {
+        self.site_route_inputs
+            .keys()
+            .filter(|(entry, owner, _)| *entry == site && *owner == view)
+            .count()
     }
 
     pub(super) fn insert_subscription(
@@ -2907,243 +2893,72 @@ impl CheckedAnalyses {
                 ));
             }
         }
-        for (key, analysis) in other.canvas_entries {
-            if self.canvas_entries.insert(key, analysis).is_some() {
+        for (key, analysis) in other.site_entries {
+            if self.site_entries.insert(key, analysis).is_some() {
                 return Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "canvas expression was captured more than once",
+                    format!("{} expression was captured more than once", key.0.label()),
                 ));
             }
         }
-        for (key, inputs) in other.canvas_route_inputs {
-            if self.canvas_route_inputs.insert(key, inputs).is_some() {
+        for (key, inputs) in other.site_route_inputs {
+            if self.site_route_inputs.insert(key, inputs).is_some() {
                 return Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "canvas route contract was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.media_entries {
-            if self.media_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "media expression was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.tooltip_entries {
-            if self.tooltip_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "tooltip expression was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.float_entries {
-            if self.float_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "float expression was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.pin_entries {
-            if self.pin_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "pin expression was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.interaction_entries {
-            if self.interaction_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "interaction expression was captured more than once",
-                ));
-            }
-        }
-        for (key, inputs) in other.interaction_route_inputs {
-            if self.interaction_route_inputs.insert(key, inputs).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "interaction route contract was captured more than once",
+                    format!(
+                        "{} route contract was captured more than once",
+                        key.0.label()
+                    ),
                 ));
             }
         }
         Ok(())
     }
 
-    pub(super) fn retain_canvas(
+    pub(super) fn retain(
         &mut self,
-        canvas: ViewId,
+        site: AnalysisSite,
+        view: ViewId,
         analyses: super::expr::HandlerAnalyses,
     ) -> Result<(), Error> {
+        if !site.keeps_routes() && !analyses.routes.is_empty() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                format!(
+                    "{} expression capture unexpectedly retained routes",
+                    site.label()
+                ),
+            ));
+        }
         for (key, analysis) in analyses.expressions {
             if self
-                .canvas_entries
-                .insert((canvas, key), analysis)
+                .site_entries
+                .insert((site, view, key), analysis)
                 .is_some()
             {
                 return Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "canvas expression was captured more than once",
+                    format!("{} expression was captured more than once", site.label()),
                 ));
             }
         }
         for (key, inputs) in analyses.routes {
             if self
-                .canvas_route_inputs
-                .insert((canvas, key), inputs)
+                .site_route_inputs
+                .insert((site, view, key), inputs)
                 .is_some()
             {
                 return Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "canvas route contract was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_media(
-        &mut self,
-        media: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        if !analyses.routes.is_empty() {
-            return Err(Error::new(
-                "E196",
-                &Span::line(1),
-                "media expression capture unexpectedly retained routes",
-            ));
-        }
-        for (key, analysis) in analyses.expressions {
-            if self.media_entries.insert((media, key), analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "media expression was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_tooltip(
-        &mut self,
-        tooltip: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        if !analyses.routes.is_empty() {
-            return Err(Error::new(
-                "E196",
-                &Span::line(1),
-                "tooltip expression capture unexpectedly retained routes",
-            ));
-        }
-        for (key, analysis) in analyses.expressions {
-            if self
-                .tooltip_entries
-                .insert((tooltip, key), analysis)
-                .is_some()
-            {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "tooltip expression was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_interaction(
-        &mut self,
-        widget: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        for (key, analysis) in analyses.expressions {
-            if self
-                .interaction_entries
-                .insert((widget, key), analysis)
-                .is_some()
-            {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "interaction expression was captured more than once",
-                ));
-            }
-        }
-        for (key, inputs) in analyses.routes {
-            if self
-                .interaction_route_inputs
-                .insert((widget, key), inputs)
-                .is_some()
-            {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "interaction route contract was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_float(
-        &mut self,
-        float: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        if !analyses.routes.is_empty() {
-            return Err(Error::new(
-                "E196",
-                &Span::line(1),
-                "float expression capture unexpectedly retained routes",
-            ));
-        }
-        for (key, analysis) in analyses.expressions {
-            if self.float_entries.insert((float, key), analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "float expression was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_pin(
-        &mut self,
-        pin: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        if !analyses.routes.is_empty() {
-            return Err(Error::new(
-                "E196",
-                &Span::line(1),
-                "pin expression capture unexpectedly retained routes",
-            ));
-        }
-        for (key, analysis) in analyses.expressions {
-            if self.pin_entries.insert((pin, key), analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "pin expression was captured more than once",
+                    format!(
+                        "{} route contract was captured more than once",
+                        site.label()
+                    ),
                 ));
             }
         }
@@ -3351,55 +3166,6 @@ impl ExprTypeEnv for ScopedFactEnv<'_> {
     }
 }
 
-struct HandlerFactEnv<'a> {
-    base: &'a dyn FactEnvironment,
-    locals: FactEnv,
-}
-
-impl<'a> HandlerFactEnv<'a> {
-    fn new(base: &'a dyn FactEnvironment) -> Self {
-        Self {
-            base,
-            locals: FactEnv::default(),
-        }
-    }
-
-    fn insert(&mut self, name: String, root: CheckedPathRoot, ty: Type) {
-        self.locals.insert(name, root, ty);
-    }
-}
-
-impl ExprTypeEnv for HandlerFactEnv<'_> {
-    fn get_type(&self, name: &str) -> Option<&Type> {
-        self.locals
-            .paths
-            .get(name)
-            .map(|(_, ty)| ty)
-            .or_else(|| self.base.get(name).map(|(_, ty)| ty))
-    }
-
-    fn visit_types(&self, visitor: &mut dyn FnMut(&str, &Type)) {
-        self.base.visit_types(visitor);
-        self.locals.visit_types(visitor);
-    }
-
-    fn type_with_prefix(&self, prefix: &str) -> Option<&Type> {
-        self.locals
-            .type_with_prefix(prefix)
-            .or_else(|| self.base.type_with_prefix(prefix))
-    }
-}
-
-impl FactEnvironment for HandlerFactEnv<'_> {
-    fn get(&self, name: &str) -> Option<&(CheckedPathRoot, Type)> {
-        self.locals.paths.get(name).or_else(|| self.base.get(name))
-    }
-
-    fn slot(&self, name: &str) -> Option<ComponentSlotId> {
-        self.locals.slot(name).or_else(|| self.base.slot(name))
-    }
-}
-
 #[derive(Clone, Copy)]
 struct ExpressionLowering<'a> {
     analysis: &'a ExprTypeAnalysis,
@@ -3470,6 +3236,20 @@ impl<'a> FactsBuilder<'a> {
         );
         self.analyses.handler_entries.clear();
         if !self.analyses.is_empty() {
+            let expressions = |site| {
+                self.analyses
+                    .site_entries
+                    .keys()
+                    .filter(|(entry, _, _)| *entry == site)
+                    .count()
+            };
+            let routes = |site| {
+                self.analyses
+                    .site_route_inputs
+                    .keys()
+                    .filter(|(entry, _, _)| *entry == site)
+                    .count()
+            };
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
@@ -3477,14 +3257,14 @@ impl<'a> FactsBuilder<'a> {
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
                     self.analyses.test_entries.len(),
-                    self.analyses.canvas_entries.len(),
-                    self.analyses.canvas_route_inputs.len(),
-                    self.analyses.media_entries.len(),
-                    self.analyses.tooltip_entries.len(),
-                    self.analyses.float_entries.len(),
-                    self.analyses.pin_entries.len(),
-                    self.analyses.interaction_entries.len(),
-                    self.analyses.interaction_route_inputs.len(),
+                    expressions(AnalysisSite::Canvas),
+                    routes(AnalysisSite::Canvas),
+                    expressions(AnalysisSite::Media),
+                    expressions(AnalysisSite::Tooltip),
+                    expressions(AnalysisSite::Float),
+                    expressions(AnalysisSite::Pin),
+                    expressions(AnalysisSite::Interaction),
+                    routes(AnalysisSite::Interaction),
                     self.analyses.handler_entries.len(),
                     self.analyses.handler_route_inputs.len(),
                     self.analyses.preset_handlers.len(),
@@ -4119,6 +3899,87 @@ impl<'a> FactsBuilder<'a> {
         Ok(())
     }
 
+    #[cfg_attr(not(test), allow(unused_variables))]
+    fn record_analysis_metrics(&mut self, analysis: &ExprTypeAnalysis) {
+        #[cfg(test)]
+        {
+            let metrics = analysis.metrics();
+            self.facts.metrics.type_analysis_queries += metrics.queries;
+            self.facts.metrics.type_analysis_nodes += metrics.nodes;
+            self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits;
+            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays;
+            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones;
+        }
+    }
+
+    /// Every checked expression reaches the fact store through here: the eleven
+    /// call sites differ only in which analysis store they took `analysis` out
+    /// of, how `source` relates to `expected`, and the noun in their invariants.
+    #[allow(clippy::too_many_arguments)]
+    fn push_analyzed_expression(
+        &mut self,
+        owner: CheckedExprOwner,
+        analysis: ExprTypeAnalysis,
+        expr: &Expr,
+        expected: Option<&Type>,
+        mode: SourceMode,
+        noun: &'static str,
+        env: &dyn FactEnvironment,
+        span: &Span,
+        origin: OriginId,
+    ) -> Result<CheckedExprUseId, Error> {
+        let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
+            self.invariant(
+                span,
+                format!("missing retained {noun} expression root type"),
+            )
+        })?;
+        let (source, coercion) = match mode {
+            SourceMode::Raw => (inferred, CheckedInitializerCoercion::None),
+            SourceMode::Contextual => (
+                resolve_erased_type(&contextual_type(inferred, expected)),
+                CheckedInitializerCoercion::None,
+            ),
+            SourceMode::Initializer => initializer_source_context(
+                &inferred,
+                expected.ok_or_else(|| {
+                    self.invariant(span, format!("{noun} initializer has no destination type"))
+                })?,
+            ),
+        };
+        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        let lowering = ExpressionLowering {
+            analysis: &analysis,
+            owner: id,
+            origin,
+            span,
+        };
+        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
+        if self.facts.expressions[root.0 as usize].ty != source {
+            return Err(self.invariant(
+                span,
+                format!("{noun} expression source type does not match its checked root"),
+            ));
+        }
+        self.facts.expression_uses.push(CheckedExprUse {
+            owner,
+            root,
+            destination: expected.cloned().unwrap_or_else(|| source.clone()),
+            source,
+            coercion,
+            origin,
+        });
+        if self
+            .facts
+            .expression_uses_by_owner
+            .insert(owner, id)
+            .is_some()
+        {
+            return Err(self.invariant(span, format!("duplicate checked {noun} expression owner")));
+        }
+        Ok(id)
+    }
+
     fn push_test_expression(
         &mut self,
         owner: CheckedExprOwner,
@@ -4134,52 +3995,18 @@ impl<'a> FactsBuilder<'a> {
             .ok_or_else(|| {
                 self.invariant(span, "missing authoritative test expression analysis")
             })?;
-        #[cfg(test)]
-        let metrics = analysis.metrics();
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-        );
-        let source = analysis
-            .type_of(expression)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained test expression root type"))?;
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "test expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.record_analysis_metrics(&analysis);
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: source,
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expression,
+            None,
+            SourceMode::Raw,
+            "test",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked test expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn lower_container_facts(
@@ -4205,16 +4032,10 @@ impl<'a> FactsBuilder<'a> {
         }
         let remaining_expressions = self
             .analyses
-            .interaction_entries
-            .keys()
-            .filter(|(owner, _)| *owner == container)
-            .count();
+            .site_expressions(AnalysisSite::Interaction, container);
         let remaining_routes = self
             .analyses
-            .interaction_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == container)
-            .count();
+            .site_routes(AnalysisSite::Interaction, container);
         if remaining_expressions != 0 || remaining_routes != 0 {
             return Err(self.invariant(
                 span,
@@ -5538,16 +5359,10 @@ impl<'a> FactsBuilder<'a> {
         )?;
         let remaining_expressions = self
             .analyses
-            .interaction_entries
-            .keys()
-            .filter(|(owner, _)| *owner == control)
-            .count();
+            .site_expressions(AnalysisSite::Interaction, control);
         let remaining_routes = self
             .analyses
-            .interaction_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == control)
-            .count();
+            .site_routes(AnalysisSite::Interaction, control);
         if remaining_expressions != 0 || remaining_routes != 0 {
             return Err(self.invariant(
                 span,
@@ -5891,64 +5706,31 @@ impl<'a> FactsBuilder<'a> {
             });
             let analysis = self
                 .analyses
-                .media_entries
-                .remove(&(media, super::expr::expr_key(expression)))
+                .site_entries
+                .remove(&(
+                    AnalysisSite::Media,
+                    media,
+                    super::expr::expr_key(expression),
+                ))
                 .ok_or_else(|| {
                     self.invariant(span, "missing authoritative media expression analysis")
                 })?;
-            #[cfg(test)]
-            let metrics = analysis.metrics();
             record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
-            record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-            record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-            record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-            record_fact_metric!(
-                self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-            );
-            record_fact_metric!(
-                self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-            );
-            let source = analysis.type_of(expression).cloned().ok_or_else(|| {
-                self.invariant(span, "missing retained media expression root type")
-            })?;
-            let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+            self.record_analysis_metrics(&analysis);
             let origin = self.origins.push(span, Some(parent));
-            let lowering = ExpressionLowering {
-                analysis: &analysis,
-                owner: id,
-                origin,
-                span,
-            };
-            let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-            if self.facts.expression(root).ty != source {
-                return Err(self.invariant(
-                    span,
-                    "media expression source type does not match its checked root",
-                ));
-            }
-            self.facts.expression_uses.push(CheckedExprUse {
+            self.push_analyzed_expression(
                 owner,
-                root,
-                source: source.clone(),
-                destination: source,
-                coercion: CheckedInitializerCoercion::None,
+                analysis,
+                expression,
+                None,
+                SourceMode::Raw,
+                "media",
+                env,
+                span,
                 origin,
-            });
-            if self
-                .facts
-                .expression_uses_by_owner
-                .insert(owner, id)
-                .is_some()
-            {
-                return Err(self.invariant(span, "duplicate checked media expression owner"));
-            }
+            )?;
         }
-        let remaining = self
-            .analyses
-            .media_entries
-            .keys()
-            .filter(|(owner, _)| *owner == media)
-            .count();
+        let remaining = self.analyses.site_expressions(AnalysisSite::Media, media);
         if remaining != 0 {
             return Err(self.invariant(
                 span,
@@ -6006,64 +5788,33 @@ impl<'a> FactsBuilder<'a> {
             });
             let analysis = self
                 .analyses
-                .tooltip_entries
-                .remove(&(tooltip, super::expr::expr_key(expression)))
+                .site_entries
+                .remove(&(
+                    AnalysisSite::Tooltip,
+                    tooltip,
+                    super::expr::expr_key(expression),
+                ))
                 .ok_or_else(|| {
                     self.invariant(span, "missing authoritative tooltip expression analysis")
                 })?;
-            #[cfg(test)]
-            let metrics = analysis.metrics();
             record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
-            record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-            record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-            record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-            record_fact_metric!(
-                self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-            );
-            record_fact_metric!(
-                self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-            );
-            let source = analysis.type_of(expression).cloned().ok_or_else(|| {
-                self.invariant(span, "missing retained tooltip expression root type")
-            })?;
-            let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+            self.record_analysis_metrics(&analysis);
             let origin = self.origins.push(span, Some(parent));
-            let lowering = ExpressionLowering {
-                analysis: &analysis,
-                owner: id,
-                origin,
-                span,
-            };
-            let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-            if self.facts.expression(root).ty != source {
-                return Err(self.invariant(
-                    span,
-                    "tooltip expression source type does not match its checked root",
-                ));
-            }
-            self.facts.expression_uses.push(CheckedExprUse {
+            self.push_analyzed_expression(
                 owner,
-                root,
-                source: source.clone(),
-                destination: source,
-                coercion: CheckedInitializerCoercion::None,
+                analysis,
+                expression,
+                None,
+                SourceMode::Raw,
+                "tooltip",
+                env,
+                span,
                 origin,
-            });
-            if self
-                .facts
-                .expression_uses_by_owner
-                .insert(owner, id)
-                .is_some()
-            {
-                return Err(self.invariant(span, "duplicate checked tooltip expression owner"));
-            }
+            )?;
         }
         let remaining = self
             .analyses
-            .tooltip_entries
-            .keys()
-            .filter(|(owner, _)| *owner == tooltip)
-            .count();
+            .site_expressions(AnalysisSite::Tooltip, tooltip);
         if remaining != 0 {
             return Err(self.invariant(
                 span,
@@ -6156,12 +5907,7 @@ impl<'a> FactsBuilder<'a> {
                 parent,
             )?;
         }
-        let remaining = self
-            .analyses
-            .float_entries
-            .keys()
-            .filter(|(owner, _)| *owner == float)
-            .count();
+        let remaining = self.analyses.site_expressions(AnalysisSite::Float, float);
         if remaining != 0 {
             return Err(self.invariant(
                 span,
@@ -6188,59 +5934,29 @@ impl<'a> FactsBuilder<'a> {
         let owner = CheckedExprOwner::Float(FloatExpressionId { float, index });
         let analysis = self
             .analyses
-            .float_entries
-            .remove(&(float, super::expr::expr_key(expression)))
+            .site_entries
+            .remove(&(
+                AnalysisSite::Float,
+                float,
+                super::expr::expr_key(expression),
+            ))
             .ok_or_else(|| {
                 self.invariant(span, "missing authoritative float expression analysis")
             })?;
-        #[cfg(test)]
-        let metrics = analysis.metrics();
         record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-        );
-        let source = analysis
-            .type_of(expression)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained float expression root type"))?;
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        self.record_analysis_metrics(&analysis);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expression(root).ty != source {
-            return Err(self.invariant(
-                span,
-                "float expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: source,
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expression,
+            None,
+            SourceMode::Raw,
+            "float",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked float expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6259,12 +5975,7 @@ impl<'a> FactsBuilder<'a> {
         for (index, expression) in roots.iter().enumerate() {
             self.push_pin_expression(pin, index as u32, expression, env, span, parent)?;
         }
-        let remaining = self
-            .analyses
-            .pin_entries
-            .keys()
-            .filter(|(owner, _)| *owner == pin)
-            .count();
+        let remaining = self.analyses.site_expressions(AnalysisSite::Pin, pin);
         if remaining != 0 {
             return Err(self.invariant(
                 span,
@@ -6290,57 +6001,23 @@ impl<'a> FactsBuilder<'a> {
         let owner = CheckedExprOwner::Pin(PinExpressionId { pin, index });
         let analysis = self
             .analyses
-            .pin_entries
-            .remove(&(pin, super::expr::expr_key(expression)))
+            .site_entries
+            .remove(&(AnalysisSite::Pin, pin, super::expr::expr_key(expression)))
             .ok_or_else(|| self.invariant(span, "missing authoritative pin expression analysis"))?;
-        #[cfg(test)]
-        let metrics = analysis.metrics();
         record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-        );
-        let source = analysis
-            .type_of(expression)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained pin expression root type"))?;
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        self.record_analysis_metrics(&analysis);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expression(root).ty != source {
-            return Err(self.invariant(
-                span,
-                "pin expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: source,
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expression,
+            None,
+            SourceMode::Raw,
+            "pin",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked pin expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6437,16 +6114,8 @@ impl<'a> FactsBuilder<'a> {
         }
         let remaining_expressions = self
             .analyses
-            .interaction_entries
-            .keys()
-            .filter(|(owner, _)| *owner == widget)
-            .count();
-        let remaining_routes = self
-            .analyses
-            .interaction_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == widget)
-            .count();
+            .site_expressions(AnalysisSite::Interaction, widget);
+        let remaining_routes = self.analyses.site_routes(AnalysisSite::Interaction, widget);
         if remaining_expressions != 0 || remaining_routes != 0 {
             return Err(self.invariant(
                 span,
@@ -6488,8 +6157,12 @@ impl<'a> FactsBuilder<'a> {
         let id = InteractionRouteId { widget, index };
         let inputs = self
             .analyses
-            .interaction_route_inputs
-            .remove(&(widget, std::ptr::from_ref(route).addr()))
+            .site_route_inputs
+            .remove(&(
+                AnalysisSite::Interaction,
+                widget,
+                std::ptr::from_ref(route).addr(),
+            ))
             .ok_or_else(|| {
                 self.invariant(
                     &route.span,
@@ -6620,61 +6293,31 @@ impl<'a> FactsBuilder<'a> {
         *index += 1;
         let analysis = self
             .analyses
-            .interaction_entries
-            .remove(&(widget, super::expr::expr_key(expression)))
+            .site_entries
+            .remove(&(
+                AnalysisSite::Interaction,
+                widget,
+                super::expr::expr_key(expression),
+            ))
             .ok_or_else(|| {
                 self.invariant(
                     span,
                     "missing authoritative interaction expression analysis",
                 )
             })?;
-        #[cfg(test)]
-        let metrics = analysis.metrics();
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-        );
-        let inferred = analysis.type_of(expression).cloned().ok_or_else(|| {
-            self.invariant(span, "missing retained interaction expression root type")
-        })?;
-        let source = resolve_erased_type(&contextual_type(inferred, destination));
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        self.record_analysis_metrics(&analysis);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expression(root).ty != source {
-            return Err(self.invariant(
-                span,
-                "interaction expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            destination: destination.cloned().unwrap_or_else(|| source.clone()),
-            source,
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expression,
+            destination,
+            SourceMode::Contextual,
+            "interaction",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked interaction expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6712,12 +6355,12 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
         expression_count: &mut u32,
-    ) -> Result<CheckedPaneLength, Error> {
+    ) -> Result<CheckedLength, Error> {
         Ok(match length {
-            None => CheckedPaneLength::None,
-            Some(LengthValue::Fill) => CheckedPaneLength::Fill,
-            Some(LengthValue::FillPortion(portion)) => CheckedPaneLength::FillPortion(*portion),
-            Some(LengthValue::Shrink) => CheckedPaneLength::Shrink,
+            None => CheckedLength::None,
+            Some(LengthValue::Fill) => CheckedLength::Fill,
+            Some(LengthValue::FillPortion(portion)) => CheckedLength::FillPortion(*portion),
+            Some(LengthValue::Shrink) => CheckedLength::Shrink,
             Some(LengthValue::Fixed(expression)) => {
                 let expression = self.push_interaction_expression(
                     pane,
@@ -6729,7 +6372,7 @@ impl<'a> FactsBuilder<'a> {
                     parent,
                 )?;
                 let source = self.facts.expression_use(expression).source.clone();
-                CheckedPaneLength::Fixed { expression, source }
+                CheckedLength::Fixed { expression, source }
             }
         })
     }
@@ -6937,7 +6580,7 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
         expression_count: &mut u32,
-    ) -> Result<CheckedPanePadding, Error> {
+    ) -> Result<CheckedPadding, Error> {
         let mut take = |value: Option<&Expr>| {
             self.lower_pane_optional_expression(
                 pane,
@@ -6949,7 +6592,7 @@ impl<'a> FactsBuilder<'a> {
                 expression_count,
             )
         };
-        Ok(CheckedPanePadding {
+        Ok(CheckedPadding {
             all: take(padding.all.as_ref())?,
             x: take(padding.x.as_ref())?,
             y: take(padding.y.as_ref())?,
@@ -7328,16 +6971,8 @@ impl<'a> FactsBuilder<'a> {
 
         let remaining_expressions = self
             .analyses
-            .interaction_entries
-            .keys()
-            .filter(|(owner, _)| *owner == pane)
-            .count();
-        let remaining_routes = self
-            .analyses
-            .interaction_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == pane)
-            .count();
+            .site_expressions(AnalysisSite::Interaction, pane);
+        let remaining_routes = self.analyses.site_routes(AnalysisSite::Interaction, pane);
         if remaining_expressions != 0 || remaining_routes != 0 {
             return Err(self.invariant(span, "pane grid left authoritative analyses unconsumed"));
         }
@@ -7435,7 +7070,7 @@ impl<'a> FactsBuilder<'a> {
 
         let empty = FactEnv::default();
         let mut state_locals = Vec::with_capacity(locals.len());
-        let mut canvas_env = HandlerFactEnv::new(env);
+        let mut canvas_env = ScopedFactEnv::new(env);
         for (index, local) in locals.iter().enumerate() {
             let local_id = CanvasLocalId {
                 canvas,
@@ -7532,7 +7167,7 @@ impl<'a> FactsBuilder<'a> {
             let payloads = native_subscription_payloads(&event.source, false).ok_or_else(|| {
                 self.invariant(&event.span, "canvas event has no native payload contract")
             })?;
-            let mut event_env = HandlerFactEnv::new(&canvas_env);
+            let mut event_env = ScopedFactEnv::new(&canvas_env);
             for (index, (name, ty)) in event.bindings.iter().zip(&payloads).enumerate() {
                 let local = self.push_local(
                     name,
@@ -7566,26 +7201,18 @@ impl<'a> FactsBuilder<'a> {
             }
         }
 
-        let remaining_expressions = self
-            .analyses
-            .canvas_entries
-            .keys()
-            .filter(|(owner, _)| *owner == canvas)
-            .count();
-        let remaining_routes = self
-            .analyses
-            .canvas_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == canvas)
-            .count();
+        let remaining_expressions = self.analyses.site_expressions(AnalysisSite::Canvas, canvas);
+        let remaining_routes = self.analyses.site_routes(AnalysisSite::Canvas, canvas);
         if remaining_expressions != 0 || remaining_routes != 0 {
             let remaining_sources =
                 crate::ast::canvas_expression_roots(options, locals, commands, events)
                     .into_iter()
                     .filter(|expression| {
-                        self.analyses
-                            .canvas_entries
-                            .contains_key(&(canvas, super::expr::expr_key(expression)))
+                        self.analyses.site_entries.contains_key(&(
+                            AnalysisSite::Canvas,
+                            canvas,
+                            super::expr::expr_key(expression),
+                        ))
                     })
                     .map(|expression| format!("{expression:?}"))
                     .collect::<Vec<_>>()
@@ -7717,8 +7344,12 @@ impl<'a> FactsBuilder<'a> {
             .ok_or_else(|| self.invariant(&route.span, "canvas route has no declaration"))?;
         let inputs = self
             .analyses
-            .canvas_route_inputs
-            .remove(&(canvas, std::ptr::from_ref(route).addr()))
+            .site_route_inputs
+            .remove(&(
+                AnalysisSite::Canvas,
+                canvas,
+                std::ptr::from_ref(route).addr(),
+            ))
             .ok_or_else(|| {
                 self.invariant(&route.span, "canvas route has no retained payload contract")
             })?;
@@ -7845,68 +7476,32 @@ impl<'a> FactsBuilder<'a> {
         *operand += 1;
         let analysis = self
             .analyses
-            .canvas_entries
-            .remove(&(canvas, super::expr::expr_key(expression)))
+            .site_entries
+            .remove(&(
+                AnalysisSite::Canvas,
+                canvas,
+                super::expr::expr_key(expression),
+            ))
             .ok_or_else(|| {
                 self.invariant(span, "missing authoritative canvas expression analysis")
             })?;
-        #[cfg(test)]
-        let metrics = analysis.metrics();
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-        );
-        let inferred = analysis
-            .type_of(expression)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained canvas expression root type"))?;
-        let (source, coercion) = if initializer {
-            initializer_source_context(
-                &inferred,
-                destination.ok_or_else(|| {
-                    self.invariant(span, "canvas initializer has no destination type")
-                })?,
-            )
-        } else {
-            (inferred, CheckedInitializerCoercion::None)
-        };
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        self.record_analysis_metrics(&analysis);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expression, Some(&source), env, lowering)?;
-        if self.facts.expression(root).ty != source {
-            return Err(self.invariant(
-                span,
-                "canvas expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: destination.cloned().unwrap_or(source),
-            coercion,
+            analysis,
+            expression,
+            destination,
+            if initializer {
+                SourceMode::Initializer
+            } else {
+                SourceMode::Raw
+            },
+            "canvas",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked canvas expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn lower_handler(
@@ -7915,7 +7510,7 @@ impl<'a> FactsBuilder<'a> {
         handler: &Handler,
         base_env: &FactEnv,
     ) -> Result<(), Error> {
-        let mut env = HandlerFactEnv::new(base_env);
+        let mut env = ScopedFactEnv::new(base_env);
         let declaration = self
             .declarations
             .handlers()
@@ -8024,55 +7619,20 @@ impl<'a> FactsBuilder<'a> {
                     format!("missing authoritative handler expression analysis for {owner:?}"),
                 )
             })?;
-        #[cfg(test)]
-        let metrics = analysis.metrics();
         record_fact_metric!(self.facts.metrics.handler_authoritative_analyses += 1);
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-        );
-        let inferred = analysis
-            .type_of(expr)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained handler expression root type"))?;
-        let source = resolve_erased_type(&contextual_type(inferred, expected));
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
+        self.record_analysis_metrics(&analysis);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "handler expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: expected.cloned().unwrap_or(source),
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expr,
+            expected,
+            SourceMode::Contextual,
+            "handler",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked handler expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn statement_operand(
@@ -8209,7 +7769,7 @@ impl<'a> FactsBuilder<'a> {
         &mut self,
         statement: &Statement,
         statement_id: StatementId,
-        env: &mut HandlerFactEnv<'_>,
+        env: &mut ScopedFactEnv<'_>,
     ) -> Result<(), Error> {
         let declaration = self.declarations.statement(statement_id).clone();
         let writable_targets = self.checked_writable_targets(statement, env)?;
@@ -8323,7 +7883,7 @@ impl<'a> FactsBuilder<'a> {
                 }
                 let mut children = declaration.children.iter().copied();
                 for arm in arms {
-                    let mut child_env = HandlerFactEnv::new(&*env);
+                    let mut child_env = ScopedFactEnv::new(&*env);
                     for child in &arm.statements {
                         let child_id = children.next().ok_or_else(|| {
                             self.invariant(span, "handler match child ID is missing")
@@ -8474,7 +8034,7 @@ impl<'a> FactsBuilder<'a> {
                 }
                 for (child, child_id) in statements.iter().zip(declaration.children.iter().copied())
                 {
-                    let mut child_env = HandlerFactEnv::new(env);
+                    let mut child_env = ScopedFactEnv::new(env);
                     self.lower_handler_statement(child, child_id, &mut child_env)?;
                 }
             }
@@ -8489,7 +8049,7 @@ impl<'a> FactsBuilder<'a> {
                 let [child] = declaration.children.as_slice() else {
                     return Err(self.invariant(span, "abortable task child arena diverged"));
                 };
-                let mut child_env = HandlerFactEnv::new(env);
+                let mut child_env = ScopedFactEnv::new(env);
                 self.lower_handler_statement(task, *child, &mut child_env)?;
             }
             Statement::Abort { .. }
@@ -9483,64 +9043,30 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
     ) -> Result<CheckedExprUseId, Error> {
         let owner = CheckedExprOwner::Subscription { subscription, role };
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let analysis = self.analyses.remove(owner).ok_or_else(|| {
             self.invariant(
                 span,
                 "missing authoritative subscription expression analysis",
             )
         })?;
-        #[cfg(test)]
-        let metrics = analysis.metrics();
         record_fact_metric!(self.facts.metrics.subscription_analysis_passes += 1);
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += metrics.nodes);
-        record_fact_metric!(self.facts.metrics.type_analysis_cache_hits += metrics.cache_hits);
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones += metrics.scoped_env_full_clones
-        );
-        let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
-            self.invariant(span, "missing retained subscription expression root type")
-        })?;
-        let source = resolve_erased_type(&contextual_type(inferred, expected));
+        self.record_analysis_metrics(&analysis);
         let parent = self
             .declarations
             .subscription(subscription.0 as usize)
             .origin;
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "subscription expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: expected.cloned().unwrap_or(source),
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expr,
+            expected,
+            SourceMode::Contextual,
+            "subscription",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked subscription expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn push_view_expression(
@@ -9552,65 +9078,27 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
     ) -> Result<CheckedExprUseId, Error> {
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let analysis = self.analyses.remove(owner).ok_or_else(|| {
             self.invariant(span, "missing authoritative view expression analysis")
         })?;
-        #[cfg(test)]
-        let analysis_metrics = analysis.metrics();
         record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += analysis_metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes);
-        record_fact_metric!(
-            self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones +=
-                analysis_metrics.scoped_env_full_clones
-        );
-        let inferred = analysis
-            .type_of(expr)
-            .cloned()
-            .ok_or_else(|| self.invariant(span, "missing retained view expression root type"))?;
-        let source = resolve_erased_type(&contextual_type(inferred, expected));
+        self.record_analysis_metrics(&analysis);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "view expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source: source.clone(),
-            destination: expected.cloned().unwrap_or(source),
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expr,
+            expected,
+            SourceMode::Contextual,
+            "view",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked view expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn lower_responsive_length(
+    fn lower_length(
         &mut self,
         view: ViewId,
         value: &Option<LengthValue>,
@@ -9618,14 +9106,12 @@ impl<'a> FactsBuilder<'a> {
         env: &dyn FactEnvironment,
         span: &Span,
         parent: OriginId,
-    ) -> Result<CheckedResponsiveLength, Error> {
+    ) -> Result<CheckedLength, Error> {
         Ok(match value {
-            None => CheckedResponsiveLength::None,
-            Some(LengthValue::Fill) => CheckedResponsiveLength::Fill,
-            Some(LengthValue::FillPortion(portion)) => {
-                CheckedResponsiveLength::FillPortion(*portion)
-            }
-            Some(LengthValue::Shrink) => CheckedResponsiveLength::Shrink,
+            None => CheckedLength::None,
+            Some(LengthValue::Fill) => CheckedLength::Fill,
+            Some(LengthValue::FillPortion(portion)) => CheckedLength::FillPortion(*portion),
+            Some(LengthValue::Shrink) => CheckedLength::Shrink,
             Some(LengthValue::Fixed(expression)) => {
                 let expression = self.push_view_expression(
                     CheckedExprOwner::View { view, role },
@@ -9637,115 +9123,17 @@ impl<'a> FactsBuilder<'a> {
                 )?;
                 let source = self.facts.expression_use(expression).source.clone();
                 if !matches!(source, Type::F64 | Type::Length) {
-                    return Err(self.invariant(
-                        span,
-                        "responsive dimension type diverged after semantic checking",
-                    ));
+                    return Err(
+                        self.invariant(span, "dimension type diverged after semantic checking")
+                    );
                 }
-                CheckedResponsiveLength::Fixed { expression, source }
+                CheckedLength::Fixed { expression, source }
             }
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn lower_keyed_length(
-        &mut self,
-        view: ViewId,
-        value: &Option<LengthValue>,
-        role: CheckedViewExprRole,
-        env: &dyn FactEnvironment,
-        span: &Span,
-        parent: OriginId,
-    ) -> Result<CheckedKeyedLength, Error> {
-        Ok(match value {
-            None => CheckedKeyedLength::None,
-            Some(LengthValue::Fill) => CheckedKeyedLength::Fill,
-            Some(LengthValue::FillPortion(portion)) => CheckedKeyedLength::FillPortion(*portion),
-            Some(LengthValue::Shrink) => CheckedKeyedLength::Shrink,
-            Some(LengthValue::Fixed(expression)) => {
-                let expression = self.push_view_expression(
-                    CheckedExprOwner::View { view, role },
-                    expression,
-                    None,
-                    env,
-                    span,
-                    parent,
-                )?;
-                let source = self.facts.expression_use(expression).source.clone();
-                if !matches!(source, Type::F64 | Type::Length) {
-                    return Err(self.invariant(
-                        span,
-                        "keyed dimension type diverged after semantic checking",
-                    ));
-                }
-                CheckedKeyedLength::Fixed { expression, source }
-            }
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn lower_keyed_metric(
-        &mut self,
-        view: ViewId,
-        value: &Option<Expr>,
-        role: CheckedViewExprRole,
-        env: &dyn FactEnvironment,
-        span: &Span,
-        parent: OriginId,
-    ) -> Result<Option<CheckedExprUseId>, Error> {
-        value
-            .as_ref()
-            .map(|expression| {
-                self.push_view_expression(
-                    CheckedExprOwner::View { view, role },
-                    expression,
-                    Some(&Type::F64),
-                    env,
-                    span,
-                    parent,
-                )
-            })
-            .transpose()
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn lower_table_length(
-        &mut self,
-        view: ViewId,
-        value: &Option<LengthValue>,
-        role: CheckedViewExprRole,
-        env: &dyn FactEnvironment,
-        span: &Span,
-        parent: OriginId,
-    ) -> Result<CheckedTableLength, Error> {
-        Ok(match value {
-            None => CheckedTableLength::None,
-            Some(LengthValue::Fill) => CheckedTableLength::Fill,
-            Some(LengthValue::FillPortion(portion)) => CheckedTableLength::FillPortion(*portion),
-            Some(LengthValue::Shrink) => CheckedTableLength::Shrink,
-            Some(LengthValue::Fixed(expression)) => {
-                let expression = self.push_view_expression(
-                    CheckedExprOwner::View { view, role },
-                    expression,
-                    None,
-                    env,
-                    span,
-                    parent,
-                )?;
-                let source = self.facts.expression_use(expression).source.clone();
-                if !matches!(source, Type::F64 | Type::Length) {
-                    return Err(self.invariant(
-                        span,
-                        "table dimension type diverged after semantic checking",
-                    ));
-                }
-                CheckedTableLength::Fixed { expression, source }
-            }
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn lower_table_metric(
+    fn lower_metric(
         &mut self,
         view: ViewId,
         value: &Option<Expr>,
@@ -9778,63 +9166,26 @@ impl<'a> FactsBuilder<'a> {
         span: &Span,
         parent: OriginId,
     ) -> Result<CheckedExprUseId, Error> {
-        let id = CheckedExprUseId(self.facts.expression_uses.len() as u32);
         let analysis = self.analyses.remove(owner).ok_or_else(|| {
             self.invariant(
                 span,
                 "missing authoritative app-setting expression analysis",
             )
         })?;
-        #[cfg(test)]
-        let analysis_metrics = analysis.metrics();
         record_fact_metric!(self.facts.metrics.app_setting_analysis_passes += 1);
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += analysis_metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes);
-        record_fact_metric!(
-            self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones +=
-                analysis_metrics.scoped_env_full_clones
-        );
-        let inferred = analysis.type_of(expr).cloned().ok_or_else(|| {
-            self.invariant(span, "missing retained app-setting expression root type")
-        })?;
-        let source = resolve_erased_type(&contextual_type(inferred, Some(expected)));
+        self.record_analysis_metrics(&analysis);
         let origin = self.origins.push(span, Some(parent));
-        let lowering = ExpressionLowering {
-            analysis: &analysis,
-            owner: id,
-            origin,
-            span,
-        };
-        let root = self.lower_expr(expr, Some(&source), env, lowering)?;
-        if self.facts.expressions[root.0 as usize].ty != source {
-            return Err(self.invariant(
-                span,
-                "app-setting expression source type does not match its checked root",
-            ));
-        }
-        self.facts.expression_uses.push(CheckedExprUse {
+        self.push_analyzed_expression(
             owner,
-            root,
-            source,
-            destination: expected.clone(),
-            coercion: CheckedInitializerCoercion::None,
+            analysis,
+            expr,
+            Some(expected),
+            SourceMode::Contextual,
+            "app-setting",
+            env,
+            span,
             origin,
-        });
-        if self
-            .facts
-            .expression_uses_by_owner
-            .insert(owner, id)
-            .is_some()
-        {
-            return Err(self.invariant(span, "duplicate checked app-setting expression owner"));
-        }
-        Ok(id)
+        )
     }
 
     fn push_local(
@@ -10256,7 +9607,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let width = self.lower_keyed_length(
+                let width = self.lower_length(
                     view,
                     &options.width,
                     CheckedViewExprRole::KeyedWidth,
@@ -10264,7 +9615,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let height = self.lower_keyed_length(
+                let height = self.lower_length(
                     view,
                     &options.height,
                     CheckedViewExprRole::KeyedHeight,
@@ -10272,7 +9623,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let spacing = self.lower_keyed_metric(
+                let spacing = self.lower_metric(
                     view,
                     &options.spacing,
                     CheckedViewExprRole::KeyedSpacing,
@@ -10280,8 +9631,8 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let padding = CheckedKeyedPadding {
-                    all: self.lower_keyed_metric(
+                let padding = CheckedPadding {
+                    all: self.lower_metric(
                         view,
                         &options.padding.all,
                         CheckedViewExprRole::KeyedPaddingAll,
@@ -10289,7 +9640,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    x: self.lower_keyed_metric(
+                    x: self.lower_metric(
                         view,
                         &options.padding.x,
                         CheckedViewExprRole::KeyedPaddingX,
@@ -10297,7 +9648,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    y: self.lower_keyed_metric(
+                    y: self.lower_metric(
                         view,
                         &options.padding.y,
                         CheckedViewExprRole::KeyedPaddingY,
@@ -10305,7 +9656,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    top: self.lower_keyed_metric(
+                    top: self.lower_metric(
                         view,
                         &options.padding.top,
                         CheckedViewExprRole::KeyedPaddingTop,
@@ -10313,7 +9664,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    right: self.lower_keyed_metric(
+                    right: self.lower_metric(
                         view,
                         &options.padding.right,
                         CheckedViewExprRole::KeyedPaddingRight,
@@ -10321,7 +9672,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    bottom: self.lower_keyed_metric(
+                    bottom: self.lower_metric(
                         view,
                         &options.padding.bottom,
                         CheckedViewExprRole::KeyedPaddingBottom,
@@ -10329,7 +9680,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    left: self.lower_keyed_metric(
+                    left: self.lower_metric(
                         view,
                         &options.padding.left,
                         CheckedViewExprRole::KeyedPaddingLeft,
@@ -10338,7 +9689,7 @@ impl<'a> FactsBuilder<'a> {
                         origin,
                     )?,
                 };
-                let max_width = self.lower_keyed_metric(
+                let max_width = self.lower_metric(
                     view,
                     &options.max_width,
                     CheckedViewExprRole::KeyedMaxWidth,
@@ -10346,7 +9697,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let virtual_row = self.lower_keyed_metric(
+                let virtual_row = self.lower_metric(
                     view,
                     &options.virtual_row,
                     CheckedViewExprRole::KeyedVirtualRow,
@@ -10506,7 +9857,7 @@ impl<'a> FactsBuilder<'a> {
                     value: (CheckedPathRoot::Local(local), *row_ty),
                 };
                 record_fact_metric!(self.facts.metrics.scope_env_overlays += 1);
-                let width = self.lower_table_length(
+                let width = self.lower_length(
                     view,
                     &options.width,
                     CheckedViewExprRole::TableWidth,
@@ -10514,7 +9865,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let padding = self.lower_table_metric(
+                let padding = self.lower_metric(
                     view,
                     &options.padding,
                     CheckedViewExprRole::TablePadding,
@@ -10522,7 +9873,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let padding_x = self.lower_table_metric(
+                let padding_x = self.lower_metric(
                     view,
                     &options.padding_x,
                     CheckedViewExprRole::TablePaddingX,
@@ -10530,7 +9881,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let padding_y = self.lower_table_metric(
+                let padding_y = self.lower_metric(
                     view,
                     &options.padding_y,
                     CheckedViewExprRole::TablePaddingY,
@@ -10538,7 +9889,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let separator = self.lower_table_metric(
+                let separator = self.lower_metric(
                     view,
                     &options.separator,
                     CheckedViewExprRole::TableSeparator,
@@ -10546,7 +9897,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let separator_x = self.lower_table_metric(
+                let separator_x = self.lower_metric(
                     view,
                     &options.separator_x,
                     CheckedViewExprRole::TableSeparatorX,
@@ -10554,7 +9905,7 @@ impl<'a> FactsBuilder<'a> {
                     span,
                     origin,
                 )?;
-                let separator_y = self.lower_table_metric(
+                let separator_y = self.lower_metric(
                     view,
                     &options.separator_y,
                     CheckedViewExprRole::TableSeparatorY,
@@ -10565,7 +9916,7 @@ impl<'a> FactsBuilder<'a> {
                 let mut checked_columns = Vec::with_capacity(columns.len());
                 for (index, column) in columns.iter().enumerate() {
                     let column_origin = self.origins.push(&column.span, Some(origin));
-                    let width = self.lower_table_length(
+                    let width = self.lower_length(
                         view,
                         &column.width,
                         CheckedViewExprRole::TableColumnWidth(index as u32),
@@ -10630,7 +9981,7 @@ impl<'a> FactsBuilder<'a> {
                 let expression_count =
                     crate::ast::responsive_expression_count(content, width, height);
                 let dimensions = [
-                    self.lower_responsive_length(
+                    self.lower_length(
                         view,
                         width,
                         CheckedViewExprRole::ResponsiveWidthDimension,
@@ -10638,7 +9989,7 @@ impl<'a> FactsBuilder<'a> {
                         span,
                         origin,
                     )?,
-                    self.lower_responsive_length(
+                    self.lower_length(
                         view,
                         height,
                         CheckedViewExprRole::ResponsiveHeightDimension,
@@ -11493,21 +10844,8 @@ impl<'a> FactsBuilder<'a> {
             .analyses
             .remove(CheckedExprOwner::Value(owner_ref))
             .ok_or_else(|| self.invariant(span, "missing authoritative initializer analysis"))?;
-        #[cfg(test)]
-        let analysis_metrics = analysis.metrics();
         record_fact_metric!(self.facts.metrics.initializer_analysis_passes += 1);
-        record_fact_metric!(self.facts.metrics.type_analysis_queries += analysis_metrics.queries);
-        record_fact_metric!(self.facts.metrics.type_analysis_nodes += analysis_metrics.nodes);
-        record_fact_metric!(
-            self.facts.metrics.type_analysis_cache_hits += analysis_metrics.cache_hits
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_overlays += analysis_metrics.scoped_env_overlays
-        );
-        record_fact_metric!(
-            self.facts.metrics.type_scope_env_full_clones +=
-                analysis_metrics.scoped_env_full_clones
-        );
+        self.record_analysis_metrics(&analysis);
         let lowering = ExpressionLowering {
             analysis: &analysis,
             owner: id,
@@ -12088,6 +11426,12 @@ fn initializer_source_context(
         (Type::Str, Type::Editor) => (Type::Str, CheckedInitializerCoercion::StrToEditor),
         _ => (destination.clone(), CheckedInitializerCoercion::None),
     }
+}
+
+enum SourceMode {
+    Raw,
+    Contextual,
+    Initializer,
 }
 
 fn contextual_type(inferred: Type, expected: Option<&Type>) -> Type {
@@ -14272,10 +13616,10 @@ view
             panic!("root must retain responsive breakpoint facts");
         };
         assert_eq!(*expression_count, 2);
-        assert_eq!(dimensions[0], CheckedResponsiveLength::Fill);
+        assert_eq!(dimensions[0], CheckedLength::Fill);
         assert!(matches!(
             dimensions[1],
-            CheckedResponsiveLength::Fixed {
+            CheckedLength::Fixed {
                 source: Type::F64,
                 ..
             }
@@ -14435,8 +13779,8 @@ view
                 role: CheckedViewLocalRole::KeyedItem,
             }
         );
-        assert!(matches!(layout.width, CheckedKeyedLength::FillPortion(2)));
-        assert!(matches!(layout.height, CheckedKeyedLength::Fixed { .. }));
+        assert!(matches!(layout.width, CheckedLength::FillPortion(2)));
+        assert!(matches!(layout.height, CheckedLength::Fixed { .. }));
         assert!(layout.spacing.is_some());
         assert!(layout.padding.all.is_some());
         assert!(layout.max_width.is_some());

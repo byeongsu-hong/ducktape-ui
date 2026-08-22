@@ -131,7 +131,7 @@ impl Lowerer {
         let checked_expression_count = u32::from(breakpoint.is_some())
             + dimensions
                 .iter()
-                .filter(|dimension| matches!(dimension, CheckedResponsiveLength::Fixed { .. }))
+                .filter(|dimension| matches!(dimension, CheckedLength::Fixed { .. }))
                 .count() as u32;
         if *expression_count != expected_expression_count
             || checked_expression_count != *expression_count
@@ -216,19 +216,19 @@ impl Lowerer {
         &self,
         responsive: ViewId,
         scope: CheckedViewScope,
-        length: &CheckedResponsiveLength,
+        length: &CheckedLength,
         role: CheckedViewExprRole,
         span: &Span,
         expressions: &mut ResponsiveExpressionValidation,
     ) -> Result<Option<ResolvedResponsiveLength>, Error> {
         Ok(match length {
-            CheckedResponsiveLength::None => None,
-            CheckedResponsiveLength::Fill => Some(ResolvedResponsiveLength::Fill),
-            CheckedResponsiveLength::FillPortion(portion) => {
+            CheckedLength::None => None,
+            CheckedLength::Fill => Some(ResolvedResponsiveLength::Fill),
+            CheckedLength::FillPortion(portion) => {
                 Some(ResolvedResponsiveLength::FillPortion(*portion))
             }
-            CheckedResponsiveLength::Shrink => Some(ResolvedResponsiveLength::Shrink),
-            CheckedResponsiveLength::Fixed { expression, source } => {
+            CheckedLength::Shrink => Some(ResolvedResponsiveLength::Shrink),
+            CheckedLength::Fixed { expression, source } => {
                 self.validate_responsive_expression(
                     responsive,
                     scope,
@@ -314,7 +314,7 @@ impl Lowerer {
         &self,
         responsive: ViewId,
         breakpoint: Option<CheckedExprUseId>,
-        dimensions: &[CheckedResponsiveLength; 2],
+        dimensions: &[CheckedLength; 2],
         span: &Span,
     ) -> Result<(), Error> {
         let expected = [
@@ -343,31 +343,25 @@ impl Lowerer {
     }
 }
 
-fn responsive_dimension_expression(length: &CheckedResponsiveLength) -> Option<CheckedExprUseId> {
+fn responsive_dimension_expression(length: &CheckedLength) -> Option<CheckedExprUseId> {
     match length {
-        CheckedResponsiveLength::Fixed { expression, .. } => Some(*expression),
+        CheckedLength::Fixed { expression, .. } => Some(*expression),
         _ => None,
     }
 }
 
-fn responsive_length_topology_matches(
-    raw: &Option<LengthValue>,
-    checked: &CheckedResponsiveLength,
-) -> bool {
+fn responsive_length_topology_matches(raw: &Option<LengthValue>, checked: &CheckedLength) -> bool {
     matches!(
         (raw, checked),
-        (None, CheckedResponsiveLength::None)
-            | (Some(LengthValue::Fill), CheckedResponsiveLength::Fill)
-            | (Some(LengthValue::Shrink), CheckedResponsiveLength::Shrink)
-            | (
-                Some(LengthValue::Fixed(_)),
-                CheckedResponsiveLength::Fixed { .. }
-            )
+        (None, CheckedLength::None)
+            | (Some(LengthValue::Fill), CheckedLength::Fill)
+            | (Some(LengthValue::Shrink), CheckedLength::Shrink)
+            | (Some(LengthValue::Fixed(_)), CheckedLength::Fixed { .. })
     ) || matches!(
         (raw, checked),
         (
             Some(LengthValue::FillPortion(raw)),
-            CheckedResponsiveLength::FillPortion(checked)
+            CheckedLength::FillPortion(checked)
         ) if raw == checked
     )
 }

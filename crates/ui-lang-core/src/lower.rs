@@ -6,18 +6,17 @@ use crate::check::{
     CheckedExprKind, CheckedExprOwner, CheckedExprUse, CheckedExternViewAdapter, CheckedFacts,
     CheckedInitializerCoercion, CheckedInput, CheckedInteraction, CheckedInteractionKind,
     CheckedLayout, CheckedLocalId, CheckedLocalOwner, CheckedMarkdown, CheckedMatchArm,
-    CheckedMatchPattern, CheckedMedia, CheckedPaneAxis, CheckedPaneBackground,
-    CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneLength,
-    CheckedPanePadding, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
-    CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
-    CheckedProjectionKind, CheckedRichChild, CheckedTableLength, CheckedText, CheckedTooltip,
-    CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole, CheckedViewFlow,
-    CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin, canonical_builtin_type, field_type,
-    lazy_hashable, unify_type_evidence,
+    CheckedMatchPattern, CheckedMedia, CheckedPadding, CheckedPaneAxis, CheckedPaneBackground,
+    CheckedPaneConfiguration, CheckedPaneGrid, CheckedPaneGridStyle, CheckedPaneRadius,
+    CheckedPaneStyleSite, CheckedPaneSurface, CheckedPaneTemplate, CheckedPaneTitle,
+    CheckedPaneView, CheckedPathRoot, CheckedPickList, CheckedProjectionKind, CheckedRichChild,
+    CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedViewExprRole,
+    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope, ContextualBuiltin,
+    canonical_builtin_type, field_type, lazy_hashable, unify_type_evidence,
 };
 pub(crate) use crate::check::{
-    CheckedExprUseId, CheckedKeyedLength, CheckedResponsiveLength, CheckedSubscription,
-    CheckedSubscriptionExprRole, CheckedSubscriptionSource,
+    CheckedExprUseId, CheckedLength, CheckedSubscription, CheckedSubscriptionExprRole,
+    CheckedSubscriptionSource,
 };
 use crate::hir::Origin;
 pub(crate) use crate::hir::{
@@ -12300,7 +12299,7 @@ view
         let source = format!(
             "app InvalidResponsiveTopology\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
         );
-        for replacement in [CheckedResponsiveLength::Fill, CheckedResponsiveLength::None] {
+        for replacement in [CheckedLength::Fill, CheckedLength::None] {
             let mut checked = analyze(&source).unwrap();
             checked
                 .facts
@@ -12318,11 +12317,9 @@ view
             "app InvalidResponsivePortion\n{THEME}view\n  responsive at=600.0 w=fill(2) h=fill\n    text \"Narrow\"\n    text \"Wide\"\n"
         );
         let mut checked = analyze(&source).unwrap();
-        checked.facts.corrupt_responsive_dimension(
-            ViewId(0),
-            0,
-            CheckedResponsiveLength::FillPortion(3),
-        );
+        checked
+            .facts
+            .corrupt_responsive_dimension(ViewId(0), 0, CheckedLength::FillPortion(3));
 
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
