@@ -827,9 +827,39 @@ fn accepts_a_full_tray_declaration() {
     menu
       describe(count)
       separator
+      "Reset" -> reset when count > 1
       "Quit" -> quit
 extern crate::backend
   pure describe(value:i64) -> str
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+on reset
+  count = 1
+on quit
+  exit
+view
+  text count
+"#;
+    analyze(source).unwrap();
+}
+
+#[test]
+fn rejects_a_non_bool_tray_row_guard() {
+    let source = r#"app Demo
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    menu
+      "Quit" -> quit when count
 theme contract AppTheme
   bg
   fg
@@ -847,7 +877,9 @@ on quit
 view
   text count
 "#;
-    analyze(source).unwrap();
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E101");
+    assert!(error.message.contains("expected `bool`"));
 }
 
 #[test]

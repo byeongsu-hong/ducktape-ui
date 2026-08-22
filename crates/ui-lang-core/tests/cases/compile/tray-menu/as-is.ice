@@ -10,6 +10,7 @@ daemon TrayMenu
       describe(count)
       separator
       "Bump" -> bump
+      "Reset" -> reset when count > 1
       "Quit" -> quit
 
 extern crate::backend
@@ -32,6 +33,9 @@ state
 
 on bump
   count = count + 1
+
+on reset
+  count = 1
 
 on quit
   exit

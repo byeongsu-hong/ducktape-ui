@@ -365,9 +365,19 @@ fn parse_tray_menu(line: &Line) -> Result<Vec<TrayRow>, Error> {
             rows.push(TrayRow::Separator { span });
             continue;
         }
-        let (text, route) = match split_top_marker(&item.text, "->") {
-            Some((text, route)) => (text, Some(identifier(route.trim(), item)?)),
+        // `expr -> route when guard`: the guard is split off first so that a
+        // `->` inside it, should an expression ever carry one, stays its own.
+        let (head, when) = match split_top_marker(&item.text, " when ") {
+            Some((head, guard)) => (head, Some(app_expression(guard.trim(), item)?)),
             None => (item.text.as_str(), None),
+        };
+        if head.trim() == "separator" {
+            return Err(error("E015", item, "a separator cannot carry `when`")
+                .hint("guard the rows a divider separates; a divider has nothing to hide"));
+        }
+        let (text, route) = match split_top_marker(head, "->") {
+            Some((text, route)) => (text, Some(identifier(route.trim(), item)?)),
+            None => (head, None),
         };
         let nested = if item.children.is_empty() {
             Vec::new()
@@ -377,6 +387,7 @@ fn parse_tray_menu(line: &Line) -> Result<Vec<TrayRow>, Error> {
         rows.push(TrayRow::Item {
             text: app_expression(text.trim(), item)?,
             route,
+            when,
             nested: nested.len(),
             span,
         });

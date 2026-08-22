@@ -209,6 +209,13 @@ pub enum TrayRow {
     Item {
         text: AppExpression,
         route: Option<String>,
+        /// `when`: the row is in the menu only while this holds. A false
+        /// guard takes the native item out rather than disabling it — a
+        /// reader sees no grey stat and no dead command — and a submenu takes
+        /// the rows it owns with it. The declared row set never changes: a
+        /// guard decides whether a declared row is present, it does not
+        /// generate one.
+        when: Option<AppExpression>,
         /// How many of the rows that follow this one are nested inside it.
         ///
         /// Zero is an ordinary row. Anything else makes the row a submenu the
@@ -263,7 +270,7 @@ impl TraySettings {
             || dynamic(&self.tooltip)
             || self.icons.iter().any(|icon| icon.when.is_some())
             || self.menu.iter().any(|row| match row {
-                TrayRow::Item { text, .. } => tray_text_is_reactive(text),
+                TrayRow::Item { text, when, .. } => when.is_some() || tray_text_is_reactive(text),
                 TrayRow::Separator { .. } => false,
             })
     }

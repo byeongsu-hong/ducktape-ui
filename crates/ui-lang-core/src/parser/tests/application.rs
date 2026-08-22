@@ -888,6 +888,60 @@ fn parses_tray_settings() {
     ));
 }
 
+/// `expr -> route when guard`: the guard comes last, after the route, and
+/// it is the row's own — a submenu row carries one over the rows it owns.
+#[test]
+fn parses_a_guarded_tray_row() {
+    let source = SOURCE.replace(
+        "app Demo",
+        r#"daemon Demo
+  tray
+    icon-rgba "assets/tray.rgba" 22 22
+    menu
+      "Reset" -> reset when armed
+      "More" when armed
+        "Quit" -> quit"#,
+    );
+    let document = parse(&source).unwrap();
+    let tray = document.settings.tray.unwrap();
+    assert!(matches!(
+        tray.menu.as_slice(),
+        [
+            TrayRow::Item {
+                route: Some(reset),
+                when: Some(AppExpression {
+                    value: Expr::Path(_),
+                    ..
+                }),
+                nested: 0,
+                ..
+            },
+            TrayRow::Item {
+                route: None,
+                when: Some(_),
+                nested: 1,
+                ..
+            },
+            TrayRow::Item {
+                route: Some(quit),
+                when: None,
+                ..
+            },
+        ] if reset == "reset" && quit == "quit"
+    ));
+}
+
+#[test]
+fn rejects_a_guarded_tray_separator() {
+    let source = SOURCE.replace(
+        "app Demo",
+        "app Demo\n  tray\n    icon-rgba \"assets/tray.rgba\" 2 2\n    menu\n      separator when armed",
+    );
+    let error = parse(&source).unwrap_err();
+    assert_eq!(error.code, "E015");
+    assert!(error.message.contains("a separator cannot carry `when`"));
+}
+
 #[test]
 fn rejects_duplicate_tray_blocks() {
     let source = SOURCE.replace(

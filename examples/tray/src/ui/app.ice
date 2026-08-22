@@ -17,8 +17,10 @@ daemon Tray
       // A row with an indented block is a submenu. It carries no route
       // because the platform opens it rather than delivering it, and the
       // rows it owns are ordinary rows: routed ones are commands, and their
-      // text re-evaluates like every other row's.
-      "Session length"
+      // text re-evaluates like every other row's. The `when` takes the whole
+      // submenu out of the menu while the timer runs: a length is picked
+      // before a session, not during one.
+      "Session length" when !running
         length_label(session, 900) -> short_session
         length_label(session, 1500) -> standard_session
         length_label(session, 3000) -> long_session
@@ -145,3 +147,15 @@ test a_nested_row_re_reads_its_text_after_a_handler_ran
   tray choose "15 minutes"
   expect tray item "• 15 minutes"
   expect no tray item "• 25 minutes"
+
+// A row with `when` is in the menu only while its guard holds — the native
+// item is removed, not disabled — so while hidden it is not an item, not a
+// command, and takes the rows it owns with it. The declared row is still
+// there: pausing puts it back, rows and all.
+test a_guarded_submenu_is_absent_while_the_timer_runs
+  preset midway
+  expect no tray item "Session length"
+  expect no tray item "50 minutes"
+  tray choose "Pause"
+  expect tray item "Session length"
+  expect tray command "50 minutes"

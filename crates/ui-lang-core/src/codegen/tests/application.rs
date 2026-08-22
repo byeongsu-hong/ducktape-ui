@@ -1783,6 +1783,30 @@ preset loaded
     );
 }
 
+/// A guard is the one thing that makes a menu of literals reactive: the row's
+/// presence is what changes, and it is synced at the row's own index.
+#[test]
+fn a_guarded_row_syncs_its_visibility() {
+    let source = format!(
+        r#"app Status
+  tray
+    icon-rgba "assets/tray.rgba" 2 2
+    menu
+      "Quit" -> quit
+      separator
+      "Reset" -> reset when count > 1
+on reset
+  count = 1
+{TRAY_TAIL}"#
+    );
+    let generated = compile(&source, "status.ice").unwrap();
+
+    assert!(generated.contains("fn __tray_sync(&self)"));
+    assert!(generated.contains("::ui_lang_runtime::tray::set_visible(2usize, "));
+    assert!(!generated.contains("::ui_lang_runtime::tray::set_visible(0usize, "));
+    assert!(!generated.contains("::ui_lang_runtime::tray::set_visible(1usize, "));
+}
+
 /// Row indices are declaration indices, so a separator simply has no line and
 /// no later row shifts under the runtime's row vector.
 #[test]

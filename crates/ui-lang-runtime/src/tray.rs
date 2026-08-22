@@ -81,12 +81,21 @@ pub struct TraySnapshot {
     /// One entry per declared row, separators included, so an index from
     /// generated code names the row the author wrote.
     pub items: Vec<String>,
+    /// One entry per declared row: `true` while the row is out of the menu a
+    /// reader sees — its own `when` guard false, or a submenu's above it,
+    /// since a hidden submenu takes the rows it owns with it. Folded here so
+    /// a reader of the snapshot needs no topology to answer "is it there".
+    pub hidden: Vec<bool>,
 }
 
 #[derive(Default)]
 struct Recorded {
     config: Option<TrayConfig>,
     snapshot: TraySnapshot,
+    /// Each row's own `when` verdict, `true` while the guard is false — the
+    /// thing a flip is diffed against. The snapshot's `hidden` is this folded
+    /// down every submenu.
+    guards: Vec<bool>,
     native_calls: usize,
 }
 
@@ -129,9 +138,11 @@ fn record(config: TrayConfig) {
             snapshot: TraySnapshot {
                 icon: config.icons.last().map(|icon| icon.path),
                 items: vec![String::new(); config.rows.len()],
+                hidden: vec![false; config.rows.len()],
                 ..TraySnapshot::default()
             },
             config: Some(config),
+            guards: vec![false; config.rows.len()],
             native_calls: 0,
         };
     });
@@ -252,6 +263,101 @@ pub fn set_item(index: usize, value: &str) {
 }
 
 /// What the program last decided the status item should show.
+/// Puts the row at `index` into the menu or takes it out, as its `when`
+/// guard decided. Diffed like every setter: a guard that holds still costs
+/// the platform nothing. A separator has no guard and is left alone.
+///
+/// The platform is handed the row's place among the siblings that are
+/// showing, computed here above the seam — the native menu only knows its
+/// current items, and a row put back has to land where the author wrote it.
+pub fn set_visible(index: usize, visible: bool) {
+    let position = RECORD.with_borrow_mut(|record| {
+        let rows = record.config?.rows;
+        let text_row = matches!(rows.get(index), Some(TrayRow::Item { .. }));
+        if !text_row {
+            return None;
+        }
+        let hidden = !visible;
+        let slot = record.guards.get_mut(index)?;
+        if *slot == hidden {
+            return None;
+        }
+        *slot = hidden;
+        record.native_calls += 1;
+        let folded = (0..rows.len())
+            .map(|row| hidden_with_ancestors(rows, &record.guards, row))
+            .collect();
+        record.snapshot.hidden = folded;
+        Some(sibling_position(rows, &record.guards, index))
+    });
+    let Some(position) = position else {
+        return;
+    };
+    trace!("set visible {index} {visible} (position {position})");
+    platform::set_visible(index, visible, position);
+}
+
+/// Whether the row at `index` is in the menu a reader sees. No row at all is
+/// not visible.
+#[must_use]
+pub fn is_visible(index: usize) -> bool {
+    RECORD.with_borrow(|record| {
+        record
+            .snapshot
+            .hidden
+            .get(index)
+            .is_some_and(|hidden| !hidden)
+    })
+}
+
+/// A row is out of the menu when its own guard is false or any submenu's
+/// above it is.
+fn hidden_with_ancestors(rows: &[TrayRow], guards: &[bool], index: usize) -> bool {
+    let mut row = Some(index);
+    while let Some(current) = row {
+        if guards[current] {
+            return true;
+        }
+        row = parent_of(rows, current);
+    }
+    false
+}
+
+fn nested_of(rows: &[TrayRow], index: usize) -> usize {
+    match rows[index] {
+        TrayRow::Item { nested, .. } => nested,
+        TrayRow::Separator => 0,
+    }
+}
+
+/// The submenu row that owns `index`, or `None` at the top level. Blocks nest
+/// properly, so the nearest preceding row whose block reaches `index` is the
+/// innermost one.
+fn parent_of(rows: &[TrayRow], index: usize) -> Option<usize> {
+    (0..index)
+        .rev()
+        .find(|&candidate| index <= candidate + nested_of(rows, candidate))
+}
+
+/// Where the row at `index` sits among the siblings of its own menu that are
+/// showing: the count of rows before it at the same depth whose own guard
+/// holds, each sibling's block skipped as one unit. Siblings share every
+/// ancestor, so their own guards are all that tells them apart.
+fn sibling_position(rows: &[TrayRow], hidden: &[bool], index: usize) -> usize {
+    let (mut cursor, end) = match parent_of(rows, index) {
+        Some(parent) => (parent + 1, parent + 1 + nested_of(rows, parent)),
+        None => (0, rows.len()),
+    };
+    let mut position = 0;
+    while cursor < index.min(end) {
+        if !hidden[cursor] {
+            position += 1;
+        }
+        cursor += 1 + nested_of(rows, cursor);
+    }
+    position
+}
+
 #[must_use]
 pub fn rendered() -> TraySnapshot {
     RECORD.with_borrow(|record| record.snapshot.clone())
@@ -389,6 +495,26 @@ mod platform {
                 eprintln!("ice tray: menu row rejected: {error}");
             }
         }
+
+        fn insert(&self, item: &dyn IsMenuItem, position: usize) {
+            let inserted = match self {
+                Parent::Root(menu) => menu.insert(item, position),
+                Parent::Nested(submenu) => submenu.insert(item, position),
+            };
+            if let Err(error) = inserted {
+                eprintln!("ice tray: menu row could not be shown: {error}");
+            }
+        }
+
+        fn remove(&self, item: &dyn IsMenuItem) {
+            let removed = match self {
+                Parent::Root(menu) => menu.remove(item),
+                Parent::Nested(submenu) => submenu.remove(item),
+            };
+            if let Err(error) = removed {
+                eprintln!("ice tray: menu row could not be hidden: {error}");
+            }
+        }
     }
 
     /// Builds `rows[range]` under `parent`, pushing every row it creates onto
@@ -438,6 +564,11 @@ mod platform {
         /// Declaration order, so a row index from generated code lands on the
         /// row the author wrote whatever depth it sits at.
         items: Vec<Row>,
+        /// The root menu, kept so a hidden top-level row has a parent to
+        /// return to; a nested row's parent is the `Submenu` in `items`.
+        menu: Menu,
+        /// The declared topology, for finding that parent.
+        rows: &'static [TrayRow],
     }
 
     thread_local! {
@@ -474,7 +605,7 @@ mod platform {
             }
         }));
         let mut builder = tray_icon::TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
+            .with_menu(Box::new(menu.clone()))
             .with_icon_as_template(config.icon_template);
         if let Some(icon) = config.icons.last() {
             match tray_icon::Icon::from_rgba(icon.rgba.to_vec(), icon.width, icon.height) {
@@ -485,7 +616,12 @@ mod platform {
         match builder.build() {
             Ok(icon) => TRAY.with_borrow_mut(|slot| {
                 trace!("status item created");
-                *slot = Some(TrayState { icon, items });
+                *slot = Some(TrayState {
+                    icon,
+                    items,
+                    menu,
+                    rows: config.rows,
+                });
             }),
             Err(error) => eprintln!("ice tray: status item creation failed: {error}"),
         }
@@ -567,6 +703,35 @@ mod platform {
             }
         });
     }
+
+    /// Takes the row out of its menu, or puts it back at `position` among
+    /// the rows of that menu that are showing. A hidden submenu carries the
+    /// `Submenu` it is, so its own rows leave and return with it; a row of a
+    /// detached submenu is still inserted into or removed from that
+    /// `Submenu`, which is what keeps the order right when it reattaches.
+    pub fn set_visible(index: usize, visible: bool, position: usize) {
+        TRAY.with_borrow(|slot| {
+            let Some(state) = slot.as_ref() else {
+                return;
+            };
+            let item: &dyn IsMenuItem = match state.items.get(index) {
+                Some(Row::Item(item)) => item,
+                Some(Row::Submenu(submenu)) => submenu,
+                Some(Row::Separator) | None => return,
+            };
+            let parent = match super::parent_of(state.rows, index) {
+                Some(parent) => match &state.items[parent] {
+                    Row::Submenu(submenu) => Parent::Nested(submenu),
+                    Row::Item(_) | Row::Separator => return,
+                },
+                None => Parent::Root(&state.menu),
+            };
+            match visible {
+                true => parent.insert(item, position),
+                false => parent.remove(item),
+            }
+        });
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -584,6 +749,8 @@ mod platform {
     pub fn set_tooltip(_value: &str) {}
 
     pub fn set_item(_index: usize, _value: &str) {}
+
+    pub fn set_visible(_index: usize, _visible: bool, _position: usize) {}
 }
 
 #[cfg(test)]
@@ -640,8 +807,93 @@ mod tests {
                 label: "PnL +12".into(),
                 tooltip: "Trading".into(),
                 items: vec!["PnL  +1,240.50".into(), String::new(), "Quit".into()],
+                hidden: vec![false; 3],
             }
         );
+    }
+
+    /// A guard takes a declared row out and puts it back; the slot stays, so
+    /// the row count the rest of the program is numbered by never moves.
+    #[test]
+    fn a_hidden_row_keeps_its_slot() {
+        record(config());
+        set_visible(2, false);
+        assert_eq!(rendered().hidden, [false, false, true]);
+        assert!(!is_visible(2));
+        assert!(is_visible(0));
+        set_visible(2, false);
+        assert_eq!(native_calls(), 1, "a guard that holds still costs nothing");
+        set_visible(2, true);
+        assert!(is_visible(2));
+        assert_eq!(native_calls(), 2);
+    }
+
+    #[test]
+    fn a_separator_and_a_missing_row_ignore_set_visible() {
+        record(config());
+        set_visible(1, false);
+        set_visible(9, false);
+        assert_eq!(rendered().hidden, [false; 3]);
+        assert_eq!(native_calls(), 0);
+        assert!(!is_visible(9), "there is no row 9 to see");
+    }
+
+    /// A hidden submenu takes the rows it owns with it: their own slots say
+    /// nothing changed, and the reader still cannot see them.
+    #[test]
+    fn a_row_under_a_hidden_submenu_is_not_visible() {
+        record(nested_config());
+        set_visible(0, false);
+        assert_eq!(
+            rendered().hidden,
+            [true, true, true, false],
+            "the snapshot folds the submenu's guard over the rows it owns"
+        );
+        assert!(!is_visible(1));
+        assert!(!is_visible(2));
+        assert!(is_visible(3), "the row after the block is its own");
+        set_visible(0, true);
+        assert!(is_visible(2));
+        set_visible(2, false);
+        set_visible(0, false);
+        set_visible(0, true);
+        assert!(
+            !is_visible(2),
+            "a row's own guard survives its submenu hiding and showing again"
+        );
+    }
+
+    /// Where a row returns to is its place among the siblings that are
+    /// showing, at its own depth — a sibling's block counts as one row, and
+    /// a hidden sibling as none.
+    #[test]
+    fn a_shown_row_returns_to_its_place_among_visible_siblings() {
+        assert_eq!(sibling_position(ROWS, &[false, false, false], 2), 2);
+        assert_eq!(
+            sibling_position(ROWS, &[true, false, false], 2),
+            1,
+            "a hidden earlier sibling is not counted"
+        );
+        assert_eq!(
+            sibling_position(NESTED_ROWS, &[false; 4], 3),
+            1,
+            "the submenu and the two rows it owns are one sibling"
+        );
+        assert_eq!(
+            sibling_position(NESTED_ROWS, &[true, false, false, false], 3),
+            0
+        );
+        assert_eq!(
+            sibling_position(NESTED_ROWS, &[false; 4], 2),
+            1,
+            "a nested row is placed among the rows of its own submenu"
+        );
+        assert_eq!(
+            sibling_position(NESTED_ROWS, &[false, true, false, false], 2),
+            0
+        );
+        assert_eq!(parent_of(NESTED_ROWS, 2), Some(0));
+        assert_eq!(parent_of(NESTED_ROWS, 3), None);
     }
 
     /// The last icon is the one with no guard, so it is what the item shows

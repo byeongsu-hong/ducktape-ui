@@ -1369,6 +1369,8 @@ pub(crate) enum ResolvedTrayRow {
         /// `subscribe` route carries, so codegen reaches the handler through
         /// the one path payload-free routes already use.
         route: Option<String>,
+        /// The row's `when` guard: present in the menu only while it holds.
+        when: Option<ResolvedAppExpression>,
         /// How many of the rows after this one it owns. Non-zero makes the row
         /// a submenu the platform opens; the menu itself stays flat.
         nested: usize,
@@ -1390,9 +1392,8 @@ impl ResolvedTraySettings {
                     row,
                     ResolvedTrayRow::Item {
                         text: ResolvedTrayText::Expression(_),
-                        nested: 0,
                         ..
-                    }
+                    } | ResolvedTrayRow::Item { when: Some(_), .. }
                 )
             })
     }
@@ -5195,11 +5196,21 @@ impl Lowerer {
                         TrayRow::Item {
                             text: source_text,
                             route,
+                            when,
                             nested,
                             span,
                         } => Ok(ResolvedTrayRow::Item {
                             nested: *nested,
                             text: text(AppSettingExprId::TrayMenuRow(index as u32), source_text)?,
+                            when: when
+                                .as_ref()
+                                .map(|guard| {
+                                    self.checked_app_setting_expression(
+                                        AppSettingExprId::TrayRowGuard(index as u32),
+                                        &guard.span,
+                                    )
+                                })
+                                .transpose()?,
                             route: route
                                 .as_ref()
                                 .map(|route| -> Result<String, Error> {
@@ -5491,10 +5502,14 @@ impl Lowerer {
                 }
             }
             for (index, row) in tray.menu.iter().enumerate() {
-                if let TrayRow::Item { text, .. } = row
-                    && tray_text_is_reactive(text)
-                {
+                let TrayRow::Item { text, when, .. } = row else {
+                    continue;
+                };
+                if tray_text_is_reactive(text) {
                     expected.insert(AppSettingExprId::TrayMenuRow(index as u32));
+                }
+                if when.is_some() {
+                    expected.insert(AppSettingExprId::TrayRowGuard(index as u32));
                 }
             }
         }
@@ -5653,6 +5668,14 @@ impl Lowerer {
                     TrayRow::Item { text, .. } => Some(text),
                     TrayRow::Separator { .. } => None,
                 }),
+            AppSettingExprId::TrayRowGuard(index) => source
+                .tray
+                .as_ref()
+                .and_then(|tray| tray.menu.get(index as usize))
+                .and_then(|row| match row {
+                    TrayRow::Item { when, .. } => when.as_ref(),
+                    TrayRow::Separator { .. } => None,
+                }),
         };
         setting.map(|setting| &setting.span).ok_or_else(|| {
             self.invariant(
@@ -5676,7 +5699,7 @@ impl Lowerer {
             | AppSettingExprId::TrayLabel
             | AppSettingExprId::TrayTooltip
             | AppSettingExprId::TrayMenuRow(_) => Type::Str,
-            AppSettingExprId::TrayIconGuard(_) => Type::Bool,
+            AppSettingExprId::TrayIconGuard(_) | AppSettingExprId::TrayRowGuard(_) => Type::Bool,
             AppSettingExprId::ScaleFactor => Type::F64,
             AppSettingExprId::Palette => match &expression.destination {
                 Type::Palette(contract) => Type::Palette(contract.clone()),
@@ -20396,12 +20419,14 @@ view
                     text: ResolvedTrayText::Expression(_),
                     nested: 0,
                     route: None,
+                    when: None,
                 },
                 ResolvedTrayRow::Separator,
                 ResolvedTrayRow::Item {
                     text: ResolvedTrayText::Literal(_),
                     nested: 0,
                     route: Some(route),
+                    when: None,
                 },
             ] if route == "quit"
         ));

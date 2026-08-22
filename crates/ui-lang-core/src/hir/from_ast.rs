@@ -507,10 +507,14 @@ impl DeclarationIndex {
                 }
             }
             for (index, row) in tray.menu.iter().enumerate() {
-                if let crate::ast::TrayRow::Item { text, .. } = row
-                    && crate::ast::tray_text_is_reactive(text)
-                {
+                let crate::ast::TrayRow::Item { text, when, .. } = row else {
+                    continue;
+                };
+                if crate::ast::tray_text_is_reactive(text) {
                     push_app_expression(AppSettingExprId::TrayMenuRow(index as u32), text);
+                }
+                if let Some(guard) = when {
+                    push_app_expression(AppSettingExprId::TrayRowGuard(index as u32), guard);
                 }
             }
         }
