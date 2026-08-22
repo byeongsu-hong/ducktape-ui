@@ -1,5 +1,26 @@
 use super::*;
 
+/// The clamp every emitted f32 dimension goes through, as text. Callers that
+/// already hold assembled code — a composed ratio, say — use this; the rest go
+/// through `clamped_f32_code`.
+pub(in crate::codegen) fn clamped_f32(code: &str, minimum: &str, maximum: &str) -> String {
+    format!("(({code}) as f32).max({minimum}).min({maximum})")
+}
+
+pub(in crate::codegen) fn clamped_f32_code(
+    expression: ResolvedExpressionId,
+    minimum: &str,
+    maximum: &str,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(clamped_f32(
+        &resolved_expr_use_code(program, expression, env, ValueMode::Owned)?,
+        minimum,
+        maximum,
+    ))
+}
+
 pub(in crate::codegen) fn text_shaping_code(shaping: TextShaping) -> &'static str {
     match shaping {
         TextShaping::Auto => "Auto",

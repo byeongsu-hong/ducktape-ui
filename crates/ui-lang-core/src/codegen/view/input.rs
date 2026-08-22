@@ -136,16 +136,16 @@ pub(in crate::codegen) fn render_input(
     if let Some(size) = input.text_size {
         write!(
             widget,
-            ".size((({}) as f32).max(f32::EPSILON).min(f32::MAX))",
-            resolved_expr_use_code(program, size, env, ValueMode::Owned)?
+            ".size({})",
+            clamped_f32_code(size, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
     if let Some(line_height) = input.line_height {
         write!(
             widget,
-            ".line_height(::iced::widget::text::LineHeight::Relative((({}) as f32).max(f32::EPSILON).min(f32::MAX)))",
-            resolved_expr_use_code(program, line_height, env, ValueMode::Owned)?
+            ".line_height(::iced::widget::text::LineHeight::Relative({}))",
+            clamped_f32_code(line_height, "f32::EPSILON", "f32::MAX", program, env)?
         )
         .unwrap();
     }
@@ -282,8 +282,8 @@ pub(super) fn resolved_input_icon_code(
         || Ok("::std::option::Option::None".into()),
         |size| {
             Ok::<_, Error>(format!(
-                "::std::option::Option::Some((({}) as f32).max(f32::EPSILON).min(f32::MAX).into())",
-                resolved_expr_use_code(program, size, env, ValueMode::Owned)?
+                "::std::option::Option::Some({}.into())",
+                clamped_f32_code(size, "f32::EPSILON", "f32::MAX", program, env)?
             ))
         },
     )?;

@@ -1252,12 +1252,8 @@ pub(in crate::codegen) fn generate_statements(
                     ))
                 };
                 let size = |width: ResolvedExpressionId, height: ResolvedExpressionId| {
-                    let positive = |value| {
-                        Ok::<_, Error>(format!(
-                            "(({}) as f32).max(f32::EPSILON).min(f32::MAX)",
-                            resolved_expr_use_code(program, value, env, ValueMode::Owned)?
-                        ))
-                    };
+                    let positive =
+                        |value| clamped_f32_code(value, "f32::EPSILON", "f32::MAX", program, env);
                     Ok::<_, Error>(format!(
                         "::iced::Size::new({}, {})",
                         positive(width)?,

@@ -30,7 +30,7 @@ pub(in crate::codegen) fn canvas_path_code(
                 code,
                 " __path.arc(::iced::widget::canvas::path::Arc {{ center: {}, radius: {}, start_angle: ::iced::Radians({} as f32), end_angle: ::iced::Radians({} as f32) }});",
                 canvas_point_code(*x, *y, env, program)?,
-                canvas_clamped_f32_code(*radius, "0.0", "f32::MAX", env, program)?,
+                clamped_f32_code(*radius, "0.0", "f32::MAX", program, env)?,
                 canvas_expr_code(*start, env, program)?,
                 canvas_expr_code(*end, env, program)?
             )
@@ -46,7 +46,7 @@ pub(in crate::codegen) fn canvas_path_code(
                 " __path.arc_to({}, {}, {});",
                 canvas_point_code(*ax, *ay, env, program)?,
                 canvas_point_code(*bx, *by, env, program)?,
-                canvas_clamped_f32_code(*radius, "0.0", "f32::MAX", env, program)?
+                clamped_f32_code(*radius, "0.0", "f32::MAX", program, env)?
             )
             .unwrap(),
             ResolvedCanvasPathSegment::Ellipse {
@@ -61,8 +61,8 @@ pub(in crate::codegen) fn canvas_path_code(
                 code,
                 " __path.ellipse(::iced::widget::canvas::path::arc::Elliptical {{ center: {}, radii: ::iced::Vector::new({}, {}), rotation: ::iced::Radians({} as f32), start_angle: ::iced::Radians({} as f32), end_angle: ::iced::Radians({} as f32) }});",
                 canvas_point_code(*x, *y, env, program)?,
-                canvas_clamped_f32_code(*radius_x, "0.0", "f32::MAX", env, program)?,
-                canvas_clamped_f32_code(*radius_y, "0.0", "f32::MAX", env, program)?,
+                clamped_f32_code(*radius_x, "0.0", "f32::MAX", program, env)?,
+                clamped_f32_code(*radius_y, "0.0", "f32::MAX", program, env)?,
                 canvas_expr_code(*rotation, env, program)?,
                 canvas_expr_code(*start, env, program)?,
                 canvas_expr_code(*end, env, program)?
@@ -125,7 +125,7 @@ pub(in crate::codegen) fn canvas_path_code(
                 code,
                 " __path.circle({}, {});",
                 canvas_point_code(*x, *y, env, program)?,
-                canvas_clamped_f32_code(*radius, "0.0", "f32::MAX", env, program)?
+                clamped_f32_code(*radius, "0.0", "f32::MAX", program, env)?
             )
             .unwrap(),
             ResolvedCanvasPathSegment::Close => code.push_str(" __path.close();"),

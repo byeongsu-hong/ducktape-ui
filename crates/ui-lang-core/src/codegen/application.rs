@@ -232,12 +232,17 @@ pub(in crate::codegen) fn generate_theme(
         writeln!(out, "__style }}").unwrap();
     }
     if let Some(setting) = &settings.scale_factor {
-        let value =
-            resolved_expr_use_code(program, setting.expression, &callback_env, ValueMode::Owned)?;
+        let value = clamped_f32_code(
+            setting.expression,
+            "f32::EPSILON",
+            "f32::MAX",
+            program,
+            &callback_env,
+        )?;
         writeln!(out, "{}", source_marker_origin(program, setting.origin)).unwrap();
         writeln!(
             out,
-            "fn __scale_factor(&self{callback_arg}) -> f32 {{ (({value}) as f32).max(f32::EPSILON).min(f32::MAX) }}\n{SOURCE_MARKER_END}"
+            "fn __scale_factor(&self{callback_arg}) -> f32 {{ {value} }}\n{SOURCE_MARKER_END}"
         )
         .unwrap();
     }

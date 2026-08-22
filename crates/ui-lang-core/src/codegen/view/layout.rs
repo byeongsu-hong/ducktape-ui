@@ -300,7 +300,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".width({})",
-                resolved_layout_clamped_f32(width, "0.0", "f32::MAX", program, env)?
+                clamped_f32_code(width, "0.0", "f32::MAX", program, env)?
             )
             .unwrap();
         }
@@ -309,9 +309,14 @@ fn render_resolved_regular_layout(
                 ResolvedGridHeight::AspectRatio { width, height } => {
                     let width = resolved_expr_use_code(program, *width, env, ValueMode::Owned)?;
                     let height = resolved_expr_use_code(program, *height, env, ValueMode::Owned)?;
+                    let ratio = clamped_f32(
+                        &format!("({width}) / ({height})"),
+                        "f32::EPSILON",
+                        "f32::MAX",
+                    );
                     write!(
                         body,
-                        ".height(::iced::widget::grid::Sizing::AspectRatio(((({width}) / ({height})) as f32).max(f32::EPSILON).min(f32::MAX)))"
+                        ".height(::iced::widget::grid::Sizing::AspectRatio({ratio}))"
                     )
                     .unwrap();
                 }
@@ -329,7 +334,7 @@ fn render_resolved_regular_layout(
             write!(
                 body,
                 ".fluid({})",
-                resolved_layout_clamped_f32(max_cell, "f32::EPSILON", "f32::MAX", program, env,)?
+                clamped_f32_code(max_cell, "f32::EPSILON", "f32::MAX", program, env,)?
             )
             .unwrap();
         } else if grid.columns.is_some() {
@@ -951,13 +956,7 @@ fn render_flex_children(
                 let item = if let Some(min_cell) = min_cell {
                     format!(
                         "::ui_lang_runtime::flex_item(__flex_child).grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed({}))",
-                        resolved_layout_clamped_f32(
-                            min_cell,
-                            "f32::EPSILON",
-                            "f32::MAX",
-                            document,
-                            env,
-                        )?
+                        clamped_f32_code(min_cell, "f32::EPSILON", "f32::MAX", document, env,)?
                     )
                 } else {
                     let options = match view.kind {
@@ -1169,17 +1168,6 @@ pub(super) fn resolved_length_code(
             resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
         }
     })
-}
-
-fn resolved_layout_clamped_f32(
-    expression: ResolvedExpressionId,
-    minimum: &str,
-    maximum: &str,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    let code = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
-    Ok(format!("(({code}) as f32).max({minimum}).min({maximum})"))
 }
 
 fn resolved_scroll_bar_code(
@@ -1503,12 +1491,12 @@ fn resolved_layout_radius_code(
     }
     let base = radius
         .all
-        .map(|value| resolved_layout_clamped_f32(value, "0.0", "f32::MAX", program, env))
+        .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
         .transpose()?
         .unwrap_or_else(|| "0.0".into());
     let corner = |value: Option<ResolvedExpressionId>| {
         value
-            .map(|value| resolved_layout_clamped_f32(value, "0.0", "f32::MAX", program, env))
+            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
             .transpose()
     };
     let top_left = corner(radius.top_left)?.unwrap_or_else(|| base.clone());
