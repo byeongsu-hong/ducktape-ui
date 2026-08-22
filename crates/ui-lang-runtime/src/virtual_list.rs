@@ -769,7 +769,6 @@ where
     let mut mounted_keys = Vec::with_capacity(range.len());
     let mut mounted_children = Vec::with_capacity(range.len());
     let mut mounted = Vec::with_capacity(range.len());
-    let mut mounted_semantic_ids = Vec::with_capacity(range.len());
     for index in range.clone() {
         let item = &items[index];
         let item_key = key(item);
@@ -802,7 +801,6 @@ where
         mounted_keys.push(semantic_key);
         mounted_children.push(row);
         mounted.push((index, item_key));
-        mounted_semantic_ids.push(semantic_key);
     }
 
     let on_event: Rc<dyn Fn(VirtualListEvent<Key>) -> Message + 'a> = Rc::new(on_event);
@@ -860,7 +858,6 @@ where
         scroll_id: state.scroll_id(),
         namespace: state.id.namespace,
         mounted,
-        mounted_semantic_ids,
         config,
         rows,
         realized_heights,
@@ -897,7 +894,6 @@ where
     scroll_id: iced::advanced::widget::Id,
     namespace: u32,
     mounted: Vec<(usize, Key)>,
-    mounted_semantic_ids: Vec<u32>,
     config: VirtualListConfig,
     rows: Rows,
     realized_heights: Rc<RefCell<Vec<f32>>>,
@@ -1162,7 +1158,6 @@ where
 
 struct State {
     namespace: u32,
-    mounted_semantic_ids: Vec<u32>,
     focused: bool,
     focus_visible: bool,
     measured_viewport_height: f32,
@@ -1173,10 +1168,9 @@ struct State {
 }
 
 impl State {
-    fn new(namespace: u32, mounted_semantic_ids: Vec<u32>) -> Self {
+    fn new(namespace: u32) -> Self {
         Self {
             namespace,
-            mounted_semantic_ids,
             focused: false,
             focus_visible: false,
             measured_viewport_height: 0.0,
@@ -1222,10 +1216,7 @@ where
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(State::new(
-            self.namespace,
-            self.mounted_semantic_ids.clone(),
-        ))
+        tree::State::new(State::new(self.namespace))
     }
 
     fn children(&self) -> Vec<Tree> {
@@ -1237,10 +1228,6 @@ where
             *tree = Tree::new(self as &dyn Widget<Message, Theme, Renderer>);
             return;
         }
-        let state = tree.state.downcast_mut::<State>();
-        state
-            .mounted_semantic_ids
-            .clone_from(&self.mounted_semantic_ids);
         tree.diff_children(std::slice::from_ref(&self.content));
     }
 
@@ -3712,7 +3699,6 @@ mod tests {
             scroll_id: "visible-list-scroll".into(),
             namespace: 1,
             mounted: Vec::<(usize, u64)>::new(),
-            mounted_semantic_ids: Vec::new(),
             config: config(),
             rows: VirtualListState::<u64>::new(VirtualListId::new("visible-list-rows"))
                 .rows(0, config()),
