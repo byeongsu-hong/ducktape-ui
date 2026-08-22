@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+    # `labeled`/`unlabeled` carry the api-breaking-approved decision; `edited`
+    # only meant a retitled pull request paid for the whole matrix again.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
 
 permissions:
