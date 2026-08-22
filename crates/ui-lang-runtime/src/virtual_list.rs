@@ -1350,13 +1350,12 @@ where
 
         if self.config.is_measured() {
             let realized = self.realized_heights.borrow();
-            let current: Vec<(usize, f32)> = self
+            let changed = !state.reported_row_heights.iter().copied().eq(self
                 .mounted
                 .iter()
                 .zip(realized.iter())
-                .map(|((index, _), height)| (*index, *height))
-                .collect();
-            if state.reported_row_heights != current {
+                .map(|((index, _), height)| (*index, *height)));
+            if changed {
                 let heights: Vec<(Key, f32)> = self
                     .mounted
                     .iter()
@@ -1366,7 +1365,13 @@ where
                     })
                     .map(|((_, key), height)| (key.clone(), *height))
                     .collect();
-                state.reported_row_heights = current;
+                state.reported_row_heights.clear();
+                state.reported_row_heights.extend(
+                    self.mounted
+                        .iter()
+                        .zip(realized.iter())
+                        .map(|((index, _), height)| (*index, *height)),
+                );
                 if !heights.is_empty() {
                     shell.publish((self.on_event)(VirtualListEvent::RowsMeasured { heights }));
                 }

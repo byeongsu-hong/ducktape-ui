@@ -295,6 +295,12 @@ impl State {
             if top < visible_bottom {
                 last = index + 1;
             }
+            // Row tops only grow (heights and spacing are both clamped
+            // non-negative), so past the viewport bottom neither branch can
+            // fire again and the rest of a 100k-child column is a no-op scan.
+            if top >= visible_bottom {
+                break;
+            }
             top += self.height_of(index, estimate) + spacing;
         }
         (first, last)
