@@ -1,6 +1,7 @@
 use crate::evidence::{REVIEW_ARTIFACT_KIND, REVIEW_SCHEMA_VERSION, validate_capture_manifest};
 use crate::inspection::{
-    DiffThresholds, compare_capture_manifests, containing_package, source_output_name,
+    DiffThresholds, compare_capture_manifests, containing_package, nonnegative_f64, read_json,
+    read_trace, set_once, source_output_name, unit_f64,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -11,7 +12,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use ui_lang_template::trace::Artifact as TraceArtifact;
 
 const REVIEW_STACK_SIZE: usize = 8 * 1024 * 1024;
 
@@ -1186,23 +1186,6 @@ fn render_html(report: &Value) -> String {
     html
 }
 
-fn read_json(path: &Path) -> Result<Value, String> {
-    let bytes =
-        fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    serde_json::from_slice(&bytes).map_err(|error| format!("invalid {}: {error}", path.display()))
-}
-
-fn read_trace(path: &Path) -> Result<TraceArtifact, String> {
-    let bytes = fs::read(path)
-        .map_err(|error| format!("cannot read trace artifact {}: {error}", path.display()))?;
-    let artifact: TraceArtifact = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("{} is not a strict trace artifact: {error}", path.display()))?;
-    artifact
-        .validate()
-        .map_err(|error| format!("invalid trace artifact {}: {error}", path.display()))?;
-    Ok(artifact)
-}
-
 fn write_json(path: &Path, value: &Value) -> Result<(), String> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
     bytes.push(b'\n');
@@ -1249,34 +1232,6 @@ fn run_id() -> Result<String, String> {
         .map_err(|error| error.to_string())?
         .as_nanos();
     Ok(format!("{}-{nanos}", std::process::id()))
-}
-
-fn set_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
-    if slot.replace(value).is_some() {
-        Err(format!("duplicate `{flag}`"))
-    } else {
-        Ok(())
-    }
-}
-
-fn nonnegative_f64(flag: &str, value: &str) -> Result<f64, String> {
-    let value = value
-        .parse::<f64>()
-        .map_err(|error| format!("invalid {flag} value: {error}"))?;
-    if value.is_finite() && value >= 0.0 {
-        Ok(value)
-    } else {
-        Err(format!("{flag} requires a finite non-negative number"))
-    }
-}
-
-fn unit_f64(flag: &str, value: &str) -> Result<f64, String> {
-    let value = nonnegative_f64(flag, value)?;
-    if value <= 1.0 {
-        Ok(value)
-    } else {
-        Err(format!("{flag} must be between 0 and 1"))
-    }
 }
 
 #[cfg(test)]

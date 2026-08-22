@@ -37,15 +37,12 @@ fn performance_contract_initial_snapshot_moves_owned_paths() {
     graph.package_roots.clear();
     graph.workspace_files.clone_from(&files);
     assert_eq!(
-        dev_stamps_with_cargo_inputs(fixture.path(), &[], &[], &graph)
-            .1
-            .len(),
+        dev_stamps_with_cargo_inputs(&[], &[], &graph).1.len(),
         FILES
     );
 
     let _profiler = dhat::Profiler::builder().testing().build();
     let snapshot = std::hint::black_box(dev_stamps_with_cargo_inputs(
-        fixture.path(),
         &[],
         &[],
         std::hint::black_box(&graph),
@@ -236,12 +233,8 @@ fn performance_contract_validated_leaf_analysis_in_a_10k_source_graph() {
     let mut graph = CargoInputGraph::workspace(root);
     graph.package_roots.clear();
     graph.workspace_files.clear();
-    let observed = dev_stamps_with_cargo_inputs(
-        root,
-        &compiled.dependencies,
-        &compiled.asset_dependencies,
-        &graph,
-    );
+    let observed =
+        dev_stamps_with_cargo_inputs(&compiled.dependencies, &compiled.asset_dependencies, &graph);
     let changed = root.join("part-05000.ice");
     let changed_source = b"// changed fragment\n";
     std::fs::write(&changed, changed_source).unwrap();
@@ -286,7 +279,7 @@ fn selective_snapshot_carries_the_second_validated_ice_read() {
     let mut graph = CargoInputGraph::workspace(root);
     graph.package_roots.clear();
     graph.workspace_files.clear();
-    let current = dev_stamps_with_cargo_inputs(root, std::slice::from_ref(&source), &[], &graph);
+    let current = dev_stamps_with_cargo_inputs(std::slice::from_ref(&source), &[], &graph);
     let changed_source = valid_app().replace("ready", "validated");
     std::fs::write(&source, &changed_source).unwrap();
 
@@ -634,10 +627,10 @@ fn participating_package_roots_detect_new_rust_files_after_a_failed_build() {
         discovered_inputs: Vec::new(),
         participating_package_ids: vec![package_id],
     });
-    let before = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let before = dev_stamps_with_cargo_inputs(&[], &[], &graph);
 
     std::fs::write(root.join("src/missing.rs"), "pub fn recovered() {}\n").unwrap();
-    let after = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let after = dev_stamps_with_cargo_inputs(&[], &[], &graph);
 
     assert_ne!(after.1, before.1);
 }
@@ -1036,10 +1029,10 @@ fn watches_regular_host_build_inputs_without_extension_guesses() {
     std::fs::write(&shader, b"BBBB").unwrap();
     let graph = CargoInputGraph::workspace(&root);
 
-    let before = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let before = dev_stamps_with_cargo_inputs(&[], &[], &graph);
     std::fs::write(&font, b"CCCC").unwrap();
     std::fs::write(&shader, b"DDDD").unwrap();
-    let after = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let after = dev_stamps_with_cargo_inputs(&[], &[], &graph);
 
     assert_ne!(after.1, before.1);
     assert!(matches!(
@@ -1063,11 +1056,11 @@ fn discovered_build_script_directories_track_new_files() {
     std::fs::create_dir_all(&generated_inputs).unwrap();
     let mut graph = CargoInputGraph::workspace(&root);
     graph.install_discovered_inputs(vec![generated_inputs.clone()]);
-    let before = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let before = dev_stamps_with_cargo_inputs(&[], &[], &graph);
 
     let created = generated_inputs.join("bindings.h");
     std::fs::write(&created, b"#define VALUE 1\n").unwrap();
-    let after = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let after = dev_stamps_with_cargo_inputs(&[], &[], &graph);
 
     assert_ne!(after.1, before.1);
     assert!(matches!(
@@ -1316,9 +1309,9 @@ fn watches_transitive_external_cargo_path_dependencies() {
         graph.package_roots.contains(&leaf),
         "transitive path dependency is not watched"
     );
-    let before = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let before = dev_stamps_with_cargo_inputs(&[], &[], &graph);
     std::fs::write(&leaf_source, "pub fn value() -> u8 { 2 }\n").unwrap();
-    let after = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let after = dev_stamps_with_cargo_inputs(&[], &[], &graph);
 
     assert_ne!(before.1, after.1);
     assert!(matches!(
@@ -1377,14 +1370,14 @@ fn build_observation_drops_unrelated_workspace_packages() {
     std::fs::write(&unrelated_asset, vec![7_u8; 1024 * 1024]).unwrap();
     let args = ["-p".to_owned(), "selected-app".to_owned()];
     let mut graph = cargo_input_graph(&root, &args).unwrap();
-    let initial = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let initial = dev_stamps_with_cargo_inputs(&[], &[], &graph);
     assert!(stamp_at(&initial.1, &unrelated_asset).is_some());
 
     let build = cargo_build(&root, &args, &initial.0, &initial.1, &graph)
         .unwrap()
         .expect("selected workspace app must build");
     graph.install_build_output(&build);
-    let narrowed = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let narrowed = dev_stamps_with_cargo_inputs(&[], &[], &graph);
 
     assert!(
         build_observation_reuses_snapshot(&initial, &narrowed),
@@ -1408,13 +1401,13 @@ fn build_observation_drops_unrelated_workspace_packages() {
     );
     std::fs::write(&unrelated_asset, vec![9_u8; 1024 * 1024]).unwrap();
     assert_eq!(
-        dev_stamps_with_cargo_inputs(&root, &[], &[], &graph),
+        dev_stamps_with_cargo_inputs(&[], &[], &graph),
         narrowed,
         "unrelated workspace bytes must not wake the selected app"
     );
     std::fs::write(&implicit, "two\n").unwrap();
     assert_ne!(
-        dev_stamps_with_cargo_inputs(&root, &[], &[], &graph).1,
+        dev_stamps_with_cargo_inputs(&[], &[], &graph).1,
         narrowed.1,
         "a no-directive build script retains Cargo's broad package semantics"
     );
@@ -1445,9 +1438,9 @@ fn watches_explicit_external_cargo_config_content_for_both_argument_forms() {
     assert!(separate.workspace_files.contains(&config));
     assert!(equals.workspace_files.contains(&config));
 
-    let before = dev_stamps_with_cargo_inputs(&root, &[], &[], &separate);
+    let before = dev_stamps_with_cargo_inputs(&[], &[], &separate);
     std::fs::write(&config, "[env]\nICE_CONFIG_PROBE = \"BBBB\"\n").unwrap();
-    let after = dev_stamps_with_cargo_inputs(&root, &[], &[], &separate);
+    let after = dev_stamps_with_cargo_inputs(&[], &[], &separate);
     assert_ne!(
         before.1, after.1,
         "an equal-sized explicit config edit must rebuild"
@@ -1478,9 +1471,9 @@ fn watches_cargo_config_discovered_from_a_nested_invocation_directory() {
 
     let graph = cargo_input_graph(&invocation, &[]).unwrap();
     assert!(graph.workspace_files.contains(&config));
-    let before = dev_stamps_with_cargo_inputs(&invocation, &[], &[], &graph);
+    let before = dev_stamps_with_cargo_inputs(&[], &[], &graph);
     std::fs::write(&config, "[env]\nICE_NESTED_PROBE = \"BBBB\"\n").unwrap();
-    let after = dev_stamps_with_cargo_inputs(&invocation, &[], &[], &graph);
+    let after = dev_stamps_with_cargo_inputs(&[], &[], &graph);
     assert_ne!(before.1, after.1);
 }
 
@@ -1500,12 +1493,12 @@ fn watches_missing_discovered_cargo_config_until_it_is_created() {
 
     let graph = cargo_input_graph(&root, &[]).unwrap();
     assert!(graph.workspace_files.contains(&config));
-    let missing = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let missing = dev_stamps_with_cargo_inputs(&[], &[], &graph);
     assert_eq!(stamp_at(&missing.1, &config), Some(FileStamp::Missing));
 
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     std::fs::write(&config, "[env]\nICE_CREATED_PROBE = \"ready\"\n").unwrap();
-    let created = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let created = dev_stamps_with_cargo_inputs(&[], &[], &graph);
     assert!(matches!(
         stamp_at(&created.1, &config),
         Some(FileStamp::Content(_))
@@ -1613,7 +1606,7 @@ fn cargo_build_discovers_rustc_and_build_script_inputs() {
     std::fs::write(&external, b"native").unwrap();
     std::fs::write(&embedded, b"embedded").unwrap();
     let mut graph = cargo_input_graph(&root, &[]).unwrap();
-    let stamps = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let stamps = dev_stamps_with_cargo_inputs(&[], &[], &graph);
 
     let build = cargo_build(&root, &[], &stamps.0, &stamps.1, &graph)
         .unwrap()
@@ -1636,7 +1629,7 @@ fn cargo_build_discovers_rustc_and_build_script_inputs() {
         build.discovered_inputs
     );
     graph.install_build_output(&build);
-    let installed = dev_stamps_with_cargo_inputs(&root, &[], &[], &graph);
+    let installed = dev_stamps_with_cargo_inputs(&[], &[], &graph);
     assert!(
         !build_observation_reuses_snapshot(&stamps, &installed),
         "newly discovered external inputs must force a build with their fingerprint"
@@ -1657,7 +1650,7 @@ fn cargo_build_discovers_rustc_and_build_script_inputs() {
     );
     graph.install_build_output(&cached);
     assert_eq!(
-        dev_stamps_with_cargo_inputs(&root, &[], &[], &graph),
+        dev_stamps_with_cargo_inputs(&[], &[], &graph),
         installed,
         "the second pass must converge on the exact discovered-input snapshot"
     );

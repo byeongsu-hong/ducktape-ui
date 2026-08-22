@@ -107,7 +107,6 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         let current =
             compile_dev_with_db(&mut analysis_db, &source, None).map_err(|error| error.message)?;
         let initial_stamps = dev_stamps_with_cargo_inputs(
-            root,
             &current.dependencies,
             &current.asset_dependencies,
             &cargo_inputs,
@@ -134,7 +133,6 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         cargo_inputs.install_build_output(&build);
         previous_cargo_inputs = Some(cargo_inputs.clone());
         let observed = dev_stamps_with_cargo_inputs(
-            root,
             &current.dependencies,
             &current.asset_dependencies,
             &cargo_inputs,
@@ -196,7 +194,6 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         };
         let next_snapshot = match change {
             DevChange::FullRescan => settled_dev_stamps_with_cargo_inputs(
-                root,
                 &watched_dependencies,
                 &watched_assets,
                 &cargo_inputs,
@@ -258,7 +255,6 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
                     continue;
                 }
                 let latest = dev_stamps_with_cargo_inputs(
-                    root,
                     &watched_dependencies,
                     &watched_assets,
                     &cargo_inputs,
@@ -271,7 +267,6 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             }
         };
         let candidate_stamps = dev_stamps_with_cargo_inputs(
-            root,
             &next.dependencies,
             &next.asset_dependencies,
             &cargo_inputs,
@@ -282,12 +277,8 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
             continue;
         }
         thread::sleep(Duration::from_millis(50));
-        if dev_stamps_with_cargo_inputs(
-            root,
-            &next.dependencies,
-            &next.asset_dependencies,
-            &cargo_inputs,
-        ) != candidate_stamps
+        if dev_stamps_with_cargo_inputs(&next.dependencies, &next.asset_dependencies, &cargo_inputs)
+            != candidate_stamps
         {
             continue;
         }
@@ -380,7 +371,6 @@ pub(super) fn run(root: &Path, source: &Path, cargo_args: &[String]) -> Result<(
         let mut next_cargo_inputs = cargo_inputs.clone();
         next_cargo_inputs.install_build_output(&build);
         let built_stamps = dev_stamps_with_cargo_inputs(
-            root,
             &next.dependencies,
             &next.asset_dependencies,
             &next_cargo_inputs,

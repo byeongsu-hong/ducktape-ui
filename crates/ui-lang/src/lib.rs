@@ -20,7 +20,7 @@ fn expand(input: TokenStream) -> Result<TokenStream, String> {
         .map_err(|error| error.to_string())?;
     if !generated.is_file() {
         return Err(format!(
-            "ui-lang: generated Rust is missing for {relative}; call ui_lang_build::compile or ui_lang_build::compile_dir from build.rs"
+            "ui-lang: generated Rust is missing for {relative}; call ui_lang_build::compile_dir from build.rs"
         ));
     }
     let expansion = format!("include!({:?});", generated.display().to_string());

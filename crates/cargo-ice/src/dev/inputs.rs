@@ -145,7 +145,6 @@ pub(super) fn dev_stamps(
     asset_dependencies: &[PathBuf],
 ) -> (SourceStamp, SourceStamp) {
     dev_stamps_with_cargo_inputs(
-        root,
         dependencies,
         asset_dependencies,
         &CargoInputGraph::workspace(root),
@@ -153,7 +152,6 @@ pub(super) fn dev_stamps(
 }
 
 pub(super) fn dev_stamps_with_cargo_inputs(
-    _root: &Path,
     dependencies: &[PathBuf],
     asset_dependencies: &[PathBuf],
     cargo_inputs: &CargoInputGraph,
@@ -173,7 +171,6 @@ pub(super) fn settled_dev_stamps(
     current_build: &SourceStamp,
 ) -> Option<(SourceStamp, SourceStamp)> {
     settled_dev_stamps_after_with_cargo_inputs(
-        root,
         dependencies,
         asset_dependencies,
         &CargoInputGraph::workspace(root),
@@ -184,7 +181,6 @@ pub(super) fn settled_dev_stamps(
 }
 
 pub(super) fn settled_dev_stamps_with_cargo_inputs(
-    root: &Path,
     dependencies: &[PathBuf],
     asset_dependencies: &[PathBuf],
     cargo_inputs: &CargoInputGraph,
@@ -192,7 +188,6 @@ pub(super) fn settled_dev_stamps_with_cargo_inputs(
     current_build: &SourceStamp,
 ) -> Option<(SourceStamp, SourceStamp)> {
     settled_dev_stamps_after_with_cargo_inputs(
-        root,
         dependencies,
         asset_dependencies,
         cargo_inputs,
@@ -252,7 +247,6 @@ pub(super) fn settled_dev_stamps_after(
     after_first_read: impl FnOnce(),
 ) -> Option<(SourceStamp, SourceStamp)> {
     settled_dev_stamps_after_with_cargo_inputs(
-        root,
         dependencies,
         asset_dependencies,
         &CargoInputGraph::workspace(root),
@@ -263,7 +257,6 @@ pub(super) fn settled_dev_stamps_after(
 }
 
 fn settled_dev_stamps_after_with_cargo_inputs(
-    _root: &Path,
     dependencies: &[PathBuf],
     asset_dependencies: &[PathBuf],
     cargo_inputs: &CargoInputGraph,

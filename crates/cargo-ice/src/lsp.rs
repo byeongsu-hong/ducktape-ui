@@ -226,7 +226,7 @@ struct Navigation {
     symbol: ui_lang_core::CheckedSymbol,
     family: Vec<ui_lang_core::CheckedSymbol>,
     occurrence: ui_lang_core::SourceRange,
-    declarations: Vec<(ui_lang_core::SymbolKind, Option<String>, String)>,
+    declarations: BTreeSet<(ui_lang_core::SymbolKind, Option<String>, String)>,
     root_uri: String,
 }
 
@@ -3098,11 +3098,15 @@ fn navigation_at(
             symbol: symbol.clone(),
             family,
             occurrence: occurrence.clone(),
-            declarations: checked
-                .symbols()
-                .iter()
-                .map(|symbol| (symbol.kind, symbol.scope.clone(), symbol.name.clone()))
-                .collect(),
+            declarations: if require_complete {
+                checked
+                    .symbols()
+                    .iter()
+                    .map(|symbol| (symbol.kind, symbol.scope.clone(), symbol.name.clone()))
+                    .collect()
+            } else {
+                BTreeSet::new()
+            },
             root_uri: (*root_uri).clone(),
         })
     })?;
@@ -3165,16 +3169,13 @@ fn navigation_at(
                 navigation.family.push(candidate.clone());
             }
         }
-        if navigation.symbol.kind != ui_lang_core::SymbolKind::TestTarget {
-            for declaration in checked
-                .symbols()
-                .iter()
-                .map(|symbol| (symbol.kind, symbol.scope.clone(), symbol.name.clone()))
-            {
-                if !navigation.declarations.contains(&declaration) {
-                    navigation.declarations.push(declaration);
-                }
-            }
+        if require_complete && navigation.symbol.kind != ui_lang_core::SymbolKind::TestTarget {
+            navigation.declarations.extend(
+                checked
+                    .symbols()
+                    .iter()
+                    .map(|symbol| (symbol.kind, symbol.scope.clone(), symbol.name.clone())),
+            );
         }
     }
     if incomplete {
@@ -7401,7 +7402,7 @@ mod tests {
             symbol: symbol.clone(),
             family: vec![symbol],
             occurrence: definition,
-            declarations: Vec::new(),
+            declarations: BTreeSet::new(),
             root_uri: uri.clone(),
         };
 
