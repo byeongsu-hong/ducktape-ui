@@ -1013,7 +1013,11 @@ mod tests {
         let unchanged = manifest.record(&output, "src/ui/app.ice", "first").unwrap();
         assert!(!unchanged);
         assert!(manifest.record(&output, "src/ui/app.ice", "first").unwrap());
-        assert!(!manifest.record(&output, "src/ui/app.ice", "changed").unwrap());
+        assert!(
+            !manifest
+                .record(&output, "src/ui/app.ice", "changed")
+                .unwrap()
+        );
         let error = manifest
             .insert(
                 output,

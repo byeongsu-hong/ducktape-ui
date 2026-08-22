@@ -124,30 +124,7 @@ pub(super) fn inspect(root: &Path, args: &[String]) -> Result<(), String> {
         .env("ICE_AGENT_INSPECT_NAME", name)
         .env("ICE_AGENT_INSPECT_ARTIFACT_DIR", &artifact_dir)
         .env("ICE_AGENT_INSPECT_RESULT", &result_path);
-    set_optional_env(&mut command, "ICE_AGENT_INSPECT_PRESET", &options.preset);
-    set_optional_env(&mut command, "ICE_AGENT_INSPECT_THEME", &options.theme);
-    set_optional_env(
-        &mut command,
-        "ICE_AGENT_INSPECT_SYSTEM_THEME",
-        &options.system_theme,
-    );
-    set_optional_env(&mut command, "ICE_AGENT_INSPECT_LOCALE", &options.locale);
-    set_optional_env(
-        &mut command,
-        "ICE_AGENT_INSPECT_PLATFORM",
-        &options.platform,
-    );
-    if let Some((width, height)) = options.viewport {
-        command
-            .env("ICE_AGENT_INSPECT_WIDTH", width.to_string())
-            .env("ICE_AGENT_INSPECT_HEIGHT", height.to_string());
-    }
-    if let Some(scale) = options.scale {
-        command.env("ICE_AGENT_INSPECT_SCALE", scale.to_string());
-    }
-    if options.reduced_motion {
-        command.env("ICE_AGENT_INSPECT_REDUCED_MOTION", "true");
-    }
+    set_inspect_environment(&mut command, &options);
 
     let output = command.output().map_err(|error| error.to_string())?;
     if !output.status.success() {
@@ -630,7 +607,7 @@ fn write_trace(directory: &Path, artifact: &TraceArtifact) -> Result<PathBuf, St
     Ok(path)
 }
 
-fn read_trace(path: &Path) -> Result<TraceArtifact, String> {
+pub(super) fn read_trace(path: &Path) -> Result<TraceArtifact, String> {
     let bytes = fs::read(path)
         .map_err(|error| format!("cannot read trace artifact {}: {error}", path.display()))?;
     let artifact: TraceArtifact = serde_json::from_slice(&bytes)
@@ -749,25 +726,6 @@ fn apply_trace_environment(
     extra: &[(&str, String)],
     replay: Option<&TraceArtifact>,
 ) {
-    command
-        .env("ICE_AGENT_INSPECT_SOURCE", source)
-        .env("ICE_AGENT_INSPECT_ROOT", root)
-        .env(
-            "ICE_AGENT_INSPECT_NAME",
-            options.name.as_deref().unwrap_or("inspection"),
-        )
-        .env(
-            "ICE_AGENT_INSPECT_ARTIFACT_DIR",
-            options.output.as_ref().map_or_else(
-                || {
-                    root.join("target/ice-inspect")
-                        .join(source_output_name(root, source))
-                },
-                |path| root.join(path),
-            ),
-        )
-        .env("ICE_TRACE_APP_ROOT", source)
-        .env("ICE_TRACE_PACKAGE", package);
     let artifact_dir = options.output.as_ref().map_or_else(
         || {
             root.join("target/ice-inspect")
@@ -775,7 +733,17 @@ fn apply_trace_environment(
         },
         |path| root.join(path),
     );
-    command.env("ICE_TEST_ARTIFACT_DIR", artifact_dir);
+    command
+        .env("ICE_AGENT_INSPECT_SOURCE", source)
+        .env("ICE_AGENT_INSPECT_ROOT", root)
+        .env(
+            "ICE_AGENT_INSPECT_NAME",
+            options.name.as_deref().unwrap_or("inspection"),
+        )
+        .env("ICE_AGENT_INSPECT_ARTIFACT_DIR", &artifact_dir)
+        .env("ICE_TEST_ARTIFACT_DIR", &artifact_dir)
+        .env("ICE_TRACE_APP_ROOT", source)
+        .env("ICE_TRACE_PACKAGE", package);
     if let Some((path, mode)) = trace {
         command.env("ICE_TRACE_MODE", mode).env(
             if mode == "authored" {
@@ -1120,7 +1088,7 @@ pub(super) fn containing_package(
         })
 }
 
-fn set_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
+pub(super) fn set_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
     if slot.replace(value).is_some() {
         Err(format!("duplicate `{flag}`"))
     } else {
@@ -1379,7 +1347,7 @@ fn parse_diff(args: &[String]) -> Result<DiffOptions, String> {
     Ok(options)
 }
 
-fn unit_f64(flag: &str, value: &str) -> Result<f64, String> {
+pub(super) fn unit_f64(flag: &str, value: &str) -> Result<f64, String> {
     let value = nonnegative_f64(flag, value)?;
     if value <= 1.0 {
         Ok(value)
@@ -1388,7 +1356,7 @@ fn unit_f64(flag: &str, value: &str) -> Result<f64, String> {
     }
 }
 
-fn nonnegative_f64(flag: &str, value: &str) -> Result<f64, String> {
+pub(super) fn nonnegative_f64(flag: &str, value: &str) -> Result<f64, String> {
     let value = value
         .parse::<f64>()
         .map_err(|error| format!("invalid {flag} value: {error}"))?;
@@ -1399,7 +1367,7 @@ fn nonnegative_f64(flag: &str, value: &str) -> Result<f64, String> {
     }
 }
 
-fn read_json(path: &Path) -> Result<Value, String> {
+pub(super) fn read_json(path: &Path) -> Result<Value, String> {
     let bytes =
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|error| format!("invalid {}: {error}", path.display()))
