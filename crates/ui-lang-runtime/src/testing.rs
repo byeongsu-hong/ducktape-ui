@@ -2752,7 +2752,12 @@ where
         expected: &str,
         source: Location,
     ) {
-        let target = self.target(id, source);
+        // Every value below comes from the selector walk, so the frame this
+        // pump delivers is for the statements after it, not this one:
+        // `Target::accessibility` never calls `require_paint`, and drawing
+        // the frame only to scan its quads would be dead work.
+        let target = self.require_target(id, false, source);
+        self.redraw(source);
         let actual = match property {
             AccessibilityProperty::Role => target.accessibility_role_name(),
             AccessibilityProperty::Name => target.accessibility_name(),
@@ -2782,7 +2787,12 @@ where
         expected: bool,
         source: Location,
     ) {
-        let target = self.target(id, source);
+        // Every value below comes from the selector walk, so the frame this
+        // pump delivers is for the statements after it, not this one:
+        // `Target::accessibility` never calls `require_paint`, and drawing
+        // the frame only to scan its quads would be dead work.
+        let target = self.require_target(id, false, source);
+        self.redraw(source);
         let actual = match property {
             AccessibilityProperty::Checked => target.accessibility_checked(),
             AccessibilityProperty::Expanded => target.accessibility_expanded(),
@@ -2813,7 +2823,12 @@ where
         expected: bool,
         source: Location,
     ) {
-        let target = self.target(id, source);
+        // Every value below comes from the selector walk, so the frame this
+        // pump delivers is for the statements after it, not this one:
+        // `Target::accessibility` never calls `require_paint`, and drawing
+        // the frame only to scan its quads would be dead work.
+        let target = self.require_target(id, false, source);
+        self.redraw(source);
         let actual = match action {
             AccessibilityAction::Click => target.accessibility_supports_activate(),
             AccessibilityAction::Focus => target.accessibility_supports_focus(),
