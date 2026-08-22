@@ -589,7 +589,7 @@ where
             &self.on_event,
             &mut children,
         );
-        Column::with_children(children).width(self.width).into()
+        Column::from_vec(children).width(self.width).into()
     }
 }
 

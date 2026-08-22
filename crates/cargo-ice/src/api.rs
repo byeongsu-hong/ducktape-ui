@@ -831,17 +831,11 @@ fn diff_theme(
                     ),
                 );
             }
-            let left = left
+            for token in left
                 .tokens
                 .iter()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>();
-            let right = right
-                .tokens
-                .iter()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>();
-            for token in left.difference(&right) {
+                .filter(|token| right.tokens.binary_search(token).is_err())
+            {
                 push_change(
                     changes,
                     ChangeClassification::Breaking,
@@ -850,7 +844,11 @@ fn diff_theme(
                     "theme token was removed",
                 );
             }
-            for token in right.difference(&left) {
+            for token in right
+                .tokens
+                .iter()
+                .filter(|token| left.tokens.binary_search(token).is_err())
+            {
                 push_change(
                     changes,
                     ChangeClassification::Breaking,
@@ -943,12 +941,13 @@ fn push_change(
 mod tests {
     use super::{
         ApiPackage, ChangeClassification, FINGERPRINT_SCHEMA_VERSION, FingerprintDocument, diff,
-        read_fingerprint, run, sha256_fingerprint,
+        diff_theme, read_fingerprint, run, sha256_fingerprint,
     };
     use std::fs;
     use tempfile::TempDir;
     use ui_lang_core::{
-        ApiExternFunction, ApiExternKind, ApiSurface, analyze, analyze_api_file, format_source,
+        ApiExternFunction, ApiExternKind, ApiSurface, ApiThemeContract, analyze, analyze_api_file,
+        format_source,
     };
 
     fn package() -> ApiPackage {
@@ -1098,6 +1097,33 @@ view
         assert_eq!(
             code("recipe_semantics_changed").classification,
             ChangeClassification::BehavioralReview
+        );
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_theme_token_diff_scans_canonical_slices() {
+        const TOKENS: usize = 4_096;
+        let tokens = (0..TOKENS)
+            .map(|index| format!("token_{index:04}"))
+            .collect::<Vec<_>>();
+        let baseline = ApiThemeContract {
+            name: "AppTheme".into(),
+            tokens,
+        };
+        let current = baseline.clone();
+        let mut changes = Vec::new();
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        diff_theme(Some(&baseline), Some(&current), &mut changes);
+        let stats = dhat::HeapStats::get();
+
+        assert!(changes.is_empty());
+        assert_eq!(stats.total_blocks, 0, "{stats:?}");
+        assert_eq!(stats.total_bytes, 0, "{stats:?}");
+        eprintln!(
+            "unchanged {TOKENS}-token theme diff: {} heap blocks / {} bytes",
+            stats.total_blocks, stats.total_bytes
         );
     }
 

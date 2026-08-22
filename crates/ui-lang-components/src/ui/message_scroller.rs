@@ -1081,8 +1081,10 @@ where
     Message: Clone + 'a,
 {
     let on_event = Rc::new(on_event);
-    let mut metadata = Vec::new();
-    let mut rows = Vec::new();
+    let items = items.into_iter();
+    let capacity = items.size_hint().0;
+    let mut metadata = Vec::with_capacity(capacity);
+    let mut rows = Vec::with_capacity(capacity.saturating_add(1));
 
     for item in items {
         let id = item_widget_id(&state.key, &item.meta.id);
@@ -1092,7 +1094,7 @@ where
     rows.push(Space::new().height(state.spacer_height).into());
 
     let content = container(
-        Column::with_children(rows)
+        Column::from_vec(rows)
             .spacing(theme.spacing.lg)
             .width(Length::Fill),
     )

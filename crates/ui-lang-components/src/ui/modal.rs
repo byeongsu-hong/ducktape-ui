@@ -5,6 +5,8 @@
 //! cannot publish: controlled visibility, inert underlay, backdrop dismissal,
 //! Escape, explicit initial/restore focus, and a wrapping focus order.
 
+use std::sync::Arc;
+
 use super::theme::{Theme, alpha};
 use iced::advanced::Renderer as _;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
@@ -71,7 +73,7 @@ impl ModalEvent {
 /// Keep this value in application state instead of recreating IDs in `view`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusScope {
-    order: Vec<widget::Id>,
+    order: Arc<Vec<widget::Id>>,
     restore: widget::Id,
 }
 
@@ -79,7 +81,7 @@ impl FocusScope {
     /// Starts a non-empty focus scope.
     pub fn new(first: widget::Id, restore: widget::Id) -> Self {
         Self {
-            order: vec![first],
+            order: Arc::new(vec![first]),
             restore,
         }
     }
@@ -88,7 +90,7 @@ impl FocusScope {
     #[must_use]
     pub fn push(mut self, id: widget::Id) -> Self {
         if !self.order.contains(&id) {
-            self.order.push(id);
+            Arc::make_mut(&mut self.order).push(id);
         }
         self
     }
@@ -625,9 +627,12 @@ mod tests {
         let scope = FocusScope::new(first.clone(), restore.clone())
             .push(second.clone())
             .push(first.clone());
+        let third = widget::Id::new("dialog-third");
+        let extended = scope.clone().push(third.clone());
 
-        assert_eq!(scope.order(), &[first, second]);
         assert_eq!(scope.restore(), &restore);
+        assert_eq!(scope.order(), &[first.clone(), second.clone()]);
+        assert_eq!(extended.order(), &[first, second, third]);
     }
 
     #[test]

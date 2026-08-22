@@ -489,11 +489,10 @@ where
             .zip(&state.measured)
             .filter_map(|(key, height)| height.map(|height| (*key, height)))
             .collect();
-        state.measured = self
-            .keys
-            .iter()
-            .map(|key| heights.get(key).copied())
-            .collect();
+        state.measured.clear();
+        state
+            .measured
+            .extend(self.keys.iter().map(|key| heights.get(key).copied()));
         // And so does the focused row: it is measured wherever it sits, and an
         // index pointing at its neighbour instead means the focused row stops
         // being measured, which is how focus gets lost for good.

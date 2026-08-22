@@ -564,7 +564,12 @@ fn watch_excluded_roots(cargo_inputs: &CargoInputGraph) -> Vec<PathBuf> {
                 .map(|path| root.join(path)),
         );
     }
-    sorted_paths(&excluded)
+    for path in &mut excluded {
+        *path = normalize_watch_path(path);
+    }
+    excluded.sort();
+    excluded.dedup();
+    excluded
 }
 
 #[cfg(test)]
@@ -627,6 +632,41 @@ mod tests {
             recursive: true,
         }));
         assert_eq!(configuration.roots.len(), 2);
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_excluded_root_normalization_reuses_storage() {
+        const ROOTS: usize = 128;
+        const REFRESHES: usize = 256;
+        const MAX_BLOCKS: u64 = 131_328;
+        const MAX_BYTES: u64 = 3_609_088;
+
+        let mut graph = CargoInputGraph::workspace(Path::new("/workspace"));
+        graph.package_roots.clear();
+        graph.excluded_roots = (0..ROOTS)
+            .map(|index| PathBuf::from(format!("/workspace/package-{index}/./target")))
+            .collect();
+        drop(watch_excluded_roots(&graph));
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..REFRESHES {
+            std::hint::black_box(watch_excluded_roots(std::hint::black_box(&graph)));
+        }
+        let heap = dhat::HeapStats::get();
+
+        eprintln!(
+            "{REFRESHES} excluded-root refreshes: {} heap blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
+        );
+        assert!(
+            heap.total_blocks <= MAX_BLOCKS,
+            "excluded-root refreshes allocated too many blocks: {heap:?}"
+        );
+        assert!(
+            heap.total_bytes <= MAX_BYTES,
+            "excluded-root refreshes allocated too many bytes: {heap:?}"
+        );
     }
 
     #[test]

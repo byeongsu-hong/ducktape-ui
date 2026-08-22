@@ -287,11 +287,19 @@ pub fn filter_items<'a, Value>(
 
 /// Lowercases Unicode and collapses whitespace for predictable matching.
 pub fn normalize_query(value: &str) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+    let mut normalized = String::with_capacity(value.len());
+    for word in value.split_whitespace() {
+        if !normalized.is_empty() {
+            normalized.push(' ');
+        }
+        normalized.push_str(word);
+    }
+    if normalized.is_ascii() {
+        normalized.make_ascii_lowercase();
+        normalized
+    } else {
+        normalized.to_lowercase()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1120,6 +1128,7 @@ mod tests {
     #[test]
     fn normalization_is_unicode_case_aware_and_empty_lists_stay_empty() {
         assert_eq!(normalize_query("  ÅNGSTRÖM\tCAFÉ  "), "ångström café");
+        assert_eq!(normalize_query("ΟΣ"), "ος");
         assert!(command_item("unicode", (), "Ångström Café").matches("ÅNGSTRÖM"));
         assert!(filter_items::<()>(&[], "anything").is_empty());
     }

@@ -673,12 +673,13 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for PopoverWidget<'_,
                 on_event: self.on_event.as_ref(),
             }))
         });
-        let overlays = trigger_overlay
-            .into_iter()
-            .chain(popover_overlay)
-            .collect::<Vec<_>>();
-
-        (!overlays.is_empty()).then(|| overlay::Group::with_children(overlays).overlay())
+        match (trigger_overlay, popover_overlay) {
+            (None, None) => None,
+            (Some(overlay), None) | (None, Some(overlay)) => Some(overlay),
+            (Some(trigger), Some(popover)) => {
+                Some(overlay::Group::with_children(vec![trigger, popover]).overlay())
+            }
+        }
     }
 }
 

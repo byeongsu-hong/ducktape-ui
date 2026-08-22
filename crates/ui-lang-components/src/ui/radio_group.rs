@@ -186,13 +186,11 @@ where
         });
 
         match orientation {
-            RadioOrientation::Horizontal => controls
-                .fold(Row::new(), Row::push)
+            RadioOrientation::Horizontal => Row::with_children(controls)
                 .spacing(theme.spacing.xs)
                 .align_y(Alignment::Center)
                 .into(),
-            RadioOrientation::Vertical => controls
-                .fold(Column::new(), Column::push)
+            RadioOrientation::Vertical => Column::with_children(controls)
                 .spacing(theme.spacing.xs)
                 .into(),
         }

@@ -3,6 +3,7 @@
 
 use super::{BundleMeta, icon, path, setting, tool};
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_TIMESTAMP_URL: &str = "http://timestamp.digicert.com";
@@ -152,23 +153,21 @@ fn product_version(version: &str) -> Result<String, String> {
 /// same across releases while differing between applications. Deriving it from
 /// the bundle identifier gives both without a value to keep in a file.
 fn upgrade_code(identifier: &str) -> String {
-    let digest = Sha256::digest(format!("ice-bundle-upgrade-code:{identifier}").as_bytes());
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    let hex = bytes
-        .iter()
-        .map(|byte| format!("{byte:02X}"))
-        .collect::<String>();
-    format!(
-        "{}-{}-{}-{}-{}",
-        &hex[0..8],
-        &hex[8..12],
-        &hex[12..16],
-        &hex[16..20],
-        &hex[20..32]
-    )
+    let mut hasher = Sha256::new();
+    hasher.update(b"ice-bundle-upgrade-code:");
+    hasher.update(identifier.as_bytes());
+    let mut digest = hasher.finalize();
+    digest[6] = (digest[6] & 0x0f) | 0x40;
+    digest[8] = (digest[8] & 0x3f) | 0x80;
+
+    let mut code = String::with_capacity(36);
+    for (index, byte) in digest[..16].iter().enumerate() {
+        if matches!(index, 4 | 6 | 8 | 10) {
+            code.push('-');
+        }
+        write!(code, "{byte:02X}").expect("writing to a String cannot fail");
+    }
+    code
 }
 
 fn escape(value: &str) -> String {
@@ -302,6 +301,22 @@ mod tests {
         );
         assert_eq!(&code[14..15], "4", "the version field");
         assert!(matches!(&code[19..20], "8" | "9" | "A" | "B"), "{code}");
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_upgrade_code_allocates_only_its_output() {
+        const CODES: u64 = 100;
+
+        let expected = upgrade_code("dev.ducktape.ui.showcase");
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..CODES {
+            assert_eq!(upgrade_code("dev.ducktape.ui.showcase"), expected);
+        }
+        let stats = dhat::HeapStats::get();
+
+        assert_eq!(stats.total_blocks, CODES, "{stats:?}");
+        assert_eq!(stats.total_bytes, CODES * 36, "{stats:?}");
     }
 
     #[test]

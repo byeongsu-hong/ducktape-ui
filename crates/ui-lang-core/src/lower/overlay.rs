@@ -51,12 +51,12 @@ impl Lowerer {
             }
         }
 
-        let routes = crate::ast::overlay_routes(options);
+        let routes = options.dismiss.as_ref();
         let mut route = 0usize;
         let dismiss = self.lower_optional_interaction_route(
             &options.dismiss,
             &checked,
-            &routes,
+            routes.as_slice(),
             &mut route,
             id,
             scope,

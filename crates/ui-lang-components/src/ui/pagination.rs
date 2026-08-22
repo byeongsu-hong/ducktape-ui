@@ -21,8 +21,10 @@ pub fn pagination<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    items.into_iter().fold(
-        Row::new()
+    let items = items.into_iter();
+    let capacity = items.size_hint().0;
+    items.fold(
+        Row::with_capacity(capacity)
             .spacing(theme.spacing.xs)
             .align_y(Alignment::Center),
         |row, item| match item {
@@ -52,8 +54,10 @@ pub fn pagination_with_content<'a, Message>(
 where
     Message: 'a,
 {
-    items.into_iter().fold(
-        Row::new()
+    let items = items.into_iter();
+    let capacity = items.size_hint().0;
+    items.fold(
+        Row::with_capacity(capacity)
             .spacing(theme.spacing.xs)
             .align_y(Alignment::Center),
         |row, item| row.push(content(item)),

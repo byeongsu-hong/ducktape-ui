@@ -895,7 +895,7 @@ where
         let settings_updated = settings_changed && !state.pointer.is_dragging();
         if settings_updated {
             state.highlighter.update(&self.highlighter_settings);
-            state.settings = self.highlighter_settings.clone();
+            state.settings.clone_from(&self.highlighter_settings);
         }
 
         let preedit_changed = state.shaped_preedit != state.preedit;

@@ -82,7 +82,18 @@ impl<Id: Clone + Eq> TabsState<Id> {
 
     /// Applies the selection and roving-focus state carried by an event.
     pub fn apply(&mut self, event: &TabsEvent<Id>) -> bool {
-        let previous = self.clone();
+        let unchanged = match event {
+            TabsEvent::Select(id) => {
+                self.selected.as_ref() == Some(id) && self.focused.as_ref() == Some(id)
+            }
+            TabsEvent::Navigate { target, select, .. } => {
+                self.focused.as_ref() == Some(target)
+                    && (!select || self.selected.as_ref() == Some(target))
+            }
+        };
+        if unchanged {
+            return false;
+        }
 
         match event {
             TabsEvent::Select(id) => self.select(id.clone()),
@@ -94,7 +105,7 @@ impl<Id: Clone + Eq> TabsState<Id> {
             }
         }
 
-        *self != previous
+        true
     }
 }
 

@@ -700,17 +700,16 @@ fn parse_review(args: &[String]) -> Result<ReviewOptions, String> {
         }
         let value = args
             .get(index + 1)
-            .ok_or_else(|| format!("{flag} requires a value"))?
-            .clone();
+            .ok_or_else(|| format!("{flag} requires a value"))?;
         match flag {
-            "--package" => set_once(&mut options.package, value, flag)?,
-            "--output" => set_once(&mut options.output, value.into(), flag)?,
-            "--baseline" => set_once(&mut options.baseline, value.into(), flag)?,
+            "--package" => set_once(&mut options.package, value.clone(), flag)?,
+            "--output" => set_once(&mut options.output, value.clone().into(), flag)?,
+            "--baseline" => set_once(&mut options.baseline, value.clone().into(), flag)?,
             "--test" => {
-                if options.tests.contains(&value) {
+                if options.tests.contains(value) {
                     return Err(format!("duplicate `--test {value}`"));
                 }
-                options.tests.push(value);
+                options.tests.push(value.clone());
             }
             "--pixel-threshold" if !seen_pixel => {
                 options.thresholds.pixel = value
@@ -719,11 +718,11 @@ fn parse_review(args: &[String]) -> Result<ReviewOptions, String> {
                 seen_pixel = true;
             }
             "--max-changed-ratio" if !seen_ratio => {
-                options.thresholds.max_changed_ratio = unit_f64(flag, &value)?;
+                options.thresholds.max_changed_ratio = unit_f64(flag, value)?;
                 seen_ratio = true;
             }
             "--value-tolerance" if !seen_value => {
-                options.thresholds.value = nonnegative_f64(flag, &value)?;
+                options.thresholds.value = nonnegative_f64(flag, value)?;
                 seen_value = true;
             }
             "--pixel-threshold" | "--max-changed-ratio" | "--value-tolerance" => {
@@ -1401,6 +1400,34 @@ mod tests {
         let tests = [test_decl("narrow"), test_decl("wide")];
         assert_eq!(selected_tests(&tests, &[]).unwrap(), ["narrow", "wide"]);
         assert!(selected_tests(&tests, &["missing".into()]).is_err());
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn allocation_contract_review_thresholds_borrow_argument_values() {
+        const RUNS: usize = 256;
+        let args = [
+            "app.ice".into(),
+            "--pixel-threshold".into(),
+            "5".into(),
+            "--max-changed-ratio".into(),
+            "0.25".into(),
+            "--value-tolerance".into(),
+            "1.5".into(),
+        ];
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..RUNS {
+            std::hint::black_box(parse_review(&args).unwrap());
+        }
+        let stats = dhat::HeapStats::get();
+
+        assert_eq!(stats.total_blocks, 256, "{stats:?}");
+        assert_eq!(stats.total_bytes, 1_792, "{stats:?}");
+        eprintln!(
+            "{RUNS} threshold parses: {} heap blocks / {} bytes",
+            stats.total_blocks, stats.total_bytes
+        );
     }
 
     #[test]

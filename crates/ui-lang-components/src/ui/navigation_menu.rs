@@ -608,18 +608,17 @@ where
         }
 
         let logical_to_visual = logical_to_visual_map(infos.len(), orientation, self.direction);
-        let visual_triggers = match (orientation, self.direction) {
-            (NavigationMenuOrientation::Horizontal, Direction::RightToLeft) => {
-                triggers.into_iter().rev().collect()
-            }
-            _ => triggers,
-        };
+        if orientation == NavigationMenuOrientation::Horizontal
+            && self.direction == Direction::RightToLeft
+        {
+            triggers.reverse();
+        }
         let list: Element<'a, Message> = match orientation {
-            NavigationMenuOrientation::Horizontal => Row::with_children(visual_triggers)
+            NavigationMenuOrientation::Horizontal => Row::with_children(triggers)
                 .spacing(4)
                 .align_y(IcedAlignment::Center)
                 .into(),
-            NavigationMenuOrientation::Vertical => Column::with_children(visual_triggers)
+            NavigationMenuOrientation::Vertical => Column::with_children(triggers)
                 .spacing(2)
                 .width(Length::Fill)
                 .into(),

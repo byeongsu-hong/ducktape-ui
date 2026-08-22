@@ -75,17 +75,19 @@ impl CompositionDocument {
         let cursor_offset = selection.as_ref().map_or(display_range.end, |selection| {
             display_lines.offset(selection.end)
         });
+        let range = (
+            display_lines.position(display_range.start),
+            display_lines.position(display_range.end),
+        );
+        let cursor = display_lines.position(cursor_offset);
         let layout = CompositionLayout {
             source_lines,
-            display_lines: display_lines.clone(),
+            display_lines,
             source_range,
-            display_range: display_range.clone(),
-            range: (
-                display_lines.position(display_range.start),
-                display_lines.position(display_range.end),
-            ),
+            display_range,
+            range,
             selection: selection.map(|selection| (selection.start, selection.end)),
-            cursor: display_lines.position(cursor_offset),
+            cursor,
             cursor_visible: preedit.selection.is_some(),
         };
 

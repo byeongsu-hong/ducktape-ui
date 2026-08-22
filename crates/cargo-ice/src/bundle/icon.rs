@@ -60,12 +60,11 @@ pub(super) fn ico(svg: &[u8]) -> Result<Vec<u8>, String> {
         .map(|size| png_of(&tree, *size))
         .collect::<Result<Vec<_>, _>>()?;
     let count = u16::try_from(images.len()).map_err(|_| "too many icon sizes".to_owned())?;
-    let mut directory = Vec::new();
-    directory.extend_from_slice(&0u16.to_le_bytes());
-    directory.extend_from_slice(&1u16.to_le_bytes());
-    directory.extend_from_slice(&count.to_le_bytes());
-    let mut body = Vec::new();
     let mut offset = 6 + 16 * images.len();
+    let mut ico = Vec::with_capacity(offset + images.iter().map(Vec::len).sum::<usize>());
+    ico.extend_from_slice(&0u16.to_le_bytes());
+    ico.extend_from_slice(&1u16.to_le_bytes());
+    ico.extend_from_slice(&count.to_le_bytes());
     for (size, png) in ICO_SIZES.iter().zip(&images) {
         // A 256-pixel entry records its size as zero; the field is one byte.
         let extent = u8::try_from(size % 256).expect("an icon size below 256 after wrapping");
@@ -73,16 +72,17 @@ pub(super) fn ico(svg: &[u8]) -> Result<Vec<u8>, String> {
             .map_err(|_| format!("the {size}x{size} icon is too large for an .ico entry"))?;
         let start =
             u32::try_from(offset).map_err(|_| "the rendered icon is too large".to_owned())?;
-        directory.extend_from_slice(&[extent, extent, 0, 0]);
-        directory.extend_from_slice(&1u16.to_le_bytes());
-        directory.extend_from_slice(&32u16.to_le_bytes());
-        directory.extend_from_slice(&length.to_le_bytes());
-        directory.extend_from_slice(&start.to_le_bytes());
+        ico.extend_from_slice(&[extent, extent, 0, 0]);
+        ico.extend_from_slice(&1u16.to_le_bytes());
+        ico.extend_from_slice(&32u16.to_le_bytes());
+        ico.extend_from_slice(&length.to_le_bytes());
+        ico.extend_from_slice(&start.to_le_bytes());
         offset += png.len();
-        body.extend_from_slice(png);
     }
-    directory.extend_from_slice(&body);
-    Ok(directory)
+    for png in images {
+        ico.extend_from_slice(&png);
+    }
+    Ok(ico)
 }
 
 pub(super) fn png(svg: &[u8], size: u32) -> Result<Vec<u8>, String> {
@@ -208,6 +208,36 @@ mod tests {
         let end = u32::from_le_bytes(ico[last + 12..last + 16].try_into().unwrap()) as usize
             + u32::from_le_bytes(ico[last + 8..last + 12].try_into().unwrap()) as usize;
         assert_eq!(end, ico.len(), "the images must tile the file exactly");
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_ico_reuses_output_storage() {
+        const RENDERS: usize = 16;
+        const MAX_BLOCKS: u64 = 8_448;
+        const MAX_BYTES: u64 = 22_559_744;
+
+        let source = source();
+        drop(ico(&source).expect("warm the icon renderer"));
+
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..RENDERS {
+            std::hint::black_box(ico(std::hint::black_box(&source)).expect("render the icon"));
+        }
+        let heap = dhat::HeapStats::get();
+
+        eprintln!(
+            "{RENDERS} ICO renders: {} heap blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
+        );
+        assert!(
+            heap.total_blocks <= MAX_BLOCKS,
+            "ICO rendering allocated too many blocks: {heap:?}"
+        );
+        assert!(
+            heap.total_bytes <= MAX_BYTES,
+            "ICO rendering allocated too many bytes: {heap:?}"
+        );
     }
 
     #[test]

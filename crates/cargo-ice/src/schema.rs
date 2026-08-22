@@ -2978,15 +2978,14 @@ pub fn completion_items() -> Vec<Value> {
 }
 
 pub fn completion_items_for(categories: &[&str]) -> Vec<Value> {
-    COMPLETIONS
-        .iter()
-        .filter(|item| {
-            item.category
-                .split('/')
-                .any(|category| categories.contains(&category))
-        })
-        .map(completion_item)
-        .collect()
+    let matches = |item: &&Completion| {
+        item.category
+            .split('/')
+            .any(|category| categories.contains(&category))
+    };
+    let mut items = Vec::with_capacity(COMPLETIONS.iter().filter(&matches).count());
+    items.extend(COMPLETIONS.iter().filter(matches).map(completion_item));
+    items
 }
 
 #[cfg(test)]
@@ -2994,7 +2993,7 @@ mod tests {
     use super::{
         ACCESSKIT_WINDOWS_VERSION, CAPTURE_SCHEMA_VERSION, COMPLETIONS, ICED_VERSION,
         ICED_WIDGET_VERSION, UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION, completion_items,
-        document,
+        completion_items_for, document,
     };
     use serde_json::json;
     use std::collections::BTreeSet;
@@ -3058,6 +3057,41 @@ mod tests {
         assert_eq!(
             schema["lsp"]["rename"]["definitionOnly"],
             json!(["dotted component descendants", "mount handler"])
+        );
+    }
+
+    #[test]
+    #[ignore = "allocation contract; run alone with --test-threads=1"]
+    fn performance_contract_filtered_completions_use_exact_storage() {
+        const REQUESTS: usize = 256;
+        const MAX_BLOCKS: u64 = 193_280;
+        const MAX_BYTES: u64 = 14_419_456;
+        const CATEGORIES: &[&str] = &[
+            "test configuration",
+            "test statement",
+            "test interaction",
+            "test assertion",
+            "operator",
+        ];
+
+        let expected = completion_items_for(CATEGORIES).len();
+        let _profiler = dhat::Profiler::builder().testing().build();
+        for _ in 0..REQUESTS {
+            std::hint::black_box(completion_items_for(std::hint::black_box(CATEGORIES)));
+        }
+        let heap = dhat::HeapStats::get();
+
+        eprintln!(
+            "{REQUESTS} filtered completion requests ({expected} items): {} heap blocks / {} bytes",
+            heap.total_blocks, heap.total_bytes
+        );
+        assert!(
+            heap.total_blocks <= MAX_BLOCKS,
+            "filtered completions allocated too many blocks: {heap:?}"
+        );
+        assert!(
+            heap.total_bytes <= MAX_BYTES,
+            "filtered completions allocated too many bytes: {heap:?}"
         );
     }
 
