@@ -2724,6 +2724,38 @@ pub(in crate::check) fn build(
     FactsBuilder::new(document, declarations, origins, analyses).build()
 }
 
+/// The per-widget analysis stores were eight parallel maps with one key shape;
+/// the site tag moved into the key so one map, one `retain`, and one leftover
+/// scan serve them all.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum AnalysisSite {
+    Canvas,
+    Media,
+    Tooltip,
+    Float,
+    Pin,
+    Interaction,
+}
+
+impl AnalysisSite {
+    fn label(self) -> &'static str {
+        match self {
+            AnalysisSite::Canvas => "canvas",
+            AnalysisSite::Media => "media",
+            AnalysisSite::Tooltip => "tooltip",
+            AnalysisSite::Float => "float",
+            AnalysisSite::Pin => "pin",
+            AnalysisSite::Interaction => "interaction",
+        }
+    }
+
+    /// Canvases and interaction widgets are the only sites whose expressions
+    /// may carry route payload contracts.
+    fn keeps_routes(self) -> bool {
+        matches!(self, AnalysisSite::Canvas | AnalysisSite::Interaction)
+    }
+}
+
 #[derive(Debug, Default)]
 pub(super) struct CheckedAnalyses {
     entries: HashMap<CheckedExprOwner, ExprTypeAnalysis>,
@@ -2736,14 +2768,8 @@ pub(super) struct CheckedAnalyses {
     pub(super) view_scope_env_full_clones: usize,
     subscriptions: HashMap<SubscriptionId, CheckedSubscriptionAnalysis>,
     test_entries: HashMap<usize, ExprTypeAnalysis>,
-    canvas_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    canvas_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
-    media_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    tooltip_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    float_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    pin_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    interaction_entries: HashMap<(ViewId, usize), ExprTypeAnalysis>,
-    interaction_route_inputs: HashMap<(ViewId, usize), super::expr::CapturedRouteInputs>,
+    site_entries: HashMap<(AnalysisSite, ViewId, usize), ExprTypeAnalysis>,
+    site_route_inputs: HashMap<(AnalysisSite, ViewId, usize), super::expr::CapturedRouteInputs>,
 }
 
 impl CheckedAnalyses {
@@ -2781,14 +2807,22 @@ impl CheckedAnalyses {
             && self.preset_handlers.is_empty()
             && self.subscriptions.is_empty()
             && self.test_entries.is_empty()
-            && self.canvas_entries.is_empty()
-            && self.canvas_route_inputs.is_empty()
-            && self.media_entries.is_empty()
-            && self.tooltip_entries.is_empty()
-            && self.float_entries.is_empty()
-            && self.pin_entries.is_empty()
-            && self.interaction_entries.is_empty()
-            && self.interaction_route_inputs.is_empty()
+            && self.site_entries.is_empty()
+            && self.site_route_inputs.is_empty()
+    }
+
+    fn site_expressions(&self, site: AnalysisSite, view: ViewId) -> usize {
+        self.site_entries
+            .keys()
+            .filter(|(entry, owner, _)| *entry == site && *owner == view)
+            .count()
+    }
+
+    fn site_routes(&self, site: AnalysisSite, view: ViewId) -> usize {
+        self.site_route_inputs
+            .keys()
+            .filter(|(entry, owner, _)| *entry == site && *owner == view)
+            .count()
     }
 
     pub(super) fn insert_subscription(
@@ -2859,243 +2893,72 @@ impl CheckedAnalyses {
                 ));
             }
         }
-        for (key, analysis) in other.canvas_entries {
-            if self.canvas_entries.insert(key, analysis).is_some() {
+        for (key, analysis) in other.site_entries {
+            if self.site_entries.insert(key, analysis).is_some() {
                 return Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "canvas expression was captured more than once",
+                    format!("{} expression was captured more than once", key.0.label()),
                 ));
             }
         }
-        for (key, inputs) in other.canvas_route_inputs {
-            if self.canvas_route_inputs.insert(key, inputs).is_some() {
+        for (key, inputs) in other.site_route_inputs {
+            if self.site_route_inputs.insert(key, inputs).is_some() {
                 return Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "canvas route contract was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.media_entries {
-            if self.media_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "media expression was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.tooltip_entries {
-            if self.tooltip_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "tooltip expression was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.float_entries {
-            if self.float_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "float expression was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.pin_entries {
-            if self.pin_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "pin expression was captured more than once",
-                ));
-            }
-        }
-        for (key, analysis) in other.interaction_entries {
-            if self.interaction_entries.insert(key, analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "interaction expression was captured more than once",
-                ));
-            }
-        }
-        for (key, inputs) in other.interaction_route_inputs {
-            if self.interaction_route_inputs.insert(key, inputs).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "interaction route contract was captured more than once",
+                    format!(
+                        "{} route contract was captured more than once",
+                        key.0.label()
+                    ),
                 ));
             }
         }
         Ok(())
     }
 
-    pub(super) fn retain_canvas(
+    pub(super) fn retain(
         &mut self,
-        canvas: ViewId,
+        site: AnalysisSite,
+        view: ViewId,
         analyses: super::expr::HandlerAnalyses,
     ) -> Result<(), Error> {
+        if !site.keeps_routes() && !analyses.routes.is_empty() {
+            return Err(Error::new(
+                "E196",
+                &Span::line(1),
+                format!(
+                    "{} expression capture unexpectedly retained routes",
+                    site.label()
+                ),
+            ));
+        }
         for (key, analysis) in analyses.expressions {
             if self
-                .canvas_entries
-                .insert((canvas, key), analysis)
+                .site_entries
+                .insert((site, view, key), analysis)
                 .is_some()
             {
                 return Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "canvas expression was captured more than once",
+                    format!("{} expression was captured more than once", site.label()),
                 ));
             }
         }
         for (key, inputs) in analyses.routes {
             if self
-                .canvas_route_inputs
-                .insert((canvas, key), inputs)
+                .site_route_inputs
+                .insert((site, view, key), inputs)
                 .is_some()
             {
                 return Err(Error::new(
                     "E196",
                     &Span::line(1),
-                    "canvas route contract was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_media(
-        &mut self,
-        media: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        if !analyses.routes.is_empty() {
-            return Err(Error::new(
-                "E196",
-                &Span::line(1),
-                "media expression capture unexpectedly retained routes",
-            ));
-        }
-        for (key, analysis) in analyses.expressions {
-            if self.media_entries.insert((media, key), analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "media expression was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_tooltip(
-        &mut self,
-        tooltip: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        if !analyses.routes.is_empty() {
-            return Err(Error::new(
-                "E196",
-                &Span::line(1),
-                "tooltip expression capture unexpectedly retained routes",
-            ));
-        }
-        for (key, analysis) in analyses.expressions {
-            if self
-                .tooltip_entries
-                .insert((tooltip, key), analysis)
-                .is_some()
-            {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "tooltip expression was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_interaction(
-        &mut self,
-        widget: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        for (key, analysis) in analyses.expressions {
-            if self
-                .interaction_entries
-                .insert((widget, key), analysis)
-                .is_some()
-            {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "interaction expression was captured more than once",
-                ));
-            }
-        }
-        for (key, inputs) in analyses.routes {
-            if self
-                .interaction_route_inputs
-                .insert((widget, key), inputs)
-                .is_some()
-            {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "interaction route contract was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_float(
-        &mut self,
-        float: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        if !analyses.routes.is_empty() {
-            return Err(Error::new(
-                "E196",
-                &Span::line(1),
-                "float expression capture unexpectedly retained routes",
-            ));
-        }
-        for (key, analysis) in analyses.expressions {
-            if self.float_entries.insert((float, key), analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "float expression was captured more than once",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn retain_pin(
-        &mut self,
-        pin: ViewId,
-        analyses: super::expr::HandlerAnalyses,
-    ) -> Result<(), Error> {
-        if !analyses.routes.is_empty() {
-            return Err(Error::new(
-                "E196",
-                &Span::line(1),
-                "pin expression capture unexpectedly retained routes",
-            ));
-        }
-        for (key, analysis) in analyses.expressions {
-            if self.pin_entries.insert((pin, key), analysis).is_some() {
-                return Err(Error::new(
-                    "E196",
-                    &Span::line(1),
-                    "pin expression was captured more than once",
+                    format!(
+                        "{} route contract was captured more than once",
+                        site.label()
+                    ),
                 ));
             }
         }
@@ -3373,6 +3236,20 @@ impl<'a> FactsBuilder<'a> {
         );
         self.analyses.handler_entries.clear();
         if !self.analyses.is_empty() {
+            let expressions = |site| {
+                self.analyses
+                    .site_entries
+                    .keys()
+                    .filter(|(entry, _, _)| *entry == site)
+                    .count()
+            };
+            let routes = |site| {
+                self.analyses
+                    .site_route_inputs
+                    .keys()
+                    .filter(|(entry, _, _)| *entry == site)
+                    .count()
+            };
             return Err(self.invariant(
                 &Span::line(1),
                 format!(
@@ -3380,14 +3257,14 @@ impl<'a> FactsBuilder<'a> {
                     self.analyses.entries.len(),
                     self.analyses.subscriptions.len(),
                     self.analyses.test_entries.len(),
-                    self.analyses.canvas_entries.len(),
-                    self.analyses.canvas_route_inputs.len(),
-                    self.analyses.media_entries.len(),
-                    self.analyses.tooltip_entries.len(),
-                    self.analyses.float_entries.len(),
-                    self.analyses.pin_entries.len(),
-                    self.analyses.interaction_entries.len(),
-                    self.analyses.interaction_route_inputs.len(),
+                    expressions(AnalysisSite::Canvas),
+                    routes(AnalysisSite::Canvas),
+                    expressions(AnalysisSite::Media),
+                    expressions(AnalysisSite::Tooltip),
+                    expressions(AnalysisSite::Float),
+                    expressions(AnalysisSite::Pin),
+                    expressions(AnalysisSite::Interaction),
+                    routes(AnalysisSite::Interaction),
                     self.analyses.handler_entries.len(),
                     self.analyses.handler_route_inputs.len(),
                     self.analyses.preset_handlers.len(),
@@ -4155,16 +4032,10 @@ impl<'a> FactsBuilder<'a> {
         }
         let remaining_expressions = self
             .analyses
-            .interaction_entries
-            .keys()
-            .filter(|(owner, _)| *owner == container)
-            .count();
+            .site_expressions(AnalysisSite::Interaction, container);
         let remaining_routes = self
             .analyses
-            .interaction_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == container)
-            .count();
+            .site_routes(AnalysisSite::Interaction, container);
         if remaining_expressions != 0 || remaining_routes != 0 {
             return Err(self.invariant(
                 span,
@@ -5488,16 +5359,10 @@ impl<'a> FactsBuilder<'a> {
         )?;
         let remaining_expressions = self
             .analyses
-            .interaction_entries
-            .keys()
-            .filter(|(owner, _)| *owner == control)
-            .count();
+            .site_expressions(AnalysisSite::Interaction, control);
         let remaining_routes = self
             .analyses
-            .interaction_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == control)
-            .count();
+            .site_routes(AnalysisSite::Interaction, control);
         if remaining_expressions != 0 || remaining_routes != 0 {
             return Err(self.invariant(
                 span,
@@ -5841,8 +5706,12 @@ impl<'a> FactsBuilder<'a> {
             });
             let analysis = self
                 .analyses
-                .media_entries
-                .remove(&(media, super::expr::expr_key(expression)))
+                .site_entries
+                .remove(&(
+                    AnalysisSite::Media,
+                    media,
+                    super::expr::expr_key(expression),
+                ))
                 .ok_or_else(|| {
                     self.invariant(span, "missing authoritative media expression analysis")
                 })?;
@@ -5861,12 +5730,7 @@ impl<'a> FactsBuilder<'a> {
                 origin,
             )?;
         }
-        let remaining = self
-            .analyses
-            .media_entries
-            .keys()
-            .filter(|(owner, _)| *owner == media)
-            .count();
+        let remaining = self.analyses.site_expressions(AnalysisSite::Media, media);
         if remaining != 0 {
             return Err(self.invariant(
                 span,
@@ -5924,8 +5788,12 @@ impl<'a> FactsBuilder<'a> {
             });
             let analysis = self
                 .analyses
-                .tooltip_entries
-                .remove(&(tooltip, super::expr::expr_key(expression)))
+                .site_entries
+                .remove(&(
+                    AnalysisSite::Tooltip,
+                    tooltip,
+                    super::expr::expr_key(expression),
+                ))
                 .ok_or_else(|| {
                     self.invariant(span, "missing authoritative tooltip expression analysis")
                 })?;
@@ -5946,10 +5814,7 @@ impl<'a> FactsBuilder<'a> {
         }
         let remaining = self
             .analyses
-            .tooltip_entries
-            .keys()
-            .filter(|(owner, _)| *owner == tooltip)
-            .count();
+            .site_expressions(AnalysisSite::Tooltip, tooltip);
         if remaining != 0 {
             return Err(self.invariant(
                 span,
@@ -6042,12 +5907,7 @@ impl<'a> FactsBuilder<'a> {
                 parent,
             )?;
         }
-        let remaining = self
-            .analyses
-            .float_entries
-            .keys()
-            .filter(|(owner, _)| *owner == float)
-            .count();
+        let remaining = self.analyses.site_expressions(AnalysisSite::Float, float);
         if remaining != 0 {
             return Err(self.invariant(
                 span,
@@ -6074,8 +5934,12 @@ impl<'a> FactsBuilder<'a> {
         let owner = CheckedExprOwner::Float(FloatExpressionId { float, index });
         let analysis = self
             .analyses
-            .float_entries
-            .remove(&(float, super::expr::expr_key(expression)))
+            .site_entries
+            .remove(&(
+                AnalysisSite::Float,
+                float,
+                super::expr::expr_key(expression),
+            ))
             .ok_or_else(|| {
                 self.invariant(span, "missing authoritative float expression analysis")
             })?;
@@ -6111,12 +5975,7 @@ impl<'a> FactsBuilder<'a> {
         for (index, expression) in roots.iter().enumerate() {
             self.push_pin_expression(pin, index as u32, expression, env, span, parent)?;
         }
-        let remaining = self
-            .analyses
-            .pin_entries
-            .keys()
-            .filter(|(owner, _)| *owner == pin)
-            .count();
+        let remaining = self.analyses.site_expressions(AnalysisSite::Pin, pin);
         if remaining != 0 {
             return Err(self.invariant(
                 span,
@@ -6142,8 +6001,8 @@ impl<'a> FactsBuilder<'a> {
         let owner = CheckedExprOwner::Pin(PinExpressionId { pin, index });
         let analysis = self
             .analyses
-            .pin_entries
-            .remove(&(pin, super::expr::expr_key(expression)))
+            .site_entries
+            .remove(&(AnalysisSite::Pin, pin, super::expr::expr_key(expression)))
             .ok_or_else(|| self.invariant(span, "missing authoritative pin expression analysis"))?;
         record_fact_metric!(self.facts.metrics.view_analysis_passes += 1);
         self.record_analysis_metrics(&analysis);
@@ -6255,16 +6114,8 @@ impl<'a> FactsBuilder<'a> {
         }
         let remaining_expressions = self
             .analyses
-            .interaction_entries
-            .keys()
-            .filter(|(owner, _)| *owner == widget)
-            .count();
-        let remaining_routes = self
-            .analyses
-            .interaction_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == widget)
-            .count();
+            .site_expressions(AnalysisSite::Interaction, widget);
+        let remaining_routes = self.analyses.site_routes(AnalysisSite::Interaction, widget);
         if remaining_expressions != 0 || remaining_routes != 0 {
             return Err(self.invariant(
                 span,
@@ -6306,8 +6157,12 @@ impl<'a> FactsBuilder<'a> {
         let id = InteractionRouteId { widget, index };
         let inputs = self
             .analyses
-            .interaction_route_inputs
-            .remove(&(widget, std::ptr::from_ref(route).addr()))
+            .site_route_inputs
+            .remove(&(
+                AnalysisSite::Interaction,
+                widget,
+                std::ptr::from_ref(route).addr(),
+            ))
             .ok_or_else(|| {
                 self.invariant(
                     &route.span,
@@ -6438,8 +6293,12 @@ impl<'a> FactsBuilder<'a> {
         *index += 1;
         let analysis = self
             .analyses
-            .interaction_entries
-            .remove(&(widget, super::expr::expr_key(expression)))
+            .site_entries
+            .remove(&(
+                AnalysisSite::Interaction,
+                widget,
+                super::expr::expr_key(expression),
+            ))
             .ok_or_else(|| {
                 self.invariant(
                     span,
@@ -7112,16 +6971,8 @@ impl<'a> FactsBuilder<'a> {
 
         let remaining_expressions = self
             .analyses
-            .interaction_entries
-            .keys()
-            .filter(|(owner, _)| *owner == pane)
-            .count();
-        let remaining_routes = self
-            .analyses
-            .interaction_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == pane)
-            .count();
+            .site_expressions(AnalysisSite::Interaction, pane);
+        let remaining_routes = self.analyses.site_routes(AnalysisSite::Interaction, pane);
         if remaining_expressions != 0 || remaining_routes != 0 {
             return Err(self.invariant(span, "pane grid left authoritative analyses unconsumed"));
         }
@@ -7350,26 +7201,18 @@ impl<'a> FactsBuilder<'a> {
             }
         }
 
-        let remaining_expressions = self
-            .analyses
-            .canvas_entries
-            .keys()
-            .filter(|(owner, _)| *owner == canvas)
-            .count();
-        let remaining_routes = self
-            .analyses
-            .canvas_route_inputs
-            .keys()
-            .filter(|(owner, _)| *owner == canvas)
-            .count();
+        let remaining_expressions = self.analyses.site_expressions(AnalysisSite::Canvas, canvas);
+        let remaining_routes = self.analyses.site_routes(AnalysisSite::Canvas, canvas);
         if remaining_expressions != 0 || remaining_routes != 0 {
             let remaining_sources =
                 crate::ast::canvas_expression_roots(options, locals, commands, events)
                     .into_iter()
                     .filter(|expression| {
-                        self.analyses
-                            .canvas_entries
-                            .contains_key(&(canvas, super::expr::expr_key(expression)))
+                        self.analyses.site_entries.contains_key(&(
+                            AnalysisSite::Canvas,
+                            canvas,
+                            super::expr::expr_key(expression),
+                        ))
                     })
                     .map(|expression| format!("{expression:?}"))
                     .collect::<Vec<_>>()
@@ -7501,8 +7344,12 @@ impl<'a> FactsBuilder<'a> {
             .ok_or_else(|| self.invariant(&route.span, "canvas route has no declaration"))?;
         let inputs = self
             .analyses
-            .canvas_route_inputs
-            .remove(&(canvas, std::ptr::from_ref(route).addr()))
+            .site_route_inputs
+            .remove(&(
+                AnalysisSite::Canvas,
+                canvas,
+                std::ptr::from_ref(route).addr(),
+            ))
             .ok_or_else(|| {
                 self.invariant(&route.span, "canvas route has no retained payload contract")
             })?;
@@ -7629,8 +7476,12 @@ impl<'a> FactsBuilder<'a> {
         *operand += 1;
         let analysis = self
             .analyses
-            .canvas_entries
-            .remove(&(canvas, super::expr::expr_key(expression)))
+            .site_entries
+            .remove(&(
+                AnalysisSite::Canvas,
+                canvas,
+                super::expr::expr_key(expression),
+            ))
             .ok_or_else(|| {
                 self.invariant(span, "missing authoritative canvas expression analysis")
             })?;
