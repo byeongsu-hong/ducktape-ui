@@ -731,10 +731,6 @@ impl Lowerer {
     }
 }
 
-fn valid_positive_f32(value: f64) -> bool {
-    value.is_finite() && value > 0.0 && value <= f32::MAX as f64
-}
-
 fn resolve_theme(value: TestTheme) -> ResolvedTestTheme {
     match value {
         TestTheme::Light => ResolvedTestTheme::Light,
