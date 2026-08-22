@@ -8,12 +8,6 @@ pub(crate) struct RecipeId(pub(super) u32);
 pub(crate) struct StyleUseId(pub(super) u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct StyleTargetId(pub(super) u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct StyleVariantId(pub(super) u32);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct ThemeContractId(pub(super) u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -36,12 +30,6 @@ pub(crate) enum ResolvedStyleTargetKind {
     Button,
     PaneContent,
     PaneTitle,
-}
-
-impl ResolvedStyleTargetKind {
-    fn id(self) -> StyleTargetId {
-        StyleTargetId(self as u32)
-    }
 }
 
 impl From<StyleRecipeTarget> for ResolvedStyleTargetKind {
@@ -68,12 +56,6 @@ pub(crate) enum ResolvedStyleVariantKind {
     Focused,
     Disabled,
     FocusVisible,
-}
-
-impl ResolvedStyleVariantKind {
-    fn id(self) -> StyleVariantId {
-        StyleVariantId(self as u32)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -126,7 +108,7 @@ pub(crate) enum ResolvedUtilityValue {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedUtility {
-    pub(crate) variant: StyleVariantId,
+    pub(crate) variant: ResolvedStyleVariantKind,
     pub(crate) property: ResolvedStyleProperty,
     pub(crate) value: ResolvedUtilityValue,
 }
@@ -136,7 +118,7 @@ pub(crate) struct ResolvedRecipe {
     pub(crate) id: RecipeId,
     #[cfg(test)]
     pub(crate) name: String,
-    pub(crate) target: StyleTargetId,
+    pub(crate) target: ResolvedStyleTargetKind,
     #[cfg(test)]
     pub(crate) base: Option<RecipeId>,
     #[cfg(test)]
@@ -186,83 +168,109 @@ impl ResolvedStyle {
     fn apply(&mut self, utility: &ResolvedUtility) {
         use ResolvedStyleProperty as Property;
         use ResolvedStyleVariantKind as Variant;
-        let variant = match utility.variant.0 {
-            0 => Variant::Base,
-            1 => Variant::Hovered,
-            2 => Variant::Pressed,
-            3 => Variant::Focused,
-            4 => Variant::Disabled,
-            5 => Variant::FocusVisible,
-            _ => unreachable!("style variants are closed during lowering"),
-        };
-        match (variant, utility.property, &utility.value) {
-            (Variant::Base, Property::WidthFill, _) => self.width_fill = true,
-            (Variant::Base, Property::HeightFill, _) => self.height_fill = true,
+        match (utility.variant, utility.property, &utility.value) {
+            (Variant::Base, Property::WidthFill, _) => {
+                self.width_fill = true;
+                self.set_properties |= 1 << 0;
+            }
+            (Variant::Base, Property::HeightFill, _) => {
+                self.height_fill = true;
+                self.set_properties |= 1 << 1;
+            }
             (Variant::Base, Property::MaxWidth, ResolvedUtilityValue::Pixels(value)) => {
-                self.max_width = Some(*value)
+                self.max_width = Some(*value);
+                self.set_properties |= 1 << 2;
             }
             (Variant::Base, Property::Padding, ResolvedUtilityValue::Padding(value)) => {
-                for (slot, value) in self.padding.iter_mut().zip(value) {
+                for (index, (slot, value)) in self.padding.iter_mut().zip(value).enumerate() {
                     if let Some(value) = value {
                         *slot = *value;
+                        self.set_properties |= 1 << (3 + index);
                     }
                 }
             }
             (Variant::Base, Property::Gap, ResolvedUtilityValue::Pixels(value)) => {
-                self.gap = Some(*value)
+                self.gap = Some(*value);
+                self.set_properties |= 1 << 7;
             }
-            (Variant::Base, Property::ItemsCenter, _) => self.items_center = true,
-            (Variant::Base, Property::SelfCenter, _) => self.self_center = true,
-            (Variant::Base, Property::Clip, _) => self.clip = true,
+            (Variant::Base, Property::ItemsCenter, _) => {
+                self.items_center = true;
+                self.set_properties |= 1 << 8;
+            }
+            (Variant::Base, Property::SelfCenter, _) => {
+                self.self_center = true;
+                self.set_properties |= 1 << 9;
+            }
+            (Variant::Base, Property::Clip, _) => {
+                self.clip = true;
+                self.set_properties |= 1 << 10;
+            }
             (Variant::Base, Property::TextSize, ResolvedUtilityValue::TextSize(value)) => {
-                self.text_size = Some(*value)
+                self.text_size = Some(*value);
+                self.set_properties |= 1 << 11;
             }
             (Variant::Base, Property::TextLineHeight, ResolvedUtilityValue::LineHeight(value)) => {
-                self.text_line_height = Some(*value)
+                self.text_line_height = Some(*value);
+                self.set_properties |= 1 << 12;
             }
-            (Variant::Base, Property::FontMonospace, _) => self.font_monospace = true,
+            (Variant::Base, Property::FontMonospace, _) => {
+                self.font_monospace = true;
+                self.set_properties |= 1 << 13;
+            }
             (Variant::Base, Property::FontWeight, ResolvedUtilityValue::FontWeight(value)) => {
-                self.font_weight = Some(*value)
+                self.font_weight = Some(*value);
+                self.set_properties |= 1 << 14;
             }
             (Variant::Base, Property::TextColor, ResolvedUtilityValue::Color(value)) => {
-                self.text_color = Some(value.clone())
+                self.text_color = Some(value.clone());
+                self.set_properties |= 1 << 15;
             }
             (Variant::Base, Property::Background, ResolvedUtilityValue::Color(value)) => {
-                self.background = Some(value.clone())
+                self.background = Some(value.clone());
+                self.set_properties |= 1 << 16;
             }
             (Variant::Hovered, Property::Background, ResolvedUtilityValue::Color(value)) => {
-                self.hover_background = Some(value.clone())
+                self.hover_background = Some(value.clone());
+                self.set_properties |= 1 << 17;
             }
             (Variant::Pressed, Property::Background, ResolvedUtilityValue::Color(value)) => {
-                self.pressed_background = Some(value.clone())
+                self.pressed_background = Some(value.clone());
+                self.set_properties |= 1 << 18;
             }
             (Variant::Disabled, Property::Background, ResolvedUtilityValue::Color(value)) => {
-                self.disabled_background = Some(value.clone())
+                self.disabled_background = Some(value.clone());
+                self.set_properties |= 1 << 19;
             }
             (Variant::Disabled, Property::TextColor, ResolvedUtilityValue::Color(value)) => {
-                self.disabled_text_color = Some(value.clone())
+                self.disabled_text_color = Some(value.clone());
+                self.set_properties |= 1 << 20;
             }
             (Variant::Base, Property::BorderColor, ResolvedUtilityValue::Color(value)) => {
-                self.border_color = Some(value.clone())
+                self.border_color = Some(value.clone());
+                self.set_properties |= 1 << 21;
             }
             (Variant::Focused, Property::BorderColor, ResolvedUtilityValue::Color(value)) => {
-                self.focus_border_color = Some(value.clone())
+                self.focus_border_color = Some(value.clone());
+                self.set_properties |= 1 << 22;
             }
             (Variant::FocusVisible, Property::BorderColor, ResolvedUtilityValue::Color(value)) => {
-                self.focus_visible_border_color = Some(value.clone())
+                self.focus_visible_border_color = Some(value.clone());
+                self.set_properties |= 1 << 26;
             }
             (Variant::Base, Property::BorderWidth, ResolvedUtilityValue::Pixels(value)) => {
-                self.border_width = *value
+                self.border_width = *value;
+                self.set_properties |= 1 << 23;
             }
             (Variant::Base, Property::Radius, ResolvedUtilityValue::Pixels(value)) => {
-                self.radius = *value
+                self.radius = *value;
+                self.set_properties |= 1 << 24;
             }
             (Variant::Disabled, Property::Opacity, ResolvedUtilityValue::Opacity(value)) => {
-                self.disabled_opacity = Some(*value)
+                self.disabled_opacity = Some(*value);
+                self.set_properties |= 1 << 25;
             }
             _ => unreachable!("checker-approved utility has a canonical style assignment"),
         }
-        self.set_properties |= utility_property_mask(utility);
     }
 
     fn overlay(&mut self, other: &Self) {
@@ -305,56 +313,6 @@ impl ResolvedStyle {
     }
 }
 
-fn utility_property_mask(utility: &ResolvedUtility) -> u64 {
-    use ResolvedStyleProperty as Property;
-    use ResolvedStyleVariantKind as Variant;
-    let variant = match utility.variant.0 {
-        0 => Variant::Base,
-        1 => Variant::Hovered,
-        2 => Variant::Pressed,
-        3 => Variant::Focused,
-        4 => Variant::Disabled,
-        5 => Variant::FocusVisible,
-        _ => unreachable!("style variants are closed during lowering"),
-    };
-    let bit = match (variant, utility.property) {
-        (Variant::Base, Property::WidthFill) => 0,
-        (Variant::Base, Property::HeightFill) => 1,
-        (Variant::Base, Property::MaxWidth) => 2,
-        (Variant::Base, Property::Gap) => 7,
-        (Variant::Base, Property::ItemsCenter) => 8,
-        (Variant::Base, Property::SelfCenter) => 9,
-        (Variant::Base, Property::Clip) => 10,
-        (Variant::Base, Property::TextSize) => 11,
-        (Variant::Base, Property::TextLineHeight) => 12,
-        (Variant::Base, Property::FontMonospace) => 13,
-        (Variant::Base, Property::FontWeight) => 14,
-        (Variant::Base, Property::TextColor) => 15,
-        (Variant::Base, Property::Background) => 16,
-        (Variant::Hovered, Property::Background) => 17,
-        (Variant::Pressed, Property::Background) => 18,
-        (Variant::Disabled, Property::Background) => 19,
-        (Variant::Disabled, Property::TextColor) => 20,
-        (Variant::Base, Property::BorderColor) => 21,
-        (Variant::Focused, Property::BorderColor) => 22,
-        (Variant::Base, Property::BorderWidth) => 23,
-        (Variant::Base, Property::Radius) => 24,
-        (Variant::Disabled, Property::Opacity) => 25,
-        (Variant::FocusVisible, Property::BorderColor) => 26,
-        (Variant::Base, Property::Padding) => {
-            let ResolvedUtilityValue::Padding(values) = &utility.value else {
-                unreachable!("padding property has a padding value")
-            };
-            return values
-                .iter()
-                .enumerate()
-                .filter(|(_, value)| value.is_some())
-                .fold(0, |mask, (index, _)| mask | (1 << (3 + index)));
-        }
-        _ => unreachable!("checker-approved utility has a canonical property mask"),
-    };
-    1 << bit
-}
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedStyleUse {
     #[cfg(test)]
@@ -841,7 +799,7 @@ impl Lowerer {
                     id: RecipeId(index as u32),
                     #[cfg(test)]
                     name: recipe.name.clone(),
-                    target: ResolvedStyleTargetKind::from(recipe.target).id(),
+                    target: ResolvedStyleTargetKind::from(recipe.target),
                     #[cfg(test)]
                     base: recipe
                         .base
@@ -1139,7 +1097,7 @@ impl Lowerer {
             _ => return Err(self.invariant(span, format!("unknown checked utility `{source}`"))),
         };
         Ok(ResolvedUtility {
-            variant: variant.id(),
+            variant,
             property: pair.0,
             value: pair.1,
         })
@@ -1193,7 +1151,7 @@ impl Lowerer {
         for source in styles {
             if let Some(id) = self.styles.recipe_ids.get(source).copied() {
                 let recipe = &self.styles.recipes[id.0 as usize];
-                if recipe.target != target.id() {
+                if recipe.target != target {
                     return Err(self.invariant(
                         span,
                         format!("checked recipe `{source}` has an incompatible target"),

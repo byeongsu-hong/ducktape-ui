@@ -921,6 +921,21 @@ fn unknown_widget_target_hint(label: &str, operation_ids: &[WidgetIdPath]) -> St
     )
 }
 
+pub(in crate::check) fn widget_paths_match(expected: &WidgetIdPath, actual: &WidgetIdPath) -> bool {
+    expected.len() == actual.len()
+        && expected
+            .iter()
+            .zip(actual)
+            .all(|((expected_name, expected_key), (name, key))| {
+                expected_name == name
+                    && match (expected_key, key) {
+                        (None, None) => true,
+                        (Some(expected), Some(actual)) => compatible(expected, actual),
+                        _ => false,
+                    }
+            })
+}
+
 pub(in crate::check) fn check_widget_target(
     target: &WidgetTarget,
     env: &dyn ExprTypeEnv,
@@ -959,35 +974,13 @@ pub(in crate::check) fn check_widget_target(
             ));
         }
     }
-    if operation_ids.iter().any(|expected| {
-        expected.len() == actual.len()
-            && expected
-                .iter()
-                .zip(&actual)
-                .all(|((expected_name, expected_key), (name, key))| {
-                    expected_name == name
-                        && match (expected_key, key) {
-                            (None, None) => true,
-                            (Some(expected), Some(actual)) => compatible(expected, actual),
-                            _ => false,
-                        }
-                })
-    }) {
+    if operation_ids
+        .iter()
+        .any(|expected| widget_paths_match(expected, &actual))
+    {
         return Ok(());
     }
-    let label = format!(
-        "#{}",
-        target
-            .segments
-            .iter()
-            .map(|segment| if segment.key.is_some() {
-                format!("{}(key)", segment.name)
-            } else {
-                segment.name.clone()
-            })
-            .collect::<Vec<_>>()
-            .join("/")
-    );
+    let label = widget_path_label(&actual);
     let same_shape = operation_ids
         .iter()
         .filter(|expected| {

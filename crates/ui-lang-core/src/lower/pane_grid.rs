@@ -19,15 +19,6 @@ pub(crate) enum ResolvedPaneConfiguration {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum ResolvedPaneLength {
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    FixedF64(CheckedExprUseId),
-    FixedLength(CheckedExprUseId),
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct ResolvedPaneGradientStop {
     pub(crate) color: ResolvedThemeColor,
     pub(crate) offset: CheckedExprUseId,
@@ -143,8 +134,8 @@ pub(crate) struct ResolvedPaneGrid {
     pub(crate) id: ViewId,
     pub(crate) name: String,
     pub(crate) configuration: ResolvedPaneConfiguration,
-    pub(crate) width: Option<ResolvedPaneLength>,
-    pub(crate) height: Option<ResolvedPaneLength>,
+    pub(crate) width: Option<ResolvedContainerLength>,
+    pub(crate) height: Option<ResolvedContainerLength>,
     pub(crate) spacing: Option<CheckedExprUseId>,
     pub(crate) min_size: Option<CheckedExprUseId>,
     pub(crate) resize_leeway: Option<CheckedExprUseId>,
@@ -296,17 +287,19 @@ impl Lowerer {
         &self,
         length: &CheckedLength,
         span: &Span,
-    ) -> Result<Option<ResolvedPaneLength>, Error> {
+    ) -> Result<Option<ResolvedContainerLength>, Error> {
         Ok(match length {
             CheckedLength::None => None,
-            CheckedLength::Fill => Some(ResolvedPaneLength::Fill),
-            CheckedLength::FillPortion(portion) => Some(ResolvedPaneLength::FillPortion(*portion)),
-            CheckedLength::Shrink => Some(ResolvedPaneLength::Shrink),
+            CheckedLength::Fill => Some(ResolvedContainerLength::Fill),
+            CheckedLength::FillPortion(portion) => {
+                Some(ResolvedContainerLength::FillPortion(*portion))
+            }
+            CheckedLength::Shrink => Some(ResolvedContainerLength::Shrink),
             CheckedLength::Fixed { expression, source } => {
                 self.require_pane_expression_type(*expression, source, span)?;
                 match source {
-                    Type::F64 => Some(ResolvedPaneLength::FixedF64(*expression)),
-                    Type::Length => Some(ResolvedPaneLength::FixedLength(*expression)),
+                    Type::F64 => Some(ResolvedContainerLength::FixedF64(*expression)),
+                    Type::Length => Some(ResolvedContainerLength::FixedLength(*expression)),
                     _ => return Err(self.invariant(span, "pane length has an invalid type")),
                 }
             }

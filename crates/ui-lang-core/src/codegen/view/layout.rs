@@ -319,7 +319,7 @@ fn render_resolved_regular_layout(
                     write!(
                         body,
                         ".height({})",
-                        resolved_layout_length_code(length, program, env)?
+                        resolved_length_code(length, program, env)?
                     )
                     .unwrap();
                 }
@@ -1143,14 +1143,14 @@ fn append_resolved_layout_dimensions(
         write!(
             code,
             ".{method}({})",
-            resolved_layout_length_code(length, program, env)?
+            resolved_length_code(length, program, env)?
         )
         .unwrap();
     }
     Ok(())
 }
 
-fn resolved_layout_length_code(
+pub(super) fn resolved_length_code(
     length: &ResolvedContainerLength,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,

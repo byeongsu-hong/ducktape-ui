@@ -53,7 +53,7 @@ pub(in crate::codegen) fn render_table(
             write!(
                 code,
                 ".width(::ui_lang_runtime::bounded_fill_length({}, {}))",
-                resolved_table_length_code(width, program, env)?,
+                resolved_length_code(width, program, env)?,
                 columns.len()
             )
             .unwrap();
@@ -85,7 +85,7 @@ pub(in crate::codegen) fn render_table(
         write!(
             code,
             ".width({})",
-            resolved_table_length_code(width, program, env)?
+            resolved_length_code(width, program, env)?
         )
         .unwrap();
     }
@@ -119,27 +119,6 @@ pub(in crate::codegen) fn render_table(
         }
     }
     Ok(format!("{code}.into() }}"))
-}
-
-fn resolved_table_length_code(
-    length: &ResolvedTableLength,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match length {
-        ResolvedTableLength::Fill => "::iced::Fill".into(),
-        ResolvedTableLength::FillPortion(portion) => {
-            format!("::iced::Length::FillPortion({portion})")
-        }
-        ResolvedTableLength::Shrink => "::iced::Shrink".into(),
-        ResolvedTableLength::FixedF64(expression) => format!(
-            "{} as f32",
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        ),
-        ResolvedTableLength::FixedLength(expression) => {
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        }
-    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -231,7 +210,7 @@ pub(in crate::codegen) fn render_keyed_column(
             write!(
                 code,
                 ".{method}({})",
-                resolved_keyed_length_code(length, program, env)?
+                resolved_length_code(length, program, env)?
             )
             .unwrap();
         }
@@ -255,27 +234,6 @@ pub(in crate::codegen) fn render_keyed_column(
         write!(code, ".align_items(::iced::Alignment::{align})").unwrap();
     }
     Ok(format!("{code}; __layout.into() }}"))
-}
-
-fn resolved_keyed_length_code(
-    length: &ResolvedKeyedLength,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match length {
-        ResolvedKeyedLength::Fill => "::iced::Fill".into(),
-        ResolvedKeyedLength::FillPortion(portion) => {
-            format!("::iced::Length::FillPortion({portion})")
-        }
-        ResolvedKeyedLength::Shrink => "::iced::Shrink".into(),
-        ResolvedKeyedLength::FixedF64(expression) => format!(
-            "{} as f32",
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        ),
-        ResolvedKeyedLength::FixedLength(expression) => {
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        }
-    })
 }
 
 fn resolved_keyed_padding_code(

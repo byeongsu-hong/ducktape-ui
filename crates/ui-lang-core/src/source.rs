@@ -49,7 +49,7 @@ pub fn analyze_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
 /// solely so the ordinary semantic checker remains the source of truth.
 pub(crate) fn analyze_interface_file(path: impl AsRef<Path>) -> Result<CheckedDocument, Error> {
     let loaded = load_interface(path.as_ref())?;
-    let document = analyze_interface_loaded(&loaded)?;
+    let document = analyze_loaded_without_assets(&loaded, true)?;
     check_assets(&document, &loaded).map_err(|error| remap_error(error, &loaded))?;
     Ok(document)
 }
@@ -87,11 +87,12 @@ pub fn discover_file_dependencies(path: impl AsRef<Path>) -> Result<Vec<PathBuf>
 /// when a missing font, window icon, or media file is created.
 pub fn discover_file_asset_dependencies(path: impl AsRef<Path>) -> Result<Vec<PathBuf>, Error> {
     let loaded = load(path.as_ref())?;
-    let document = analyze_loaded_without_assets(&loaded)?;
+    let document = analyze_loaded_without_assets(&loaded, false)?;
     Ok(asset_dependencies(&document, &loaded))
 }
 
 /// Analyze an unsaved root buffer while resolving its `use` graph from disk.
+#[cfg(test)]
 pub fn analyze_file_with_source(
     path: impl AsRef<Path>,
     source: &str,
@@ -121,36 +122,19 @@ pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
 
 pub(crate) fn analyze_loaded_without_assets(
     loaded: &LoadedSource,
+    interface: bool,
 ) -> Result<CheckedDocument, Error> {
     let namespaces = loaded
         .origins
         .iter()
         .map(|origin| origin.namespace.clone())
         .collect::<Vec<_>>();
-    let (document, symbols) =
-        parser::parse_with_symbols_and_namespaces(&loaded.source, &namespaces)
-            .map_err(|error| remap_error(error, loaded))?;
-    let document = check::analyze(document).map_err(|error| remap_error(error, loaded))?;
-    Ok(document
-        .with_parsed_symbols(remap_symbols(symbols, loaded))
-        .with_source_origins(
-            loaded
-                .origins
-                .iter()
-                .map(|origin| (origin.path.clone(), origin.line))
-                .collect(),
-        ))
-}
-
-fn analyze_interface_loaded(loaded: &LoadedSource) -> Result<CheckedDocument, Error> {
-    let namespaces = loaded
-        .origins
-        .iter()
-        .map(|origin| origin.namespace.clone())
-        .collect::<Vec<_>>();
-    let (document, symbols) =
+    let (document, symbols) = if interface {
         parser::parse_interface_with_symbols_and_namespaces(&loaded.source, &namespaces)
-            .map_err(|error| remap_error(error, loaded))?;
+    } else {
+        parser::parse_with_symbols_and_namespaces(&loaded.source, &namespaces)
+    }
+    .map_err(|error| remap_error(error, loaded))?;
     let document = check::analyze(document).map_err(|error| remap_error(error, loaded))?;
     Ok(document
         .with_parsed_symbols(remap_symbols(symbols, loaded))

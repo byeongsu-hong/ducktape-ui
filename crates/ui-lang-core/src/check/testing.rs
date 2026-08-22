@@ -917,21 +917,6 @@ fn typed_target_path(
         .collect()
 }
 
-fn widget_paths_match(expected: &WidgetIdPath, actual: &WidgetIdPath) -> bool {
-    expected.len() == actual.len()
-        && expected
-            .iter()
-            .zip(actual)
-            .all(|((expected_name, expected_key), (name, key))| {
-                expected_name == name
-                    && match (expected_key, key) {
-                        (None, None) => true,
-                        (Some(expected), Some(actual)) => compatible(expected, actual),
-                        _ => false,
-                    }
-            })
-}
-
 fn target_label(target: &WidgetTarget) -> String {
     format!(
         "#{}",

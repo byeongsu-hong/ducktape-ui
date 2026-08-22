@@ -130,7 +130,6 @@ pub struct AnalysisMetrics {
     pub root_cache_hits: usize,
     pub speculative_runs: usize,
     pub symbols_indexed: usize,
-    pub codegen_roots: usize,
     pub elapsed: AnalysisTimings,
 }
 
@@ -416,20 +415,11 @@ impl AnalysisDb {
         self.metrics.roots_reused += candidate.metrics.roots_reused;
         self.metrics.root_cache_hits += candidate.metrics.root_cache_hits;
         self.metrics.symbols_indexed += candidate.metrics.symbols_indexed;
-        self.metrics.codegen_roots += candidate.metrics.codegen_roots;
         self.metrics.elapsed.load += candidate.metrics.elapsed.load;
         self.metrics.elapsed.check += candidate.metrics.elapsed.check;
         self.metrics.elapsed.codegen += candidate.metrics.elapsed.codegen;
         self.metrics.speculative_runs += 1 + candidate.metrics.speculative_runs;
         result
-    }
-
-    pub fn parsed_file_count(&self) -> usize {
-        self.parsed_files.len()
-    }
-
-    pub fn checked_root_count(&self) -> usize {
-        self.checked_roots.len()
     }
 
     /// Roots whose checked result is absent or invalid after an input failure.
@@ -646,7 +636,7 @@ impl AnalysisDb {
     }
 
     /// Refresh one disk input. Equal content keeps every checked root reusable.
-    pub fn refresh_file(&mut self, path: impl AsRef<Path>) -> Result<AnalysisInvalidation, Error> {
+    fn refresh_file(&mut self, path: impl AsRef<Path>) -> Result<AnalysisInvalidation, Error> {
         let path = self.normalize_db_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
@@ -755,7 +745,7 @@ impl AnalysisDb {
 
         let started = Instant::now();
         self.metrics.roots_checked += 1;
-        let document = analyze_loaded_without_assets(&graph.loaded);
+        let document = analyze_loaded_without_assets(&graph.loaded, false);
         self.metrics.elapsed.check += started.elapsed();
         let document = document?;
         let asset_dependencies = asset_dependencies(&document, &graph.loaded);
@@ -873,16 +863,6 @@ impl AnalysisDb {
         })
     }
 
-    pub fn analyze_roots(
-        &mut self,
-        roots: impl IntoIterator<Item = impl AsRef<Path>>,
-    ) -> Vec<Result<FileAnalysis, Error>> {
-        roots
-            .into_iter()
-            .map(|root| self.analyze_root(root))
-            .collect()
-    }
-
     /// Publishes a root's view as data without generating any Rust.
     ///
     /// This is the reload path: parse, check, and lower still run — so an edit
@@ -976,7 +956,6 @@ impl AnalysisDb {
             ));
         }
         self.metrics.elapsed.codegen += started.elapsed();
-        self.metrics.codegen_roots += 1;
         Ok(FileCompilation {
             rust,
             dependencies: analysis.dependencies,
@@ -1018,26 +997,22 @@ impl AnalysisDb {
             .remove_entry(root)
             .expect("checked root exists during refresh");
 
-        for (path, previous) in &mut checked.source_stamps {
-            self.metrics.source_stamps_checked += 1;
-            let mut metadata = DiskStamp::read(path, None);
-            metadata.content_hash = previous.content_hash;
-            let current = if content_due || !metadata.same_identity(previous) {
-                self.disk_stamp_with_content(path)
+        for (path, previous, is_source) in checked
+            .source_stamps
+            .iter_mut()
+            .map(|(path, stamp)| (path, stamp, true))
+            .chain(
+                checked
+                    .asset_stamps
+                    .iter_mut()
+                    .map(|(path, stamp)| (path, stamp, false)),
+            )
+        {
+            if is_source {
+                self.metrics.source_stamps_checked += 1;
             } else {
-                metadata
-            };
-            if !current.same_resolved_input(previous)
-                || !current.is_file
-                || current.content_hash != previous.content_hash
-            {
-                self.dirty_roots.insert(root);
-                return Ok(());
+                self.metrics.asset_stamps_checked += 1;
             }
-            *previous = current;
-        }
-        for (path, previous) in &mut checked.asset_stamps {
-            self.metrics.asset_stamps_checked += 1;
             let mut metadata = DiskStamp::read(path, None);
             metadata.content_hash = previous.content_hash;
             let current = if content_due || !metadata.same_identity(previous) {
@@ -1357,51 +1332,16 @@ impl AnalysisDb {
     }
 
     fn replace_dependencies(&mut self, source: PathBuf, next: BTreeSet<PathBuf>) {
-        let previous = if next.is_empty() {
-            self.dependencies.remove(&source)
-        } else {
-            self.dependencies.insert(source.clone(), next.clone())
-        };
-        if let Some(previous) = previous {
-            for dependency in previous.difference(&next) {
-                if let Some(reverse) = self.reverse_dependencies.get_mut(dependency) {
-                    reverse.remove(&source);
-                    if reverse.is_empty() {
-                        self.reverse_dependencies.remove(dependency);
-                    }
-                }
-            }
-        }
-        for dependency in next {
-            self.reverse_dependencies
-                .entry(dependency)
-                .or_default()
-                .insert(source.clone());
-        }
+        replace_index_edges(
+            &mut self.dependencies,
+            &mut self.reverse_dependencies,
+            source,
+            next,
+        );
     }
 
     fn replace_root_assets(&mut self, root: PathBuf, next: BTreeSet<PathBuf>) {
-        let previous = if next.is_empty() {
-            self.root_assets.remove(&root)
-        } else {
-            self.root_assets.insert(root.clone(), next.clone())
-        };
-        if let Some(previous) = previous {
-            for asset in previous.difference(&next) {
-                if let Some(roots) = self.asset_roots.get_mut(asset) {
-                    roots.remove(&root);
-                    if roots.is_empty() {
-                        self.asset_roots.remove(asset);
-                    }
-                }
-            }
-        }
-        for asset in next {
-            self.asset_roots
-                .entry(asset)
-                .or_default()
-                .insert(root.clone());
-        }
+        replace_index_edges(&mut self.root_assets, &mut self.asset_roots, root, next);
     }
 
     fn resolve_import(
@@ -1682,6 +1622,34 @@ impl AnalysisDb {
             metrics: AnalysisMetrics::default(),
             validation_policy: self.validation_policy,
         }
+    }
+}
+
+/// Rewrites one key's forward edges and keeps the reverse index in step, so a
+/// dependency or asset that a root stopped using stops naming that root back.
+fn replace_index_edges(
+    forward: &mut HashMap<PathBuf, BTreeSet<PathBuf>>,
+    reverse: &mut HashMap<PathBuf, BTreeSet<PathBuf>>,
+    key: PathBuf,
+    next: BTreeSet<PathBuf>,
+) {
+    let previous = if next.is_empty() {
+        forward.remove(&key)
+    } else {
+        forward.insert(key.clone(), next.clone())
+    };
+    if let Some(previous) = previous {
+        for edge in previous.difference(&next) {
+            if let Some(sources) = reverse.get_mut(edge) {
+                sources.remove(&key);
+                if sources.is_empty() {
+                    reverse.remove(edge);
+                }
+            }
+        }
+    }
+    for edge in next {
+        reverse.entry(edge).or_default().insert(key.clone());
     }
 }
 
@@ -2549,8 +2517,8 @@ mod tests {
         assert!(!db.current_files.contains_key(&a_part));
         assert!(db.current_files.contains_key(&b));
         assert!(db.current_files.contains_key(&b_part));
-        assert_eq!(db.checked_root_count(), 1);
-        assert_eq!(db.parsed_file_count(), 2);
+        assert_eq!(db.checked_roots.len(), 1);
+        assert_eq!(db.parsed_files.len(), 2);
     }
 
     #[test]

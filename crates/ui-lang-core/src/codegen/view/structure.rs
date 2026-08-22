@@ -132,7 +132,7 @@ pub(in crate::codegen) fn render_structure(
                     write!(
                         code,
                         ".{method}({})",
-                        resolved_responsive_length_code(length, program, env)?
+                        resolved_length_code(length, program, env)?
                     )
                     .unwrap();
                 }
@@ -192,7 +192,7 @@ pub(in crate::codegen) fn render_structure(
                     write!(
                         code,
                         ".{method}({})",
-                        resolved_responsive_length_code(length, program, env)?
+                        resolved_length_code(length, program, env)?
                     )
                     .unwrap();
                 }
@@ -569,54 +569,12 @@ fn render_resolved_pin(
             write!(
                 code,
                 ".{method}({})",
-                resolved_pin_length_code(length, program, env)?
+                resolved_length_code(length, program, env)?
             )
             .unwrap();
         }
     }
     Ok(format!("{code}.into() }}"))
-}
-
-fn resolved_pin_length_code(
-    length: &ResolvedPinLength,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match length {
-        ResolvedPinLength::Fill => "::iced::Fill".into(),
-        ResolvedPinLength::FillPortion(portion) => {
-            format!("::iced::Length::FillPortion({portion})")
-        }
-        ResolvedPinLength::Shrink => "::iced::Shrink".into(),
-        ResolvedPinLength::FixedF64(expression) => format!(
-            "{} as f32",
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        ),
-        ResolvedPinLength::FixedLength(expression) => {
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        }
-    })
-}
-
-fn resolved_responsive_length_code(
-    length: &ResolvedResponsiveLength,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match length {
-        ResolvedResponsiveLength::Fill => "::iced::Fill".into(),
-        ResolvedResponsiveLength::FillPortion(portion) => {
-            format!("::iced::Length::FillPortion({portion})")
-        }
-        ResolvedResponsiveLength::Shrink => "::iced::Shrink".into(),
-        ResolvedResponsiveLength::FixedF64(expression) => format!(
-            "{} as f32",
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        ),
-        ResolvedResponsiveLength::FixedLength(expression) => {
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        }
-    })
 }
 
 fn resolved_float_radius_code(

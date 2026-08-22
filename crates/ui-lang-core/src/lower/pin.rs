@@ -1,21 +1,12 @@
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ResolvedPinLength {
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    FixedF64(CheckedExprUseId),
-    FixedLength(CheckedExprUseId),
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedPin {
     pub(crate) id: ViewId,
     pub(crate) x: CheckedExprUseId,
     pub(crate) y: CheckedExprUseId,
-    pub(crate) width: Option<ResolvedPinLength>,
-    pub(crate) height: Option<ResolvedPinLength>,
+    pub(crate) width: Option<ResolvedContainerLength>,
+    pub(crate) height: Option<ResolvedContainerLength>,
     pub(crate) origin: OriginId,
 }
 
@@ -142,20 +133,20 @@ impl Lowerer {
         &self,
         value: &Option<LengthValue>,
         expressions: &mut PinOperands<'_>,
-    ) -> Result<Option<ResolvedPinLength>, Error> {
+    ) -> Result<Option<ResolvedContainerLength>, Error> {
         value
             .as_ref()
             .map(|value| {
                 Ok(match value {
-                    LengthValue::Fill => ResolvedPinLength::Fill,
-                    LengthValue::FillPortion(value) => ResolvedPinLength::FillPortion(*value),
-                    LengthValue::Shrink => ResolvedPinLength::Shrink,
+                    LengthValue::Fill => ResolvedContainerLength::Fill,
+                    LengthValue::FillPortion(value) => ResolvedContainerLength::FillPortion(*value),
+                    LengthValue::Shrink => ResolvedContainerLength::Shrink,
                     LengthValue::Fixed(_) => {
                         let expression = expressions.take()?;
                         let source = self.facts.expression_use(expression).source.clone();
                         match source {
-                            Type::F64 => ResolvedPinLength::FixedF64(expression),
-                            Type::Length => ResolvedPinLength::FixedLength(expression),
+                            Type::F64 => ResolvedContainerLength::FixedF64(expression),
+                            Type::Length => ResolvedContainerLength::FixedLength(expression),
                             _ => {
                                 return Err(self.invariant(
                                     expressions.span,

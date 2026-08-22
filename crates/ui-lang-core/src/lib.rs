@@ -28,8 +28,7 @@ pub use format::{format_fragment, format_source};
 pub use semantic::*;
 pub use source::{
     FileAnalysis, FileCompilation, analyze_file, analyze_file_graph, analyze_file_with_overlays,
-    analyze_file_with_source, compile_file, discover_file_asset_dependencies,
-    discover_file_dependencies, source_is_app,
+    compile_file, discover_file_asset_dependencies, discover_file_dependencies, source_is_app,
 };
 
 use std::collections::{BTreeMap, HashSet};

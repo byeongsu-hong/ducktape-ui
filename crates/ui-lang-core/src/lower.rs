@@ -3353,51 +3353,6 @@ impl LoweredProgram {
         &self.tests
     }
 
-    #[cfg(test)]
-    pub(crate) fn canvas(&self, id: ViewId) -> Option<&ResolvedCanvas> {
-        self.canvases.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn container(&self, id: ViewId) -> Option<&ResolvedContainer> {
-        self.containers.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn layout(&self, id: ViewId) -> Option<&ResolvedLayout> {
-        self.layouts.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn text(&self, id: ViewId) -> Option<&ResolvedText> {
-        self.texts.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn input(&self, id: ViewId) -> Option<&ResolvedInput> {
-        self.inputs.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn button(&self, id: ViewId) -> Option<&ResolvedButton> {
-        self.buttons.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn text_editor(&self, id: ViewId) -> Option<&ResolvedTextEditor> {
-        self.text_editors.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn markdown(&self, id: ViewId) -> Option<&ResolvedMarkdown> {
-        self.markdowns.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn extern_component(&self, id: ViewId) -> Option<&ResolvedExternComponent> {
-        self.extern_components.get(&id)
-    }
-
     pub(crate) fn extern_components(&self) -> impl Iterator<Item = &ResolvedExternComponent> {
         self.extern_components.values()
     }
@@ -3449,138 +3404,18 @@ impl LoweredProgram {
         Ok(&self.extern_component_declarations)
     }
 
-    #[cfg(test)]
-    pub(crate) fn themer(&self, id: ViewId) -> Option<&ResolvedThemer> {
-        self.themers.get(&id)
-    }
-
     pub(crate) fn themers(&self) -> impl Iterator<Item = &ResolvedThemer> {
         self.themers.values()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn shader(&self, id: ViewId) -> Option<&ResolvedShader> {
-        self.shaders.get(&id)
     }
 
     pub(crate) fn shaders(&self) -> impl Iterator<Item = &ResolvedShader> {
         self.shaders.values()
     }
 
-    #[cfg(test)]
-    pub(crate) fn boolean_control(&self, id: ViewId) -> Option<&ResolvedBooleanControl> {
-        self.boolean_controls.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pick_list(&self, id: ViewId) -> Option<&ResolvedPickList> {
-        self.pick_lists.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn combo_box(&self, id: ViewId) -> Option<&ResolvedComboBox> {
-        self.combo_boxes.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn slider(&self, id: ViewId) -> Option<&ResolvedSlider> {
-        self.sliders.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn progress(&self, id: ViewId) -> Option<&ResolvedProgress> {
-        self.progresses.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn rule(&self, id: ViewId) -> Option<&ResolvedRule> {
-        self.rules.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn qr_code(&self, id: ViewId) -> Option<&ResolvedQrCode> {
-        self.qr_codes.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn space(&self, id: ViewId) -> Option<&ResolvedSpace> {
-        self.spaces.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn media(&self, id: ViewId) -> Option<&ResolvedMedia> {
-        self.media.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn overlay(&self, id: ViewId) -> Option<&ResolvedOverlay> {
-        self.overlays.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn tooltip(&self, id: ViewId) -> Option<&ResolvedTooltip> {
-        self.tooltips.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn float(&self, id: ViewId) -> Option<&ResolvedFloat> {
-        self.floats.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pin(&self, id: ViewId) -> Option<&ResolvedPin> {
-        self.pins.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn responsive(&self, id: ViewId) -> Option<&ResolvedResponsive> {
-        self.responsives.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn keyed_column(&self, id: ViewId) -> Option<&ResolvedKeyedColumn> {
-        self.keyed_columns.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn conditional(&self, id: ViewId) -> Option<&ResolvedConditional> {
-        self.conditionals.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn iteration(&self, id: ViewId) -> Option<&ResolvedIteration> {
-        self.iterations.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn match_view(&self, id: ViewId) -> Option<&ResolvedMatch> {
-        self.match_views.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn lazy_view(&self, id: ViewId) -> Option<&ResolvedLazy> {
-        self.lazy_views.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn table(&self, id: ViewId) -> Option<&ResolvedTable> {
-        self.tables.get(&id)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn pane_grid(&self, id: ViewId) -> Option<&ResolvedPaneGrid> {
-        self.pane_grids.get(&id)
-    }
-
     pub(crate) fn pane_grids(&self) -> Vec<&ResolvedPaneGrid> {
         let mut panes = self.pane_grids.values().collect::<Vec<_>>();
         panes.sort_by_key(|pane| pane.id.0);
         panes
-    }
-
-    #[cfg(test)]
-    pub(crate) fn interaction_widget(&self, id: ViewId) -> Option<&ResolvedInteractionWidget> {
-        self.interaction_widgets.get(&id)
     }
 
     pub(crate) fn test_mount(&self, id: TestId) -> Option<ViewId> {
@@ -3966,18 +3801,8 @@ impl LoweredProgram {
             })
     }
 
-    #[cfg(test)]
-    pub(crate) fn style_use(&self, span: &Span) -> Result<&ResolvedStyleUse, Error> {
-        self.styles.style_use(span)
-    }
-
     pub(crate) fn theme(&self) -> &ResolvedThemeProgram {
         &self.styles.theme
-    }
-
-    #[cfg(test)]
-    pub(crate) fn nested_theme(&self, id: ViewId) -> Option<&ResolvedNestedTheme> {
-        self.styles.nested_theme(id)
     }
 
     pub(crate) fn extern_function(&self, id: ExternFnId) -> &crate::hir::ExternDeclaration {
@@ -12495,7 +12320,7 @@ view
             "app TooltipHir\nextern crate::backend\n  box-style dynamic_tooltip(active:bool)\n{THEME}state\n  active = true\nview\n  tooltip position=cursor gap=2.0 p=5.0 delay=100 snap=false style=dynamic_tooltip(active) bg=linear(1.57, bg@0.0, primary/25@1.0) text=fg border=primary/75 border-w=1.0 r=5.0 r-tl=2.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=8.0 px-snap=true\n    text \"Hover\"\n    text \"Tip\"\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let tooltip = program.tooltip(ViewId(0)).unwrap();
+        let tooltip = program.resolved_tooltip(ViewId(0)).unwrap();
 
         assert_eq!(tooltip.id, ViewId(0));
         assert_eq!(tooltip.position, ResolvedTooltipPosition::FollowCursor);
@@ -12608,11 +12433,7 @@ view
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
 
-        let Some(ResolvedInteractionWidget::MouseArea(mouse)) =
-            program.interaction_widget(ViewId(1))
-        else {
-            panic!("first interaction must be a mouse area");
-        };
+        let mouse = program.resolved_mouse_area(ViewId(1)).unwrap();
         assert_eq!(mouse.interaction, Some(MouseInteraction::Pointer));
         let press = mouse.press.as_ref().unwrap();
         assert!(matches!(
@@ -12632,11 +12453,7 @@ view
         let scrolled = mouse.scroll.as_ref().unwrap();
         assert_eq!(scrolled.source_payloads, [Type::F64, Type::F64, Type::Bool]);
 
-        let Some(ResolvedInteractionWidget::ResizeHandle(handle)) =
-            program.interaction_widget(ViewId(3))
-        else {
-            panic!("second interaction must be a resize handle");
-        };
+        let handle = program.resolved_resize_handle(ViewId(3)).unwrap();
         assert_eq!(
             handle.interaction,
             Some(MouseInteraction::ResizingHorizontally)
@@ -12659,10 +12476,7 @@ view
             "app SensorHir\n{THEME}state\n  active = true\non shown(width, height)\non resized(width, height)\non hidden\nview\n  sensor show=shown resize=resized hide=hidden key=active anticipate=24.0 delay=50\n    text \"Observed\"\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let Some(ResolvedInteractionWidget::Sensor(sensor)) = program.interaction_widget(ViewId(0))
-        else {
-            panic!("interaction must be a sensor");
-        };
+        let sensor = program.resolved_sensor(ViewId(0)).unwrap();
 
         assert_eq!(sensor.id, ViewId(0));
         let show = sensor.show.as_ref().unwrap();
@@ -12696,7 +12510,7 @@ view
             "app OverlayHir\n{THEME}state\n  shown = true\non close(flag)\nview\n  overlay when=shown dismiss=close(shown) backdrop=black/60 p=24.0 align-x=center align-y=end\n    content\n      text \"Page\"\n    layer\n      text \"Dialog\"\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let overlay = program.overlay(ViewId(0)).unwrap();
+        let overlay = program.resolved_overlay(ViewId(0)).unwrap();
 
         assert_eq!(overlay.id, ViewId(0));
         assert_eq!(overlay.align_x, ResolvedOverlayAlignment::Center);
@@ -12891,7 +12705,7 @@ view
             "app ContainerHir\nextern crate::backend\n  box-style dynamic_container(active:bool)\n{THEME}state\n  active = true\nview\n  flex\n    box style=dynamic_container(active) w=fill h=80.0 max-w=640.0 max-h=120.0 align-x=center align-y=end clip=true p=8.0 pl=12.0 bg=linear(1.57, bg@0.0, primary/25@1.0) text=fg border=primary border-w=2.0 border-dash=(4.0, 3.0) r=4.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0 shadow=black/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=6.0 px-snap=true order=2 grow=1.0 shrink=0.5 basis=percent(40.0) self=flex-end m=auto mx=percent(5.0) mt=-2.0\n      text \"Card\"\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let container = program.container(ViewId(1)).unwrap();
+        let container = program.resolved_container(ViewId(1)).unwrap();
 
         assert_eq!(container.id, ViewId(1));
         assert!(matches!(
@@ -13093,7 +12907,7 @@ view
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
 
-        let root = program.layout(ViewId(0)).unwrap();
+        let root = program.resolved_layout(ViewId(0)).unwrap();
         assert!(matches!(
             root.mode,
             ResolvedLayoutMode::Linear(ResolvedLinearLayout {
@@ -13313,7 +13127,7 @@ view
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
 
-        let plain = program.text(ViewId(1)).unwrap();
+        let plain = program.resolved_text(ViewId(1)).unwrap();
         assert!(matches!(plain.content, ResolvedTextContent::Plain { .. }));
         assert!(matches!(
             plain.options.width,
@@ -13342,7 +13156,7 @@ view
         );
         assert_eq!(plain_style.arguments.len(), 1);
 
-        let rich = program.text(ViewId(2)).unwrap();
+        let rich = program.resolved_text(ViewId(2)).unwrap();
         assert_eq!(rich.options.align_x, Some(ResolvedTextAlignment::Justified));
         let ResolvedTextContent::Rich {
             color,
@@ -13400,7 +13214,10 @@ view
         for span in spans {
             assert_eq!(program.origin(span.origin).parent, Some(rich.origin));
         }
-        assert_eq!(program.text(ViewId(3)).unwrap().options.tracking, Some(1.2));
+        assert_eq!(
+            program.resolved_text(ViewId(3)).unwrap().options.tracking,
+            Some(1.2)
+        );
     }
 
     #[test]
@@ -13589,7 +13406,7 @@ view
     icon code="•" font=ui size=12.0 gap=4.0 side=right
 "#;
         let program = lower(analyze(source).unwrap()).unwrap();
-        let input = program.input(ViewId(0)).unwrap();
+        let input = program.resolved_input(ViewId(0)).unwrap();
 
         assert_eq!(input.label, "Secret");
         assert_eq!(input.hint, "Paste token");
@@ -13942,7 +13759,7 @@ view
       icon code="⌕" font=ui size=12.0 gap=6.0 side=right
 "#;
         let program = lower(analyze(source).unwrap()).unwrap();
-        let pick = program.pick_list(ViewId(1)).unwrap();
+        let pick = program.resolved_pick_list(ViewId(1)).unwrap();
         assert_eq!(pick.option_type, Type::Str);
         assert!(matches!(pick.width, Some(ResolvedContainerLength::Fill)));
         assert!(matches!(
@@ -13968,7 +13785,7 @@ view
             Some(pick.origin)
         );
 
-        let combo = program.combo_box(ViewId(2)).unwrap();
+        let combo = program.resolved_combo_box(ViewId(2)).unwrap();
         assert_eq!(combo.state.name, "modes");
         assert_eq!(combo.state.option_type, Type::Str);
         assert!(matches!(combo.font, Some(ResolvedTextFont::Named(_))));
@@ -14236,7 +14053,7 @@ view
     disabled bg=bg text=danger r=10.0
 "#;
         let program = lower(analyze(source).unwrap()).unwrap();
-        let button = program.button(ViewId(0)).unwrap();
+        let button = program.resolved_button(ViewId(0)).unwrap();
 
         assert_eq!(button.id, ViewId(0));
         assert_eq!(button.content, ResolvedButtonContent::Label("Save".into()));
@@ -14517,7 +14334,7 @@ view
       active selected bg=bg dot=fg border=primary border-w=2.0 text=fg
 "#;
         let program = lower(analyze(source).unwrap()).unwrap();
-        let checkbox = program.boolean_control(ViewId(1)).unwrap();
+        let checkbox = program.resolved_boolean_control(ViewId(1)).unwrap();
         assert_eq!(checkbox.kind, ResolvedBooleanKind::Checkbox);
         assert!(checkbox.disabled.is_some());
         assert!(checkbox.options.accessibility_label.is_some());
@@ -14544,7 +14361,7 @@ view
         assert!(active.border_width.is_some());
         assert!(active.radius.all.is_some());
 
-        let toggler = program.boolean_control(ViewId(2)).unwrap();
+        let toggler = program.resolved_boolean_control(ViewId(2)).unwrap();
         assert_eq!(toggler.kind, ResolvedBooleanKind::Toggler);
         assert_eq!(
             toggler.options.alignment,
@@ -14555,7 +14372,7 @@ view
         };
         assert!(styles.active_checked.as_ref().unwrap().foreground.is_some());
 
-        let radio = program.boolean_control(ViewId(3)).unwrap();
+        let radio = program.resolved_boolean_control(ViewId(3)).unwrap();
         assert_eq!(radio.kind, ResolvedBooleanKind::Radio);
         assert!(radio.value.is_some());
         assert!(radio.disabled.is_none());
@@ -14824,7 +14641,7 @@ view
             "app ExternComponentHir\nextern crate::backend\n  component borrowed_surface(label:&str, active:&bool, choice:bool?) -> bool\n{THEME}state\n  label = \"Native\"\n  active = false\non changed(next)\nview\n  extern borrowed_surface(label, active, none) -> changed _\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let component = program.extern_component(ViewId(0)).unwrap();
+        let component = program.resolved_extern_component(ViewId(0)).unwrap();
         let declarations = program.extern_component_declarations().unwrap();
 
         assert_eq!(component.id, ViewId(0));
@@ -14891,7 +14708,7 @@ view
         let program = lower(analyze(&direct).unwrap()).unwrap();
         assert!(matches!(
             program
-                .extern_component(ViewId(0))
+                .resolved_extern_component(ViewId(0))
                 .unwrap()
                 .route
                 .as_ref()
@@ -14930,7 +14747,7 @@ view
             "app ExternUnit\nextern crate::backend\n  component native_surface(active:bool) -> unit\n{THEME}state\n  active = false\nview\n  extern native_surface(active)\n"
         );
         let program = lower(analyze(&no_output).unwrap()).unwrap();
-        let component = program.extern_component(ViewId(0)).unwrap();
+        let component = program.resolved_extern_component(ViewId(0)).unwrap();
         assert_eq!(component.output, Type::Unit);
         assert!(component.route.is_none());
         let generated = crate::codegen::generate(&program, "extern-unit.ice").unwrap();
@@ -15205,8 +15022,8 @@ view
             "app ExternViewsHir\nextern crate::backend\n  themer alternate_surface(label:str, active:bool, choice:bool?) -> bool\n  shader shader_surface(label:str, active:bool, choice:bool?) -> bool\n  themer passive_theme() -> unit\n  shader passive_shader() -> unit\n{THEME}state\n  label = \"Native\"\n  active = false\n  fixed_length:length = length.fixed(48.0)\non themed(next)\non shaded(next)\nview\n  col\n    themer alternate_surface(label, active, none) -> themed _\n    shader shader_surface(label, active, none) w=fill(3) h=64.0 -> shaded _\n    themer passive_theme()\n    shader passive_shader() w=shrink h=fixed_length\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let themer = program.themer(ViewId(1)).unwrap();
-        let shader = program.shader(ViewId(2)).unwrap();
+        let themer = program.resolved_themer(ViewId(1)).unwrap();
+        let shader = program.resolved_shader(ViewId(2)).unwrap();
 
         assert_eq!(themer.id, ViewId(1));
         assert_eq!(themer.adapter.function.id, ExternFnId(0));
@@ -15267,8 +15084,8 @@ view
             vec![Type::Bool]
         );
 
-        let passive_themer = program.themer(ViewId(3)).unwrap();
-        let passive_shader = program.shader(ViewId(4)).unwrap();
+        let passive_themer = program.resolved_themer(ViewId(3)).unwrap();
+        let passive_shader = program.resolved_shader(ViewId(4)).unwrap();
         assert!(passive_themer.adapter.route.is_none());
         assert_eq!(passive_themer.adapter.output, Type::Unit);
         assert!(passive_shader.adapter.route.is_none());
@@ -15692,7 +15509,7 @@ view
             "app MarkdownHir\nextern crate::backend\n  markdown-viewer docs_viewer(prefix:str, generation:i64) -> str\nfont ui family=sans\n{THEME}state\n  docs:markdown = \"# Docs\"\n  prefix = \"guide\"\n  generation = 7\non opened(url)\nview\n  markdown docs text-size=16.0 h1-size=32.0 h2-size=28.0 h3-size=24.0 h4-size=20.0 h5-size=18.0 h6-size=16.0 code-size=13.0 gap=12.0 viewer=docs_viewer(prefix, generation) -> opened _\n    style font=ui inline-code-bg=linear(1.57, bg@0.0, primary/25@1.0) inline-code-fg=fg inline-code-font=mono code-block-font=mono link=primary inline-code-p=2.0 inline-code-px=3.0 inline-code-py=4.0 inline-code-pt=5.0 inline-code-pr=6.0 inline-code-pb=7.0 inline-code-pl=8.0 inline-code-border=danger inline-code-border-w=1.0 inline-code-r=4.0 inline-code-r-tl=1.0 inline-code-r-tr=2.0 inline-code-r-br=3.0 inline-code-r-bl=4.0\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let markdown = program.markdown(ViewId(0)).unwrap();
+        let markdown = program.resolved_markdown(ViewId(0)).unwrap();
 
         assert_eq!(markdown.id, ViewId(0));
         assert_eq!(
@@ -15746,7 +15563,7 @@ view
         );
         let program = lower(analyze(&direct).unwrap()).unwrap();
         assert!(matches!(
-            program.markdown(ViewId(0)).unwrap().link.target,
+            program.resolved_markdown(ViewId(0)).unwrap().link.target,
             ResolvedInteractionRouteTarget::TargetHandler(_)
         ));
 
@@ -16024,7 +15841,7 @@ view
     disabled bg=bg border=danger border-w=1.0 r=12.0 value=danger
 "#;
         let program = lower(analyze(source).unwrap()).unwrap();
-        let editor = program.text_editor(ViewId(0)).unwrap();
+        let editor = program.resolved_text_editor(ViewId(0)).unwrap();
 
         assert!(matches!(
             editor.binding,
@@ -16082,7 +15899,7 @@ view
             "app BuiltinEditorHighlight\n{THEME}state\n  body:editor = \"\"\nview\n  editor <-> body highlight=\"rs\" highlight-theme=inspired-github\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let editor = program.text_editor(ViewId(0)).unwrap();
+        let editor = program.resolved_text_editor(ViewId(0)).unwrap();
         assert_eq!(editor.highlight.as_deref(), Some("rs"));
         assert_eq!(
             editor.highlight_theme,
@@ -16408,7 +16225,7 @@ view
             "app FloatHir\n{THEME}state\n  shift = 2.0\nview\n  float scale=1.1 x=(viewport_x + shift) y=(original_y - shift) shadow=primary/50 shadow-x=-1.0 shadow-y=2.0 shadow-blur=4.0 r=8.0 r-tl=1.0 r-tr=2.0 r-br=3.0 r-bl=4.0\n    text \"Floating\"\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let float = program.float(ViewId(0)).unwrap();
+        let float = program.resolved_float(ViewId(0)).unwrap();
 
         assert_eq!(float.id, ViewId(0));
         assert_eq!(float.geometry.len(), 8);
@@ -16506,11 +16323,14 @@ view
             "app PinHir\n{THEME}state\n  offset = 12.0\n  height = 80.0\nview\n  pin w=fill h=height x=offset y=8.0\n    text \"Pinned\"\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let pin = program.pin(ViewId(0)).unwrap();
+        let pin = program.resolved_pin(ViewId(0)).unwrap();
 
         assert_eq!(pin.id, ViewId(0));
-        assert_eq!(pin.width, Some(ResolvedPinLength::Fill));
-        assert!(matches!(pin.height, Some(ResolvedPinLength::FixedF64(_))));
+        assert_eq!(pin.width, Some(ResolvedContainerLength::Fill));
+        assert!(matches!(
+            pin.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
         for expression in [pin.x, pin.y] {
             let expression = program.checked_facts().expression_use(expression);
             assert_eq!(expression.source, Type::F64);
@@ -16588,15 +16408,15 @@ view
             "app BreakpointHir\n{THEME}state\n  breakpoint = 600.0\n  height = 40.0\n  native_width:length = length.fill()\nview\n  responsive at=breakpoint w=native_width h=height\n    text \"Narrow\"\n    text \"Wide\"\n"
         );
         let breakpoint_program = lower(analyze(&breakpoint_source).unwrap()).unwrap();
-        let responsive = breakpoint_program.responsive(ViewId(0)).unwrap();
+        let responsive = breakpoint_program.resolved_responsive(ViewId(0)).unwrap();
         assert_eq!(responsive.id, ViewId(0));
         assert!(matches!(
             responsive.width,
-            Some(ResolvedResponsiveLength::FixedLength(_))
+            Some(ResolvedContainerLength::FixedLength(_))
         ));
         assert!(matches!(
             responsive.height,
-            Some(ResolvedResponsiveLength::FixedF64(_))
+            Some(ResolvedContainerLength::FixedF64(_))
         ));
         let ResolvedResponsiveKind::Breakpoint { breakpoint } = responsive.kind else {
             panic!("root must be breakpoint responsive");
@@ -16613,7 +16433,7 @@ view
             "app SizeHir\n{THEME}view\n  responsive size=(available_width, available_height) w=fill h=fill\n    text available_width\n"
         );
         let size_program = lower(analyze(&size_source).unwrap()).unwrap();
-        let responsive = size_program.responsive(ViewId(0)).unwrap();
+        let responsive = size_program.resolved_responsive(ViewId(0)).unwrap();
         let ResolvedResponsiveKind::Size { width, height } = &responsive.kind else {
             panic!("root must be size responsive");
         };
@@ -16706,7 +16526,7 @@ view
             "app LazyHir\n{THEME}state\n  title = \"Hello\"\nview\n  lazy title as cached\n    text cached\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let lazy = program.lazy_view(ViewId(0)).unwrap();
+        let lazy = program.resolved_lazy(ViewId(0)).unwrap();
         assert_eq!(lazy.id, ViewId(0));
         assert_eq!(lazy.binding.name, "cached");
         assert_eq!(lazy.binding.ty, Type::Str);
@@ -16787,16 +16607,16 @@ view
             "app KeyedHir\nextern crate::backend\n  Item(id:i64, name:str)\n{THEME}state\n  items:[Item] = []\nview\n  keyed item in items by=item.id w=fill(2) h=120.0 gap=8.0 p=4.0 pl=12.0 max-w=640.0 align=end\n    text item.name\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let keyed = program.keyed_column(ViewId(0)).unwrap();
+        let keyed = program.resolved_keyed_column(ViewId(0)).unwrap();
         assert_eq!(keyed.id, ViewId(0));
         assert_eq!(keyed.item.name, "item");
         assert!(matches!(
             keyed.width,
-            Some(ResolvedKeyedLength::FillPortion(2))
+            Some(ResolvedContainerLength::FillPortion(2))
         ));
         assert!(matches!(
             keyed.height,
-            Some(ResolvedKeyedLength::FixedF64(_))
+            Some(ResolvedContainerLength::FixedF64(_))
         ));
         assert!(keyed.spacing.is_some());
         assert!(keyed.padding.all.is_some());
@@ -16902,17 +16722,17 @@ view
             "app TableHir\nextern crate::backend\n  Item(name:str)\n{THEME}state\n  rows:[Item] = []\nview\n  table row in rows w=fill p=4.0 sep-x=2.0\n    col w=fill(2) align-x=right align-y=bottom\n      header\n        text \"Name\"\n      cell\n        text row.name\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let table = program.table(ViewId(0)).unwrap();
+        let table = program.resolved_table(ViewId(0)).unwrap();
         assert_eq!(table.id, ViewId(0));
         assert_eq!(table.row.name, "row");
         assert_eq!(table.row.ty, Type::Named("Item".into()));
-        assert!(matches!(table.width, Some(ResolvedTableLength::Fill)));
+        assert!(matches!(table.width, Some(ResolvedContainerLength::Fill)));
         assert!(table.padding.is_some());
         assert!(table.separator_x.is_some());
         assert_eq!(table.columns.len(), 1);
         assert!(matches!(
             table.columns[0].width,
-            Some(ResolvedTableLength::FillPortion(2))
+            Some(ResolvedContainerLength::FillPortion(2))
         ));
         assert_eq!(table.columns[0].align_x, Some(InputAlignment::Right));
         assert_eq!(
@@ -17017,11 +16837,14 @@ view
             "app PaneHir\nextern crate::backend\n  Task(id:i64, title:str)\n  panes-style dynamic_panes(active:bool)\n{THEME}state\n  tasks:[Task] = []\n  active = true\non clicked(name)\nview\n  panes #work w=fill h=64.0 gap=8.0 min-size=120.0 resize=6.0 drag click=clicked(_) style=dynamic_panes(active)\n    style\n      hovered-region bg=primary/25 border=fg border-w=2.0 r=4.0\n      hovered-split color=primary w=3.0\n      picked-split color=danger w=4.0\n    split workspace_root vertical ratio=0.7\n      pane files maximized=files_maximized bg=bg text=fg border=primary border-w=1.0 r=2.0 shadow=black/50 shadow-x=1.0 shadow-y=2.0 shadow-blur=3.0 px-snap=true\n        title p=4.0 always-controls bg=primary/50 text=fg\n          text \"Files\"\n        controls\n          text \"Controls\"\n        text \"Files body\"\n      pane editor\n        text \"Editor\"\n    pane task in tasks by=task.id maximized=task_maximized\n      col\n        if task_maximized\n          text task.title\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let pane = program.pane_grid(ViewId(0)).unwrap();
+        let pane = program.resolved_pane_grid(ViewId(0)).unwrap();
         assert_eq!(pane.id, ViewId(0));
         assert_eq!(pane.name, "work");
-        assert!(matches!(pane.width, Some(ResolvedPaneLength::Fill)));
-        assert!(matches!(pane.height, Some(ResolvedPaneLength::FixedF64(_))));
+        assert!(matches!(pane.width, Some(ResolvedContainerLength::Fill)));
+        assert!(matches!(
+            pane.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
         assert!(pane.spacing.is_some());
         assert!(pane.min_size.is_some());
         assert!(pane.resize_leeway.is_some());
@@ -17338,7 +17161,7 @@ view
             "app IfHir\n{THEME}state\n  enabled = true\nview\n  if enabled\n    text \"Visible\"\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let conditional = program.conditional(ViewId(0)).unwrap();
+        let conditional = program.resolved_conditional(ViewId(0)).unwrap();
         assert_eq!(conditional.id, ViewId(0));
         let expression = program
             .checked_facts()
@@ -17410,7 +17233,7 @@ view
             "app ForHir\n{THEME}state\n  items:[str] = []\nview\n  for item in items\n    text item\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let iteration = program.iteration(ViewId(0)).unwrap();
+        let iteration = program.resolved_iteration(ViewId(0)).unwrap();
         assert_eq!(iteration.id, ViewId(0));
         assert_eq!(iteration.item.name, "item");
         assert_eq!(iteration.item.ty, Type::Str);
@@ -17519,7 +17342,7 @@ view
             "app MatchHir\n{THEME}state\n  choice:str? = some(\"ready\")\nview\n  match choice\n    some(label)\n      text label\n    none\n      text \"none\"\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let resolved = program.match_view(ViewId(0)).unwrap();
+        let resolved = program.resolved_match(ViewId(0)).unwrap();
         assert_eq!(resolved.id, ViewId(0));
         assert_eq!(resolved.value_ty, Type::Option(Box::new(Type::Str)));
         assert_eq!(resolved.arms.len(), 2);
@@ -18171,7 +17994,7 @@ view
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
 
-        let image = program.media(ViewId(1)).unwrap();
+        let image = program.resolved_media(ViewId(1)).unwrap();
         assert_eq!(image.id, ViewId(1));
         assert_eq!(image.kind, ResolvedMediaKind::Image);
         assert_eq!(image.source_type, Type::Str);
@@ -18189,7 +18012,7 @@ view
         assert_eq!(image.options.filter, Some(ResolvedMediaFilter::Nearest));
         assert!(image.options.crop.is_some());
 
-        let viewer = program.media(ViewId(2)).unwrap();
+        let viewer = program.resolved_media(ViewId(2)).unwrap();
         assert_eq!(viewer.kind, ResolvedMediaKind::Viewer);
         let bounds = viewer.options.scale_bounds.as_ref().unwrap();
         assert!(matches!(
@@ -18203,7 +18026,7 @@ view
         assert!(viewer.options.padding.is_some());
         assert!(viewer.options.scale_step.is_some());
 
-        let svg = program.media(ViewId(3)).unwrap();
+        let svg = program.resolved_media(ViewId(3)).unwrap();
         assert_eq!(svg.kind, ResolvedMediaKind::Svg);
         let colors = svg.options.svg_colors.as_ref().unwrap();
         assert!(matches!(
@@ -18903,7 +18726,7 @@ view
             "app CanvasHir\n{THEME}on released(button)\nview\n  canvas w=fill h=120.0\n    state\n      hits = 0\n    event mouse pressed\n      set hits = hits + 1\n      redraw\n      capture\n    event mouse released as button\n      emit released button\n    text hits x=8.0 y=20.0 color=fg\n    for value in [12.0, 24.0]\n      circle x=value y=40.0 r=4.0 fill=primary\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let canvas = program.canvas(ViewId(0)).unwrap();
+        let canvas = program.resolved_canvas(ViewId(0)).unwrap();
 
         assert_eq!(canvas.states[0].id.index, 0);
         assert!(matches!(
@@ -20903,7 +20726,7 @@ view
         let ViewNode::Layout { children, .. } = &program.document.view else {
             panic!("fixture view must be a layout");
         };
-        let button = program.style_use(children[0].span()).unwrap();
+        let button = program.styles.style_use(children[0].span()).unwrap();
         assert_eq!(button.recipes, [RecipeId(2)]);
         assert_eq!(button.utilities.len(), 1);
         assert!(matches!(
@@ -20913,7 +20736,7 @@ view
                 ..
             })
         ));
-        let input = program.style_use(children[1].span()).unwrap();
+        let input = program.styles.style_use(children[1].span()).unwrap();
         assert!(matches!(
             input.style.focus_border_color,
             Some(ResolvedThemeColor {
@@ -21005,7 +20828,7 @@ view
             program.extern_function(factory.function).name,
             "native_theme"
         );
-        let nested = program.nested_theme(ViewId(0)).unwrap();
+        let nested = program.resolved_nested_theme(ViewId(0)).unwrap();
         let ResolvedThemePreset::Factory(factory) = &nested.preset else {
             panic!("nested theme factory must be resolved");
         };
@@ -21053,7 +20876,7 @@ view
         let ViewNode::Theme { content, .. } = &program.document.view else {
             panic!("fixture root must be a theme");
         };
-        let style = program.style_use(content.span()).unwrap();
+        let style = program.styles.style_use(content.span()).unwrap();
         assert!(matches!(
             style.style.text_color,
             Some(ResolvedThemeColor {
@@ -21263,7 +21086,7 @@ view
             .declarations
             .view_id(program.document.components[0].root.span())
             .unwrap();
-        let theme = program.nested_theme(theme_id).unwrap();
+        let theme = program.resolved_nested_theme(theme_id).unwrap();
         let theme_origin = theme.origin;
         let origin = program.origin(theme_origin);
         assert_eq!(origin.path.as_deref(), Some(imported.as_path()));
@@ -21461,7 +21284,7 @@ view
             .declarations
             .view_id(program.document.view.span())
             .unwrap();
-        let nested = program.nested_theme(theme_id).unwrap();
+        let nested = program.resolved_nested_theme(theme_id).unwrap();
         assert!(matches!(
             &nested.preset,
             ResolvedThemePreset::BuiltIn(name) if name == "light"
@@ -21524,7 +21347,7 @@ view
             .declarations
             .view_id(program.document.view.span())
             .unwrap();
-        let nested = program.nested_theme(theme_id).unwrap();
+        let nested = program.resolved_nested_theme(theme_id).unwrap();
         let ResolvedThemePreset::Factory(factory) = &nested.preset else {
             panic!("namespaced nested theme factory must be resolved");
         };
@@ -21533,7 +21356,7 @@ view
             program.origin(nested.origin).path.as_deref(),
             Some(root.as_path())
         );
-        let style = program.style_use(content.span()).unwrap();
+        let style = program.styles.style_use(content.span()).unwrap();
         assert_eq!(style.recipes, [recipe.id]);
         let imported_style = program
             .styles
@@ -21888,7 +21711,10 @@ test stable_flow
         let program = lower(checked).unwrap();
         let generated = crate::codegen::generate(&program, "canvas-perf.ice").unwrap();
         let elapsed = started.elapsed();
-        assert_eq!(program.canvas(ViewId(0)).unwrap().commands.len(), COMMANDS);
+        assert_eq!(
+            program.resolved_canvas(ViewId(0)).unwrap().commands.len(),
+            COMMANDS
+        );
         assert_eq!(generated.matches("Path::circle(").count(), COMMANDS);
         assert!(
             elapsed.as_secs_f64() < 2.0,
@@ -21902,7 +21728,7 @@ test stable_flow
             "app RangeHir\nextern crate::backend\n  RangeNumber()\n  pure range_number(value:f64) -> RangeNumber\n  slider-style slider_style(active:bool)\n  progress-style progress_style(active:bool)\n{THEME}state\n  amount = 25.0\n  precise:RangeNumber = range_number(25.0)\n  active = true\non changed(next)\n  precise = next\non released\nview\n  col\n    slider precise min=range_number(0.0) max=range_number(100.0) step=range_number(1.0) default=range_number(25.0) shift-step=range_number(5.0) vertical w=20.0 h=fill(2) style=slider_style(active) release=released -> changed _\n      active rail-start=linear(0.0, primary@0.0, danger@1.0) rail-end=bg rail-w=4.0 rail-border=fg rail-border-w=1.0 rail-r=2.0 handle=rect(12) handle-color=primary handle-border=fg handle-border-w=1.0 handle-r=3.0\n    progress amount vertical length=fill(2) girth=20.0 style=progress_style(active) bg=bg bar=primary border=fg border-w=1.0 r=4.0\n"
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
-        let slider = program.slider(ViewId(1)).unwrap();
+        let slider = program.resolved_slider(ViewId(1)).unwrap();
         assert_eq!(slider.value_type, Type::Named("RangeNumber".into()));
         assert_eq!(slider.axis, ResolvedRangeAxis::Vertical);
         assert!(slider.default.is_some());
@@ -21924,7 +21750,7 @@ test stable_flow
             Some(ResolvedSliderHandleShape::Rectangle { width: 12, .. })
         ));
 
-        let progress = program.progress(ViewId(2)).unwrap();
+        let progress = program.resolved_progress(ViewId(2)).unwrap();
         assert_eq!(progress.axis, ResolvedRangeAxis::Vertical);
         assert!(matches!(
             progress.length,
@@ -22271,7 +22097,7 @@ test stable_flow
         );
         let program = lower(analyze(&source).unwrap()).unwrap();
 
-        let rule = program.rule(ViewId(1)).unwrap();
+        let rule = program.resolved_rule(ViewId(1)).unwrap();
         assert_eq!(rule.id, ViewId(1));
         assert_eq!(rule.axis, ResolvedRuleAxis::Horizontal);
         assert_eq!(rule.preset, ResolvedRulePreset::Weak);
@@ -22287,7 +22113,7 @@ test stable_flow
             }) if token == program.theme().native_tokens.primary
         ));
 
-        let text_qr = program.qr_code(ViewId(2)).unwrap();
+        let text_qr = program.resolved_qr_code(ViewId(2)).unwrap();
         assert_eq!(text_qr.id, ViewId(2));
         assert_eq!(text_qr.payload_kind, ResolvedQrPayloadKind::Text);
         assert_eq!(
@@ -22306,7 +22132,7 @@ test stable_flow
             }) if token == program.theme().native_tokens.background
         ));
 
-        let bytes_qr = program.qr_code(ViewId(3)).unwrap();
+        let bytes_qr = program.resolved_qr_code(ViewId(3)).unwrap();
         assert_eq!(bytes_qr.payload_kind, ResolvedQrPayloadKind::Bytes);
         assert_eq!(
             bytes_qr.encoding,
@@ -22317,7 +22143,7 @@ test stable_flow
         );
         assert!(matches!(bytes_qr.size, ResolvedQrSize::Total(_)));
 
-        let space = program.space(ViewId(4)).unwrap();
+        let space = program.resolved_space(ViewId(4)).unwrap();
         assert_eq!(space.id, ViewId(4));
         assert!(matches!(
             space.width,

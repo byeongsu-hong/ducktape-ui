@@ -138,7 +138,7 @@ pub(in crate::codegen) fn render_pane_grid(
             write!(
                 code,
                 ".{method}({})",
-                resolved_pane_length_code(length, program, env)?
+                resolved_length_code(length, program, env)?
             )
             .unwrap();
         }
@@ -414,27 +414,6 @@ fn pane_items_code(
     });
     code.ok_or_else(|| {
         program.invariant_at_origin(origin, "pane items binding is absent from emission scope")
-    })
-}
-
-fn resolved_pane_length_code(
-    length: &ResolvedPaneLength,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match length {
-        ResolvedPaneLength::Fill => "::iced::Fill".into(),
-        ResolvedPaneLength::FillPortion(portion) => {
-            format!("::iced::Length::FillPortion({portion})")
-        }
-        ResolvedPaneLength::Shrink => "::iced::Shrink".into(),
-        ResolvedPaneLength::FixedF64(expression) => format!(
-            "{} as f32",
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        ),
-        ResolvedPaneLength::FixedLength(expression) => {
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        }
     })
 }
 

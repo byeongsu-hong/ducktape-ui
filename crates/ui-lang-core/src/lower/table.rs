@@ -8,17 +8,8 @@ pub(crate) struct ResolvedTableBinding {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum ResolvedTableLength {
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    FixedF64(CheckedExprUseId),
-    FixedLength(CheckedExprUseId),
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct ResolvedTableColumn {
-    pub(crate) width: Option<ResolvedTableLength>,
+    pub(crate) width: Option<ResolvedContainerLength>,
     pub(crate) align_x: Option<InputAlignment>,
     pub(crate) align_y: Option<VerticalAlignment>,
     #[cfg(test)]
@@ -30,7 +21,7 @@ pub(crate) struct ResolvedTable {
     pub(crate) id: ViewId,
     pub(crate) rows: CheckedExprUseId,
     pub(crate) row: ResolvedTableBinding,
-    pub(crate) width: Option<ResolvedTableLength>,
+    pub(crate) width: Option<ResolvedContainerLength>,
     pub(crate) padding: Option<CheckedExprUseId>,
     pub(crate) padding_x: Option<CheckedExprUseId>,
     pub(crate) padding_y: Option<CheckedExprUseId>,
@@ -183,20 +174,22 @@ impl Lowerer {
         length: CheckedLength,
         role: CheckedViewExprRole,
         span: &Span,
-    ) -> Result<Option<ResolvedTableLength>, Error> {
+    ) -> Result<Option<ResolvedContainerLength>, Error> {
         Ok(match length {
             CheckedLength::None => None,
-            CheckedLength::Fill => Some(ResolvedTableLength::Fill),
-            CheckedLength::FillPortion(portion) => Some(ResolvedTableLength::FillPortion(portion)),
-            CheckedLength::Shrink => Some(ResolvedTableLength::Shrink),
+            CheckedLength::Fill => Some(ResolvedContainerLength::Fill),
+            CheckedLength::FillPortion(portion) => {
+                Some(ResolvedContainerLength::FillPortion(portion))
+            }
+            CheckedLength::Shrink => Some(ResolvedContainerLength::Shrink),
             CheckedLength::Fixed { expression, source } => {
                 let actual = self.validate_table_expression(view, scope, expression, role, span)?;
                 if actual != source {
                     return Err(self.invariant(span, "table length type contract diverged"));
                 }
                 match source {
-                    Type::F64 => Some(ResolvedTableLength::FixedF64(expression)),
-                    Type::Length => Some(ResolvedTableLength::FixedLength(expression)),
+                    Type::F64 => Some(ResolvedContainerLength::FixedF64(expression)),
+                    Type::Length => Some(ResolvedContainerLength::FixedLength(expression)),
                     _ => return Err(self.invariant(span, "table length has invalid type")),
                 }
             }

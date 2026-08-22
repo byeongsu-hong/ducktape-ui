@@ -230,7 +230,7 @@ fn append_resolved_boolean_options(
         write!(
             code,
             ".width({})",
-            resolved_text_length_code(width, program, env)?
+            resolved_length_code(width, program, env)?
         )
         .unwrap();
     }

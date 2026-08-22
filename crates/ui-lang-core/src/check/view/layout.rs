@@ -365,6 +365,7 @@ pub(in crate::check) fn infer_layout_group(
             for pane in panes {
                 check_pane_view_options(pane, env, document)?;
             }
+            let mut template_envs = Vec::with_capacity(templates.len());
             for template in templates {
                 let Some(Type::List(item_type)) = env.get_type(&template.items) else {
                     return Err(Error::new(
@@ -387,25 +388,14 @@ pub(in crate::check) fn infer_layout_group(
                     ));
                 }
                 check_pane_view_options(&template.pane, &template_env, document)?;
+                template_envs.push(template_env);
             }
             retain_pane_analyses(span, pane_analysis_guard.finish())?;
             for pane in panes {
                 infer_pane_view_nodes(pane, env, document, signatures, ids)?;
             }
-            for template in templates {
-                let Some(Type::List(item_type)) = env.get_type(&template.items) else {
-                    return Err(Error::new(
-                        "E187",
-                        &template.span,
-                        format!(
-                            "dynamic pane template `{}` requires list state `{}`",
-                            template.item, template.items
-                        ),
-                    ));
-                };
-                let mut template_env = scoped_view_env(env);
-                template_env.insert(template.item.clone(), (**item_type).clone());
-                infer_pane_view_nodes(&template.pane, &template_env, document, signatures, ids)?;
+            for (template, template_env) in templates.iter().zip(&template_envs) {
+                infer_pane_view_nodes(&template.pane, template_env, document, signatures, ids)?;
             }
         }
         _ => return Ok(false),
