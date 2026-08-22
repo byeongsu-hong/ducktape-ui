@@ -1,0 +1,15 @@
+app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for OtherTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 1
+view
+  text count

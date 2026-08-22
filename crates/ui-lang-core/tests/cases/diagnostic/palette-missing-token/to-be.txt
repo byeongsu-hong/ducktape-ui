@@ -1,0 +1,2 @@
+E110
+palette `app` is missing token `danger`
