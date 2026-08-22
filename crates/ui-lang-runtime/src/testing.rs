@@ -1319,21 +1319,6 @@ impl Target {
         self.images.len()
     }
 
-    pub fn surfaces(&self) -> &[SurfacePaint] {
-        self.require_paint("surfaces");
-        &self.surfaces
-    }
-
-    pub fn texts(&self) -> &[TextPaint] {
-        self.require_paint("texts");
-        &self.texts
-    }
-
-    pub fn images(&self) -> &[ImagePaint] {
-        self.require_paint("images");
-        &self.images
-    }
-
     pub fn text_x(&self) -> f64 {
         f64::from(self.text("text_x").bounds.x)
     }
@@ -3031,14 +3016,6 @@ where
         self.set_cursor(Point::new(x, y), true, source);
     }
 
-    pub fn hover(&mut self, id: &str, source: Location) {
-        self.move_to(id, source);
-    }
-
-    pub fn click(&mut self, id: &str, source: Location) {
-        self.click_with(id, MouseButton::Left, 1, source);
-    }
-
     pub fn click_with(&mut self, id: &str, button: MouseButton, count: u8, source: Location) {
         let bounds = self.interaction_bounds("click", id, source);
         self.set_cursor(bounds.center(), true, source);
@@ -3063,18 +3040,10 @@ where
         self.click_current(button, count, source);
     }
 
-    pub fn press(&mut self, id: &str, source: Location) {
-        self.press_with(id, MouseButton::Left, source);
-    }
-
     pub fn press_with(&mut self, id: &str, button: MouseButton, source: Location) {
         let bounds = self.interaction_bounds("press", id, source);
         self.set_cursor(bounds.center(), true, source);
         self.press_current(button, source);
-    }
-
-    pub fn release(&mut self, source: Location) {
-        self.release_button(MouseButton::Left, source);
     }
 
     pub fn release_button(&mut self, button: MouseButton, source: Location) {
@@ -3092,10 +3061,6 @@ where
             ))],
             source,
         );
-    }
-
-    pub fn wheel(&mut self, x: f32, y: f32, source: Location) {
-        self.wheel_delta(WheelDelta::Pixels { x, y }, source);
     }
 
     pub fn wheel_lines(&mut self, x: f32, y: f32, source: Location) {
@@ -3904,18 +3869,9 @@ where
         }
     }
 
-    pub fn exists(&mut self, id: &str, source: Location) -> bool {
-        self.inspect(id, false, source).is_some()
-    }
-
     #[track_caller]
     pub fn target(&mut self, id: &str, source: Location) -> Target {
         self.require_target(id, true, source)
-    }
-
-    pub fn text_exists(&mut self, text: &str, within: Option<&Target>, source: Location) -> bool {
-        self.redraw(source);
-        self.drawn_text_exists(text, within.map(Target::bounds), source)
     }
 
     fn require_target(&mut self, id: &str, paint: bool, source: Location) -> Target {
@@ -6561,17 +6517,17 @@ mod tests {
         driver.check_text("0", Some("App/root/count"), false, HERE);
         driver.check_text("missing", None, true, HERE);
         assert_eq!(driver.target("App/root", HERE).width, 240.0);
-        driver.hover("App/root/increment", HERE);
-        driver.press("App/root/increment", HERE);
-        driver.release(HERE);
+        driver.move_to("App/root/increment", HERE);
+        driver.press_with("App/root/increment", MouseButton::Left, HERE);
+        driver.release_button(MouseButton::Left, HERE);
         assert_eq!(driver.state().count, 1);
-        driver.click("App/root/increment", HERE);
+        driver.click_with("App/root/increment", MouseButton::Left, 1, HERE);
         assert_eq!(driver.state().count, 2);
-        driver.click("App/root/input", HERE);
+        driver.click_with("App/root/input", MouseButton::Left, 1, HERE);
         driver.typewrite("iced", HERE);
         assert_eq!(driver.target("App/root/input", HERE).value(), "iced");
         driver.key(Key::named(keyboard::key::Named::Escape), HERE);
-        assert!(driver.text_exists("2", None, HERE));
+        driver.check_text("2", None, false, HERE);
         driver.resize(640.0, 480.0, HERE);
         assert_eq!(driver.viewport(), Size::new(640.0, 480.0));
         let scroll = driver.target("App/root/scroll", HERE);
@@ -6900,11 +6856,10 @@ mod tests {
             Config::new("layered_text").viewport(320.0, 240.0),
         );
 
-        assert!(driver.text_exists("beneath the layer", None, HERE));
-        assert!(driver.text_exists("inside the layer", None, HERE));
-        assert!(!driver.text_exists("nowhere on this screen", None, HERE));
-        let panel = driver.target("Layer/panel", HERE);
-        assert!(driver.text_exists("inside the layer", Some(&panel), HERE));
+        driver.check_text("beneath the layer", None, false, HERE);
+        driver.check_text("inside the layer", None, false, HERE);
+        driver.check_text("nowhere on this screen", None, true, HERE);
+        driver.check_text("inside the layer", Some("Layer/panel"), false, HERE);
     }
 
     #[test]
@@ -8409,9 +8364,6 @@ mod tests {
             panic_message(|| _ = target.surface_count()),
             panic_message(|| _ = target.text_count()),
             panic_message(|| _ = target.image_count()),
-            panic_message(|| _ = target.surfaces()),
-            panic_message(|| _ = target.texts()),
-            panic_message(|| _ = target.images()),
         ] {
             assert!(
                 unavailable.contains("expected: structured tiny-skia paint"),

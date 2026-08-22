@@ -2608,8 +2608,7 @@ pub fn document() -> Value {
                     "testing::WheelDelta", "testing::Modifiers", "testing::Key", "testing::KeyLocation",
                     "testing::KeyMetadata", "testing::CompositionPhase", "testing::TouchPhase",
                     "testing::Capture", "testing::AccessibilityAction", "testing::AccessibilityProperty", "testing::Action",
-                    "testing::Config", "testing::Driver", "testing::Target", "testing::SurfacePaint",
-                    "testing::TextPaint", "testing::ImagePaint",
+                    "testing::Config", "testing::Driver", "testing::Target",
                     "testing::step",
                 ],
                 "testing": {
@@ -2618,7 +2617,7 @@ pub fn document() -> Value {
                         "Location", "ThemeMode", "Platform", "MouseButton", "WheelDelta",
                         "Modifiers", "Key", "KeyLocation", "KeyMetadata", "CompositionPhase",
                         "TouchPhase", "Capture", "AccessibilityAction", "AccessibilityProperty", "Action", "Config",
-                        "Driver", "Target", "SurfacePaint", "TextPaint", "ImagePaint", "step"
+                        "Driver", "Target", "step"
                     ],
                 },
                 "accesskit": ACCESSKIT_VERSION,
