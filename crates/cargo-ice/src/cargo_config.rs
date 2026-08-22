@@ -109,49 +109,25 @@ mod tests {
     #[ignore = "allocation contract; run alone with --test-threads=1"]
     fn performance_contract_explicit_arguments_stream_without_scratch() {
         const REQUESTS: u64 = 100;
-        const WINDOWS: usize = 4;
 
         let cwd = Path::new("/workspace/app");
         let arguments = ["--release".to_owned()];
         assert!(explicit_files(cwd, &arguments).is_empty());
 
-        // `dhat::Alloc` is this binary's global allocator, so its counters
-        // cover every thread, and this is the first test the binary runs.
-        // While it runs, libtest's main thread enters `Receiver::recv()` to
-        // wait for the result and allocates the one-time `mpmc` context and
-        // waker entry that `recv` needs (2 blocks / 144 bytes, landing about
-        // 2ms in) — blocks that belong to the harness, not to the scan. A scan
-        // that allocated would dirty every window, while a one-time foreign
-        // block dirties at most one, so the contract is a clean window rather
-        // than a clean process.
         let _profiler = dhat::Profiler::builder().testing().build();
-        let mut allocated = (0, 0);
-        for _ in 0..WINDOWS {
-            let before = dhat::HeapStats::get();
+        let measured = crate::allocation::clean_window((0, 0), || {
             for _ in 0..REQUESTS {
                 assert!(
                     std::hint::black_box(explicit_files(cwd, std::hint::black_box(&arguments)))
                         .is_empty()
                 );
             }
-            let after = dhat::HeapStats::get();
-            allocated = (
-                after.total_blocks - before.total_blocks,
-                after.total_bytes - before.total_bytes,
-            );
-            if allocated == (0, 0) {
-                break;
-            }
-        }
+        });
 
-        assert_eq!(
-            allocated,
-            (0, 0),
-            "argument scan allocations: {allocated:?}"
-        );
+        assert_eq!(measured, (0, 0), "argument scan allocations: {measured:?}");
         eprintln!(
             "{REQUESTS} explicit argument scans: {} heap blocks / {} bytes",
-            allocated.0, allocated.1
+            measured.0, measured.1
         );
     }
 

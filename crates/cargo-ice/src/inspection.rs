@@ -1869,15 +1869,19 @@ mod tests {
         let mut differences = Vec::new();
 
         let _profiler = dhat::Profiler::builder().testing().build();
-        compare_json("", &baseline, &current, 0.0, &mut differences);
-        let stats = dhat::HeapStats::get();
+        let measured = crate::allocation::clean_window((0, 0), || {
+            compare_json("", &baseline, &current, 0.0, &mut differences);
+        });
 
         assert!(differences.is_empty());
-        assert_eq!(stats.total_blocks, 0, "{stats:?}");
-        assert_eq!(stats.total_bytes, 0, "{stats:?}");
+        assert_eq!(
+            measured,
+            (0, 0),
+            "equal JSON diff allocations: {measured:?}"
+        );
         eprintln!(
             "unchanged {FIELDS}-field JSON diff: {} heap blocks / {} bytes",
-            stats.total_blocks, stats.total_bytes
+            measured.0, measured.1
         );
     }
 

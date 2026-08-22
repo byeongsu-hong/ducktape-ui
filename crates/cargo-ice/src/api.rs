@@ -1115,15 +1115,15 @@ view
         let mut changes = Vec::new();
 
         let _profiler = dhat::Profiler::builder().testing().build();
-        diff_theme(Some(&baseline), Some(&current), &mut changes);
-        let stats = dhat::HeapStats::get();
+        let measured = crate::allocation::clean_window((0, 0), || {
+            diff_theme(Some(&baseline), Some(&current), &mut changes);
+        });
 
         assert!(changes.is_empty());
-        assert_eq!(stats.total_blocks, 0, "{stats:?}");
-        assert_eq!(stats.total_bytes, 0, "{stats:?}");
+        assert_eq!(measured, (0, 0), "theme diff allocations: {measured:?}");
         eprintln!(
             "unchanged {TOKENS}-token theme diff: {} heap blocks / {} bytes",
-            stats.total_blocks, stats.total_bytes
+            measured.0, measured.1
         );
     }
 
