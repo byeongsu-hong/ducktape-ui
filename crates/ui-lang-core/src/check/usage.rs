@@ -398,34 +398,39 @@ fn record_derived_read(tracker: &mut Tracker, name: &str, site: (usize, usize)) 
     }
 }
 
-fn derived_value_dependencies(document: &Document) -> HashMap<String, Vec<String>> {
-    fn paths(expr: &Expr, output: &mut Vec<String>) {
-        match expr {
-            Expr::Path(path) => {
-                if let Some(name) = path.first() {
-                    output.push(name.clone());
-                }
+/// Collects the first segment of every path an expression reads, in first-use
+/// order. The `contains` guard bounds `expand`'s recursion: a derived that
+/// names the same dependency twice would otherwise re-walk its whole subtree.
+fn path_roots(expr: &Expr, output: &mut Vec<String>) {
+    match expr {
+        Expr::Path(path) => {
+            if let Some(name) = path.first()
+                && !output.contains(name)
+            {
+                output.push(name.clone());
             }
-            Expr::List(values) | Expr::Call { args: values, .. } => {
-                for value in values {
-                    paths(value, output);
-                }
-            }
-            Expr::Unary { value, .. } => paths(value, output),
-            Expr::Binary { left, right, .. } => {
-                paths(left, output);
-                paths(right, output);
-            }
-            Expr::Bool(_)
-            | Expr::I64(_)
-            | Expr::F64(_)
-            | Expr::Str(_)
-            | Expr::Bytes(_)
-            | Expr::EmptyList
-            | Expr::None => {}
         }
+        Expr::List(values) | Expr::Call { args: values, .. } => {
+            for value in values {
+                path_roots(value, output);
+            }
+        }
+        Expr::Unary { value, .. } => path_roots(value, output),
+        Expr::Binary { left, right, .. } => {
+            path_roots(left, output);
+            path_roots(right, output);
+        }
+        Expr::Bool(_)
+        | Expr::I64(_)
+        | Expr::F64(_)
+        | Expr::Str(_)
+        | Expr::Bytes(_)
+        | Expr::EmptyList
+        | Expr::None => {}
     }
+}
 
+fn derived_value_dependencies(document: &Document) -> HashMap<String, Vec<String>> {
     let names = document
         .derived
         .iter()
@@ -436,7 +441,7 @@ fn derived_value_dependencies(document: &Document) -> HashMap<String, Vec<String
         .iter()
         .map(|derived| {
             let mut dependencies = Vec::new();
-            paths(&derived.value, &mut dependencies);
+            path_roots(&derived.value, &mut dependencies);
             dependencies.retain(|name| names.contains(name.as_str()));
             dependencies.sort();
             dependencies.dedup();
@@ -514,35 +519,6 @@ fn collect_handler_bindings(
 }
 
 fn derived_state_dependencies(document: &Document) -> HashMap<String, Vec<String>> {
-    fn paths(expr: &Expr, output: &mut Vec<String>) {
-        match expr {
-            Expr::Path(path) => {
-                if let Some(name) = path.first()
-                    && !output.contains(name)
-                {
-                    output.push(name.clone());
-                }
-            }
-            Expr::List(values) | Expr::Call { args: values, .. } => {
-                for value in values {
-                    paths(value, output);
-                }
-            }
-            Expr::Unary { value, .. } => paths(value, output),
-            Expr::Binary { left, right, .. } => {
-                paths(left, output);
-                paths(right, output);
-            }
-            Expr::Bool(_)
-            | Expr::I64(_)
-            | Expr::F64(_)
-            | Expr::Str(_)
-            | Expr::Bytes(_)
-            | Expr::EmptyList
-            | Expr::None => {}
-        }
-    }
-
     fn expand(
         name: &str,
         states: &HashSet<String>,
@@ -577,7 +553,7 @@ fn derived_state_dependencies(document: &Document) -> HashMap<String, Vec<String
         .iter()
         .map(|derived| {
             let mut dependencies = Vec::new();
-            paths(&derived.value, &mut dependencies);
+            path_roots(&derived.value, &mut dependencies);
             (derived.name.clone(), dependencies)
         })
         .collect::<HashMap<_, _>>();

@@ -424,6 +424,35 @@ fn refine_expr_type_evidence(
     refined
 }
 
+/// Resolves a call against the document's `pure`/`sync` externs. The name is
+/// compared verbatim: the qualified site resolves before the builtin table, the
+/// fallback site after `unqualified_name` has already shortened it.
+fn pure_or_sync_extern_type(
+    name: &str,
+    args: &[Expr],
+    env: &dyn ExprTypeEnv,
+    document: &Document,
+    span: &Span,
+) -> Result<Option<Type>, Error> {
+    let Some(function) = document.functions.iter().find(|function| {
+        function.name == name && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
+    }) else {
+        return Ok(None);
+    };
+    if function.kind == ExternKind::Sync && !env.allows_sync_externs() {
+        return Err(Error::new(
+            "E152",
+            span,
+            format!("sync extern `{name}` is only valid in app state initializers and handlers"),
+        )
+        .hint(
+            "declare a deterministic, side-effect-free Rust function as `pure` when it must run in a recomputed expression",
+        ));
+    }
+    check_call_args(function, args, env, document, span)?;
+    Ok(Some(function.output.clone()))
+}
+
 fn contextual_builtin_call(name: &str, document: &Document) -> Option<ContextualBuiltin> {
     if document.functions.iter().any(|function| {
         function.name == name && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
@@ -700,23 +729,9 @@ fn expr_type_uncached_with_call_resolution(
                 return Ok(Type::Named(enum_name.to_owned()));
             }
             if call_resolution == CallResolution::Source
-                && let Some(function) = document.functions.iter().find(|function| {
-                    function.name == *name
-                        && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
-                })
+                && let Some(output) = pure_or_sync_extern_type(name, args, env, document, span)?
             {
-                if function.kind == ExternKind::Sync && !env.allows_sync_externs() {
-                    return Err(Error::new(
-                        "E152",
-                        span,
-                        format!(
-                            "sync extern `{name}` is only valid in app state initializers and handlers"
-                        ),
-                    )
-                    .hint("declare a deterministic, side-effect-free Rust function as `pure` when it must run in a recomputed expression"));
-                }
-                check_call_args(function, args, env, document, span)?;
-                return Ok(function.output.clone());
+                return Ok(output);
             }
             let name = unqualified_name(name);
             if let Some(builtin) = ContextualBuiltin::from_name(name) {
@@ -2386,30 +2401,9 @@ fn expr_type_uncached_with_call_resolution(
                     span,
                     format!("unknown built-in function `{name}`"),
                 )),
-                _ => {
-                    let function = document
-                        .functions
-                        .iter()
-                        .find(|function| {
-                            function.name == name
-                                && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
-                        })
-                        .ok_or_else(|| {
-                            Error::new("E130", span, format!("unknown extern function `{name}`"))
-                        })?;
-                    if function.kind == ExternKind::Sync && !env.allows_sync_externs() {
-                        return Err(Error::new(
-                            "E152",
-                            span,
-                            format!(
-                                "sync extern `{name}` is only valid in app state initializers and handlers"
-                            ),
-                        )
-                        .hint("declare a deterministic, side-effect-free Rust function as `pure` when it must run in a recomputed expression"));
-                    }
-                    check_call_args(function, args, env, document, span)?;
-                    Ok(function.output.clone())
-                }
+                _ => pure_or_sync_extern_type(name, args, env, document, span)?.ok_or_else(|| {
+                    Error::new("E130", span, format!("unknown extern function `{name}`"))
+                }),
             }
         }
         Expr::Unary { op, value } => {
