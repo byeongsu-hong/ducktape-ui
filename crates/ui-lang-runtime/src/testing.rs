@@ -1076,14 +1076,14 @@ pub fn step<T>(test_name: &'static str, source: Location, operation: impl FnOnce
 }
 
 #[derive(Debug, Clone)]
-pub struct SurfacePaint {
+struct SurfacePaint {
     pub background: Background,
     pub border: Border,
     pub shadow: Shadow,
 }
 
 #[derive(Debug, Clone)]
-pub struct TextPaint {
+struct TextPaint {
     pub content: Option<String>,
     pub bounds: Rectangle,
     pub color: Color,
@@ -1094,7 +1094,7 @@ pub struct TextPaint {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct ImagePaint {
+struct ImagePaint {
     pub bounds: Rectangle,
     /// The svg tint, when the primitive is a vector image drawn with one.
     pub color: Option<Color>,
