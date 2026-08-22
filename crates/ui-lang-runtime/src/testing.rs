@@ -3999,38 +3999,45 @@ where
         }
     }
 
+    /// Every walk runs against one interface. `with_interface` rebuilds the
+    /// view and re-lays it out on each call, so asking per id — once for the
+    /// layout and twice for capabilities — cost the fuzz loop `1 + 3n` view
+    /// builds per generated action where one does.
     fn interaction_inventory(&mut self) -> Vec<trace::InteractionTarget> {
-        self.known_ids()
-            .into_iter()
-            .filter_map(|id| {
-                let mut layouts = self.with_interface(|interface, renderer, _| {
-                    find_targets::<P::Message, P::Renderer>(interface, renderer, &id)
-                });
-                normalize_target_matches(&mut layouts);
-                let [layout] = layouts.as_slice() else {
-                    return None;
-                };
-                let visible = layout.visible_bounds.is_some();
-                let scrollable = layout.translation.is_some()
-                    && self.has_widget_capability(&id, WidgetCapability::Scrollable);
-                let focusable = layout.accessibility.as_ref().is_some_and(|accessibility| {
-                    accessibility.supports_focus && !accessibility.disabled
-                }) || self.has_widget_capability(&id, WidgetCapability::Focusable);
-                Some(trace::InteractionTarget {
-                    id,
-                    visible,
-                    scrollable,
-                    focusable,
-                })
-            })
-            .collect()
-    }
-
-    fn has_widget_capability(&mut self, id: &str, capability: WidgetCapability) -> bool {
         self.with_interface(|interface, renderer, _| {
-            let mut operation = MatchingWidgetIds::new(id, capability).find_all();
-            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
-            matches!(operation.finish(), Outcome::Some(ids) if ids.len() == 1)
+            collect_known_ids::<P::Message, P::Renderer>(interface, renderer)
+                .into_iter()
+                .filter_map(|id| {
+                    let mut layouts =
+                        find_targets::<P::Message, P::Renderer>(interface, renderer, &id);
+                    normalize_target_matches(&mut layouts);
+                    let [layout] = layouts.as_slice() else {
+                        return None;
+                    };
+                    let visible = layout.visible_bounds.is_some();
+                    let scrollable = layout.translation.is_some()
+                        && widget_capability::<P::Message, P::Renderer>(
+                            interface,
+                            renderer,
+                            &id,
+                            WidgetCapability::Scrollable,
+                        );
+                    let focusable = layout.accessibility.as_ref().is_some_and(|accessibility| {
+                        accessibility.supports_focus && !accessibility.disabled
+                    }) || widget_capability::<P::Message, P::Renderer>(
+                        interface,
+                        renderer,
+                        &id,
+                        WidgetCapability::Focusable,
+                    );
+                    Some(trace::InteractionTarget {
+                        id,
+                        visible,
+                        scrollable,
+                        focusable,
+                    })
+                })
+                .collect()
         })
     }
 
@@ -4062,18 +4069,9 @@ where
     }
 
     fn known_ids(&mut self) -> Vec<String> {
-        let mut ids = self.with_interface(|interface, renderer, _| {
-            let mut operation = KnownIds::<P::Message>::new().find_all();
-            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
-            match operation.finish() {
-                Outcome::Some(ids) => ids,
-                _ => Vec::new(),
-            }
-        });
-        ids.retain(|id| !internal_auto_id(id));
-        ids.sort();
-        ids.dedup();
-        ids
+        self.with_interface(|interface, renderer, _| {
+            collect_known_ids::<P::Message, P::Renderer>(interface, renderer)
+        })
     }
 
     fn known_ids_display(&mut self) -> String {
@@ -4955,6 +4953,41 @@ where
         Outcome::Some(targets) => targets,
         _ => Vec::new(),
     }
+}
+
+fn collect_known_ids<Message: 'static, Renderer>(
+    interface: &mut UserInterface<'_, Message, impl theme::Base, Renderer>,
+    renderer: &Renderer,
+) -> Vec<String>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    let mut operation = KnownIds::<Message>::new().find_all();
+    interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+    let mut ids = match operation.finish() {
+        Outcome::Some(ids) => ids,
+        _ => Vec::new(),
+    };
+    ids.retain(|id| !internal_auto_id(id));
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// Asks the whole tree, not one node: a duplicated id answers `false`, which
+/// is what keeps an ambiguous selector out of the fuzz inventory.
+fn widget_capability<Message: 'static, Renderer>(
+    interface: &mut UserInterface<'_, Message, impl theme::Base, Renderer>,
+    renderer: &Renderer,
+    id: &str,
+    capability: WidgetCapability,
+) -> bool
+where
+    Renderer: iced::advanced::Renderer,
+{
+    let mut operation = MatchingWidgetIds::new(id, capability).find_all();
+    interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+    matches!(operation.finish(), Outcome::Some(ids) if ids.len() == 1)
 }
 
 fn normalize_target_matches(targets: &mut Vec<LayoutTarget>) {
