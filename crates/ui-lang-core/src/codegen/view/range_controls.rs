@@ -52,7 +52,7 @@ pub(in crate::codegen) fn render_slider(
             write!(
                 widget,
                 ".{method}({})",
-                resolved_text_length_code(length, program, env)?
+                resolved_length_code(length, program, env)?
             )
             .unwrap();
         }
@@ -93,7 +93,7 @@ pub(in crate::codegen) fn render_progress(
             write!(
                 widget,
                 ".{method}({})",
-                resolved_text_length_code(length, program, env)?
+                resolved_length_code(length, program, env)?
             )
             .unwrap();
         }

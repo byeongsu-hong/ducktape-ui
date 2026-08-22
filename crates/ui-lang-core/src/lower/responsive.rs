@@ -1,14 +1,5 @@
 use super::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ResolvedResponsiveLength {
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    FixedF64(CheckedExprUseId),
-    FixedLength(CheckedExprUseId),
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedResponsiveLocal {
     pub(crate) local: CheckedLocalId,
@@ -30,8 +21,8 @@ pub(crate) enum ResolvedResponsiveKind {
 pub(crate) struct ResolvedResponsive {
     pub(crate) id: ViewId,
     pub(crate) kind: ResolvedResponsiveKind,
-    pub(crate) width: Option<ResolvedResponsiveLength>,
-    pub(crate) height: Option<ResolvedResponsiveLength>,
+    pub(crate) width: Option<ResolvedContainerLength>,
+    pub(crate) height: Option<ResolvedContainerLength>,
     pub(crate) origin: OriginId,
 }
 
@@ -220,14 +211,14 @@ impl Lowerer {
         role: CheckedViewExprRole,
         span: &Span,
         expressions: &mut ResponsiveExpressionValidation,
-    ) -> Result<Option<ResolvedResponsiveLength>, Error> {
+    ) -> Result<Option<ResolvedContainerLength>, Error> {
         Ok(match length {
             CheckedLength::None => None,
-            CheckedLength::Fill => Some(ResolvedResponsiveLength::Fill),
+            CheckedLength::Fill => Some(ResolvedContainerLength::Fill),
             CheckedLength::FillPortion(portion) => {
-                Some(ResolvedResponsiveLength::FillPortion(*portion))
+                Some(ResolvedContainerLength::FillPortion(*portion))
             }
-            CheckedLength::Shrink => Some(ResolvedResponsiveLength::Shrink),
+            CheckedLength::Shrink => Some(ResolvedContainerLength::Shrink),
             CheckedLength::Fixed { expression, source } => {
                 self.validate_responsive_expression(
                     responsive,
@@ -239,8 +230,8 @@ impl Lowerer {
                     expressions,
                 )?;
                 Some(match source {
-                    Type::F64 => ResolvedResponsiveLength::FixedF64(*expression),
-                    Type::Length => ResolvedResponsiveLength::FixedLength(*expression),
+                    Type::F64 => ResolvedContainerLength::FixedF64(*expression),
+                    Type::Length => ResolvedContainerLength::FixedLength(*expression),
                     _ => {
                         return Err(self.invariant(
                             span,

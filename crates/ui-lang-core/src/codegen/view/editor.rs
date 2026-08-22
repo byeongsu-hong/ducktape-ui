@@ -93,7 +93,7 @@ pub(in crate::codegen) fn render_text_editor(
         write!(
             code,
             ".height({})",
-            resolved_text_length_code(height, program, env)?
+            resolved_length_code(height, program, env)?
         )
         .unwrap();
     }

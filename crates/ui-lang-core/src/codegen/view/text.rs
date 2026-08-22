@@ -515,33 +515,12 @@ fn append_resolved_text_dimensions(
             write!(
                 code,
                 ".{method}({})",
-                resolved_text_length_code(length, program, env)?
+                resolved_length_code(length, program, env)?
             )
             .unwrap();
         }
     }
     Ok(())
-}
-
-pub(super) fn resolved_text_length_code(
-    length: &ResolvedContainerLength,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match length {
-        ResolvedContainerLength::Fill => "::iced::Fill".into(),
-        ResolvedContainerLength::FillPortion(portion) => {
-            format!("::iced::Length::FillPortion({portion})")
-        }
-        ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
-        ResolvedContainerLength::FixedF64(expression) => format!(
-            "{} as f32",
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        ),
-        ResolvedContainerLength::FixedLength(expression) => {
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        }
-    })
 }
 
 fn resolved_text_line_height_code(

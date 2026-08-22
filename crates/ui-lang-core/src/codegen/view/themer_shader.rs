@@ -66,27 +66,6 @@ pub(in crate::codegen) fn render_themer(
     ))
 }
 
-fn shader_length_code(
-    length: &ResolvedContainerLength,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match length {
-        ResolvedContainerLength::Fill => "::iced::Fill".into(),
-        ResolvedContainerLength::FillPortion(portion) => {
-            format!("::iced::Length::FillPortion({portion})")
-        }
-        ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
-        ResolvedContainerLength::FixedF64(expression) => format!(
-            "{} as f32",
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        ),
-        ResolvedContainerLength::FixedLength(expression) => {
-            resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-        }
-    })
-}
-
 pub(in crate::codegen) fn render_shader(
     shader: &ResolvedShader,
     document: &LoweredProgram,
@@ -107,7 +86,7 @@ pub(in crate::codegen) fn render_shader(
             write!(
                 code,
                 ".{method}({})",
-                shader_length_code(length, program, env)?
+                resolved_length_code(length, program, env)?
             )
             .unwrap();
         }

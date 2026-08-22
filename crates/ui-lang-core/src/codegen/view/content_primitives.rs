@@ -79,7 +79,7 @@ pub(in crate::codegen) fn render_space(
             write!(
                 code,
                 ".{method}({})",
-                resolved_text_length_code(length, program, env)?
+                resolved_length_code(length, program, env)?
             )
             .unwrap();
         }

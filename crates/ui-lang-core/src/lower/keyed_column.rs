@@ -6,15 +6,6 @@ pub(crate) struct ResolvedKeyedBinding {
     pub(crate) name: String,
 }
 
-#[derive(Clone, Debug)]
-pub(crate) enum ResolvedKeyedLength {
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    FixedF64(CheckedExprUseId),
-    FixedLength(CheckedExprUseId),
-}
-
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ResolvedKeyedPadding {
     pub(crate) all: Option<CheckedExprUseId>,
@@ -32,8 +23,8 @@ pub(crate) struct ResolvedKeyedColumn {
     pub(crate) items: CheckedExprUseId,
     pub(crate) key: CheckedExprUseId,
     pub(crate) item: ResolvedKeyedBinding,
-    pub(crate) width: Option<ResolvedKeyedLength>,
-    pub(crate) height: Option<ResolvedKeyedLength>,
+    pub(crate) width: Option<ResolvedContainerLength>,
+    pub(crate) height: Option<ResolvedContainerLength>,
     pub(crate) spacing: Option<CheckedExprUseId>,
     pub(crate) padding: ResolvedKeyedPadding,
     pub(crate) max_width: Option<CheckedExprUseId>,
@@ -201,12 +192,14 @@ impl Lowerer {
         length: CheckedLength,
         role: CheckedViewExprRole,
         span: &Span,
-    ) -> Result<Option<ResolvedKeyedLength>, Error> {
+    ) -> Result<Option<ResolvedContainerLength>, Error> {
         Ok(match length {
             CheckedLength::None => None,
-            CheckedLength::Fill => Some(ResolvedKeyedLength::Fill),
-            CheckedLength::FillPortion(portion) => Some(ResolvedKeyedLength::FillPortion(portion)),
-            CheckedLength::Shrink => Some(ResolvedKeyedLength::Shrink),
+            CheckedLength::Fill => Some(ResolvedContainerLength::Fill),
+            CheckedLength::FillPortion(portion) => {
+                Some(ResolvedContainerLength::FillPortion(portion))
+            }
+            CheckedLength::Shrink => Some(ResolvedContainerLength::Shrink),
             CheckedLength::Fixed { expression, source } => {
                 let actual =
                     self.validate_keyed_expression(view, scope, expression, role, false, span)?;
@@ -214,8 +207,8 @@ impl Lowerer {
                     return Err(self.invariant(span, "keyed length type contract diverged"));
                 }
                 match source {
-                    Type::F64 => Some(ResolvedKeyedLength::FixedF64(expression)),
-                    Type::Length => Some(ResolvedKeyedLength::FixedLength(expression)),
+                    Type::F64 => Some(ResolvedContainerLength::FixedF64(expression)),
+                    Type::Length => Some(ResolvedContainerLength::FixedLength(expression)),
                     _ => return Err(self.invariant(span, "keyed length has invalid type")),
                 }
             }

@@ -16509,8 +16509,11 @@ view
         let pin = program.pin(ViewId(0)).unwrap();
 
         assert_eq!(pin.id, ViewId(0));
-        assert_eq!(pin.width, Some(ResolvedPinLength::Fill));
-        assert!(matches!(pin.height, Some(ResolvedPinLength::FixedF64(_))));
+        assert_eq!(pin.width, Some(ResolvedContainerLength::Fill));
+        assert!(matches!(
+            pin.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
         for expression in [pin.x, pin.y] {
             let expression = program.checked_facts().expression_use(expression);
             assert_eq!(expression.source, Type::F64);
@@ -16592,11 +16595,11 @@ view
         assert_eq!(responsive.id, ViewId(0));
         assert!(matches!(
             responsive.width,
-            Some(ResolvedResponsiveLength::FixedLength(_))
+            Some(ResolvedContainerLength::FixedLength(_))
         ));
         assert!(matches!(
             responsive.height,
-            Some(ResolvedResponsiveLength::FixedF64(_))
+            Some(ResolvedContainerLength::FixedF64(_))
         ));
         let ResolvedResponsiveKind::Breakpoint { breakpoint } = responsive.kind else {
             panic!("root must be breakpoint responsive");
@@ -16792,11 +16795,11 @@ view
         assert_eq!(keyed.item.name, "item");
         assert!(matches!(
             keyed.width,
-            Some(ResolvedKeyedLength::FillPortion(2))
+            Some(ResolvedContainerLength::FillPortion(2))
         ));
         assert!(matches!(
             keyed.height,
-            Some(ResolvedKeyedLength::FixedF64(_))
+            Some(ResolvedContainerLength::FixedF64(_))
         ));
         assert!(keyed.spacing.is_some());
         assert!(keyed.padding.all.is_some());
@@ -16906,13 +16909,13 @@ view
         assert_eq!(table.id, ViewId(0));
         assert_eq!(table.row.name, "row");
         assert_eq!(table.row.ty, Type::Named("Item".into()));
-        assert!(matches!(table.width, Some(ResolvedTableLength::Fill)));
+        assert!(matches!(table.width, Some(ResolvedContainerLength::Fill)));
         assert!(table.padding.is_some());
         assert!(table.separator_x.is_some());
         assert_eq!(table.columns.len(), 1);
         assert!(matches!(
             table.columns[0].width,
-            Some(ResolvedTableLength::FillPortion(2))
+            Some(ResolvedContainerLength::FillPortion(2))
         ));
         assert_eq!(table.columns[0].align_x, Some(InputAlignment::Right));
         assert_eq!(
@@ -17020,8 +17023,11 @@ view
         let pane = program.pane_grid(ViewId(0)).unwrap();
         assert_eq!(pane.id, ViewId(0));
         assert_eq!(pane.name, "work");
-        assert!(matches!(pane.width, Some(ResolvedPaneLength::Fill)));
-        assert!(matches!(pane.height, Some(ResolvedPaneLength::FixedF64(_))));
+        assert!(matches!(pane.width, Some(ResolvedContainerLength::Fill)));
+        assert!(matches!(
+            pane.height,
+            Some(ResolvedContainerLength::FixedF64(_))
+        ));
         assert!(pane.spacing.is_some());
         assert!(pane.min_size.is_some());
         assert!(pane.resize_leeway.is_some());

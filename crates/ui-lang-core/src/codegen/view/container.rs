@@ -207,20 +207,7 @@ fn append_resolved_container_dimensions(
 ) -> Result<(), Error> {
     for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
         let Some(length) = length else { continue };
-        let value = match length {
-            ResolvedContainerLength::Fill => "::iced::Fill".into(),
-            ResolvedContainerLength::FillPortion(portion) => {
-                format!("::iced::Length::FillPortion({portion})")
-            }
-            ResolvedContainerLength::Shrink => "::iced::Shrink".into(),
-            ResolvedContainerLength::FixedF64(expression) => format!(
-                "{} as f32",
-                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-            ),
-            ResolvedContainerLength::FixedLength(expression) => {
-                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
-            }
-        };
+        let value = resolved_length_code(length, program, env)?;
         write!(code, ".{method}({value})").unwrap();
     }
     Ok(())

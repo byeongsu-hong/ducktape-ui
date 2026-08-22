@@ -121,7 +121,7 @@ pub(in crate::codegen) fn render_input(
         write!(
             widget,
             ".width({})",
-            resolved_text_length_code(width, program, env)?
+            resolved_length_code(width, program, env)?
         )
         .unwrap();
     }
