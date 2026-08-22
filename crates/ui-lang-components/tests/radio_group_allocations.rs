@@ -1,16 +1,15 @@
 #![cfg(feature = "radio-group")]
 
-use std::alloc::System;
+mod common;
+
+use common::clean_window_allocations;
+
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use iced::Element;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use ui_lang_components::ui::radio_group::{radio_group, radio_option};
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 static VALUE_CLONES: AtomicUsize = AtomicUsize::new(0);
 
@@ -41,13 +40,12 @@ fn radio_group_build_shares_keyboard_snapshots() {
     const ALLOCATION_BUDGET: usize = 119;
 
     drop(black_box(group(OPTIONS)));
-    VALUE_CLONES.store(0, Ordering::Relaxed);
 
-    let region = Region::new(GLOBAL);
-    let element = black_box(group(OPTIONS));
-    let stats = region.change();
+    let stats = clean_window_allocations(ALLOCATION_BUDGET, || {
+        VALUE_CLONES.store(0, Ordering::Relaxed);
+        drop(black_box(group(OPTIONS)));
+    });
     let clones = VALUE_CLONES.load(Ordering::Relaxed);
-    drop(element);
 
     eprintln!(
         "{OPTIONS} radio options: {clones} value clones, {} allocations, {} bytes",

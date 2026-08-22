@@ -6,7 +6,7 @@ use super::direction::Direction;
 use super::menu::{MENU_PANEL_PADDING, MenuEntry, MenuEvent, MenuState, focus_menu_state, menu};
 use super::popover::{
     Alignment, DismissReason, FloatingConfig, FloatingContent, FocusFlag, PanelKind, Placement,
-    draw_focus_ring, panel,
+    draw_focus_ring, panel, translated_bounds,
 };
 use super::theme::Theme;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget};
@@ -441,10 +441,6 @@ where
             on_event: self.on_event.as_ref(),
         })))
     }
-}
-
-fn translated_bounds(bounds: Rectangle, translation: Vector) -> Rectangle {
-    Rectangle::new(bounds.position() + translation, bounds.size())
 }
 
 struct ContextOverlay<'a, 'b, Message> {

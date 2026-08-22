@@ -582,7 +582,7 @@ fn status(state: &State, disabled: bool, hovered: bool) -> Status {
     }
 }
 
-fn is_pointer_press(event: &Event) -> bool {
+pub(crate) fn is_pointer_press(event: &Event) -> bool {
     matches!(
         event,
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))

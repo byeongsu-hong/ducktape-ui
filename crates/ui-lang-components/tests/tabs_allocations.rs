@@ -1,17 +1,16 @@
 #![cfg(feature = "tabs")]
 
-use std::alloc::System;
+mod common;
+
+use common::clean_window;
+
 use std::hint::black_box;
 
 use iced::widget::{self, text};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use ui_lang_components::ui::tabs::{
     TabsActivation, TabsOrientation, TabsState, TabsVariant, tab, tabs,
 };
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn render(ids: &[widget::Id], state: &TabsState<usize>) {
     let items = ids.iter().enumerate().map(|(index, id)| {
@@ -41,11 +40,11 @@ fn performance_contract_tabs_reuse_trigger_storage() {
     let state = TabsState::new(0);
 
     render(&ids, &state);
-    let region = Region::new(GLOBAL);
-    for _ in 0..RENDERS {
-        render(&ids, &state);
-    }
-    let stats = region.change();
+    let stats = clean_window((150_272, 47_652_864), || {
+        for _ in 0..RENDERS {
+            render(&ids, &state);
+        }
+    });
 
     eprintln!(
         "{RENDERS} tab renders with {TABS} triggers: {} allocations / {} reallocations / {} bytes",

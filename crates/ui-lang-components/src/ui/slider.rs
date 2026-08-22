@@ -1253,8 +1253,8 @@ mod tests {
             assert!(disabled.range.a < normal.range.a);
             assert_eq!(invalid.range, theme.palette.destructive);
             assert_eq!(invalid.focus_ring, theme.palette.destructive);
-            assert!(contrast(normal.track, theme.palette.background) >= 3.0);
-            assert!(contrast(normal.thumb_border, normal.thumb) >= 3.0);
+            assert!(normal.track.relative_contrast(theme.palette.background) >= 3.0);
+            assert!(normal.thumb_border.relative_contrast(normal.thumb) >= 3.0);
         }
     }
 
@@ -1450,22 +1450,5 @@ mod tests {
 
         assert_eq!(horizontal.as_widget().children().len(), 2);
         assert_eq!(vertical.as_widget().children().len(), 1);
-    }
-
-    fn contrast(left: Color, right: Color) -> f32 {
-        let left = luminance(left);
-        let right = luminance(right);
-        (left.max(right) + 0.05) / (left.min(right) + 0.05)
-    }
-
-    fn luminance(color: Color) -> f32 {
-        let channel = |value: f32| {
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
     }
 }

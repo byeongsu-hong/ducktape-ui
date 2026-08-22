@@ -355,7 +355,13 @@ mod tests {
 
         for theme in [LIGHT, DARK] {
             let focused = style(&theme, ToggleVariant::Outline, false, Status::Focused);
-            assert!(contrast(focused.focus_ring.color, theme.palette.background) >= 3.0);
+            assert!(
+                focused
+                    .focus_ring
+                    .color
+                    .relative_contrast(theme.palette.background)
+                    >= 3.0
+            );
             assert_eq!(focused.border.color, theme.palette.ring);
 
             let disabled = style(&theme, ToggleVariant::Outline, true, Status::Disabled);
@@ -401,20 +407,5 @@ mod tests {
             (large.horizontal, large.height, large.minimum_width),
             (10.0, 40.0, 40.0)
         );
-    }
-
-    fn contrast(a: Color, b: Color) -> f32 {
-        let luminance = |color: Color| {
-            let channel = |value: f32| {
-                if value <= 0.04045 {
-                    value / 12.92
-                } else {
-                    ((value + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
-        };
-        let (a, b) = (luminance(a), luminance(b));
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
     }
 }

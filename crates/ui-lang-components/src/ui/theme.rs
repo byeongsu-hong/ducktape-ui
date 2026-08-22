@@ -1,5 +1,6 @@
 use iced::theme::Palette as IcedPalette;
-use iced::{Color, Font, Shadow, Theme as IcedTheme, Vector};
+use iced::widget::overlay::menu;
+use iced::{Background, Border, Color, Font, Shadow, Theme as IcedTheme, Vector};
 
 /// Semantic colors shared by every component.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -586,6 +587,25 @@ pub(crate) fn alpha(mut color: Color, amount: f32) -> Color {
     color
 }
 
+pub fn menu_style(theme: &Theme) -> menu::Style {
+    menu::Style {
+        background: Background::Color(theme.palette.popover),
+        border: Border {
+            color: theme.palette.border,
+            width: 1.0,
+            radius: theme.radius.button.into(),
+        },
+        text_color: theme.palette.popover_foreground,
+        selected_text_color: theme.palette.accent_foreground,
+        selected_background: Background::Color(theme.palette.accent),
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.14),
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -995,5 +1015,17 @@ mod tests {
                 .relative_contrast(LIGHT.palette.success_background)
                 >= 4.5
         );
+    }
+    #[test]
+    fn menu_uses_popover_and_accent_roles() {
+        let style = menu_style(&LIGHT);
+
+        assert_eq!(style.background, Background::Color(LIGHT.palette.popover));
+        assert_eq!(style.text_color, LIGHT.palette.popover_foreground);
+        assert_eq!(
+            style.selected_background,
+            Background::Color(LIGHT.palette.accent)
+        );
+        assert_eq!(style.selected_text_color, LIGHT.palette.accent_foreground);
     }
 }

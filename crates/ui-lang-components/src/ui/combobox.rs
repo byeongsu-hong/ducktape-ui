@@ -1,8 +1,6 @@
 use super::input::{InputVariant, style as input_style};
-use super::theme::Theme;
-use iced::widget::overlay::menu;
+use super::theme::{Theme, menu_style};
 use iced::widget::{ComboBox, combo_box};
-use iced::{Background, Border, Shadow, Vector};
 use std::fmt::Display;
 
 /// A themed native iced combo box with searchable, keyboard-capable state.
@@ -27,42 +25,4 @@ where
         .size(theme.typography.list)
         .input_style(move |_iced_theme, status| input_style(&theme, InputVariant::Default, status))
         .menu_style(move |_iced_theme| menu_style(&theme))
-}
-
-pub fn menu_style(theme: &Theme) -> menu::Style {
-    menu::Style {
-        background: Background::Color(theme.palette.popover),
-        border: Border {
-            color: theme.palette.border,
-            width: 1.0,
-            radius: theme.radius.button.into(),
-        },
-        text_color: theme.palette.popover_foreground,
-        selected_text_color: theme.palette.accent_foreground,
-        selected_background: Background::Color(theme.palette.accent),
-        shadow: Shadow {
-            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.14),
-            offset: Vector::new(0.0, 4.0),
-            blur_radius: 12.0,
-        },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::theme::LIGHT;
-    use super::*;
-
-    #[test]
-    fn menu_uses_popover_and_accent_roles() {
-        let style = menu_style(&LIGHT);
-
-        assert_eq!(style.background, Background::Color(LIGHT.palette.popover));
-        assert_eq!(style.text_color, LIGHT.palette.popover_foreground);
-        assert_eq!(
-            style.selected_background,
-            Background::Color(LIGHT.palette.accent)
-        );
-        assert_eq!(style.selected_text_color, LIGHT.palette.accent_foreground);
-    }
 }

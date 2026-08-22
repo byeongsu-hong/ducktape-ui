@@ -1,12 +1,10 @@
 #![cfg(feature = "tabs")]
 
-use std::alloc::System;
+mod common;
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use common::clean_window;
+
 use ui_lang_components::ui::tabs::{TabsEvent, TabsState};
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[test]
 fn performance_contract_tabs_skip_equal_state_replacement() {
@@ -15,11 +13,11 @@ fn performance_contract_tabs_skip_equal_state_replacement() {
     let event = TabsEvent::Select("account".to_owned());
 
     assert!(!state.apply(&event));
-    let region = Region::new(GLOBAL);
-    for _ in 0..UPDATES {
-        assert!(!state.apply(&event));
-    }
-    let stats = region.change();
+    let stats = clean_window((0, 0), || {
+        for _ in 0..UPDATES {
+            assert!(!state.apply(&event));
+        }
+    });
 
     eprintln!(
         "{UPDATES} equal tabs state updates: {} allocations / {} reallocations / \

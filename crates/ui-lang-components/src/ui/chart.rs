@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::f32::consts::{PI, TAU};
 use std::fmt::{self, Write as _};
@@ -44,7 +45,9 @@ impl ChartColor {
             Self::Warning => theme.palette.warning,
             Self::Destructive => theme.palette.destructive,
             Self::LightDark { light, dark } => {
-                if luminance(theme.palette.background) < luminance(theme.palette.foreground) {
+                if theme.palette.background.relative_luminance()
+                    < theme.palette.foreground.relative_luminance()
+                {
                     dark
                 } else {
                     light
@@ -932,9 +935,22 @@ where
     }
 }
 
+type CartesianKey = (
+    ChartConfig,
+    ChartData,
+    CartesianOptions,
+    Option<ChartHit>,
+    UiTheme,
+);
+
 #[derive(Debug, Default)]
 struct CartesianState {
     hovered: Option<ChartHit>,
+    layers: canvas::Cache,
+    /// `Cache` invalidates itself when the layer resizes, so the key only has to
+    /// carry what else the drawing reads. The clone happens on a miss, never on
+    /// the steady-state frames it exists to skip.
+    key: RefCell<Option<CartesianKey>>,
 }
 
 struct CartesianProgram<'a, Message> {
@@ -981,48 +997,69 @@ impl<Message> canvas::Program<Message> for CartesianProgram<'_, Message> {
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &iced::Renderer,
         _theme: &iced::Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        match cartesian_geometry(
-            &self.config,
-            &self.data,
-            Rectangle::with_size(bounds.size()),
-            self.options,
-        ) {
-            Ok(geometry) if !geometry.marks.is_empty() => {
-                draw_cartesian(
-                    &mut frame,
-                    &geometry,
-                    &self.config,
-                    self.options,
-                    self.hovered.as_ref(),
-                    &self.theme,
-                );
-            }
-            Ok(geometry) => draw_empty(&mut frame, geometry.report.state, &self.theme),
-            Err(_) => draw_error(&mut frame, &self.theme),
+        let unchanged =
+            state
+                .key
+                .borrow()
+                .as_ref()
+                .is_some_and(|(config, data, options, hovered, theme)| {
+                    config == &self.config
+                        && data == &self.data
+                        && *options == self.options
+                        && hovered == &self.hovered
+                        && theme == &self.theme
+                });
+        if !unchanged {
+            state.layers.clear();
+            *state.key.borrow_mut() = Some((
+                self.config.clone(),
+                self.data.clone(),
+                self.options,
+                self.hovered.clone(),
+                self.theme,
+            ));
         }
-        vec![frame.into_geometry()]
+
+        vec![state.layers.draw(renderer, bounds.size(), |frame| {
+            match cartesian_geometry(
+                &self.config,
+                &self.data,
+                Rectangle::with_size(bounds.size()),
+                self.options,
+            ) {
+                Ok(geometry) if !geometry.marks.is_empty() => {
+                    draw_cartesian(
+                        frame,
+                        &geometry,
+                        &self.config,
+                        self.options,
+                        self.hovered.as_ref(),
+                        &self.theme,
+                    );
+                }
+                Ok(geometry) => draw_empty(frame, geometry.report.state, &self.theme),
+                Err(_) => draw_error(frame, &self.theme),
+            }
+        })]
     }
 
+    /// `update` already stores the hit under the cursor, so the pointer icon
+    /// reads it instead of running the hit test a second time. `update` only
+    /// fires on `CursorMoved`/`CursorLeft`, so after a resize under a still
+    /// cursor the icon lags until the next mouse move.
     fn mouse_interaction(
         &self,
-        _state: &Self::State,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
+        state: &Self::State,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        let local_bounds = Rectangle::with_size(bounds.size());
-        let hit = cursor.position_in(bounds).and_then(|point| {
-            cartesian_geometry(&self.config, &self.data, local_bounds, self.options)
-                .ok()
-                .and_then(|geometry| geometry.hit_test(point, HIT_RADIUS))
-        });
-        if self.on_hover.is_some() && hit.is_some() {
+        if self.on_hover.is_some() && state.hovered.is_some() {
             mouse::Interaction::Pointer
         } else {
             mouse::Interaction::default()
@@ -1675,9 +1712,13 @@ where
     }
 }
 
+type PieKey = (ChartConfig, PieData, f32, Option<PieHit>, UiTheme);
+
 #[derive(Debug, Default)]
 struct PieState {
     hovered: Option<PieHit>,
+    layers: canvas::Cache,
+    key: RefCell<Option<PieKey>>,
 }
 
 struct PieProgram<'a, Message> {
@@ -1727,51 +1768,61 @@ impl<Message> canvas::Program<Message> for PieProgram<'_, Message> {
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &iced::Renderer,
         _theme: &iced::Theme,
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        match pie_geometry(
-            &self.config,
-            &self.data,
-            Rectangle::with_size(bounds.size()),
-            self.inner_ratio,
-        ) {
-            Ok(geometry) if !geometry.slices.is_empty() => {
-                draw_pie(
-                    &mut frame,
-                    &geometry,
-                    &self.config,
-                    self.hovered.as_ref(),
-                    &self.theme,
-                );
-            }
-            Ok(geometry) => draw_empty(&mut frame, geometry.report.state, &self.theme),
-            Err(_) => draw_error(&mut frame, &self.theme),
+        let unchanged = state.key.borrow().as_ref().is_some_and(
+            |(config, data, inner_ratio, hovered, theme)| {
+                config == &self.config
+                    && data == &self.data
+                    && *inner_ratio == self.inner_ratio
+                    && hovered == &self.hovered
+                    && theme == &self.theme
+            },
+        );
+        if !unchanged {
+            state.layers.clear();
+            *state.key.borrow_mut() = Some((
+                self.config.clone(),
+                self.data.clone(),
+                self.inner_ratio,
+                self.hovered.clone(),
+                self.theme,
+            ));
         }
-        vec![frame.into_geometry()]
-    }
 
-    fn mouse_interaction(
-        &self,
-        _state: &Self::State,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> mouse::Interaction {
-        let hit = cursor.position_in(bounds).and_then(|point| {
-            pie_geometry(
+        vec![state.layers.draw(renderer, bounds.size(), |frame| {
+            match pie_geometry(
                 &self.config,
                 &self.data,
                 Rectangle::with_size(bounds.size()),
                 self.inner_ratio,
-            )
-            .ok()
-            .and_then(|geometry| geometry.hit_test(point))
-        });
-        if self.on_hover.is_some() && hit.is_some() {
+            ) {
+                Ok(geometry) if !geometry.slices.is_empty() => {
+                    draw_pie(
+                        frame,
+                        &geometry,
+                        &self.config,
+                        self.hovered.as_ref(),
+                        &self.theme,
+                    );
+                }
+                Ok(geometry) => draw_empty(frame, geometry.report.state, &self.theme),
+                Err(_) => draw_error(frame, &self.theme),
+            }
+        })]
+    }
+
+    fn mouse_interaction(
+        &self,
+        state: &Self::State,
+        _bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if self.on_hover.is_some() && state.hovered.is_some() {
             mouse::Interaction::Pointer
         } else {
             mouse::Interaction::default()
@@ -2035,7 +2086,7 @@ pub fn tooltip_style(theme: &UiTheme) -> iced::widget::container::Style {
         shadow: Shadow {
             color: alpha(
                 Color::BLACK,
-                if luminance(theme.palette.background) < 0.5 {
+                if theme.palette.background.relative_luminance() < 0.5 {
                     0.35
                 } else {
                     0.12
@@ -2208,17 +2259,6 @@ fn format_number(value: f32) -> String {
             .trim_end_matches('.')
             .to_owned()
     }
-}
-
-fn luminance(color: Color) -> f32 {
-    let channel = |value: f32| {
-        if value <= 0.04045 {
-            value / 12.92
-        } else {
-            ((value + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
 }
 
 #[cfg(test)]

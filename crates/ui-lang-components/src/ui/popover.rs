@@ -778,7 +778,7 @@ fn activation_key(key: &keyboard::Key) -> Option<Press> {
     }
 }
 
-fn translated_bounds(bounds: Rectangle, translation: Vector) -> Rectangle {
+pub(crate) fn translated_bounds(bounds: Rectangle, translation: Vector) -> Rectangle {
     Rectangle::new(bounds.position() + translation, bounds.size())
 }
 
@@ -1742,27 +1742,31 @@ mod tests {
         assert_eq!(tooltip.shadow, Shadow::default());
         assert_eq!(light.border.width, 1.0);
         assert_eq!(tooltip.border.width, 0.0);
-        assert!(contrast_ratio(LIGHT.palette.popover, LIGHT.palette.popover_foreground,) > 4.5);
-        assert!(contrast_ratio(DARK.palette.popover, DARK.palette.popover_foreground,) > 4.5);
-        assert!(contrast_ratio(LIGHT.palette.primary, tooltip.text_color.unwrap(),) > 4.5);
-        assert!(contrast_ratio(DARK.palette.primary, dark_tooltip.text_color.unwrap(),) > 4.5);
-    }
-
-    fn contrast_ratio(a: Color, b: Color) -> f32 {
-        fn channel(value: f32) -> f32 {
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        }
-
-        fn relative(color: Color) -> f32 {
-            0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
-        }
-
-        let a = relative(a);
-        let b = relative(b);
-        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        assert!(
+            LIGHT
+                .palette
+                .popover
+                .relative_contrast(LIGHT.palette.popover_foreground)
+                > 4.5
+        );
+        assert!(
+            DARK.palette
+                .popover
+                .relative_contrast(DARK.palette.popover_foreground)
+                > 4.5
+        );
+        assert!(
+            LIGHT
+                .palette
+                .primary
+                .relative_contrast(tooltip.text_color.unwrap())
+                > 4.5
+        );
+        assert!(
+            DARK.palette
+                .primary
+                .relative_contrast(dark_tooltip.text_color.unwrap())
+                > 4.5
+        );
     }
 }

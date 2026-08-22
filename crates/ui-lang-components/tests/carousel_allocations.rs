@@ -1,18 +1,17 @@
 #![cfg(feature = "carousel")]
 
-use std::alloc::System;
+mod common;
+
+use common::clean_window_allocations;
+
 use std::hint::black_box;
 
 use iced::widget;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use ui_lang_components::ui::carousel::{
     CarouselBoundary, CarouselOrientation, CarouselState, carousel_indicators,
 };
 use ui_lang_components::ui::direction::Direction;
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn render(ids: &[widget::Id], state: CarouselState) {
     black_box(carousel_indicators(
@@ -35,11 +34,11 @@ fn performance_contract_carousel_preallocates_indicator_storage() {
     let state = CarouselState::new(0, SLIDES, CarouselBoundary::Bounded);
 
     render(&ids, state);
-    let region = Region::new(GLOBAL);
-    for _ in 0..RENDERS {
-        render(&ids, state);
-    }
-    let stats = region.change();
+    let stats = clean_window_allocations(99_072, || {
+        for _ in 0..RENDERS {
+            render(&ids, state);
+        }
+    });
 
     eprintln!(
         "{RENDERS} carousel renders with {SLIDES} indicators: {} allocations / {} reallocations / {} bytes / {} reallocated bytes",

@@ -679,27 +679,6 @@ mod tests {
 
     #[test]
     fn variants_keep_selected_and_disabled_details_distinct_in_both_themes() {
-        fn luminance(color: iced::Color) -> f32 {
-            fn channel(value: f32) -> f32 {
-                if value <= 0.04045 {
-                    value / 12.92
-                } else {
-                    ((value + 0.055) / 1.055).powf(2.4)
-                }
-            }
-
-            0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
-        }
-
-        fn contrast(left: iced::Color, right: iced::Color) -> f32 {
-            let (light, dark) = if luminance(left) > luminance(right) {
-                (luminance(left), luminance(right))
-            } else {
-                (luminance(right), luminance(left))
-            };
-            (light + 0.05) / (dark + 0.05)
-        }
-
         for theme in [LIGHT, DARK] {
             let selected = trigger_style(&theme, true, TabsVariant::Default, Status::Active);
             assert!(selected.background.is_some());
@@ -713,7 +692,11 @@ mod tests {
 
             let disabled = trigger_style(&theme, false, TabsVariant::Default, Status::Disabled);
             assert!(
-                contrast(disabled.text_color.unwrap(), theme.palette.muted) >= 3.0,
+                disabled
+                    .text_color
+                    .unwrap()
+                    .relative_contrast(theme.palette.muted)
+                    >= 3.0,
                 "disabled tab text should stay legible in {}",
                 theme.name
             );

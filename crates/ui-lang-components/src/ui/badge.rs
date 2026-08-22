@@ -214,7 +214,7 @@ mod tests {
                         _ => theme.palette.background,
                     };
                     assert!(
-                        contrast(foreground, background) >= 4.5,
+                        foreground.relative_contrast(background) >= 4.5,
                         "{} {variant:?} dot={dot}",
                         theme.name
                     );
@@ -235,25 +235,5 @@ mod tests {
             metrics(BadgeSize::Default, &LIGHT).text,
             LIGHT.typography.nav_label
         );
-    }
-
-    fn contrast(a: iced::Color, b: iced::Color) -> f32 {
-        let (lighter, darker) = if luminance(a) > luminance(b) {
-            (luminance(a), luminance(b))
-        } else {
-            (luminance(b), luminance(a))
-        };
-        (lighter + 0.05) / (darker + 0.05)
-    }
-
-    fn luminance(color: iced::Color) -> f32 {
-        fn channel(value: f32) -> f32 {
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        }
-        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
     }
 }

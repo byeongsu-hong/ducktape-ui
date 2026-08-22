@@ -1,16 +1,15 @@
 #![cfg(feature = "button-group")]
 
-use std::alloc::System;
+mod common;
+
+use common::clean_window_allocations;
+
 use std::hint::black_box;
 
 use iced::Element;
 use iced::widget::text;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use ui_lang_components::ui::button_group::{ButtonGroupOrientation, button_group};
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn child() -> Element<'static, ()> {
     text("Child").into()
@@ -30,11 +29,11 @@ fn performance_contract_button_group_streams_child_storage() {
     const CHILDREN: usize = 64;
 
     render(CHILDREN);
-    let region = Region::new(GLOBAL);
-    for _ in 0..RENDERS {
-        render(CHILDREN);
-    }
-    let stats = region.change();
+    let stats = clean_window_allocations(17_152, || {
+        for _ in 0..RENDERS {
+            render(CHILDREN);
+        }
+    });
 
     eprintln!(
         "{RENDERS} button group renders with {CHILDREN} children: {} allocations / {} reallocations / {} bytes / {} reallocated bytes",

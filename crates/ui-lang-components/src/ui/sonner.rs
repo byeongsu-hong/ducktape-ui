@@ -1470,15 +1470,16 @@ mod tests {
                 };
                 assert_eq!(background.a, 1.0);
                 assert!(
-                    contrast(
-                        appearance.text_color.expect("toast needs text color"),
-                        background
-                    ) >= 4.5,
+                    appearance
+                        .text_color
+                        .expect("toast needs text color")
+                        .relative_contrast(background)
+                        >= 4.5,
                     "{} {variant:?}",
                     theme.name
                 );
                 assert!(
-                    contrast(secondary_text_color(&theme, variant), background) >= 4.5,
+                    secondary_text_color(&theme, variant).relative_contrast(background) >= 4.5,
                     "{} {variant:?}",
                     theme.name
                 );
@@ -1510,26 +1511,5 @@ mod tests {
         .into();
 
         assert_eq!(calls.get(), 1);
-    }
-
-    fn contrast(a: Color, b: Color) -> f32 {
-        let (lighter, darker) = if luminance(a) > luminance(b) {
-            (luminance(a), luminance(b))
-        } else {
-            (luminance(b), luminance(a))
-        };
-        (lighter + 0.05) / (darker + 0.05)
-    }
-
-    fn luminance(color: Color) -> f32 {
-        fn channel(value: f32) -> f32 {
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        }
-
-        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
     }
 }
