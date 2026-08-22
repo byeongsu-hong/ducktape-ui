@@ -1063,7 +1063,32 @@ pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
             ResponsiveContent::Breakpoint { narrow, wide, .. } => vec![narrow, wide],
             ResponsiveContent::Size { content, .. } => vec![content],
         },
-        _ => Vec::new(),
+        // Spelled out rather than caught by `_`, because every walk that
+        // recurses through this function inherits its blind spots: a new
+        // nesting widget that forgot an arm here would silently drop its whole
+        // subtree from the checker instead of failing to compile.
+        ViewNode::Button { content: None, .. }
+        | ViewNode::Text { .. }
+        | ViewNode::RichText { .. }
+        | ViewNode::Input { .. }
+        | ViewNode::Checkbox { .. }
+        | ViewNode::Toggler { .. }
+        | ViewNode::Slider { .. }
+        | ViewNode::Progress { .. }
+        | ViewNode::Radio { .. }
+        | ViewNode::PickList { .. }
+        | ViewNode::ComboBox { .. }
+        | ViewNode::Rule { .. }
+        | ViewNode::QrCode { .. }
+        | ViewNode::Space { .. }
+        | ViewNode::Markdown { .. }
+        | ViewNode::TextEditor { .. }
+        | ViewNode::Slot { .. }
+        | ViewNode::ExternComponent { .. }
+        | ViewNode::Themer { .. }
+        | ViewNode::Shader { .. }
+        | ViewNode::Media { .. }
+        | ViewNode::Canvas { .. } => Vec::new(),
     }
 }
 
