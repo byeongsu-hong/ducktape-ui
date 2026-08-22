@@ -380,6 +380,56 @@ Micro-optimizing emitted code has the ~0.72ms `__view` share as its ceiling.
 Removing 984 redundant scope clones from showcase's generated view — every one
 of them real waste — was worth ~19us. Measure before spending effort there.
 
+### A resize is not its own frame
+
+Reported as "the trading window stutters while it is being resized", which
+sounds like a resize path and is not one. `resize_cost` drags the dense
+terminal three pixels a frame and prices the frame it produces against a
+settled one, on both axes separately, because they are not the same work: a
+height change moves every panel and re-aims every virtual column, while a width
+change does that *and* re-shapes every text run on the screen.
+
+At 1760x940, 200 markets / 200 fills / 60 prints, p50 of 60 interleaved rounds:
+
+| | |
+| --- | --- |
+| idle redraw, settled | 2139us |
+| resize, height only | 2160us |
+| resize, width only | 2169us |
+| resize, corner | 2112us |
+| resize, corner, no rows | 964us |
+
+**A resize frame costs what any other frame on that screen costs.** There is no
+resize-specific work in the Ice or iced layer to remove: what a drag changes is
+only that those frames arrive back to back, at whatever rate the compositor
+asks. The rows are 1148us of the 2112, and they cost that on every frame,
+resizing or not.
+
+Two things that read like resize costs and are not, both checked rather than
+assumed:
+
+- **The virtual columns do not double-layout a resize.** `virtual_children`'s
+  `update` invalidates layout when the viewport it remembers has moved, which
+  would cost the real loop a second view build and layout for every resize
+  event. It does not fire: `virtual_scroll`'s `layout` re-aim already ran
+  `sync_viewport` over every column against the same rectangle iced hands the
+  scrollable's content — `Rectangle { x: bounds.x + translation.x, y: bounds.y +
+  translation.y, ..bounds }`, spelled identically in both places — so the
+  comparison in `update` is equal by the time the event arrives.
+- **`responsive` rebuilds its content on every layout call**, unconditionally,
+  not only when the size changed. The whole terminal lives inside one, so that
+  cost is in the settled frame above too, and a resize does not add it.
+
+Take the baseline settled. A redraw timed straight after a resize is the frame
+the columns re-aim on; an earlier revision of this probe used one as its
+baseline and read the difference as zero for the wrong reason.
+
+What this cannot reach is the platform half, and the remaining suspects are all
+in it: wgpu reconfigures the surface on each `Resized`, and AppKit runs a live
+resize in a nested loop that wants a frame inside the callback. Neither is
+measurable from a headless Linux runner, and neither is a claim this file
+makes. What is settled is that the app-side frame is the same frame.
+
 ### A second app, and where the boundary runs out
 
 `examples/trading/src/frame_probe.rs` measures the opposite shape from
@@ -387,6 +437,7 @@ showcase: lists whose rows are a near-pure function of one row value.
 
 ```sh
 cargo test --release -p trading-example -- --ignored --nocapture frame_        # cost, panels, scaling
+cargo test --release -p trading-example -- --ignored --nocapture resize_cost   # a window being dragged
 cargo test --release -p trading-example -- --ignored --nocapture beat_cost     # a beat of the feed
 cargo test --release -p trading-example -- --ignored --nocapture direct_call_cost  # direct Rust call costs
 cargo test --release -p trading-example -- --ignored --nocapture memo_parking  # the memo lot
