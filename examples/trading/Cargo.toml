@@ -31,7 +31,7 @@ iced = { version = "=0.14.0", features = ["smol"] }
 # secp256k1 with public-key recovery, which is the whole of what an Ethereum
 # r/s/v needs. Pure Rust, and it shares the sha2/digest/zeroize already in the
 # lockfile; the C-binding alternative would drag a build script and a compiler.
-k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+k256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 serde_json = "1"
 sha2 = "0.10"
 # keccak256. `sha2` is already here but SHA-3 and SHA-2 share nothing but a
