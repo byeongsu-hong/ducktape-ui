@@ -695,7 +695,7 @@ comparison policy belongs to `cargo ice diff`.
 
 The scoped implementation score is **100%** on all three executable inventories:
 
-- **59/59 public ledger rows are native.** No row below is `partial` or
+- **Every public ledger row is native.** No row below is `partial` or
   `missing` for the pinned iced baseline.
 - **48/48 render-node kinds have a runtime witness.** The dedicated
   `render_surface.ice` contract keeps every branch populated, resolves every
@@ -795,7 +795,6 @@ Ice 2.0 Preview has thirty-four checked Rust boundaries:
 | --- | --- | --- |
 | `name(args)` | `async fn(...) -> Output` or `Result<Output, Error>` | domain I/O and arbitrary futures through native `Task::perform` |
 | `component name(args)` | `fn<'a>(..., &'a T, ...) -> Element<'a, Event, Theme, Renderer>` or an owned `'static` form | any owned or app-state-borrowing widget tree using the configured theme and renderer, including custom widgets |
-| app `renderer rust_path` | concrete `iced::program::Renderer` type | application-wide custom graphics renderer/compositor selection, propagated through every generated `Element` and checked by rustc |
 | `selector name(args)` | `fn(...) -> impl widget::selector::Selector<Output = Event>` | custom native matching over every widget candidate with arbitrary checked outputs |
 | `shader name(args)` | `fn(...) -> impl shader::Program<Event>` | native wgpu primitives, pipeline/storage, state, events, redraw, capture, and mouse interaction |
 | `task name(args)` | `fn(...) -> Task<Event>` or `Task<Result<Event, Error>>` | widget/window/clipboard/font/system operations and arbitrary task composition |
