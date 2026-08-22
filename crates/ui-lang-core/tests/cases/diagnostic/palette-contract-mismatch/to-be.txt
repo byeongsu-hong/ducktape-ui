@@ -1,0 +1,2 @@
+E110
+palette `app` targets theme contract `OtherTheme`, not `AppTheme`

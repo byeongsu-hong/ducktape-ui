@@ -1,0 +1,2 @@
+E110
+missing `theme contract Name` declaration

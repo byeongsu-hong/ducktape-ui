@@ -1,0 +1,2 @@
+E110
+palette `dark__mode` conflicts with another generated palette variant

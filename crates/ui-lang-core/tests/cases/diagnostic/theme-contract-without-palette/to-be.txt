@@ -1,0 +1,2 @@
+E110
+theme contract `AppTheme` requires at least one palette
