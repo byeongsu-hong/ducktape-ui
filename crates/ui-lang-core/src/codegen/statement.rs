@@ -956,12 +956,17 @@ pub(in crate::codegen) fn generate_statements(
                     .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
                     .collect::<Result<Vec<_>, Error>>()?
                     .join(", ");
+                // A zero-payload event is a unit variant: `Variant()` is a
+                // call on it and does not compile.
+                let variant = handler_variant(target);
+                let event = if args.is_empty() {
+                    variant
+                } else {
+                    format!("{variant}({args})")
+                };
                 writeln!(
                     out,
-                    "{}::iced::Task::done({message}::{}({args})){}",
-                    task_prefix,
-                    handler_variant(target),
-                    task_suffix
+                    "{task_prefix}::iced::Task::done({message}::{event}){task_suffix}"
                 )
                 .unwrap();
             }
