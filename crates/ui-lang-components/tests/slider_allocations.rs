@@ -1,13 +1,13 @@
 #![cfg(feature = "slider")]
 
-use std::alloc::System;
+mod common;
+
+use common::GLOBAL;
+
 use std::hint::black_box;
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_components::ui::slider::{SliderCommand, SliderSpec, reduce_thumb};
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[test]
 fn performance_contract_slider_keyboard_update_reuses_normalized_values() {

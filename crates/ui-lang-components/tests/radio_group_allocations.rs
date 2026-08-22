@@ -1,16 +1,16 @@
 #![cfg(feature = "radio-group")]
 
-use std::alloc::System;
+mod common;
+
+use common::GLOBAL;
+
 use std::hint::black_box;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use iced::Element;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_components::ui::radio_group::{radio_group, radio_option};
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 static VALUE_CLONES: AtomicUsize = AtomicUsize::new(0);
 

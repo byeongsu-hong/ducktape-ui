@@ -1,18 +1,18 @@
 #![cfg(feature = "calendar")]
 
-use std::alloc::System;
+mod common;
+
+use common::GLOBAL;
+
 use std::hint::black_box;
 
 use iced::Element;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_components::ui::calendar::{
     CalendarSelection, CalendarState, Month, controlled_calendar,
 };
 use ui_lang_components::ui::direction::Direction;
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn render(state: &CalendarState) {
     let element: Element<'_, ()> =

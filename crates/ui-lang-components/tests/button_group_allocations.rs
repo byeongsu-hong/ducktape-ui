@@ -1,16 +1,16 @@
 #![cfg(feature = "button-group")]
 
-use std::alloc::System;
+mod common;
+
+use common::GLOBAL;
+
 use std::hint::black_box;
 
 use iced::Element;
 use iced::widget::text;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_components::ui::button_group::{ButtonGroupOrientation, button_group};
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn child() -> Element<'static, ()> {
     text("Child").into()

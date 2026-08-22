@@ -1,12 +1,11 @@
 #![cfg(feature = "tabs")]
 
-use std::alloc::System;
+mod common;
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use common::GLOBAL;
+
+use stats_alloc::Region;
 use ui_lang_components::ui::tabs::{TabsEvent, TabsState};
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[test]
 fn performance_contract_tabs_skip_equal_state_replacement() {

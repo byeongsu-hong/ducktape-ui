@@ -1,16 +1,15 @@
 #![cfg(feature = "resizable")]
 
-use std::alloc::System;
+mod common;
+
+use common::GLOBAL;
 
 use iced::advanced::{Layout, Shell, clipboard, layout, mouse, renderer::Headless as _, widget};
 use iced::widget::{container, text};
 use iced::{Element, Event, Point, Rectangle, Size, touch};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_components::ui::resizable::resizable;
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn update(
     element: &mut Element<'_, Vec<f32>>,

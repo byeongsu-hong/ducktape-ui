@@ -1,17 +1,17 @@
 #![cfg(feature = "menubar")]
 
-use std::alloc::System;
+mod common;
+
+use common::GLOBAL;
+
 use std::hint::black_box;
 
 use iced::Element;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_components::ui::direction::Direction;
 use ui_lang_components::ui::menu::MenuState;
 use ui_lang_components::ui::menubar::{MenubarMenu, MenubarState, menubar};
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn render(menus: &[MenubarMenu], state: &MenubarState, menu_state: &MenuState) {
     let element: Element<'_, ()> = menubar(

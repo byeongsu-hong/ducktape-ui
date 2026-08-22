@@ -1,17 +1,17 @@
 #![cfg(feature = "tabs")]
 
-use std::alloc::System;
+mod common;
+
+use common::GLOBAL;
+
 use std::hint::black_box;
 
 use iced::widget::{self, text};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_components::ui::tabs::{
     TabsActivation, TabsOrientation, TabsState, TabsVariant, tab, tabs,
 };
 use ui_lang_components::ui::theme::LIGHT;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 fn render(ids: &[widget::Id], state: &TabsState<usize>) {
     let items = ids.iter().enumerate().map(|(index, id)| {
