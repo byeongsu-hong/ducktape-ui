@@ -34,27 +34,11 @@ impl ContentHash {
     }
 }
 
-/// Cargo/compiler features that can change Ice analysis semantics.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CompilerFeatureSet(BTreeSet<String>);
-
-impl CompilerFeatureSet {
-    pub fn new(features: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self(features.into_iter().map(Into::into).collect())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().map(String::as_str)
-    }
-}
-
 /// The complete identity of one cached parsed source file.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileKey {
     canonical_path: PathBuf,
     content_hash: ContentHash,
-    language_revision: String,
-    compiler_features: CompilerFeatureSet,
 }
 
 impl FileKey {
@@ -64,46 +48,6 @@ impl FileKey {
 
     pub fn content_hash(&self) -> ContentHash {
         self.content_hash
-    }
-
-    pub fn language_revision(&self) -> &str {
-        &self.language_revision
-    }
-
-    pub fn compiler_features(&self) -> &CompilerFeatureSet {
-        &self.compiler_features
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AnalysisConfig {
-    language_revision: String,
-    compiler_features: CompilerFeatureSet,
-}
-
-impl AnalysisConfig {
-    pub fn new(
-        language_revision: impl Into<String>,
-        compiler_features: CompilerFeatureSet,
-    ) -> Self {
-        Self {
-            language_revision: language_revision.into(),
-            compiler_features,
-        }
-    }
-
-    pub fn language_revision(&self) -> &str {
-        &self.language_revision
-    }
-
-    pub fn compiler_features(&self) -> &CompilerFeatureSet {
-        &self.compiler_features
-    }
-}
-
-impl Default for AnalysisConfig {
-    fn default() -> Self {
-        Self::new(LANGUAGE_REVISION, CompilerFeatureSet::default())
     }
 }
 
@@ -339,7 +283,6 @@ struct GraphLoader {
 /// callers can create it for a single command.
 #[derive(Debug, Default)]
 pub struct AnalysisDb {
-    config: AnalysisConfig,
     overlay_store: Arc<OverlayStore>,
     inherited_overlay_store: Option<Arc<OverlayStore>>,
     parsed_files: HashMap<FileKey, Arc<ParsedFile>>,
@@ -356,17 +299,6 @@ pub struct AnalysisDb {
 }
 
 impl AnalysisDb {
-    pub fn new(config: AnalysisConfig) -> Self {
-        Self {
-            config,
-            ..Self::default()
-        }
-    }
-
-    pub fn config(&self) -> &AnalysisConfig {
-        &self.config
-    }
-
     pub fn metrics(&self) -> AnalysisMetrics {
         self.metrics
     }
@@ -969,8 +901,6 @@ impl AnalysisDb {
         FileKey {
             canonical_path,
             content_hash: ContentHash::of(source),
-            language_revision: self.config.language_revision.clone(),
-            compiler_features: self.config.compiler_features.clone(),
         }
     }
 
@@ -1599,7 +1529,6 @@ impl AnalysisDb {
             .map(|checked| HashMap::from([(root.to_owned(), checked)]))
             .unwrap_or_default();
         Self {
-            config: self.config.clone(),
             overlay_store: Arc::default(),
             inherited_overlay_store: Some(Arc::clone(&self.overlay_store)),
             parsed_files,
@@ -1719,9 +1648,7 @@ fn absolute_lexical_path(path: &Path) -> std::io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AnalysisConfig, AnalysisDb, CompilerFeatureSet, LANGUAGE_REVISION, ValidationPolicy,
-    };
+    use super::{AnalysisDb, ValidationPolicy};
     use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
     use std::collections::BTreeSet;
     use std::fs;
@@ -1813,30 +1740,6 @@ mod tests {
             ),
             name, text
         )
-    }
-
-    #[test]
-    fn file_key_includes_path_hash_revision_and_features() {
-        let fixture = Fixture::new();
-        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
-        fixture.write("part.ice", &component("Part", "one"));
-        let mut db = AnalysisDb::new(AnalysisConfig::new(
-            LANGUAGE_REVISION,
-            CompilerFeatureSet::new(["native-dialog"]),
-        ));
-
-        db.analyze_root(fixture.path("app.ice")).unwrap();
-        let key = db
-            .current_files
-            .get(&fixture.path("part.ice").canonicalize().unwrap())
-            .unwrap();
-        assert_eq!(key.canonical_path(), fixture.path("part.ice"));
-        assert_ne!(key.content_hash().bytes(), [0; 32]);
-        assert_eq!(key.language_revision(), LANGUAGE_REVISION);
-        assert_eq!(
-            key.compiler_features().iter().collect::<Vec<_>>(),
-            ["native-dialog"]
-        );
     }
 
     #[test]

@@ -14,8 +14,8 @@ mod source;
 mod test_support;
 
 pub use analysis_db::{
-    AnalysisConfig, AnalysisDb, AnalysisInvalidation, AnalysisMetrics, AnalysisTimings,
-    CompilerFeatureSet, ContentHash, FileKey, LANGUAGE_REVISION, ValidatedSource, ValidationPolicy,
+    AnalysisDb, AnalysisInvalidation, AnalysisMetrics, AnalysisTimings, ContentHash, FileKey,
+    LANGUAGE_REVISION, ValidatedSource, ValidationPolicy,
 };
 pub use api::*;
 pub use ast::*;
