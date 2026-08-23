@@ -3165,9 +3165,9 @@ mod tests {
         // user has composed nothing. A focused terminal sits here for a whole
         // typing session, so this state must NOT hold the keyboard.
         assert!(!super::composing(None));
-        assert!(!super::composing(Some(
-            &super::input_method::Preedit::new()
-        )));
+        assert!(!super::composing(
+            Some(&super::input_method::Preedit::new())
+        ));
 
         let mut hangul = super::input_method::Preedit::new();
         hangul.content = "한".into();
