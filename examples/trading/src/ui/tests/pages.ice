@@ -537,6 +537,10 @@ test trading_the_portfolio_curve_carries_its_figures_and_answers_the_pointer
   move chart
   expect !empty(hover_readout(portfolio_hover, false))
   expect text hover_readout(portfolio_hover, false) within readout
+  // A point on the value curve is not a point on the PnL bars: each chart
+  // has a readout of its own, and the one not under the pointer stays blank
+  // rather than printing the other's figure under its own heading.
+  expect empty(hover_readout(pnl_hover, true))
   dispatch pick_portfolio_range("day")
   expect empty(hover_readout(portfolio_hover, false))
   expect text "LAST DAY" within curve

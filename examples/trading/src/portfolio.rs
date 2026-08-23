@@ -355,14 +355,17 @@ pub fn range_label(range: String) -> String {
 }
 
 /// The window as a heading over the figures read off it.
-pub fn range_heading(range: String) -> String {
-    match range.as_str() {
-        "day" => "LAST DAY",
-        "week" => "LAST WEEK",
-        "month" => "LAST MONTH",
-        _ => "ALL TIME",
-    }
-    .to_owned()
+pub fn range_heading(locale: crate::Locale, range: String) -> String {
+    crate::i18n::t(
+        locale,
+        match range.as_str() {
+            "day" => "LAST DAY",
+            "week" => "LAST WEEK",
+            "month" => "LAST MONTH",
+            _ => "ALL TIME",
+        }
+        .to_owned(),
+    )
 }
 
 pub fn portfolio_empty() -> PortfolioHistory {
@@ -498,14 +501,16 @@ pub fn portfolio_history_max_drawdown(history: PortfolioHistory, range: String) 
     worst
 }
 
-/// PnL booked over the window, which is the last point of a cumulative
-/// series. Distinct from the change in value: a deposit moves one and not the
-/// other.
+/// PnL booked over the window: the cumulative series' last point less its
+/// first, which is also what the bars under it sum to. The two are one figure
+/// whether or not the venue starts the window's series at zero. Distinct from
+/// the change in value: a deposit moves one and not the other.
 pub fn portfolio_history_pnl(history: PortfolioHistory, range: String) -> f64 {
-    selected(&history, &range)
-        .pnl
-        .last()
-        .map_or(0.0, |(_, value)| *value)
+    let pnl = &selected(&history, &range).pnl;
+    match (pnl.first(), pnl.last()) {
+        (Some((_, first)), Some((_, last))) => last - first,
+        _ => 0.0,
+    }
 }
 
 /// Whether the venue sent a PnL series at all for this window. Hyperliquid

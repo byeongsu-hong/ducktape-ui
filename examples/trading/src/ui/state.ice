@@ -189,6 +189,7 @@ state
   // The point under the pointer on whichever portfolio chart has it, or none.
   // One slot for both charts: a pointer is over at most one of them.
   portfolio_hover:PortfolioHover? = none
+  pnl_hover:PortfolioHover? = none
   // What this app may sign with. Opaque: the rules that move it are a tested
   // state machine in Rust, and a copy of them here would be a second opinion
   // about when an order may be signed.

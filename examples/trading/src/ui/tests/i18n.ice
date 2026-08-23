@@ -14,6 +14,7 @@ test trading_picking_korean_reads_the_whole_screen_in_korean
   target english = picker/lang-en/root/on
   target korean = picker/lang-ko/root/off
   target korean_on = picker/lang-ko/root/on
+  target portfolio_tab = app/header/pages/page-portfolio/root/tab-off
   dispatch navigate(Page.settings)
   expect locale == Locale.en
   // Each language is offered in itself: the reader who cannot read the one on
@@ -38,6 +39,9 @@ test trading_picking_korean_reads_the_whole_screen_in_korean
   // rather than this page's.
   expect text "포트폴리오"
   expect no text "PORTFOLIO"
+  // And the names a screen reader hears are whole sentences in it, not an
+  // English frame around a Korean word.
+  expect a11y portfolio_tab name "포트폴리오 페이지 열기"
   capture settings_korean
   // And the terminal, which is where the setting is actually lived with.
   dispatch navigate(Page.terminal)

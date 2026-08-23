@@ -11,7 +11,7 @@ extern crate::portfolio
   venue_portfolio(venue:Venue, address:str) -> PortfolioHistory ! HlError
   pure range_label(range:str) -> str
   // The window as a column heading over its figures.
-  pure range_heading(range:str) -> str
+  pure range_heading(locale:Locale, range:str) -> str
   pure portfolio_empty() -> PortfolioHistory
   pure portfolio_unavailable(message:str) -> PortfolioHistory
   pure demo_portfolio_history() -> PortfolioHistory

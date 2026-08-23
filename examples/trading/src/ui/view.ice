@@ -190,21 +190,24 @@ view
                     row #pages gap=4.0 align=center
                       NavTab #page-terminal
                         with
-                          name=t(locale, "TERMINAL")
+                          name="TERMINAL"
+                          locale=locale
                           target=Page.terminal
                           current=page
                         events
                           pick -> navigate _
                       NavTab #page-portfolio
                         with
-                          name=t(locale, "PORTFOLIO")
+                          name="PORTFOLIO"
+                          locale=locale
                           target=Page.portfolio
                           current=page
                         events
                           pick -> navigate _
                       NavTab #page-settings
                         with
-                          name=t(locale, "SETTINGS")
+                          name="SETTINGS"
+                          locale=locale
                           target=Page.settings
                           current=page
                         events
@@ -565,11 +568,11 @@ view
                               // put back together to get rid of. Each appears
                               // only at the width that folds its pane away.
                               if term_w < 1280.0
-                                PaneToggle name=t(locale, "MARKETS") open=rail_open #toggle-markets
+                                PaneToggle name="MARKETS" locale=locale open=rail_open #toggle-markets
                                   events
                                     pick -> toggle_rail
                               if term_w < 1580.0
-                                PaneToggle name=t(locale, "FILLS") open=fills_open #toggle-fills
+                                PaneToggle name="FILLS" locale=locale open=fills_open #toggle-fills
                                   events
                                     pick -> toggle_fills
                           rule horizontal thickness=1.0 color=edge
@@ -784,7 +787,7 @@ view
                                           hovered bg=edge text=fg r=4.0
                                           text t(locale, "Connect an address") size=11.0 @text-fg
                                     for held in positions
-                                      PositionRow held=held #position(held.coin)
+                                      PositionRow held=held locale=locale #position(held.coin)
                                         events
                                           pick -> pick_symbol _
                               // Recent fills yields the width so positions keeps its columns.
@@ -2203,7 +2206,7 @@ view
                                     text t(locale, "Historical performance") size=18.0 @text-fg
                                 if portfolio_history_ready(portfolio_history, portfolio_range)
                                   col gap=3.0
-                                    text range_heading(portfolio_range)
+                                    text range_heading(locale, portfolio_range)
                                       with
                                         size=10.0
                                         tracking=1.0
@@ -2383,7 +2386,7 @@ view
                                       @text-muted
                                 if portfolio_pnl_ready(portfolio_history, portfolio_range)
                                   col gap=3.0
-                                    text range_heading(portfolio_range)
+                                    text range_heading(locale, portfolio_range)
                                       with
                                         size=10.0
                                         tracking=1.0
@@ -2396,7 +2399,7 @@ view
                                         width=96.0
                                         hug=true
                                 space w=fill
-                                text hover_readout(portfolio_hover, true) #pnl-readout
+                                text hover_readout(pnl_hover, true) #pnl-readout
                                   with
                                     size=12.0
                                     w=220.0
@@ -2405,7 +2408,7 @@ view
                                     @text-fg
                               if portfolio_pnl_ready(portfolio_history, portfolio_range)
                                 box #pnl-frame w=fill h=fill
-                                  extern portfolio_pnl_bars(portfolio_history, portfolio_range, portfolio_hover) #pnl-chart -> portfolio_hovered _
+                                  extern portfolio_pnl_bars(portfolio_history, portfolio_range, pnl_hover) #pnl-chart -> pnl_hovered _
                               if !portfolio_pnl_ready(portfolio_history, portfolio_range)
                                 box
                                   with
@@ -3410,7 +3413,10 @@ view
                                 col #shortcuts gap=10.0 w=fill
                                   col gap=4.0
                                     Label value=t(locale, "KEYBOARD")
-                                    text t(locale, "No key sends an order.") size=11.0 @text-muted
+                                    text t(locale, "What the keys do, and where they stop.")
+                                      with
+                                        size=11.0
+                                        @text-muted
                                   rule horizontal thickness=1.0 color=edge
                                   for bound in hotkey_list(locale)
                                     row #shortcut(bound.keys)
@@ -4159,8 +4165,9 @@ view
                         w=fill
                         wrap=word
                         @text-muted
-                    input "Address" #address-input <-> draft
+                    input "" #address-input <-> draft
                       with
+                        label=t(locale, "Address")
                         hint="0x0000000000000000000000000000000000000000"
                         submit=connect
                         text-size=12.0

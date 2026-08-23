@@ -1,4 +1,4 @@
-component PositionRow(held:Position)
+component PositionRow(held:Position, locale:Locale)
   emits
     pick(str)
   button #root -> emit(pick, held.coin)
@@ -60,7 +60,7 @@ component PositionRow(held:Position)
               font=digits
               @text-down
         if held.liq <= 0.0
-          text "none"
+          text t(locale, "none")
             with
               size=12.0
               w=fill

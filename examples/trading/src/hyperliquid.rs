@@ -3754,16 +3754,16 @@ pub fn finer_interval(interval: String, bars: i64) -> String {
 /// a reader hears is the act the button performs. It says "hide" while the pane
 /// is open because that is what pressing it does — a control that announced the
 /// pane's current state would leave a reader guessing at the verb.
-pub fn pane_label(pane: String, open: bool) -> String {
+pub fn pane_label(locale: crate::Locale, pane: String, open: bool) -> String {
     let act = if open { "Hide" } else { "Show" };
-    format!("{act} the {} pane", pane.to_lowercase())
+    crate::i18n::t(locale, format!("{act} the {} pane", pane.to_lowercase()))
 }
 
 /// A page tab by the same rule. The tab draws its page's name in capitals
 /// because it is a heading for the surface it opens; the selected state is
 /// exposed separately on the button.
-pub fn page_label(page: String) -> String {
-    format!("Show the {} page", page.to_lowercase())
+pub fn page_label(locale: crate::Locale, page: String) -> String {
+    crate::i18n::t(locale, format!("Show the {} page", page.to_lowercase()))
 }
 
 /// A hovered candle's figures, one per cell of the crosshair readout. The demo
@@ -6714,7 +6714,10 @@ mod tests {
 
         // A page tab draws a heading and is heard as the act; its selected
         // state is exposed separately on the button.
-        assert_eq!(page_label("PORTFOLIO".into()), "Show the portfolio page");
+        assert_eq!(
+            page_label(crate::Locale::En, "PORTFOLIO".into()),
+            "Show the portfolio page"
+        );
     }
 
     #[test]

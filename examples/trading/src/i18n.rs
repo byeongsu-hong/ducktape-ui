@@ -79,7 +79,9 @@ fn ko(key: &str) -> Option<&'static str> {
         "SIZE" => "수량",
         "Size" => "수량",
         "VALUE" => "평가액",
-        "VOL" => "거래량",
+        // Beside the literal O H L C of the candle readout, which are the
+        // tickers every chart prints.
+        "VOL" => "VOL",
         "VOLUME" => "거래량",
         "TIME" => "시각",
         "AGE" => "경과",
@@ -132,8 +134,8 @@ fn ko(key: &str) -> Option<&'static str> {
         "MARGIN HEALTH" => "증거금 상태",
         "CROSS" => "교차",
         "ISOLATED" => "격리",
-        "EQUITY" => "자산",
-        "CROSS EQUITY" => "교차 자산",
+        "EQUITY" => "순자산",
+        "CROSS EQUITY" => "교차 순자산",
         "ACCOUNT VALUE" => "계좌 가치",
         "WITHDRAWABLE" => "출금 가능",
         "PNL" => "손익",
@@ -179,8 +181,8 @@ fn ko(key: &str) -> Option<&'static str> {
         "Rest at a price you choose" => "정한 가격에 걸어 두기",
         "Spread the size over a range of prices" => "수량을 가격 구간에 나누어 걸기",
         "Let the venue work the size over a window" => "거래소가 일정 시간에 걸쳐 체결하게 두기",
-        "LIMIT PRICE" => "지정가",
-        "Limit price" => "지정가",
+        "LIMIT PRICE" => "주문 가격",
+        "Limit price" => "주문 가격",
         "FROM" => "시작",
         "TO" => "끝",
         "OVER" => "기간",
@@ -291,6 +293,8 @@ fn ko(key: &str) -> Option<&'static str> {
         }
         "KEYBOARD" => "키보드",
         "No key sends an order." => "어떤 키도 주문을 보내지 않습니다.",
+        "What the keys do, and where they stop." => "키가 하는 일과, 멈추는 곳.",
+        "Address" => "주소",
         // Connecting, importing, creating.
         "Browse markets only, with no account at all" => "계정 없이 마켓만 둘러보기",
         "Watch an address, read-only, without holding its key" => {
@@ -353,6 +357,19 @@ fn ko(key: &str) -> Option<&'static str> {
         "Nothing has been stored yet. This is the account those twenty-four words make — keep it, and this app can sign enrolments for it." => {
             "아직 아무것도 저장되지 않았습니다. 이것이 그 스물네 단어가 만드는 계좌입니다. 보관하면 이 앱이 이 계좌의 등록에 서명할 수 있습니다."
         }
+        // The page tabs and pane toggles, composed in Rust.
+        "Show the terminal page" => "터미널 페이지 열기",
+        "Show the portfolio page" => "포트폴리오 페이지 열기",
+        "Show the settings page" => "설정 페이지 열기",
+        "Show the markets pane" => "마켓 패널 열기",
+        "Hide the markets pane" => "마켓 패널 닫기",
+        "Show the fills pane" => "체결 패널 열기",
+        "Hide the fills pane" => "체결 패널 닫기",
+        // The portfolio's range headings, in Rust.
+        "LAST DAY" => "지난 하루",
+        "LAST WEEK" => "지난 일주일",
+        "LAST MONTH" => "지난 한 달",
+        "ALL TIME" => "전체 기간",
         // The keyboard scheme, in Rust.
         "Buy / long" => "매수 / 롱",
         "Sell / short" => "매도 / 숏",
@@ -431,12 +448,36 @@ mod tests {
     /// scheme and the unlock button — is in the table too.
     #[test]
     fn the_rust_prose_has_its_korean() {
-        for key in crate::hotkeys::hotkey_list(Locale::En) {
-            assert!(ko(&key.act).is_some(), "no Korean for {:?}", key.act);
-        }
-        assert!(ko(&crate::hotkeys::hotkey_note(Locale::En)).is_some());
+        let mut english = Vec::new();
+        english.extend(
+            crate::hotkeys::hotkey_list(Locale::En)
+                .into_iter()
+                .map(|key| key.act),
+        );
+        english.push(crate::hotkeys::hotkey_note(Locale::En));
         for vault in [true, false] {
-            assert!(ko(&crate::custody::unlock_label(Locale::En, vault)).is_some());
+            english.push(crate::custody::unlock_label(Locale::En, vault));
+        }
+        for page in ["TERMINAL", "PORTFOLIO", "SETTINGS"] {
+            english.push(crate::hyperliquid::page_label(Locale::En, page.to_owned()));
+        }
+        for pane in ["MARKETS", "FILLS"] {
+            for open in [true, false] {
+                english.push(crate::hyperliquid::pane_label(
+                    Locale::En,
+                    pane.to_owned(),
+                    open,
+                ));
+            }
+        }
+        for range in ["day", "week", "month", "all"] {
+            english.push(crate::portfolio::range_heading(
+                Locale::En,
+                range.to_owned(),
+            ));
+        }
+        for key in english {
+            assert!(ko(&key).is_some(), "no Korean for {key:?}");
         }
     }
 
