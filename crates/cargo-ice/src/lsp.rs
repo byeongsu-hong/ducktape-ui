@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -302,7 +303,7 @@ pub fn run_stdio() -> Result<(), String> {
 }
 
 fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
-    let mut documents = HashMap::<String, String>::new();
+    let mut documents = Documents::default();
     let mut analysis_db = ui_lang_core::AnalysisDb::default();
     let mut diagnostic_reports = HashMap::<String, DiagnosticReport>::new();
     let mut cargo_diagnostic_reports = CargoDiagnosticReports::new();
@@ -752,7 +753,7 @@ fn serve(reader: &mut impl BufRead, writer: &mut impl Write) -> io::Result<()> {
 
 fn refresh_watched_files(
     analysis_db: &mut ui_lang_core::AnalysisDb,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     workspace_index: &mut WorkspaceIndex,
     params: &Value,
 ) -> bool {
@@ -782,7 +783,7 @@ fn refresh_watched_files(
 
 fn reanalyze_open_roots(
     writer: &mut impl Write,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     analysis_db: &mut ui_lang_core::AnalysisDb,
     reports: &mut HashMap<String, DiagnosticReport>,
     cargo_reports: &CargoDiagnosticReports,
@@ -869,10 +870,7 @@ fn cargo_diagnostic_targets(reports: &CargoDiagnosticReports) -> BTreeSet<String
         .collect()
 }
 
-fn has_unsaved_workspace_document(
-    documents: &HashMap<String, String>,
-    workspace_roots: &[PathBuf],
-) -> bool {
+fn has_unsaved_workspace_document(documents: &Documents, workspace_roots: &[PathBuf]) -> bool {
     documents.iter().any(|(uri, source)| {
         let Some(path) = file_uri_path(uri) else {
             return false;
@@ -1029,7 +1027,7 @@ fn compiler_diagnostic_to_lsp(
 
 fn analyze_diagnostics(
     analysis_db: &mut ui_lang_core::AnalysisDb,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     uri: &str,
     source: &str,
 ) -> DiagnosticReport {
@@ -1194,7 +1192,7 @@ fn accepts_code_action_kind(params: &Value, kind: &str) -> bool {
 
 fn checked_document(
     analysis_db: &mut ui_lang_core::AnalysisDb,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     uri: &str,
 ) -> Option<SemanticDocument> {
     let source = documents.get(uri)?;
@@ -1216,7 +1214,7 @@ fn checked_document(
 
 fn completion_items_at(
     analysis_db: &mut ui_lang_core::AnalysisDb,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     params: &Value,
 ) -> Option<Vec<Value>> {
     let uri = params["textDocument"]["uri"].as_str()?;
@@ -1735,7 +1733,7 @@ fn component_event_signature(event: &ui_lang_core::ComponentEvent) -> String {
 
 fn hover_at(
     analysis_db: &mut ui_lang_core::AnalysisDb,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     params: &Value,
 ) -> Option<Value> {
     let uri = params["textDocument"]["uri"].as_str()?;
@@ -1773,7 +1771,7 @@ fn hover_at(
 
 fn signature_help_at(
     analysis_db: &mut ui_lang_core::AnalysisDb,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     params: &Value,
 ) -> Option<Value> {
     let uri = params["textDocument"]["uri"].as_str()?;
@@ -1955,7 +1953,7 @@ fn recipe_hover(document: &ui_lang_core::Document, recipe: &ui_lang_core::StyleR
 
 fn code_actions_at(
     analysis_db: &mut ui_lang_core::AnalysisDb,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     params: &Value,
 ) -> Option<Vec<Value>> {
     let uri = params["textDocument"]["uri"].as_str()?;
@@ -3008,7 +3006,7 @@ fn is_view_node(name: &str) -> bool {
 
 fn navigation_at(
     analysis_db: &mut ui_lang_core::AnalysisDb,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     workspace_index: &mut WorkspaceIndex,
     require_complete: bool,
     params: &Value,
@@ -3026,21 +3024,21 @@ fn navigation_at(
         .iter()
         .map(|path| {
             documents
-                .keys()
-                .find(|open_uri| file_uri_path(open_uri).is_some_and(|open| same_file(&open, path)))
+                .uri_for_path(path)
                 .cloned()
                 .unwrap_or_else(|| file_path_uri(path))
         })
         .collect::<Vec<_>>();
     let workspace_complete =
         workspace_index.complete && !workspace_index.workspace_roots.is_empty();
-    for (root_uri, root_source) in documents {
+    for (root_uri, root_source) in documents.iter() {
         if ui_lang_core::source_is_app(root_source)
             && !roots.iter().any(|candidate| {
-                match (file_uri_path(candidate), file_uri_path(root_uri)) {
-                    (Some(candidate), Some(root)) => same_file(&candidate, &root),
-                    _ => candidate == root_uri,
-                }
+                candidate == root_uri
+                    || matches!(
+                        (file_uri_path(candidate), file_uri_path(root_uri)),
+                        (Some(candidate), Some(root)) if same_file(&candidate, &root)
+                    )
             })
         {
             roots.push(root_uri.clone());
@@ -3237,7 +3235,7 @@ fn source_range(source: &str, range: &ui_lang_core::SourceRange) -> Option<Value
 }
 
 fn range_document<'a>(
-    documents: &'a HashMap<String, String>,
+    documents: &'a Documents,
     range: &ui_lang_core::SourceRange,
     fallback_uri: &str,
 ) -> Option<(String, Cow<'a, str>)> {
@@ -3246,10 +3244,7 @@ fn range_document<'a>(
             .get(fallback_uri)
             .map(|source| (fallback_uri.to_owned(), Cow::Borrowed(source.as_str())));
     };
-    let open_uri = documents
-        .keys()
-        .find(|uri| file_uri_path(uri).is_some_and(|open| same_file(&open, path)))
-        .cloned();
+    let open_uri = documents.uri_for_path(path).cloned();
     if let Some(uri) = open_uri {
         let source = documents.get(&uri)?;
         return Some((uri, Cow::Borrowed(source.as_str())));
@@ -3261,7 +3256,7 @@ fn range_document<'a>(
 }
 
 fn location(
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     range: &ui_lang_core::SourceRange,
     fallback_uri: &str,
 ) -> Option<Value> {
@@ -3272,11 +3267,7 @@ fn location(
     }))
 }
 
-fn workspace_edit(
-    documents: &HashMap<String, String>,
-    navigation: &Navigation,
-    new_name: &str,
-) -> Option<Value> {
+fn workspace_edit(documents: &Documents, navigation: &Navigation, new_name: &str) -> Option<Value> {
     let mut changes = BTreeMap::<String, Vec<Value>>::new();
     for symbol in &navigation.family {
         let renamed = navigation.family_name(&symbol.name, new_name);
@@ -3389,7 +3380,7 @@ fn lint_code_action() -> Value {
 fn diagnostic_target(
     root_uri: &str,
     root_source: &str,
-    documents: &HashMap<String, String>,
+    documents: &Documents,
     path: Option<&str>,
 ) -> (String, String) {
     let Some(error_path) = path.map(Path::new) else {
@@ -3398,14 +3389,73 @@ fn diagnostic_target(
     if file_uri_path(root_uri).is_some_and(|root_path| same_file(&root_path, error_path)) {
         return (root_uri.to_owned(), root_source.to_owned());
     }
-    if let Some((uri, source)) = documents.iter().find(|(uri, _)| {
-        file_uri_path(uri).is_some_and(|open_path| same_file(&open_path, error_path))
-    }) {
+    if let Some(uri) = documents.uri_for_path(error_path)
+        && let Some(source) = documents.get(uri)
+    {
         return (uri.clone(), source.clone());
     }
     match fs::read_to_string(error_path) {
         Ok(source) => (file_path_uri(error_path), source),
         Err(_) => (root_uri.to_owned(), root_source.to_owned()),
+    }
+}
+
+/// Open documents, indexed both by URI and by the path each URI decodes to so a
+/// path lookup does not decode and canonicalize every open URI in turn.
+///
+/// The path index is derived purely from the URI string, so it never goes stale
+/// against the filesystem: a hit means `path` *is* the path the URI decodes to,
+/// which `same_file` accepts whether or not either side still canonicalizes.
+/// Everything else falls back to the full scan. There is no `DerefMut`, so the
+/// two maps can only be changed together, through `insert` and `remove`.
+#[derive(Default)]
+struct Documents {
+    sources: HashMap<String, String>,
+    paths: HashMap<PathBuf, String>,
+}
+
+impl Documents {
+    fn insert(&mut self, uri: String, source: String) {
+        if let Some(path) = file_uri_path(&uri) {
+            self.paths.insert(path, uri.clone());
+        }
+        self.sources.insert(uri, source);
+    }
+
+    fn remove(&mut self, uri: &str) -> Option<String> {
+        let source = self.sources.remove(uri)?;
+        if let Some(path) = file_uri_path(uri)
+            && self.paths.get(&path).is_some_and(|open| open == uri)
+        {
+            self.paths.remove(&path);
+        }
+        Some(source)
+    }
+
+    fn uri_for_path(&self, path: &Path) -> Option<&String> {
+        self.paths.get(path).or_else(|| {
+            self.sources
+                .keys()
+                .find(|uri| file_uri_path(uri).is_some_and(|open| same_file(&open, path)))
+        })
+    }
+}
+
+impl Deref for Documents {
+    type Target = HashMap<String, String>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.sources
+    }
+}
+
+impl<const N: usize> From<[(String, String); N]> for Documents {
+    fn from(entries: [(String, String); N]) -> Self {
+        let mut documents = Self::default();
+        for (uri, source) in entries {
+            documents.insert(uri, source);
+        }
+        documents
     }
 }
 
@@ -3643,12 +3693,12 @@ fn write_message(writer: &mut impl Write, message: &Value) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Navigation, SemanticDocument, WatchRegistrationState, WorkspaceIndex,
+        Documents, Navigation, SemanticDocument, WatchRegistrationState, WorkspaceIndex,
         accepts_code_action_kind, checked_document, code_actions_at as code_actions_at_with_db,
         collect_cargo_lint_diagnostics, compiler_diagnostic_to_lsp,
         completion_items_at as completion_items_at_with_db, configure_validation, diagnostic_range,
         file_path_uri, file_uri_path, has_unsaved_workspace_document, hover_at as hover_at_with_db,
-        lint_code_action, navigation_at as navigation_at_with_db, read_message,
+        lint_code_action, navigation_at as navigation_at_with_db, range_document, read_message,
         reanalyze_open_roots, record_watch_registration_response, refresh_watched_files, serve,
         signature_help_at as signature_help_at_with_db, source_range, whole_document_range,
         workspace_edit,
@@ -3664,27 +3714,24 @@ mod tests {
     const APP_WITH_PART: &str = "app Demo\nuse \"part.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  Broken\n";
     const APP_THEME: &str = "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n";
 
-    fn completion_items_at(
-        documents: &HashMap<String, String>,
-        params: &Value,
-    ) -> Option<Vec<Value>> {
+    fn completion_items_at(documents: &Documents, params: &Value) -> Option<Vec<Value>> {
         completion_items_at_with_db(&mut seeded_db(documents), documents, params)
     }
 
-    fn hover_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value> {
+    fn hover_at(documents: &Documents, params: &Value) -> Option<Value> {
         hover_at_with_db(&mut seeded_db(documents), documents, params)
     }
 
-    fn signature_help_at(documents: &HashMap<String, String>, params: &Value) -> Option<Value> {
+    fn signature_help_at(documents: &Documents, params: &Value) -> Option<Value> {
         signature_help_at_with_db(&mut seeded_db(documents), documents, params)
     }
 
-    fn code_actions_at(documents: &HashMap<String, String>, params: &Value) -> Option<Vec<Value>> {
+    fn code_actions_at(documents: &Documents, params: &Value) -> Option<Vec<Value>> {
         code_actions_at_with_db(&mut seeded_db(documents), documents, params)
     }
 
     fn navigation_at(
-        documents: &HashMap<String, String>,
+        documents: &Documents,
         workspace_roots: &[PathBuf],
         params: &Value,
     ) -> Option<Navigation> {
@@ -3693,9 +3740,9 @@ mod tests {
         navigation_at_with_db(&mut db, documents, &mut index, true, params)
     }
 
-    fn seeded_db(documents: &HashMap<String, String>) -> ui_lang_core::AnalysisDb {
+    fn seeded_db(documents: &Documents) -> ui_lang_core::AnalysisDb {
         let mut db = ui_lang_core::AnalysisDb::default();
-        for (uri, source) in documents {
+        for (uri, source) in documents.iter() {
             if let Some(path) = file_uri_path(uri) {
                 db.set_overlay(path, source).unwrap();
             }
@@ -3914,7 +3961,7 @@ mod tests {
         fixture.write("app.ice", source);
         let root = fixture.path("app.ice");
         let uri = file_path_uri(&root);
-        let documents = HashMap::from([(uri.clone(), source.to_owned())]);
+        let documents = Documents::from([(uri.clone(), source.to_owned())]);
         let mut db = seeded_db(&documents);
         let retained = db.query_root(&root).unwrap();
 
@@ -3976,7 +4023,7 @@ mod tests {
         fixture.write("app.ice", &source);
         let root = fixture.path("app.ice");
         let uri = file_path_uri(&root);
-        let documents = HashMap::from([(uri.clone(), source.clone())]);
+        let documents = Documents::from([(uri.clone(), source.clone())]);
         let mut db = seeded_db(&documents);
         let retained = db.query_root(&root).unwrap();
 
@@ -4047,7 +4094,7 @@ mod tests {
             .lines()
             .position(|line| line.trim() == "Card")
             .unwrap();
-        let documents = HashMap::from([(target_uri.clone(), target)]);
+        let documents = Documents::from([(target_uri.clone(), target)]);
 
         let _profiler = dhat::Profiler::builder().testing().build();
         let actions = code_actions_at_with_db(
@@ -4092,7 +4139,7 @@ mod tests {
         let root_uri = file_path_uri(&root);
         let part = fixture.path("part.ice");
         let part_uri = file_path_uri(&part);
-        let documents = HashMap::from([(root_uri, source.to_owned())]);
+        let documents = Documents::from([(root_uri, source.to_owned())]);
         let mut db = ui_lang_core::AnalysisDb::default();
         db.set_overlay(&root, source).unwrap();
         let retained = db.query_root(&root).unwrap();
@@ -4129,7 +4176,7 @@ mod tests {
         let root_uri = file_path_uri(&root);
         let part = fixture.path("part.ice");
         let part_uri = file_path_uri(&part);
-        let documents = HashMap::from([(root_uri.clone(), source.to_owned())]);
+        let documents = Documents::from([(root_uri.clone(), source.to_owned())]);
         let mut db = seeded_db(&documents);
         db.query_root(&root).unwrap();
         let mut reports = HashMap::new();
@@ -4173,7 +4220,7 @@ mod tests {
         let root_uri = file_path_uri(&root);
         let part = fixture.path("part.ice");
         let part_uri = file_path_uri(&part);
-        let documents = HashMap::from([(root_uri.clone(), source.to_owned())]);
+        let documents = Documents::from([(root_uri.clone(), source.to_owned())]);
         let mut db = seeded_db(&documents);
         db.query_root(&root).unwrap();
 
@@ -4216,7 +4263,7 @@ mod tests {
         let root_uri = file_path_uri(&root);
         let part = fixture.path("part.ice");
         let part_uri = file_path_uri(&part);
-        let documents = HashMap::from([(root_uri.clone(), source.to_owned())]);
+        let documents = Documents::from([(root_uri.clone(), source.to_owned())]);
         let mut db = seeded_db(&documents);
         db.query_root(&root).unwrap();
 
@@ -4256,7 +4303,7 @@ mod tests {
         let root_uri = file_path_uri(&root);
         let asset = fixture.path("Brand.ttf");
         let asset_uri = file_path_uri(&asset);
-        let documents = HashMap::from([(root_uri, source.to_owned())]);
+        let documents = Documents::from([(root_uri, source.to_owned())]);
         let mut db = seeded_db(&documents);
         db.query_root(&root).unwrap();
         fs::remove_file(asset).unwrap();
@@ -4279,7 +4326,7 @@ mod tests {
         let uri = file_path_uri(&root);
         let asset = fixture.path("Brand.ttf");
         let asset_uri = file_path_uri(&asset);
-        let documents = HashMap::from([(uri, source.to_owned())]);
+        let documents = Documents::from([(uri, source.to_owned())]);
         let mut db = seeded_db(&documents);
         assert_eq!(db.query_root(&root).unwrap_err().code, "E192");
 
@@ -4305,7 +4352,7 @@ mod tests {
             fixture.write("part.ice", "component Part()\n  text \"before\"\n");
             let root = fixture.path("app.ice");
             let uri = file_path_uri(&root);
-            let documents = HashMap::from([(uri, source.to_owned())]);
+            let documents = Documents::from([(uri, source.to_owned())]);
             let mut db = seeded_db(&documents);
             let mut index = WorkspaceIndex::default();
             configure_validation(&state, &mut db, &mut index);
@@ -4416,13 +4463,14 @@ mod tests {
         fixture.write("app.ice", "app Saved\nview\n  text \"Saved\"\n");
         let uri = file_path_uri(&fixture.path("app.ice"));
         let roots = [fixture.root.clone()];
-        let saved = HashMap::from([(
+        let saved = Documents::from([(
             uri.clone(),
             "app Saved\nview\n  text \"Saved\"\n".to_owned(),
         )]);
         assert!(!has_unsaved_workspace_document(&saved, &roots));
 
-        let unsaved = HashMap::from([(uri, "app Changed\nview\n  text \"Changed\"\n".to_owned())]);
+        let unsaved =
+            Documents::from([(uri, "app Changed\nview\n  text \"Changed\"\n".to_owned())]);
         assert!(has_unsaved_workspace_document(&unsaved, &roots));
     }
 
@@ -4958,7 +5006,7 @@ mod tests {
         let a_uri = file_path_uri(&fixture.path("a.ice"));
         let b_uri = file_path_uri(&fixture.path("b.ice"));
         let part_uri = file_path_uri(&fixture.path("a_part.ice"));
-        let mut documents = HashMap::from([
+        let mut documents = Documents::from([
             (
                 a_uri.clone(),
                 fs::read_to_string(fixture.path("a.ice")).unwrap(),
@@ -4970,7 +5018,7 @@ mod tests {
             ),
         ]);
         let mut db = ui_lang_core::AnalysisDb::default();
-        for (uri, source) in &documents {
+        for (uri, source) in documents.iter() {
             db.set_overlay(file_uri_path(uri).unwrap(), source).unwrap();
         }
         let mut reports = HashMap::new();
@@ -5183,7 +5231,7 @@ mod tests {
             "{:?}",
             ui_lang_core::parse(source)
         );
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let complete = |line| {
             completion_items_at(
                 &documents,
@@ -5306,7 +5354,7 @@ mod tests {
         fixture.write("app.ice", source);
         let root = fixture.path("app.ice");
         let uri = file_path_uri(&root);
-        let documents = HashMap::from([(uri.clone(), source.to_owned())]);
+        let documents = Documents::from([(uri.clone(), source.to_owned())]);
         let mut db = ui_lang_core::AnalysisDb::default();
         db.set_overlay(&root, source).unwrap();
         db.query_root(&root).unwrap();
@@ -5363,7 +5411,7 @@ mod tests {
         fixture.write("app.ice", source);
         let root = fixture.path("app.ice");
         let uri = file_path_uri(&root);
-        let documents = HashMap::from([(uri.clone(), source.to_owned())]);
+        let documents = Documents::from([(uri.clone(), source.to_owned())]);
         let line = source
             .lines()
             .position(|line| line.trim_start().starts_with("Catalog "))
@@ -5424,7 +5472,7 @@ mod tests {
             .lines()
             .position(|line| line.trim_start().starts_with("Catalog value="))
             .unwrap();
-        let documents = HashMap::from([
+        let documents = Documents::from([
             (uri.clone(), source.clone()),
             (catalog_uri, catalog.clone()),
         ]);
@@ -5504,7 +5552,7 @@ mod tests {
             "mixed requests allocated source-sized copies: {heap:?}"
         );
         assert!(
-            heap.total_blocks <= REQUESTS as u64 * 220,
+            heap.total_blocks <= REQUESTS as u64 * 182,
             "mixed requests allocated too many blocks: {heap:?}"
         );
         eprintln!(
@@ -5516,10 +5564,45 @@ mod tests {
     }
 
     #[test]
+    fn path_lookup_resolves_the_matching_open_document_and_forgets_closed_ones() {
+        let fixture = Fixture::new();
+        let a_source = "app A\nview\n  text \"a\"\n";
+        let b_source = "app B\nview\n  text \"b\"\n";
+        fixture.write("a.ice", a_source);
+        fixture.write("b.ice", b_source);
+        let a_path = fixture.path("a.ice");
+        let b_path = fixture.path("b.ice");
+        let a_uri = file_path_uri(&a_path);
+        let b_uri = file_path_uri(&b_path);
+        let mut documents = Documents::from([
+            (a_uri.clone(), a_source.to_owned()),
+            (b_uri.clone(), b_source.to_owned()),
+        ]);
+
+        assert_eq!(documents.uri_for_path(&a_path), Some(&a_uri));
+        assert_eq!(documents.uri_for_path(&b_path), Some(&b_uri));
+        assert_eq!(documents.uri_for_path(&fixture.path("c.ice")), None);
+
+        let range = ui_lang_core::SourceRange {
+            path: Some(b_path.clone()),
+            line: 3,
+            start_column: 8,
+            end_column: 11,
+        };
+        let (uri, source) = range_document(&documents, &range, &a_uri).unwrap();
+        assert_eq!(uri, b_uri);
+        assert_eq!(source, b_source);
+
+        assert_eq!(documents.remove(&a_uri).as_deref(), Some(a_source));
+        assert_eq!(documents.uri_for_path(&a_path), None);
+        assert_eq!(documents.uri_for_path(&b_path), Some(&b_uri));
+    }
+
+    #[test]
     fn completion_tracks_match_arms_optional_slots_and_theme_contracts() {
         let uri = "file:///tmp/new-contexts.ice";
         let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  choice:str? = none\ncomponent Card()\n  col\n    slot Header\n    slot Footer?\nview\n  col\n    Card\n    match choice\n      some(value)\n        text value\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let complete = |line, character| {
             completion_items_at(
                 &documents,
@@ -5564,7 +5647,7 @@ mod tests {
     fn completes_nominal_palette_values_and_match_arms() {
         let uri = "file:///tmp/palette-context.ice";
         let source = "app Demo\n  palette active_palette\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette light for AppTheme\n  bg #ffffff\n  fg #111111\n  primary #3366ff\n  danger #cc3344\npalette dark for AppTheme\n  bg #111111\n  fg #ffffff\n  primary #88aaff\n  danger #ff6677\nstate\n  active_palette:palette[AppTheme] = AppTheme.light\nview\n  match active_palette\n    AppTheme.light\n      text \"Light\"\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let complete = |line| {
             completion_items_at(
                 &documents,
@@ -5585,7 +5668,7 @@ mod tests {
 
         let arm_line = source.lines().count();
         let source = format!("{source}    \n");
-        let documents = HashMap::from([(uri.to_owned(), source)]);
+        let documents = Documents::from([(uri.to_owned(), source)]);
         let patterns = completion_items_at(
             &documents,
             &json!({
@@ -5611,7 +5694,7 @@ mod tests {
             "{:?}",
             ui_lang_core::analyze(source)
         );
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let hover = |line, character| {
             hover_at(
                 &documents,
@@ -5642,7 +5725,7 @@ mod tests {
     fn code_actions_return_workspace_edits_for_component_contracts() {
         let uri = "file:///tmp/actions.ice";
         let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nstate\n  title = \"Draft\"\n  tone = \"quiet\"\ncomponent Card(bind title:str, tone:str)\n  emits\n    select(str)\n  text title\nview\n  Card title=title tone<->tone\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let actions = |line, character| {
             code_actions_at(
                 &documents,
@@ -5708,7 +5791,7 @@ mod tests {
                 .lines()
                 .position(|line| line.trim_start().starts_with("match "))
                 .unwrap();
-            let documents = HashMap::from([(uri.to_owned(), source.clone())]);
+            let documents = Documents::from([(uri.to_owned(), source.clone())]);
             let actions = code_actions_at(
                 &documents,
                 &json!({
@@ -5736,7 +5819,7 @@ mod tests {
         let uri = "file:///tmp/wildcard.ice";
         let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nenum Screen\n  home\n  settings(str)\nstate\n  value:Screen = Screen.home\nview\n  match value\n    Screen.home\n      text \"home\"\n    _\n      text \"fallback\"\n";
         let line = source.lines().position(|line| line.trim() == "_").unwrap();
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let actions = code_actions_at(
             &documents,
             &json!({
@@ -5790,7 +5873,7 @@ mod tests {
                         .map(|column| (line, column + selected.len()))
                 })
                 .unwrap();
-            let documents = HashMap::from([(uri.clone(), source.clone())]);
+            let documents = Documents::from([(uri.clone(), source.clone())]);
             let actions = code_actions_at(
                 &documents,
                 &json!({
@@ -5837,7 +5920,7 @@ mod tests {
         let part = fixture.path("ui.ice");
         let uri = file_path_uri(&root);
         let part_uri = file_path_uri(&part);
-        let documents = HashMap::from([
+        let documents = Documents::from([
             (uri.clone(), source.to_owned()),
             (
                 part_uri,
@@ -5880,7 +5963,7 @@ mod tests {
             .lines()
             .position(|line| line.trim() == "Card")
             .unwrap();
-        let documents = HashMap::from([(uri.clone(), source.to_owned())]);
+        let documents = Documents::from([(uri.clone(), source.to_owned())]);
         let actions = code_actions_at(
             &documents,
             &json!({
@@ -5904,7 +5987,7 @@ mod tests {
     fn code_actions_cover_handlers_errors_accessibility_and_long_nodes() {
         let uri = "file:///tmp/more-actions.ice";
         let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non loaded(value)\n  return if true\non submit\n  run every load(\"x\") -> loaded _\nview\n  col\n    button #go w=fill h=40.0 p=8.0 disabled=false @w-full px-4 rounded-2 -> missing _\n      text \"Go\"\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let actions = code_actions_at(
             &documents,
             &json!({
@@ -5956,7 +6039,7 @@ mod tests {
     fn fallible_route_action_recognizes_delivery_modes_and_ignores_invalidation() {
         let uri = "file:///tmp/delivery-lane-actions.ice";
         let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\n  stream watch(topic:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non every\n  run every load(\"every\") -> loaded _\non cancel_search\n  invalidate lane=search\non newest\n  run latest lane=search load(\"latest\") -> loaded _\non replacing\n  run replace lane=refresh load(\"replace\") -> loaded _\non loaded(_value)\nview\n  text \"Ready\"\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
 
         for statement in [
             "  run every load(\"every\") -> loaded _",
@@ -6114,7 +6197,7 @@ mod tests {
     fn handler_skeleton_action_uses_parenthesized_route_name_and_arity() {
         let uri = "file:///tmp/route-snapshot-action.ice";
         let source = "app Demo\nextern crate::backend\n  load(query:str) -> str ! str\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non submit\n  let snapshot = \"launch\"\n  run every load(\"a->b\") -> loaded(snapshot, true || false, \"a|b\", _)\nview\n  text \"Ready\"\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let line = source
             .lines()
             .position(|candidate| {
@@ -6153,7 +6236,7 @@ mod tests {
     fn code_action_extracts_inline_utilities_into_a_recipe() {
         let uri = "file:///tmp/extract-recipe.ice";
         let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\non save\n  return if true\nview\n  col\n    button \"Save\" @px-4 py-3 -> save\n    button \"Save again\" @px-4 py-3 -> save\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let actions = code_actions_at(
             &documents,
             &json!({
@@ -6178,7 +6261,7 @@ mod tests {
         ui_lang_core::analyze(&output).unwrap();
 
         let single = source.replace("    button \"Save again\" @px-4 py-3 -> save\n", "");
-        let documents = HashMap::from([(uri.to_owned(), single)]);
+        let documents = Documents::from([(uri.to_owned(), single)]);
         let actions = code_actions_at(
             &documents,
             &json!({
@@ -6202,7 +6285,7 @@ mod tests {
     fn code_action_closes_a_component_over_one_unambiguous_call_site() {
         let uri = "file:///tmp/close-component.ice";
         let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ncomponent Nav(page:str)\n  button \"Open\" -> navigate page\non navigate(page)\n  return if true\nview\n  Nav page=\"home\"\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let actions = code_actions_at(
             &documents,
             &json!({
@@ -6232,7 +6315,7 @@ mod tests {
             "view\n  Nav page=\"home\"",
             "view\n  col\n    Nav page=\"home\"\n    Nav page=\"other\"",
         );
-        let documents = HashMap::from([(uri.to_owned(), ambiguous)]);
+        let documents = Documents::from([(uri.to_owned(), ambiguous)]);
         let actions = code_actions_at(
             &documents,
             &json!({
@@ -6379,7 +6462,7 @@ mod tests {
         }
 
         let source = "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\ntest semantic_driver\n  \nview\n  text \"ready\"\n";
-        let documents = HashMap::from([(uri.to_owned(), source.to_owned())]);
+        let documents = Documents::from([(uri.to_owned(), source.to_owned())]);
         let contextual = completion_items_at(
             &documents,
             &json!({
@@ -6830,7 +6913,7 @@ mod tests {
         fixture.write("part.ice", part);
         let root_uri = file_path_uri(&fixture.path("app.ice"));
         let part_uri = file_path_uri(&fixture.path("part.ice"));
-        let documents = HashMap::from([
+        let documents = Documents::from([
             (root_uri.clone(), root.to_owned()),
             (part_uri, part.to_owned()),
         ]);
@@ -6853,7 +6936,7 @@ mod tests {
         fixture.write("part.ice", part);
         let root_uri = file_path_uri(&fixture.path("new.ice"));
         let part_uri = file_path_uri(&fixture.path("part.ice"));
-        let documents = HashMap::from([
+        let documents = Documents::from([
             (root_uri.clone(), root.to_owned()),
             (part_uri, part.to_owned()),
         ]);
@@ -6883,7 +6966,7 @@ mod tests {
         let a_uri = file_path_uri(&a_path);
         let b_uri = file_path_uri(&b_path);
         let part_uri = file_path_uri(&part_path);
-        let documents = HashMap::from([(a_uri.clone(), a), (part_uri.clone(), part.to_owned())]);
+        let documents = Documents::from([(a_uri.clone(), a), (part_uri.clone(), part.to_owned())]);
         let mut db = seeded_db(&documents);
         let mut index = WorkspaceIndex::build(vec![fixture.root.clone()]);
         index.configure_watching(&WatchRegistrationState::Unsupported);
@@ -6923,7 +7006,7 @@ mod tests {
         let b_path = fixture.path("b.ice");
         let b_uri = file_path_uri(&b_path);
         let part_uri = file_path_uri(&fixture.path("part.ice"));
-        let documents = HashMap::from([(a_uri.clone(), a), (part_uri.clone(), part.to_owned())]);
+        let documents = Documents::from([(a_uri.clone(), a), (part_uri.clone(), part.to_owned())]);
         let params = json!({
             "textDocument": { "uri": a_uri },
             "position": { "line": 13, "character": 3 },
@@ -7005,7 +7088,7 @@ mod tests {
         fs::write(outside.join("part.ice"), part).unwrap();
         let root_uri = file_path_uri(&outside.join("app.ice"));
         let part_uri = file_path_uri(&outside.join("part.ice"));
-        let documents = HashMap::from([
+        let documents = Documents::from([
             (root_uri.clone(), outside_app.to_owned()),
             (part_uri, part.to_owned()),
         ]);
@@ -7030,7 +7113,7 @@ mod tests {
         fixture.write("extra.ice", "// saved fragment\n");
         let root_uri = file_path_uri(&fixture.path("app.ice"));
         let extra_uri = file_path_uri(&fixture.path("extra.ice"));
-        let documents = HashMap::from([
+        let documents = Documents::from([
             (root_uri.clone(), root.to_owned()),
             (extra_uri, "component Tile()\n  text \"New\"\n".to_owned()),
         ]);
@@ -7407,7 +7490,7 @@ mod tests {
 
         assert!(
             workspace_edit(
-                &HashMap::from([(uri, "Tile\n".to_owned())]),
+                &Documents::from([(uri, "Tile\n".to_owned())]),
                 &navigation,
                 "Panel"
             )
