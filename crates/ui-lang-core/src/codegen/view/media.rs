@@ -656,7 +656,7 @@ fn render_resolved_media(
             .transpose()?
             .unwrap_or_default();
         Ok(format!(
-            "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); ::ui_lang_runtime::accessible({code}, __a11y_id, ::ui_lang_runtime::Role::Image).logical_id(__a11y_key.clone()).label({label}){description}.into() }}"
+            "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); ::ui_lang_runtime::accessible({code}, __a11y_id, ::ui_lang_runtime::Role::Image).logical_id(__a11y_key).label({label}){description}.into() }}"
         ))
     } else {
         Ok(format!("{code}.into()"))

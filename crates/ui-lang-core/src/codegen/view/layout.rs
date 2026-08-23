@@ -390,7 +390,7 @@ fn render_resolved_regular_layout(
     }
     write!(
         body,
-        " let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+        " let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key).into() }}"
     )
     .unwrap();
     Ok(body)
@@ -546,7 +546,7 @@ fn render_resolved_flexbox(
     body.push_str(&container_style_code(style));
     write!(
         body,
-        "; let __layout_content: __IceElement<'_, {message}> = __content.into(); let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+        "; let __layout_content: __IceElement<'_, {message}> = __content.into(); let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key).into() }}"
     )
     .unwrap();
     Ok(body)
@@ -692,7 +692,7 @@ fn render_resolved_scroll(
         code = format!("::ui_lang_runtime::scroll_anchor({code})");
     }
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key).into() }}"
     ))
 }
 

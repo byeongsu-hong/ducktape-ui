@@ -1399,7 +1399,10 @@ view
     // `text` is published as data, so its identity is a template segment
     // rather than a generated key expression.
     assert!(generated.contains(r#"\"segment\": \"plain\""#));
-    assert!(generated.contains(".logical_id(__a11y_key.clone())"));
+    // Only the two focusables read the key again after `logical_id`, to build
+    // their `focus_id`; the other five wrappers move it.
+    assert!(generated.contains(".logical_id(__a11y_key.clone()).focus_id("));
+    assert_eq!(generated.matches("__a11y_key.clone()").count(), 2);
     for id in [
         "rich",
         "toggle",
@@ -1496,8 +1499,13 @@ view
 
     assert_eq!(
         generated.matches("::ui_lang_runtime::accessible(").count(),
-        generated.matches(".logical_id(__a11y_key.clone())").count()
+        generated.matches(".logical_id(__a11y_key").count()
     );
+    // The key is a `String` built fresh per node per frame, and `StableId`
+    // borrows it without holding on, so `logical_id` takes it by move. Only a
+    // node that reads the key AGAIN afterwards still clones — here just the
+    // checkbox, which builds its `focus_id` from it.
+    assert_eq!(generated.matches("__a11y_key.clone()").count(), 1);
     assert_eq!(generated.matches("/image").count(), 2);
     assert!(!generated.contains("/@media:"));
 }
