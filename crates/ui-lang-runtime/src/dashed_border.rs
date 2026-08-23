@@ -10,6 +10,7 @@
 use iced::border::Radius;
 use iced::widget::canvas;
 use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
+use std::cell::RefCell;
 
 /// Layers a dashed rounded-rectangle stroke over `content`.
 ///
@@ -23,30 +24,58 @@ pub fn dashed_border<'a, Message: 'a>(
     radius: Radius,
     segments: Vec<f32>,
 ) -> Element<'a, Message> {
-    let stroke = canvas(DashedBorder {
-        color,
-        width,
-        radius,
-        segments: normalize_segments(segments),
-    })
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let stroke = canvas(DashedBorder::new(color, width, radius, segments))
+        .width(Length::Fill)
+        .height(Length::Fill);
     iced::widget::stack([content.into(), Element::from(stroke)]).into()
 }
 
-struct DashedBorder {
+/// The canvas program [`dashed_border`] layers over the surface.
+///
+/// Public only so the crate's allocation contract can call `Program::draw`
+/// directly; the view builds it through [`dashed_border`].
+#[doc(hidden)]
+#[derive(Clone, PartialEq)]
+pub struct DashedBorder {
     color: Color,
     width: f32,
     radius: Radius,
     segments: Vec<f32>,
 }
 
+impl DashedBorder {
+    pub fn new(color: Color, width: f32, radius: Radius, segments: Vec<f32>) -> Self {
+        Self {
+            color,
+            width,
+            radius,
+            segments: normalize_segments(segments),
+        }
+    }
+}
+
+/// The stroke's tessellated geometry, kept across frames.
+///
+/// `canvas` calls `Program::draw` from its own `draw`, so without this every
+/// frame re-walks the rounded rectangle and re-tessellates the dashed stroke
+/// for geometry that only changes when its parameters do. `canvas::Cache`
+/// keys itself on the layer's bounds, so it already covers a resize; `drawn`
+/// covers everything else the closure reads, which is the whole of
+/// [`DashedBorder`]. The comparison is the derived `PartialEq`, so a field
+/// added later cannot quietly escape it.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct DashedBorderCache {
+    geometry: canvas::Cache,
+    drawn: RefCell<Option<DashedBorder>>,
+}
+
 impl<Message> canvas::Program<Message> for DashedBorder {
-    type State = ();
+    type State = DashedBorderCache;
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
@@ -55,29 +84,37 @@ impl<Message> canvas::Program<Message> for DashedBorder {
         if self.width <= 0.0 || self.segments.is_empty() {
             return Vec::new();
         }
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        // A spurious mismatch costs one redraw; a missed one draws a stale
+        // border. So this compares every parameter, floats included, and
+        // never tries to be clever about which of them "matter".
+        let stale = state.drawn.borrow().as_ref() != Some(self);
+        if stale {
+            state.geometry.clear();
+            *state.drawn.borrow_mut() = Some(self.clone());
+        }
         let inset = self.width / 2.0;
-        let path = canvas::Path::rounded_rectangle(
-            Point::new(inset, inset),
-            Size::new(
-                (bounds.width - self.width).max(0.0),
-                (bounds.height - self.width).max(0.0),
-            ),
-            inner_radius(self.radius, inset),
-        );
-        frame.stroke(
-            &path,
-            canvas::Stroke {
-                style: canvas::Style::Solid(self.color),
-                width: self.width,
-                line_dash: canvas::LineDash {
-                    segments: &self.segments,
-                    offset: 0,
+        vec![state.geometry.draw(renderer, bounds.size(), |frame| {
+            let path = canvas::Path::rounded_rectangle(
+                Point::new(inset, inset),
+                Size::new(
+                    (bounds.width - self.width).max(0.0),
+                    (bounds.height - self.width).max(0.0),
+                ),
+                inner_radius(self.radius, inset),
+            );
+            frame.stroke(
+                &path,
+                canvas::Stroke {
+                    style: canvas::Style::Solid(self.color),
+                    width: self.width,
+                    line_dash: canvas::LineDash {
+                        segments: &self.segments,
+                        offset: 0,
+                    },
+                    ..canvas::Stroke::default()
                 },
-                ..canvas::Stroke::default()
-            },
-        );
-        vec![frame.into_geometry()]
+            );
+        })]
     }
 }
 
