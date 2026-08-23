@@ -716,6 +716,16 @@ impl DocumentLine {
             }
         }
 
+        // cosmic-text sizes a visual line by the largest line-height metric
+        // among its glyphs, and iced only attaches that metric to spans that
+        // set a size or line height. A body span left at the defaults would
+        // not vote, so a wrapped line holding only a hidden 0.01 px marker
+        // collapsed to nothing. Every span votes with the paragraph defaults.
+        for span in &mut spans {
+            span.size.get_or_insert(style.text_size);
+            span.line_height.get_or_insert(style.line_height);
+        }
+
         let paragraph = GraphicsParagraph::with_spans(Text {
             content: spans.as_slice(),
             bounds: Size::new(
