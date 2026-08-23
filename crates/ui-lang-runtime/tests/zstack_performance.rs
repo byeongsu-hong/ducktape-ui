@@ -10,6 +10,31 @@ use ui_lang_runtime::zstack;
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
+/// A measured window may carry one foreign one-off: libtest sets up its own
+/// main-thread channel while the first test is already running, and on a
+/// loaded runner that lands inside the region as +4 allocations. Code under
+/// test that allocated would dirty *every* window; a one-time foreign block
+/// dirties at most one. So the batch runs in its own window, up to
+/// [`WINDOWS`] times, and the contract asks for one clean window rather than a
+/// clean process.
+const WINDOWS: usize = 4;
+
+/// Runs `batch` in a fresh allocator window, up to [`WINDOWS`] times, and
+/// returns the first window reporting `expected` allocations — or the last
+/// window's stats, when none did.
+fn clean_window(expected: usize, mut batch: impl FnMut()) -> stats_alloc::Stats {
+    let mut stats = Region::new(GLOBAL).change();
+    for _ in 0..WINDOWS {
+        let region = Region::new(GLOBAL);
+        batch();
+        stats = region.change();
+        if stats.allocations == expected {
+            break;
+        }
+    }
+    stats
+}
+
 type Renderer = iced_test::renderer::Renderer;
 
 #[test]
@@ -35,9 +60,11 @@ fn zstack_layout_allocates_only_its_retained_children() {
     let mut tree = widget::Tree::new(&stack as &dyn Widget<(), Theme, Renderer>);
     let limits = layout::Limits::new(Size::ZERO, Size::new(1_000.0, 1_000.0));
 
-    let region = Region::new(GLOBAL);
-    let node = std::hint::black_box(&mut stack).layout(&mut tree, &renderer, &limits);
-    let stats = region.change();
+    let mut measured = None;
+    let stats = clean_window(1, || {
+        measured = Some(std::hint::black_box(&mut stack).layout(&mut tree, &renderer, &limits));
+    });
+    let node = measured.expect("a laid out bounded stack");
 
     assert_eq!(node.children().len(), LAYERS);
     for (index, child) in node.children().iter().enumerate() {
@@ -66,9 +93,11 @@ fn zstack_layout_allocates_only_its_retained_children() {
     let mut tree = widget::Tree::new(&stack as &dyn Widget<(), Theme, Renderer>);
     let limits = layout::Limits::new(Size::ZERO, Size::new(1_000.0, f32::INFINITY));
 
-    let region = Region::new(GLOBAL);
-    let node = std::hint::black_box(&mut stack).layout(&mut tree, &renderer, &limits);
-    let stats = region.change();
+    let mut measured = None;
+    let stats = clean_window(1, || {
+        measured = Some(std::hint::black_box(&mut stack).layout(&mut tree, &renderer, &limits));
+    });
+    let node = measured.expect("a laid out unbounded stack");
 
     assert_eq!(node.children().len(), LAYERS);
     assert_eq!(node.size(), Size::new(64.0, 10.0));
