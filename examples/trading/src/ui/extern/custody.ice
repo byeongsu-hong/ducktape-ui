@@ -36,6 +36,10 @@ extern crate::custody
   pure session_window(session:Session, now:i64) -> str
   pure session_unlockable(session:Session) -> bool
   pure session_refusal(session:Session) -> str
+  // What pressing UNLOCK does, for its accessible name: the prompt on a build
+  // the Enclave serves, the passphrase on one it does not. It used to say
+  // "Touch ID" on both, over a panel explaining there was no Touch ID to use.
+  pure unlock_label(locale:Locale, vault:bool) -> str
   // The account's own key: typed once, confirmed by the address it derives,
   // and stored under the address alone because it is the account on every
   // network rather than a key for one of them.

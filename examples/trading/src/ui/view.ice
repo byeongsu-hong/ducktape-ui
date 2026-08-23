@@ -64,7 +64,7 @@ view
                           size=20.0
                           @text-fg
                           @font-bold
-                      Label value="PERP"
+                      Label value=t(locale, "PERP")
                     // Three slots in a fixed order: the price, its move, and
                     // whether either is still a reading. Nothing here is drawn
                     // from `venue`, but everything here is drawn from a read the
@@ -148,7 +148,7 @@ view
                               py=3.0
                               bg=down
                               r=2.0
-                            text "NOT LIVE"
+                            text t(locale, "NOT LIVE")
                               with
                                 size=9.0
                                 tracking=1.1
@@ -176,7 +176,11 @@ view
                     button #venues label=venue_switch_label(venue) p=0.0 -> open_venues
                       active bg=panel text=fg r=3.0
                       hovered bg=raised text=fg r=3.0
-                      col w=138.0 gap=3.0
+                      col
+                        with
+                          w=138.0
+                          gap=3.0
+                          align=center
                         text venue_name(venue) #venue-name
                           with
                             size=10.0
@@ -187,6 +191,7 @@ view
                       NavTab #page-terminal
                         with
                           name="TERMINAL"
+                          locale=locale
                           target=Page.terminal
                           current=page
                         events
@@ -194,6 +199,7 @@ view
                       NavTab #page-portfolio
                         with
                           name="PORTFOLIO"
+                          locale=locale
                           target=Page.portfolio
                           current=page
                         events
@@ -201,6 +207,7 @@ view
                       NavTab #page-settings
                         with
                           name="SETTINGS"
+                          locale=locale
                           target=Page.settings
                           current=page
                         events
@@ -224,7 +231,7 @@ view
                         some(held)
                           col gap=4.0
                             row gap=6.0 align=center
-                              Label value="EQUITY"
+                              Label value=t(locale, "EQUITY")
                               text fmt_usd(held.value)
                                 with
                                   size=13.0
@@ -247,7 +254,7 @@ view
                                   space w=fill h=fill
                               text fmt_share(held.margin_pct) size=9.0 @text-faint
                           row gap=6.0 align=center
-                            Label value="PNL"
+                            Label value=t(locale, "PNL")
                             Delta
                               with
                                 value=fmt_pnl(held.pnl)
@@ -257,7 +264,7 @@ view
                         none
                           col gap=4.0
                             row gap=6.0 align=center
-                              Label value="EQUITY"
+                              Label value=t(locale, "EQUITY")
                               text "—"
                                 with
                                   size=13.0
@@ -274,7 +281,7 @@ view
                                   space w=fill h=fill
                               text "—" size=9.0 @text-faint
                           row gap=6.0 align=center
-                            Label value="PNL"
+                            Label value=t(locale, "PNL")
                             text "—"
                               with
                                 size=13.0
@@ -302,7 +309,7 @@ view
                         tracking=1.1
                         @text-faint
                     rule vertical thickness=1.0 color=edge
-                    Stat #feed name="FEED" value=fmt_latency(latency)
+                    Stat #feed name=t(locale, "FEED") value=fmt_latency(latency)
                 rule horizontal thickness=1.0 color=edge
                 // What broke belongs to the app, not to the page that happened to be
                 // drawn when it broke. The account poll and the universe poll run on
@@ -370,7 +377,7 @@ view
                               box w=fill p=10.0
                                 input "" #search <-> query
                                   with
-                                    label="Search markets"
+                                    label=t(locale, "Search markets")
                                     hint="Search markets"
                                     change=search
                                     text-size=12.0
@@ -384,11 +391,11 @@ view
                                   pr=14.0
                                   pb=8.0
                                   gap=8.0
-                                Label value="MARKET"
+                                Label value=t(locale, "MARKETS")
                                 space w=fill
                                 Head
                                   with
-                                    name="LAST"
+                                    name=t(locale, "LAST")
                                     width=74.0
                                     right=true
                                 Head
@@ -425,7 +432,7 @@ view
                                         p=16.0
                                         align-x=center
                                         align-y=center
-                                      text "No market matches that."
+                                      text t(locale, "No market matches that.")
                                         with
                                           size=12.0
                                           w=fill
@@ -508,7 +515,7 @@ view
                                             size=11.0
                                             font=digits
                                             @text-fg
-                                      Stat name="VOL" value=fmt_volume(hit.volume) #cell-volume
+                                      Stat name=t(locale, "VOL") value=fmt_volume(hit.volume) #cell-volume
                                   none
                                     space
                               if term_w < 1580.0
@@ -538,7 +545,7 @@ view
                                 active bg=panel text=muted r=4.0
                                 hovered bg=raised text=fg r=4.0
                                 row gap=6.0 align=center
-                                  text "INDICATORS"
+                                  text t(locale, "INDICATORS")
                                     with
                                       size=9.0
                                       tracking=0.7
@@ -561,11 +568,11 @@ view
                               // put back together to get rid of. Each appears
                               // only at the width that folds its pane away.
                               if term_w < 1280.0
-                                PaneToggle name="MARKETS" open=rail_open #toggle-markets
+                                PaneToggle name="MARKETS" locale=locale open=rail_open #toggle-markets
                                   events
                                     pick -> toggle_rail
                               if term_w < 1580.0
-                                PaneToggle name="FILLS" open=fills_open #toggle-fills
+                                PaneToggle name="FILLS" locale=locale open=fills_open #toggle-fills
                                   events
                                     pick -> toggle_fills
                           rule horizontal thickness=1.0 color=edge
@@ -597,7 +604,7 @@ view
                                     pr=16.0
                                     gap=10.0
                                     align=center
-                                  Label value="POSITIONS"
+                                  Label value=t(locale, "POSITIONS")
                                   Label value=fmt_count(len(positions))
                                   space w=fill
                                   // When the next funding charge lands, over
@@ -634,7 +641,7 @@ view
                                   // whose identity is a scope with no rendered
                                   // box of its own to name. The typography is
                                   // the one `Label` draws.
-                                  text "FUNDING IN" #funding-label
+                                  text t(locale, "FUNDING IN") #funding-label
                                     with
                                       size=10.0
                                       tracking=1.1
@@ -651,7 +658,7 @@ view
                                   // closes are the rows underneath it.
                                   Sweeper #flatten-all
                                     with
-                                      name="FLATTEN ALL"
+                                      name=t(locale, "FLATTEN ALL")
                                       count=len(positions)
                                       cancel=false
                                       refusal=flatten_all_refusal
@@ -681,38 +688,38 @@ view
                                     gap=8.0
                                   Head
                                     with
-                                      name="COIN"
+                                      name=t(locale, "COIN")
                                       width=52.0
                                       right=false
                                   Head
                                     with
-                                      name="SIDE"
+                                      name=t(locale, "SIDE")
                                       width=56.0
                                       right=false
                                   space w=fill
                                   Head
                                     with
-                                      name="SIZE"
+                                      name=t(locale, "SIZE")
                                       width=72.0
                                       right=true
                                   Head
                                     with
-                                      name="ENTRY"
+                                      name=t(locale, "ENTRY")
                                       width=80.0
                                       right=true
                                   Head
                                     with
-                                      name="LIQ"
+                                      name=t(locale, "LIQ")
                                       width=80.0
                                       right=true
                                   Head #head-funding
                                     with
-                                      name="FUNDING"
+                                      name=t(locale, "FUNDING")
                                       width=72.0
                                       right=true
                                   Head #head-unrealized
                                     with
-                                      name="UNREALIZED"
+                                      name=t(locale, "UNREALIZED")
                                       width=104.0
                                       right=true
                                 rule horizontal thickness=1.0 color=edge
@@ -739,7 +746,7 @@ view
                                           h=96.0
                                           align-x=center
                                           align-y=center
-                                        text "No open positions on this account."
+                                        text t(locale, "No open positions on this account.")
                                           with
                                             size=11.0
                                             @text-faint
@@ -772,12 +779,15 @@ view
                                           h=96.0
                                           align-x=center
                                           align-y=center
-                                        button #reconnect p=9.0 label="Connect an address" -> reopen
+                                        button #reconnect -> reopen
+                                          with
+                                            p=9.0
+                                            label=t(locale, "Connect an address")
                                           active bg=raised text=fg r=4.0
                                           hovered bg=edge text=fg r=4.0
-                                          text "Connect an address" size=11.0 @text-fg
+                                          text t(locale, "Connect an address") size=11.0 @text-fg
                                     for held in positions
-                                      PositionRow held=held #position(held.coin)
+                                      PositionRow held=held locale=locale #position(held.coin)
                                         events
                                           pick -> pick_symbol _
                               // Recent fills yields the width so positions keeps its columns.
@@ -792,7 +802,7 @@ view
                                       pr=14.0
                                       gap=8.0
                                       align=center
-                                    Label value="RECENT FILLS"
+                                    Label value=t(locale, "RECENT FILLS")
                                     space w=fill
                                     Label value=fmt_count(len(fills))
                                     // The one way anything this app holds
@@ -805,13 +815,13 @@ view
                                     // nothing to do.
                                     button #export-fills -> export_fills
                                       with
-                                        label="Export these fills to a CSV file"
+                                        label=t(locale, "Export these fills to a CSV file")
                                         disabled=empty(fills)
                                         p=4.0
                                       active bg=panel text=muted r=3.0
                                       hovered bg=raised text=fg r=3.0
                                       disabled bg=panel text=faint r=3.0
-                                      text "CSV"
+                                      text t(locale, "CSV")
                                         with
                                           size=9.0
                                           tracking=1.0
@@ -825,28 +835,28 @@ view
                                       gap=5.0
                                     Head
                                       with
-                                        name="TIME"
+                                        name=t(locale, "TIME")
                                         width=44.0
                                         right=false
                                     Head
                                       with
-                                        name="COIN"
+                                        name=t(locale, "COIN")
                                         width=38.0
                                         right=false
                                     Head
                                       with
-                                        name="SIDE"
+                                        name=t(locale, "SIDE")
                                         width=30.0
                                         right=false
                                     Head
                                       with
-                                        name="PRICE"
+                                        name=t(locale, "PRICE")
                                         width=72.0
                                         right=true
                                     space w=fill
                                     Head
                                       with
-                                        name="PNL / SIZE"
+                                        name=t(locale, "PNL / SIZE")
                                         width=64.0
                                         right=true
                                   rule horizontal thickness=1.0 color=edge
@@ -910,7 +920,7 @@ view
                                 pr=14.0
                                 gap=10.0
                                 align=center
-                              Label value="ORDER BOOK"
+                              Label value=t(locale, "ORDER BOOK")
                               space w=fill
                             rule horizontal thickness=1.0 color=edge
                             // The book is the one list in this column whose length
@@ -967,7 +977,7 @@ view
                                           font=digits
                                           @text-fg
                                       space w=fill
-                                      Label value="SPREAD"
+                                      Label value=t(locale, "SPREAD")
                                       text fmt_bps(depth.spread_pct)
                                         with
                                           size=11.0
@@ -984,7 +994,7 @@ view
                                         h=120.0
                                         align-x=center
                                         align-y=center
-                                      text "Loading book" size=12.0 @text-faint
+                                      text t(locale, "Loading book") size=12.0 @text-faint
                             rule horizontal thickness=1.0 color=edge
                             row
                               with
@@ -994,7 +1004,7 @@ view
                                 pr=14.0
                                 gap=10.0
                                 align=center
-                              Label value="TAPE"
+                              Label value=t(locale, "TAPE")
                               space w=fill
                               if !empty(tape_prints)
                                 Delta
@@ -1032,7 +1042,7 @@ view
                                       h=72.0
                                       align-x=center
                                       align-y=center
-                                    text "Waiting for a print." size=11.0 @text-faint
+                                    text t(locale, "Waiting for a print.") size=11.0 @text-faint
                                 for print in tape_prints
                                   lazy print as printed
                                     TradeRow print=printed #print(printed.tid)
@@ -1045,7 +1055,7 @@ view
                                 pr=14.0
                                 gap=10.0
                                 align=center
-                              Label value="ALERTS"
+                              Label value=t(locale, "ALERTS")
                               space w=fill
                               Label value=fmt_count(waiting_alerts(alerts))
                             rule horizontal thickness=1.0 color=edge
@@ -1070,7 +1080,7 @@ view
                                       h=56.0
                                       align-x=center
                                       align-y=center
-                                    text "No levels watched." size=11.0 @text-faint
+                                    text t(locale, "No levels watched.") size=11.0 @text-faint
                                 for alert in alerts
                                   AlertRow alert=alert #alert(fmt_px(alert.price))
                                     events
@@ -1084,7 +1094,7 @@ view
                                 pr=14.0
                                 gap=8.0
                                 align=center
-                              Label value="OPEN ORDERS"
+                              Label value=t(locale, "OPEN ORDERS")
                               space w=fill
                               Label value=fmt_count(len(orders))
                               // Every row's own CANCEL, run down the list. It
@@ -1093,7 +1103,7 @@ view
                               // the rows underneath it.
                               Sweeper #cancel-all
                                 with
-                                  name="CANCEL ALL"
+                                  name=t(locale, "CANCEL ALL")
                                   count=len(orders)
                                   cancel=true
                                   refusal=cancel_all_refusal
@@ -1133,6 +1143,7 @@ view
                                   OrderRow #order(fmt_px(order.price))
                                     with
                                       order=order
+                                      locale=locale
                                       now=clock
                                       refusal=cancel_refusal
                                     events
@@ -1177,7 +1188,7 @@ view
                                     gap=10.0
                                     align=center
                                   row gap=6.0 align=center
-                                    text "New order"
+                                    text t(locale, "New order")
                                       with
                                         size=18.0
                                         @text-fg
@@ -1192,28 +1203,28 @@ view
                                 // both sighted and assistive-technology users.
                                 row gap=8.0 w=fill
                                   col #side-buy w=fill
-                                    radio "BUY / LONG" #buy-on -> ticket_side _
+                                    radio t(locale, "BUY / LONG") #buy-on -> ticket_side _
                                       with
                                         value=true
                                         selected=ticket_buy
                                         w=fill
                                         text-size=11.0
                                         gap=8.0
-                                      active selected bg=up dot=fg_invert border=up text=fg_invert
+                                      active selected bg=up dot=fg_invert border=up text=up
                                       active unselected bg=raised dot=muted border=edge text=muted
-                                      hovered selected bg=up dot=fg_invert border=up text=fg_invert
+                                      hovered selected bg=up dot=fg_invert border=up text=up
                                       hovered unselected bg=edge dot=fg border=fg text=fg
                                   col #side-sell w=fill
-                                    radio "SELL / SHORT" #sell-off -> ticket_side _
+                                    radio t(locale, "SELL / SHORT") #sell-off -> ticket_side _
                                       with
                                         value=false
                                         selected=(!ticket_buy)
                                         w=fill
                                         text-size=11.0
                                         gap=8.0
-                                      active selected bg=down dot=fg_invert border=down text=fg_invert
+                                      active selected bg=down dot=fg_invert border=down text=down
                                       active unselected bg=raised dot=muted border=edge text=muted
-                                      hovered selected bg=down dot=fg_invert border=down text=fg_invert
+                                      hovered selected bg=down dot=fg_invert border=down text=down
                                       hovered unselected bg=edge dot=fg border=fg text=fg
                                 // Market or limit, which is not a filter over one
                                 // order shape. A market order has no price to
@@ -1223,22 +1234,22 @@ view
                                 row #ticket-kind gap=6.0 w=fill
                                   Choice #kind-market
                                     with
-                                      name="MARKET"
-                                      act="Cross the spread now"
+                                      name=t(locale, "MARKET")
+                                      act=t(locale, "Cross the spread now")
                                       on=ticket_market
                                     events
                                       pick -> ticket_kinded(OrderKind.market)
                                   Choice #kind-limit
                                     with
-                                      name="LIMIT"
-                                      act="Rest at a price you choose"
+                                      name=t(locale, "LIMIT")
+                                      act=t(locale, "Rest at a price you choose")
                                       on=(ticket_kind == OrderKind.limit)
                                     events
                                       pick -> ticket_kinded(OrderKind.limit)
                                   Choice #kind-scale
                                     with
-                                      name="SCALE"
-                                      act="Spread the size over a range of prices"
+                                      name=t(locale, "SCALE")
+                                      act=t(locale, "Spread the size over a range of prices")
                                       on=ticket_scale
                                     events
                                       pick -> ticket_kinded(OrderKind.scale)
@@ -1250,20 +1261,20 @@ view
                                   if venue_places_twap(venue)
                                     Choice #kind-twap
                                       with
-                                        name="TWAP"
-                                        act="Let the venue work the size over a window"
+                                        name=t(locale, "TWAP")
+                                        act=t(locale, "Let the venue work the size over a window")
                                         on=ticket_twap
                                       events
                                         pick -> ticket_kinded(OrderKind.twap)
                                 if position_held(positions, coin) != 0.0
                                   button #close-held -> close_held
                                     with
-                                      label="Fill the size that closes this position"
+                                      label=t(locale, "Fill the size that closes this position")
                                       w=fill
                                       p=8.0
                                     active bg=raised text=muted r=4.0
                                     hovered bg=edge text=fg r=4.0
-                                    text "CLOSE POSITION"
+                                    text t(locale, "CLOSE POSITION")
                                       with
                                         size=10.0
                                         w=fill
@@ -1273,7 +1284,7 @@ view
                                 if !ticket_market
                                   col #limit-group gap=6.0 w=fill
                                     if !ticket_scale
-                                      Label value="LIMIT PRICE"
+                                      Label value=t(locale, "LIMIT PRICE")
                                       // Enter reviews. It is the field's own
                                       // submit rather than a key the app listens
                                       // for, which is the strongest form of the
@@ -1285,7 +1296,7 @@ view
                                       // sends.
                                       input "" #ticket-price <-> ticket_price
                                         with
-                                          label="Limit price"
+                                          label=t(locale, "Limit price")
                                           hint="0.00"
                                           change=ticket_priced
                                           submit=ticket_review
@@ -1303,10 +1314,10 @@ view
                                       col #scale-group gap=6.0 w=fill
                                         row gap=6.0 w=fill
                                           col w=fill gap=6.0
-                                            Label value="FROM"
+                                            Label value=t(locale, "FROM")
                                             input "" #ticket-from <-> ticket_from
                                               with
-                                                label="Ladder from this price"
+                                                label=t(locale, "Ladder from this price")
                                                 hint="0.00"
                                                 change=ticket_from_typed
                                                 submit=ticket_review
@@ -1314,10 +1325,10 @@ view
                                                 font=digits
                                               focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                                           col w=fill gap=6.0
-                                            Label value="TO"
+                                            Label value=t(locale, "TO")
                                             input "" #ticket-to <-> ticket_to
                                               with
-                                                label="Ladder to this price"
+                                                label=t(locale, "Ladder to this price")
                                                 hint="0.00"
                                                 change=ticket_to_typed
                                                 submit=ticket_review
@@ -1325,10 +1336,10 @@ view
                                                 font=digits
                                               focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                                           col w=54.0 gap=6.0
-                                            Label value="ORDERS"
+                                            Label value=t(locale, "ORDERS")
                                             input "" #ticket-rungs <-> ticket_rungs
                                               with
-                                                label="How many orders the ladder is"
+                                                label=t(locale, "How many orders the ladder is")
                                                 hint="5"
                                                 change=ticket_runged
                                                 submit=ticket_review
@@ -1346,7 +1357,7 @@ view
                                     if ticket_twap
                                       col #twap-group gap=6.0 w=fill
                                         row w=fill align=center
-                                          Label value="OVER"
+                                          Label value=t(locale, "OVER")
                                           space w=fill
                                           text order_worked(ticket_minutes)
                                             with
@@ -1355,7 +1366,7 @@ view
                                               @text-muted
                                         input "" #ticket-minutes <-> ticket_minutes
                                           with
-                                            label="Minutes to work this order over"
+                                            label=t(locale, "Minutes to work this order over")
                                             hint="30"
                                             change=ticket_worked
                                             submit=ticket_review
@@ -1404,14 +1415,14 @@ view
                                     if !ticket_scale
                                       button #alert-here -> add_alert_here
                                         with
-                                          label="Watch this level"
+                                          label=t(locale, "Watch this level")
                                           w=fill
                                           p=5.0
                                           disabled=!empty(watch_refusal)
                                         active bg=raised text=muted r=3.0
                                         hovered bg=edge text=fg r=3.0
                                         disabled bg=raised text=faint r=3.0
-                                        text "WATCH THIS LEVEL"
+                                        text t(locale, "WATCH THIS LEVEL")
                                           with
                                             size=9.0
                                             w=fill
@@ -1450,26 +1461,26 @@ view
                                       gap=6.0
                                       align=center
                                       w=fill
-                                    Label value="SIZE"
+                                    Label value=t(locale, "SIZE")
                                     space w=fill
                                     row #size-unit gap=4.0 w=96.0
                                       Choice #unit-coin
                                         with
                                           name=coin
-                                          act="Type the size in coins"
+                                          act=t(locale, "Type the size in coins")
                                           on=!ticket_usd
                                         events
                                           pick -> ticket_denom(false)
                                       Choice #unit-usd
                                         with
-                                          name="USD"
-                                          act="Type the size in dollars"
+                                          name=t(locale, "USD")
+                                          act=t(locale, "Type the size in dollars")
                                           on=ticket_usd
                                         events
                                           pick -> ticket_denom(true)
                                   input "" #ticket-size <-> ticket_size
                                     with
-                                      label="Size"
+                                      label=t(locale, "Size")
                                       hint="0.00"
                                       change=ticket_sized
                                       submit=ticket_review
@@ -1510,7 +1521,7 @@ view
                                       pick -> size_share _
                                   Share #share-max
                                     with
-                                      label="MAX"
+                                      label=t(locale, "MAX")
                                       share=1.0
                                       reduce=ticket_reduce
                                     events
@@ -1536,11 +1547,11 @@ view
                                       @text-muted
                                 col gap=6.0 w=fill
                                   row gap=6.0 align=center
-                                    Label value="LEVERAGE"
+                                    Label value=t(locale, "LEVERAGE")
                                     match focus
                                       some(row)
                                         row gap=4.0 align=center
-                                          text "max" size=10.0 @text-faint
+                                          text t(locale, "max") size=10.0 @text-faint
                                           text fmt_leverage(row.leverage)
                                             with
                                               size=10.0
@@ -1550,7 +1561,7 @@ view
                                         space
                                   input "" #ticket-leverage <-> ticket_leverage
                                     with
-                                      label="Leverage"
+                                      label=t(locale, "Leverage")
                                       hint="5"
                                       change=ticket_levered
                                       submit=ticket_review
@@ -1572,19 +1583,19 @@ view
                                     row #margin-mode gap=4.0 w=112.0
                                       Choice #mode-cross
                                         with
-                                          name="CROSS"
-                                          act="Hold this order against the whole account"
+                                          name=t(locale, "CROSS")
+                                          act=t(locale, "Hold this order against the whole account")
                                           on=ticket_cross
                                         events
                                           pick -> ticket_moded(true)
                                       Choice #mode-isolated
                                         with
-                                          name="ISOLATED"
-                                          act="Hold this order against its own margin"
+                                          name=t(locale, "ISOLATED")
+                                          act=t(locale, "Hold this order against its own margin")
                                           on=!ticket_cross
                                         events
                                           pick -> ticket_moded(false)
-                                    checkbox "Reduce only" #ticket-reduce -> ticket_reduced _
+                                    checkbox t(locale, "Reduce only") #ticket-reduce -> ticket_reduced _
                                       with
                                         checked=ticket_reduce
                                         size=13.0
@@ -1615,7 +1626,7 @@ view
                                     // bottom of the panel. Folding is also what
                                     // stops a level being attached out of sight:
                                     // closing the box clears both.
-                                    checkbox "Attach a take-profit and a stop-loss" #ticket-attach -> ticket_attached _
+                                    checkbox t(locale, "Attach a take-profit and a stop-loss") #ticket-attach -> ticket_attached _
                                       with
                                         checked=ticket_levels
                                         size=13.0
@@ -1629,7 +1640,7 @@ view
                                         // not the height for two stacks.
                                         row gap=8.0 w=fill
                                           col w=fill gap=6.0
-                                            Label value="TAKE PROFIT"
+                                            Label value=t(locale, "TAKE PROFIT")
                                             input "" #ticket-tp <-> ticket_tp
                                               with
                                                 label=level_label("Take profit", tp_pnl)
@@ -1645,7 +1656,7 @@ view
                                                   font=digits
                                                   @text-up
                                           col w=fill gap=6.0
-                                            Label value="STOP LOSS"
+                                            Label value=t(locale, "STOP LOSS")
                                             input "" #ticket-sl <-> ticket_sl
                                               with
                                                 label=level_label("Stop loss", sl_pnl)
@@ -1721,7 +1732,7 @@ view
                                           font=digits
                                           @text-muted
                               row w=fill align=center
-                                Label value="ORDER VALUE"
+                                Label value=t(locale, "ORDER VALUE")
                                 space w=fill
                                 text fmt_margin(quote.notional, focus)
                                   with
@@ -1737,9 +1748,9 @@ view
                               // every figure below is priced off it.
                               row w=fill align=center
                                 if ticket_market
-                                  Label value="FILLS AT"
+                                  Label value=t(locale, "FILLS AT")
                                 if !ticket_market
-                                  Label value="IF YOU CROSS"
+                                  Label value=t(locale, "IF YOU CROSS")
                                 space w=fill
                                 row gap=8.0 align=center
                                   text impact_price(book, ticket_coins, ticket_buy)
@@ -1753,13 +1764,13 @@ view
                                       font=digits
                                       @text-faint
                               if impact_short(book, ticket_coins, ticket_buy)
-                                text "The book on screen cannot fill that size."
+                                text t(locale, "The book on screen cannot fill that size.")
                                   with
                                     size=10.0
                                     w=fill
                                     @text-down
                               row w=fill align=center
-                                Label value="PRICED AT"
+                                Label value=t(locale, "PRICED AT")
                                 space w=fill
                                 text fmt_leverage(quote.leverage)
                                   with
@@ -1767,7 +1778,7 @@ view
                                     font=digits
                                     @text-muted
                               row w=fill align=center
-                                Label value="RENT PER DAY"
+                                Label value=t(locale, "RENT PER DAY")
                                 space w=fill
                                 text funding_day(focus, ticket_at, ticket_coins, ticket_buy)
                                   with
@@ -1775,7 +1786,7 @@ view
                                     font=digits
                                     @text-muted
                               row w=fill align=center
-                                Label value="AGAINST THE ENGINE"
+                                Label value=t(locale, "AGAINST THE ENGINE")
                                 space w=fill
                                 text order_load(account, coin, ticket_coins, ticket_buy, focus)
                                   with
@@ -1783,7 +1794,7 @@ view
                                     font=digits
                                     @text-muted
                               row w=fill align=center
-                                Label value="MARGIN REQUIRED"
+                                Label value=t(locale, "MARGIN REQUIRED")
                                 space w=fill
                                 text fmt_margin(quote.margin, focus)
                                   with
@@ -1791,7 +1802,7 @@ view
                                     font=digits
                                     @text-muted
                               row w=fill align=center
-                                Label value="LIQUIDATION"
+                                Label value=t(locale, "LIQUIDATION")
                                 space w=fill
                                 if quote.liquidation > 0.0
                                   text fmt_px(quote.liquidation)
@@ -1800,7 +1811,7 @@ view
                                       font=digits
                                       @text-down
                                 if quote.liquidation <= 0.0 && quote.known
-                                  text "none"
+                                  text t(locale, "none")
                                     with
                                       size=13.0
                                       font=digits
@@ -1871,12 +1882,12 @@ view
                           gap=16.0
                         row w=fill align=center
                           col gap=4.0
-                            text "Portfolio"
+                            text t(locale, "Portfolio")
                               with
                                 size=22.0
                                 @text-fg
                                 @font-bold
-                            text "Current derivatives exposure and account-value history."
+                            text t(locale, "Current derivatives exposure and account-value history.")
                               with
                                 size=11.0
                                 @text-muted
@@ -1905,7 +1916,7 @@ view
                                 pick -> pick_portfolio_range _
                             PortfolioRange #range-all
                               with
-                                name="ALL"
+                                name=t(locale, "ALL")
                                 value="all"
                                 current=portfolio_range
                               events
@@ -1928,7 +1939,7 @@ view
                               border-w=1.0
                               border=edge
                             col gap=7.0
-                              text "ACCOUNT VALUE"
+                              text t(locale, "ACCOUNT VALUE")
                                 with
                                   size=9.0
                                   tracking=1.0
@@ -1956,7 +1967,7 @@ view
                               border-w=1.0
                               border=edge
                             col gap=7.0
-                              text "UNREALIZED PNL"
+                              text t(locale, "UNREALIZED PNL")
                                 with
                                   size=9.0
                                   tracking=1.0
@@ -1997,13 +2008,16 @@ view
                               border-w=1.0
                               border=edge
                             col gap=7.0
-                              text "REALIZED PNL"
+                              text t(locale, "REALIZED PNL")
                                 with
                                   size=9.0
                                   tracking=1.0
                                   @text-faint
                               if !empty(venue_account_gap(venue))
-                                text "Not served here" #realized-unread size=13.0 @text-faint
+                                text t(locale, "Not served here") #realized-unread
+                                  with
+                                    size=13.0
+                                    @text-faint
                               if empty(venue_account_gap(venue))
                                 PortfolioRealized #realized flow=portfolio_flow(fills)
                           box
@@ -2016,7 +2030,7 @@ view
                               border-w=1.0
                               border=edge
                             col gap=7.0
-                              text "WITHDRAWABLE"
+                              text t(locale, "WITHDRAWABLE")
                                 with
                                   size=9.0
                                   tracking=1.0
@@ -2045,7 +2059,7 @@ view
                               border-w=1.0
                               border=edge
                             col gap=7.0
-                              text "GROSS EXPOSURE"
+                              text t(locale, "GROSS EXPOSURE")
                                 with
                                   size=9.0
                                   tracking=1.0
@@ -2065,7 +2079,7 @@ view
                               border-w=1.0
                               border=edge
                             col gap=7.0
-                              text "LONG / SHORT"
+                              text t(locale, "LONG / SHORT")
                                 with
                                   size=9.0
                                   tracking=1.0
@@ -2082,6 +2096,21 @@ view
                                     size=14.0
                                     font=digits
                                     @text-down
+                              // The split, drawn: two figures side by side
+                              // ask the reader to do the division.
+                              row #long-short-rail w=200.0 h=4.0
+                                box
+                                  with
+                                    w=portfolio_long_rail(positions)
+                                    h=4.0
+                                    bg=up
+                                  space w=fill h=fill
+                                box
+                                  with
+                                    w=(200.0 - portfolio_long_rail(positions))
+                                    h=4.0
+                                    bg=down
+                                  space w=fill h=fill
                           box #tile-leverage
                             with
                               w=fill
@@ -2092,7 +2121,7 @@ view
                               border-w=1.0
                               border=edge
                             col gap=7.0
-                              text "EFFECTIVE LEVERAGE"
+                              text t(locale, "EFFECTIVE LEVERAGE")
                                 with
                                   size=9.0
                                   tracking=1.0
@@ -2120,7 +2149,7 @@ view
                               border-w=1.0
                               border=edge
                             col gap=7.0
-                              text "POSITION MARGIN"
+                              text t(locale, "POSITION MARGIN")
                                 with
                                   size=9.0
                                   tracking=1.0
@@ -2130,10 +2159,17 @@ view
                                   size=18.0
                                   font=digits
                                   @text-fg
+                        // The curve and the allocation beside it. The curve's
+                        // card carries everything a reader asks of an equity
+                        // line before the line itself: where it ended, what it
+                        // moved, how far under its own high it stands, and the
+                        // worst it fell on the way. The point under the pointer
+                        // is printed in the card rather than in a tooltip the
+                        // capture cannot read.
                         row
                           with
                             w=fill
-                            h=250.0
+                            h=290.0
                             gap=12.0
                           box #performance
                             with
@@ -2149,9 +2185,13 @@ view
                                 w=fill
                                 h=fill
                                 gap=12.0
-                              row w=fill align=center
+                              row
+                                with
+                                  w=fill
+                                  align=center
+                                  gap=24.0
                                 col gap=3.0
-                                  text "ACCOUNT VALUE"
+                                  text t(locale, "ACCOUNT VALUE")
                                     with
                                       size=10.0
                                       tracking=1.0
@@ -2163,47 +2203,78 @@ view
                                         font=digits
                                         @text-fg
                                   if !portfolio_history_ready(portfolio_history, portfolio_range)
-                                    text "Historical performance" size=18.0 @text-fg
+                                    text t(locale, "Historical performance") size=18.0 @text-fg
+                                if portfolio_history_ready(portfolio_history, portfolio_range)
+                                  col gap=3.0
+                                    text range_heading(locale, portfolio_range)
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    row gap=8.0 align=center
+                                      Delta #range-change
+                                        with
+                                          value=fmt_pnl(portfolio_history_change(portfolio_history, portfolio_range))
+                                          up=(portfolio_history_change(portfolio_history, portfolio_range) >= 0.0)
+                                          size=13.0
+                                          width=96.0
+                                          hug=true
+                                      Delta #range-change-pct
+                                        with
+                                          value=fmt_pct(portfolio_history_change_pct(portfolio_history, portfolio_range))
+                                          up=(portfolio_history_change(portfolio_history, portfolio_range) >= 0.0)
+                                          size=11.0
+                                          width=72.0
+                                          hug=true
+                                  col gap=3.0
+                                    text t(locale, "PEAK")
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    text fmt_usd(portfolio_history_peak(portfolio_history, portfolio_range)) #peak
+                                      with
+                                        size=13.0
+                                        font=digits
+                                        @text-muted
+                                  col gap=3.0
+                                    text t(locale, "OFF PEAK")
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    text fmt_share(portfolio_history_drawdown(portfolio_history, portfolio_range)) #drawdown
+                                      with
+                                        size=13.0
+                                        font=digits
+                                        @text-muted
+                                  col gap=3.0
+                                    text t(locale, "MAX DRAWDOWN")
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    text fmt_share(portfolio_history_max_drawdown(portfolio_history, portfolio_range)) #max-drawdown
+                                      with
+                                        size=13.0
+                                        font=digits
+                                        @text-down
                                 space w=fill
-                                if portfolio_history_change(portfolio_history, portfolio_range) >= 0.0 && portfolio_history_ready(portfolio_history, portfolio_range)
-                                  col gap=2.0
-                                    text fmt_pnl(portfolio_history_change(portfolio_history, portfolio_range))
-                                      with
-                                        size=12.0
-                                        w=104.0
-                                        align-x=right
-                                        font=digits
-                                        @text-up
-                                    text fmt_pct(portfolio_history_change_pct(portfolio_history, portfolio_range))
-                                      with
-                                        size=10.0
-                                        w=104.0
-                                        align-x=right
-                                        font=digits
-                                        @text-up
-                                if portfolio_history_change(portfolio_history, portfolio_range) < 0.0 && portfolio_history_ready(portfolio_history, portfolio_range)
-                                  col gap=2.0
-                                    text fmt_pnl(portfolio_history_change(portfolio_history, portfolio_range))
-                                      with
-                                        size=12.0
-                                        w=104.0
-                                        align-x=right
-                                        font=digits
-                                        @text-down
-                                    text fmt_pct(portfolio_history_change_pct(portfolio_history, portfolio_range))
-                                      with
-                                        size=10.0
-                                        w=104.0
-                                        align-x=right
-                                        font=digits
-                                        @text-down
+                                // The point under the pointer, or nothing. A
+                                // fixed width so the readout appearing does not
+                                // move the figures beside it.
+                                text hover_readout(portfolio_hover, false) #performance-readout
+                                  with
+                                    size=12.0
+                                    w=220.0
+                                    align-x=right
+                                    font=digits
+                                    @text-fg
                               if portfolio_history_ready(portfolio_history, portfolio_range)
                                 // The canvas takes its size from the box around
-                                // it, the way the terminal's chart does. Left as
-                                // a bare `h=fill` child of this column it drew
-                                // into nothing and the panel read as empty.
+                                // it, the way the terminal's chart does.
                                 box #performance-frame w=fill h=fill
-                                  extern portfolio_performance(portfolio_history, portfolio_range) #performance-chart
+                                  extern portfolio_performance(portfolio_history, portfolio_range, portfolio_hover) #performance-chart -> portfolio_hovered _
                               if !portfolio_history_ready(portfolio_history, portfolio_range)
                                 box
                                   with
@@ -2236,12 +2307,12 @@ view
                                 h=fill
                                 gap=14.0
                               col gap=4.0
-                                text "EXPOSURE ALLOCATION"
+                                text t(locale, "EXPOSURE ALLOCATION")
                                   with
                                     size=10.0
                                     tracking=1.0
                                     @text-faint
-                                text "Share of gross marked value" size=11.0 @text-muted
+                                text t(locale, "Share of gross marked value") size=11.0 @text-muted
                               rule horizontal thickness=1.0 color=edge
                               scroll #allocation-chart
                                 with
@@ -2272,9 +2343,153 @@ view
                                         h=120.0
                                         align-x=center
                                         align-y=center
-                                      text "No open exposure." size=11.0 @text-faint
+                                      text t(locale, "No open exposure.") size=11.0 @text-faint
                                   for asset in portfolio_assets(positions)
                                     PortfolioAllocation asset=asset
+                        // What each step of the window booked, beside the
+                        // fold over the fills. The bars are the venue's own
+                        // cumulative PnL differenced, so a deposit that lifts
+                        // the curve above does not paint a bar here.
+                        row
+                          with
+                            w=fill
+                            h=220.0
+                            gap=12.0
+                          box #pnl-bars
+                            with
+                              w=fill
+                              h=fill
+                              p=16.0
+                              bg=panel
+                              r=4.0
+                              border-w=1.0
+                              border=edge
+                            col
+                              with
+                                w=fill
+                                h=fill
+                                gap=12.0
+                              row
+                                with
+                                  w=fill
+                                  align=center
+                                  gap=24.0
+                                col gap=3.0
+                                  text t(locale, "PNL BY PERIOD")
+                                    with
+                                      size=10.0
+                                      tracking=1.0
+                                      @text-faint
+                                  text t(locale, "What each step of the window booked, from the venue's own ledger")
+                                    with
+                                      size=11.0
+                                      @text-muted
+                                if portfolio_pnl_ready(portfolio_history, portfolio_range)
+                                  col gap=3.0
+                                    text range_heading(locale, portfolio_range)
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    Delta #range-pnl
+                                      with
+                                        value=fmt_pnl(portfolio_history_pnl(portfolio_history, portfolio_range))
+                                        up=(portfolio_history_pnl(portfolio_history, portfolio_range) >= 0.0)
+                                        size=13.0
+                                        width=96.0
+                                        hug=true
+                                space w=fill
+                                text hover_readout(pnl_hover, true) #pnl-readout
+                                  with
+                                    size=12.0
+                                    w=220.0
+                                    align-x=right
+                                    font=digits
+                                    @text-fg
+                              if portfolio_pnl_ready(portfolio_history, portfolio_range)
+                                box #pnl-frame w=fill h=fill
+                                  extern portfolio_pnl_bars(portfolio_history, portfolio_range, pnl_hover) #pnl-chart -> pnl_hovered _
+                              if !portfolio_pnl_ready(portfolio_history, portfolio_range)
+                                box
+                                  with
+                                    w=fill
+                                    h=fill
+                                    p=20.0
+                                    bg=raised
+                                    r=3.0
+                                    align-x=center
+                                    align-y=center
+                                  text portfolio_history_note(portfolio_history) #pnl-note
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      align-x=center
+                                      wrap=word
+                                      @text-muted
+                          box #fill-history
+                            with
+                              w=300.0
+                              h=fill
+                              p=16.0
+                              bg=panel
+                              r=4.0
+                              border-w=1.0
+                              border=edge
+                            col
+                              with
+                                w=fill
+                                h=fill
+                                gap=12.0
+                              col gap=4.0
+                                text t(locale, "FILL HISTORY")
+                                  with
+                                    size=10.0
+                                    tracking=1.0
+                                    @text-faint
+                                text t(locale, "What this account has actually traded")
+                                  with
+                                    size=11.0
+                                    @text-muted
+                              rule horizontal thickness=1.0 color=edge
+                              // Three different empty states, and only the first
+                              // is about this app: the venue will not serve fills
+                              // at all, the venue serves them and there are none,
+                              // or no address has been given to ask about. Each
+                              // says which, because a shared blank would let the
+                              // unreadable one pass as the quiet one.
+                              if !empty(venue_account_gap(venue))
+                                box
+                                  with
+                                    w=fill
+                                    h=fill
+                                    align-x=center
+                                    align-y=center
+                                  text venue_account_gap(venue) #fill-history-gap
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      align-x=center
+                                      wrap=word
+                                      @text-faint
+                              if empty(venue_account_gap(venue)) && empty(fills)
+                                box
+                                  with
+                                    w=fill
+                                    h=fill
+                                    align-x=center
+                                    align-y=center
+                                  text venue_fills_note(venue, watching, fills_error)
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      align-x=center
+                                      wrap=word
+                                      @text-faint
+                              if empty(venue_account_gap(venue)) && !empty(fills)
+                                PortfolioFillRows #fill-rows
+                                  with
+                                    flow=portfolio_flow(fills)
+                                    locale=locale
                         row
                           with
                             w=fill
@@ -2295,12 +2510,12 @@ view
                                 h=fill
                                 gap=12.0
                               col gap=4.0
-                                text "MARGIN HEALTH"
+                                text t(locale, "MARGIN HEALTH")
                                   with
                                     size=10.0
                                     tracking=1.0
                                     @text-faint
-                                text "What the engine holds against the cross book"
+                                text t(locale, "What the engine holds against the cross book")
                                   with
                                     size=11.0
                                     @text-muted
@@ -2309,7 +2524,7 @@ view
                                 some(held)
                                   col w=fill gap=11.0
                                     row w=fill align=center
-                                      text "MAINTENANCE REQUIRED" size=10.0 @text-muted
+                                      text t(locale, "MAINTENANCE REQUIRED") size=10.0 @text-muted
                                       space w=fill
                                       text fmt_usd(held.maintenance) #maintenance-required
                                         with
@@ -2317,7 +2532,7 @@ view
                                           font=digits
                                           @text-fg
                                     row w=fill align=center
-                                      text "CROSS EQUITY" size=10.0 @text-muted
+                                      text t(locale, "CROSS EQUITY") size=10.0 @text-muted
                                       space w=fill
                                       text fmt_usd(held.cross_value) #cross-equity
                                         with
@@ -2325,7 +2540,7 @@ view
                                           font=digits
                                           @text-fg
                                     row w=fill align=center
-                                      text "MARGIN USED" size=10.0 @text-muted
+                                      text t(locale, "MARGIN USED") size=10.0 @text-muted
                                       space w=fill
                                       row gap=8.0 align=center
                                         row w=80.0 h=4.0
@@ -2380,12 +2595,12 @@ view
                                 h=fill
                                 gap=12.0
                               col gap=4.0
-                                text "FUNDING"
+                                text t(locale, "FUNDING")
                                   with
                                     size=10.0
                                     tracking=1.0
                                     @text-faint
-                                text "Charged against open positions since each opened"
+                                text t(locale, "Charged against open positions since each opened")
                                   with
                                     size=11.0
                                     @text-muted
@@ -2397,7 +2612,7 @@ view
                                     h=fill
                                     align-x=center
                                     align-y=center
-                                  text "No open positions to have been funded."
+                                  text t(locale, "No open positions to have been funded.")
                                     with
                                       size=11.0
                                       @text-faint
@@ -2405,73 +2620,15 @@ view
                                 PortfolioFundingRows #funding-rows
                                   with
                                     funding=portfolio_funding(positions)
-                          box #fill-history
-                            with
-                              w=300.0
-                              h=fill
-                              p=16.0
-                              bg=panel
-                              r=4.0
-                              border-w=1.0
-                              border=edge
-                            col
-                              with
-                                w=fill
-                                h=fill
-                                gap=12.0
-                              col gap=4.0
-                                text "FILL HISTORY"
-                                  with
-                                    size=10.0
-                                    tracking=1.0
-                                    @text-faint
-                                text "What this account has actually traded" size=11.0 @text-muted
-                              rule horizontal thickness=1.0 color=edge
-                              // Three different empty states, and only the first
-                              // is about this app: the venue will not serve fills
-                              // at all, the venue serves them and there are none,
-                              // or no address has been given to ask about. Each
-                              // says which, because a shared blank would let the
-                              // unreadable one pass as the quiet one.
-                              if !empty(venue_account_gap(venue))
-                                box
-                                  with
-                                    w=fill
-                                    h=fill
-                                    align-x=center
-                                    align-y=center
-                                  text venue_account_gap(venue) #fill-history-gap
-                                    with
-                                      size=11.0
-                                      w=fill
-                                      align-x=center
-                                      wrap=word
-                                      @text-faint
-                              if empty(venue_account_gap(venue)) && empty(fills)
-                                box
-                                  with
-                                    w=fill
-                                    h=fill
-                                    align-x=center
-                                    align-y=center
-                                  text venue_fills_note(venue, watching, fills_error)
-                                    with
-                                      size=11.0
-                                      w=fill
-                                      align-x=center
-                                      wrap=word
-                                      @text-faint
-                              if empty(venue_account_gap(venue)) && !empty(fills)
-                                PortfolioFillRows #fill-rows flow=portfolio_flow(fills)
+                                    locale=locale
                         box #portfolio-assets
                           with
                             w=fill
-                            h=fill
                             bg=panel
                             r=4.0
                             border-w=1.0
                             border=edge
-                          col w=fill h=fill
+                          col w=fill
                             row
                               with
                                 w=fill
@@ -2479,55 +2636,76 @@ view
                                 px=14.0
                                 gap=10.0
                                 align=center
-                              text "ASSETS"
+                              text t(locale, "ASSETS")
                                 with
                                   size=10.0
                                   tracking=1.0
                                   @text-faint
                               text fmt_count(len(portfolio_assets(positions))) size=10.0 @text-faint
                               space w=fill
+                              // Every row is a way to its market, the same
+                              // way a position row in the terminal is.
+                              text t(locale, "Pick a row to open its market") size=10.0 @text-faint
+                            // The same facts the terminal's position row
+                            // carries, in the order a risk desk reads them:
+                            // what was paid, what it is worth, where it dies.
                             row
                               with
                                 w=fill
                                 px=14.0
                                 pb=8.0
                                 gap=10.0
-                              text "MARKET / SIDE"
+                              Head #asset-head-market
                                 with
-                                  size=9.0
-                                  w=120.0
-                                  @text-faint
-                              text "SIZE"
+                                  name=t(locale, "MARKET / SIDE")
+                                  width=120.0
+                                  right=false
+                              Head #asset-head-size
                                 with
-                                  size=9.0
-                                  w=90.0
-                                  align-x=right
-                                  @text-faint
-                              text "MARK"
+                                  name=t(locale, "SIZE")
+                                  width=80.0
+                                  right=true
+                              Head #asset-head-entry
                                 with
-                                  size=9.0
-                                  w=100.0
-                                  align-x=right
-                                  @text-faint
+                                  name=t(locale, "ENTRY")
+                                  width=100.0
+                                  right=true
+                              Head #asset-head-mark
+                                with
+                                  name=t(locale, "MARK")
+                                  width=100.0
+                                  right=true
+                              Head #asset-head-liq
+                                with
+                                  name=t(locale, "LIQ")
+                                  width=100.0
+                                  right=true
+                              Head #asset-head-margin
+                                with
+                                  name=t(locale, "MARGIN")
+                                  width=100.0
+                                  right=true
+                              Head #asset-head-funding
+                                with
+                                  name=t(locale, "FUNDING")
+                                  width=100.0
+                                  right=true
                               space w=fill
-                              text "VALUE"
+                              Head #asset-head-value
                                 with
-                                  size=9.0
-                                  w=112.0
-                                  align-x=right
-                                  @text-faint
-                              text "WEIGHT"
+                                  name=t(locale, "VALUE")
+                                  width=112.0
+                                  right=true
+                              Head #asset-head-weight
                                 with
-                                  size=9.0
-                                  w=76.0
-                                  align-x=right
-                                  @text-faint
-                              text "UNREALIZED"
+                                  name=t(locale, "WEIGHT")
+                                  width=64.0
+                                  right=true
+                              Head #asset-head-unrealized
                                 with
-                                  size=9.0
-                                  w=104.0
-                                  align-x=right
-                                  @text-faint
+                                  name=t(locale, "UNREALIZED")
+                                  width=104.0
+                                  right=true
                             rule horizontal thickness=1.0 color=edge
                             if empty(positions)
                               box
@@ -2536,9 +2714,228 @@ view
                                   h=100.0
                                   align-x=center
                                   align-y=center
-                                text "No open positions to list." size=11.0 @text-faint
+                                text t(locale, "No open positions to list.") size=11.0 @text-faint
                             for asset in portfolio_assets(positions)
-                              PortfolioAssetRow asset=asset
+                              PortfolioAssetRow #asset(asset.coin) asset=asset locale=locale
+                                events
+                                  pick -> pick_symbol _
+                        // What is resting and what has filled, drawn from the
+                        // same rows the terminal draws them from: a reader on
+                        // this page should not have to leave it to see what
+                        // is still out there or what actually printed.
+                        box #portfolio-orders
+                          with
+                            w=fill
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col w=fill
+                            row
+                              with
+                                w=fill
+                                h=42.0
+                                px=14.0
+                                gap=10.0
+                                align=center
+                              text t(locale, "OPEN ORDERS")
+                                with
+                                  size=10.0
+                                  tracking=1.0
+                                  @text-faint
+                              text fmt_count(len(orders)) size=10.0 @text-faint
+                              space w=fill
+                              Sweeper #portfolio-cancel-all
+                                with
+                                  name=t(locale, "CANCEL ALL")
+                                  count=len(orders)
+                                  cancel=true
+                                  refusal=cancel_all_refusal
+                                events
+                                  pick -> cancel_all
+                            row
+                              with
+                                w=fill
+                                pl=14.0
+                                pr=18.0
+                                pb=8.0
+                                gap=8.0
+                              Head
+                                with
+                                  name=t(locale, "AGE")
+                                  width=44.0
+                                  right=false
+                              Head
+                                with
+                                  name=t(locale, "COIN")
+                                  width=52.0
+                                  right=false
+                              Head
+                                with
+                                  name=t(locale, "SIDE")
+                                  width=52.0
+                                  right=false
+                              space w=fill
+                              Head
+                                with
+                                  name=t(locale, "PRICE")
+                                  width=88.0
+                                  right=true
+                              Head
+                                with
+                                  name=t(locale, "SIZE")
+                                  width=72.0
+                                  right=true
+                              space w=70.0
+                            rule horizontal thickness=1.0 color=edge
+                            if !empty(venue_account_gap(venue))
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_account_gap(venue) #orders-gap
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            if empty(venue_account_gap(venue)) && empty(orders)
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_orders_note(venue, watching, orders_error)
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            for order in orders
+                              OrderRow #portfolio-order(order.oid)
+                                with
+                                  order=order
+                                  locale=locale
+                                  now=clock
+                                  refusal=cancel_refusal
+                                events
+                                  pick -> pick_resting _
+                                  cancel -> cancel_order _ _
+                        box #portfolio-fills
+                          with
+                            w=fill
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col w=fill
+                            row
+                              with
+                                w=fill
+                                h=42.0
+                                px=14.0
+                                gap=10.0
+                                align=center
+                              text t(locale, "FILLS")
+                                with
+                                  size=10.0
+                                  tracking=1.0
+                                  @text-faint
+                              text fmt_count(len(fills)) size=10.0 @text-faint
+                              space w=fill
+                              button #portfolio-export -> export_fills
+                                with
+                                  label=t(locale, "Export these fills to a CSV file")
+                                  disabled=empty(fills)
+                                  p=4.0
+                                active bg=panel text=muted r=3.0
+                                hovered bg=raised text=fg r=3.0
+                                disabled bg=panel text=faint r=3.0
+                                text t(locale, "CSV")
+                                  with
+                                    size=9.0
+                                    tracking=1.0
+                                    @text-faint
+                            row
+                              with
+                                w=fill
+                                pl=14.0
+                                pr=18.0
+                                pb=8.0
+                                gap=6.0
+                              Head
+                                with
+                                  name=t(locale, "TIME")
+                                  width=52.0
+                                  right=false
+                              Head
+                                with
+                                  name=t(locale, "COIN")
+                                  width=52.0
+                                  right=false
+                              Head
+                                with
+                                  name=t(locale, "SIDE")
+                                  width=52.0
+                                  right=false
+                              space w=fill
+                              Head
+                                with
+                                  name=t(locale, "PRICE")
+                                  width=88.0
+                                  right=true
+                              Head
+                                with
+                                  name=t(locale, "SIZE")
+                                  width=72.0
+                                  right=true
+                              Head
+                                with
+                                  name=t(locale, "REALIZED")
+                                  width=88.0
+                                  right=true
+                            rule horizontal thickness=1.0 color=edge
+                            if !empty(venue_account_gap(venue))
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_account_gap(venue) #fills-gap
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            if empty(venue_account_gap(venue)) && empty(fills)
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_fills_note(venue, watching, fills_error)
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            for fill in fills
+                              FillRow fill=fill #portfolio-fill(fill.tid)
+                                events
+                                  pick -> pick_symbol _
                   Page.settings
                     scroll #settings
                       with
@@ -2553,291 +2950,498 @@ view
                       hovered
                         y-rail bg=bg
                         y-scroller bg=faint r=3.0
-                      // Two fixed columns in a window that is not fixed. 480 + 48 +
-                      // 480 is 1008 of content and 28 of padding on each side, so
-                      // this page has wanted exactly 1064 since it was written —
-                      // under the window's own 1180 minimum, and under every width
-                      // above it. What was missing was the other half of that
-                      // arithmetic: the leftover was all being spent on the right,
-                      // so at 1660 the columns sat against the left edge with 596px
-                      // of nothing beside them. Centred rather than widened,
-                      // because these are paragraphs: 480 is the measure they were
-                      // written to, and a line run the width of a 1660 window is
-                      // one the eye loses on the way back to the next.
+                      // Two columns of cards in a window that is not fixed.
+                      // 480 + 48 + 480 is 1008 of content, under the window's
+                      // own 1180 minimum and under every width above it, and
+                      // the leftover is spent evenly on both sides: 480 is
+                      // the measure the sentences here were written to, and a
+                      // line run the width of a 1660 window is one the eye
+                      // loses on the way back to the next.
+                      //
+                      // Cards rather than headings over prose, the way the
+                      // portfolio page is built: a setting is a control with
+                      // its state beside it and one sentence under it, and a
+                      // reader scans for the control. What each card used to
+                      // explain at paragraph length is now one line, with the
+                      // sentences that say what this app may sign with kept
+                      // whole at the foot of the card they are about.
                       box
                         with
                           w=fill
                           p=28.0
                           align-x=center
-                        row #settings-content gap=48.0
-                          col gap=26.0 w=480.0
-                            col gap=10.0 w=fill
-                              Label value="ADDRESS"
-                              if empty(address)
-                                text "No account is being read. Everything this app knows about an account — its positions, its resting orders, its fills on the chart — belongs to one address, and there is none."
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              if !empty(address)
-                                text address
-                                  with
-                                    size=13.0
-                                    w=fill
-                                    wrap=word
-                                    font=digits
-                                    @text-fg
-                              button #change-address -> reopen
-                                with
-                                  label="Connect a different address"
-                                  p=10.0
-                                active bg=raised text=muted r=4.0
-                                hovered bg=edge text=fg r=4.0
-                                text "Connect a different address" size=12.0
-                            rule horizontal thickness=1.0 color=edge
-                            // What this exchange will and will not answer, stated
-                            // where the app's own facts are stated. A gap named
-                            // only in the panel it empties is a gap the reader
-                            // finds by going looking for rows that are not coming.
-                            col gap=10.0 w=fill
-                              Label value="NETWORK"
-                              text venue_name(venue) #settings-venue
-                                with
-                                  size=16.0
-                                  w=fill
-                                  wrap=word
-                                  @text-fg
-                                  @font-bold
-                              // Facts about the network being read, and no way
-                              // to leave it: there is one picker and it is the
-                              // header's, where the name that prompts the switch
-                              // is already drawn. A second copy here would be a
-                              // second place for a row to go stale, and the
-                              // sentences below are what this page is for.
-                              text "A network is an exchange and one of its deployments: they list different markets, hold a position to different margin, and know nothing of each other's orders. Switch with the network named in the header, which points every panel at the one picked and throws away what this one filled them with."
-                                with
-                                  size=12.0
-                                  w=fill
-                                  wrap=word
-                                  @text-muted
-                              if !empty(venue_note(venue))
-                                text venue_note(venue) #settings-network-note
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              if !empty(venue_account_gap(venue))
-                                text venue_account_gap(venue)
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                            rule horizontal thickness=1.0 color=edge
-                            // The keyboard, written where the app's own facts
-                            // are written rather than behind a `?` overlay. An
-                            // overlay is a fourth thing that can stand on the
-                            // one modal surface, and this page is already the
-                            // place a reader comes to find out what the app
-                            // will and will not do.
-                            //
-                            // The rows are the scheme itself rather than a copy
-                            // of it: one list in Rust answers the keys and
-                            // prints them here, so a binding that changes
-                            // cannot leave its documentation behind.
-                            col #shortcuts gap=10.0 w=fill
-                              Label value="KEYBOARD"
-                              for bound in hotkey_list()
-                                row #shortcut(bound.keys)
-                                  with
-                                    gap=12.0
-                                    w=fill
-                                    align=center
-                                  text bound.keys
-                                    with
-                                      size=12.0
-                                      w=96.0
-                                      font=digits
-                                      @text-fg
-                                  text bound.act
-                                    with
-                                      size=12.0
-                                      w=fill
-                                      wrap=word
-                                      @text-muted
-                              text hotkey_note() #shortcuts-note
-                                with
-                                  size=12.0
-                                  w=fill
-                                  wrap=word
-                                  @text-muted
-                            rule horizontal thickness=1.0 color=edge
-                            col gap=10.0 w=fill
-                              Label value="FEED"
-                              Stat name="ROUND TRIP" value=fmt_latency(latency)
-                              if live
-                                text "One socket carries the mark, the book, the tape and the chart, and the round trip above is its own ping rather than a clock compared with the exchange's."
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              if !live
-                                text "Nothing is arriving. Every price on screen is the last one that did."
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                          col gap=12.0 w=480.0
-                            Label value="CUSTODY"
-                            text "Two keys, and only one of them can trade."
+                        col gap=16.0 w=1008.0
+                          col gap=4.0
+                            text t(locale, "Settings")
                               with
-                                size=16.0
-                                w=fill
-                                wrap=word
+                                size=22.0
                                 @text-fg
                                 @font-bold
-                            text "The trading key is a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance, and it is the only key an order is ever signed with."
+                            text t(locale, "The address being read, the network it is read on, what this app may sign with, and how it is read.")
                               with
-                                size=12.0
-                                w=fill
-                                wrap=word
+                                size=11.0
                                 @text-muted
-                            text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it, and so does connecting a different address. Switching network does not: one unlock releases every network this address has enrolled, and each of them still holds a key of its own."
-                              with
-                                size=12.0
-                                w=fill
-                                wrap=word
-                                @text-muted
-                            col #custody gap=8.0 w=fill
-                              row gap=8.0 align=center
-                                Label value="SESSION"
-                                Label value=session_badge(session, clock) #custody-badge
-                              if !empty(session_agent(session))
-                                text session_agent(session) #custody-agent
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    font=digits
-                                    @text-fg
-                              if !empty(session_window(session, clock))
-                                text session_window(session, clock) #custody-window
-                                  with
-                                    size=11.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              if !empty(session_reason(session))
-                                text session_reason(session) #custody-reason
-                                  with
-                                    size=11.0
-                                    w=fill
-                                    wrap=word
-                                    @text-down
-                              if !empty(unlock_note)
-                                text unlock_note #custody-note
-                                  with
-                                    size=11.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              // What this build has instead of a sheet. Above
-                              // the buttons rather than beside them, because it
-                              // is what both of them are about to use.
-                              if vault_wanted
-                                col #vault gap=6.0 w=fill
-                                  Label value="THIS MACHINE'S PASSPHRASE" #vault-label
-                                  input "" #vault-phrase <-> vault_phrase
+                          row #settings-content gap=48.0
+                            col gap=16.0 w=480.0
+                              // The address every panel is read for, and the
+                              // way to a different one. The button's name is
+                              // the act; its consequence is stated under it
+                              // rather than discovered: `reopen` throws the
+                              // account away and locks the key.
+                              box #settings-account
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "ACCOUNT")
+                                    text t(locale, "The address every panel on this screen is read for.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  if empty(address)
+                                    text t(locale, "No address is connected.") #settings-no-address
+                                      with
+                                        size=12.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                  if !empty(address)
+                                    row
+                                      with
+                                        gap=10.0
+                                        align=center
+                                        w=fill
+                                      text address #settings-address
+                                        with
+                                          size=12.0
+                                          w=fill
+                                          wrap=word
+                                          font=digits
+                                          @text-fg
+                                      box #watching-badge
+                                        with
+                                          px=5.0
+                                          py=2.0
+                                          bg=edge
+                                          r=2.0
+                                        text t(locale, "WATCHING")
+                                          with
+                                            size=8.0
+                                            tracking=1.1
+                                            @text-faint
+                                  col gap=6.0 w=fill
+                                    row w=fill
+                                      button #change-address -> reopen
+                                        with
+                                          label=t(locale, "Connect a different address")
+                                          p=9.0
+                                        active bg=raised text=muted r=4.0
+                                        hovered bg=edge text=fg r=4.0
+                                        text t(locale, "Connect a different address") size=12.0
+                                    text t(locale, "Disconnects this address, clears its positions, orders and fills, and locks the key.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-faint
+                              // The network being read, and the others, on the
+                              // page a reader comes to for the app's facts.
+                              // The header keeps its own picker; both point at
+                              // `switch_venue`. Every row states its kind
+                              // beside its name, because a picker is where the
+                              // mistake this app must never allow is made.
+                              box #settings-network
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "NETWORK")
+                                    text t(locale, "An exchange and one of its deployments. They list different markets and know nothing of each other's orders.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  row
                                     with
-                                      label="Passphrase for this machine's key file"
-                                      hint="what opens the file"
-                                      text-size=12.0
+                                      gap=8.0
+                                      align=center
                                       w=fill
-                                    focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                                  text "The Secure Enclave will not make a key for an unsigned build, so this app keeps its keys in a file it encrypts itself. This passphrase is the whole of what opens that file — weaker than Touch ID, which is the trade this machine is making, and nothing here can recover it if it is forgotten." #vault-note
+                                    text venue_name(venue) #settings-venue
+                                      with
+                                        size=16.0
+                                        @text-fg
+                                        @font-bold
+                                    NetworkKind #settings-kind target=venue
+                                  col #settings-network-picker gap=4.0 w=fill
+                                    for network in venue_list()
+                                      VenueTab #settings-network-row(venue_name(network))
+                                        with
+                                          target=network
+                                          current=venue
+                                        events
+                                          pick -> switch_venue _
+                                  text t(locale, "Picking one points every panel at that network and throws away what this one filled them with.")
                                     with
                                       size=11.0
                                       w=fill
                                       wrap=word
-                                      @text-down
-                              row gap=8.0 w=fill
-                                button #unlock -> unlock
-                                  with
-                                    label="Unlock with Touch ID"
-                                    p=9.0
-                                    disabled=!empty(session_refusal(session))
-                                  active bg=fg text=fg_invert r=4.0
-                                  hovered bg=fg text=fg_invert r=4.0
-                                  disabled bg=raised text=faint r=4.0
-                                  text "UNLOCK" size=11.0 tracking=1.1
-                                // One press, one sheet, every network. What it
-                                // authorises is named above the button rather
-                                // than discovered afterwards.
-                                button #enrol -> enrol_networks
-                                  with
-                                    label="Register a trading key on every network, with one Touch ID"
-                                    p=9.0
-                                    disabled=empty(address)
-                                  active bg=raised text=muted r=4.0
-                                  hovered bg=edge text=fg r=4.0
-                                  disabled bg=raised text=faint r=4.0
-                                  text "ENROL ALL" size=11.0 tracking=1.1
-                                space w=fill
-                                button #lock label="Lock and forget the key" p=9.0 -> lock
-                                  active bg=panel text=muted r=4.0
-                                  hovered bg=raised text=fg r=4.0
-                                  text "LOCK" size=11.0 tracking=1.1
-                              if !empty(session_refusal(session))
-                                text session_refusal(session) #unlock-refusal
-                                  with
-                                    size=11.0
-                                    w=fill
-                                    wrap=word
-                                    @text-faint
-                              // What ENROL ALL is about to sign for, network by
-                              // network, each with what it costs to be wrong on
-                              // it. The naming is the rule rather than the
-                              // sheet count: one prompt that says which four is
-                              // more explicit than four that each say "a key".
-                              if !empty(enrolment_plan(address))
-                                text enrolment_plan(address) #enrol-plan
-                                  with
-                                    size=10.0
-                                    w=fill
-                                    wrap=word
-                                    @text-faint
-                              // The door to the other act of custody, which
-                              // lives behind its own step rather than in this
-                              // panel: a phrase wants a screen with nothing
-                              // else on it.
-                              row
+                                      @text-faint
+                                  if !empty(venue_note(venue))
+                                    text venue_note(venue) #settings-network-note
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                  if !empty(venue_account_gap(venue))
+                                    text venue_account_gap(venue)
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                              // The language every sentence is read in. The
+                              // only preference here that is one: the palette
+                              // is the terminal's own and the figures are the
+                              // same figures in either language.
+                              box #settings-display
                                 with
-                                  gap=8.0
                                   w=fill
-                                  align=center
-                                button #open-import -> open_import
-                                  with
-                                    label="Import a wallet from a recovery phrase"
-                                    p=9.0
-                                  active bg=panel text=muted r=4.0
-                                  hovered bg=raised text=fg r=4.0
-                                  text "IMPORT A WALLET" size=11.0 tracking=1.1
-                            text "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else."
-                              with
-                                size=12.0
-                                w=fill
-                                wrap=word
-                                @text-muted
-                            text "Importing a wallet does put the account's own key on this Mac, behind Touch ID. It signs enrolments and nothing else — the app cannot spend it on an order even by mistake, because an order is a different type of thing and this key has no method that takes one. It never moves collateral and never withdraws."
-                              with
-                                size=12.0
-                                w=fill
-                                wrap=word
-                                @text-muted
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "LANGUAGE")
+                                    text t(locale, "Every sentence on screen. The figures are the same figures.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  row #languages gap=6.0 w=fill
+                                    Choice #lang-en
+                                      with
+                                        name=locale_name(Locale.en)
+                                        act=locale_label(Locale.en)
+                                        on=(locale == Locale.en)
+                                      events
+                                        pick -> set_locale(Locale.en)
+                                    Choice #lang-ko
+                                      with
+                                        name=locale_name(Locale.ko)
+                                        act=locale_label(Locale.ko)
+                                        on=(locale == Locale.ko)
+                                      events
+                                        pick -> set_locale(Locale.ko)
+                              // The feed: what state it is in, said with the
+                              // header's own badge, and its round trip.
+                              box #settings-feed
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "FEED")
+                                    text t(locale, "One socket carries the mark, the book, the tape and the chart.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  row
+                                    with
+                                      gap=12.0
+                                      align=center
+                                      w=fill
+                                    Stat name=t(locale, "ROUND TRIP") value=fmt_latency(latency)
+                                    space w=fill
+                                    if live
+                                      box #feed-live
+                                        with
+                                          px=5.0
+                                          py=2.0
+                                          bg=edge
+                                          r=2.0
+                                        text t(locale, "LIVE")
+                                          with
+                                            size=8.0
+                                            tracking=1.1
+                                            @text-faint
+                                    if !live
+                                      box #feed-stale
+                                        with
+                                          px=5.0
+                                          py=2.0
+                                          bg=down
+                                          r=2.0
+                                        text t(locale, "NOT LIVE")
+                                          with
+                                            size=8.0
+                                            tracking=1.1
+                                            @text-fg
+                                  if live
+                                    text t(locale, "The round trip is the socket's own ping, not a clock compared with the exchange's.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-faint
+                                  if !live
+                                    text t(locale, "Nothing is arriving. Every price on screen is the last one that did.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-down
+                            col gap=16.0 w=480.0
+                              // What this app may sign with. The state first,
+                              // as a chip; the three acts in one row; the
+                              // networks a key would be registered on as a
+                              // list; and the sentences that say what a key
+                              // can and cannot do kept whole at the foot,
+                              // under the controls they are about.
+                              box #settings-security
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "CUSTODY")
+                                    text t(locale, "Two keys, and only one of them can trade.")
+                                      with
+                                        size=14.0
+                                        w=fill
+                                        wrap=word
+                                        @text-fg
+                                        @font-bold
+                                  rule horizontal thickness=1.0 color=edge
+                                  col #custody gap=10.0 w=fill
+                                    row
+                                      with
+                                        gap=8.0
+                                        align=center
+                                        w=fill
+                                      Label value=t(locale, "SESSION")
+                                      SessionChip #custody-badge session=session now=clock
+                                      space w=fill
+                                      if !empty(session_window(session, clock))
+                                        text session_window(session, clock) #custody-window
+                                          with
+                                            size=11.0
+                                            font=digits
+                                            @text-muted
+                                    if !empty(session_agent(session))
+                                      text session_agent(session) #custody-agent
+                                        with
+                                          size=11.0
+                                          w=fill
+                                          wrap=word
+                                          font=digits
+                                          @text-muted
+                                    if !empty(session_reason(session))
+                                      text session_reason(session) #custody-reason
+                                        with
+                                          size=11.0
+                                          w=fill
+                                          wrap=word
+                                          @text-down
+                                    if !empty(unlock_note)
+                                      text unlock_note #custody-note
+                                        with
+                                          size=11.0
+                                          w=fill
+                                          wrap=word
+                                          @text-muted
+                                    // What this build has instead of a sheet.
+                                    // Above the buttons, because it is what
+                                    // both of them are about to use.
+                                    if vault_wanted
+                                      col #vault gap=6.0 w=fill
+                                        Label value=t(locale, "THIS MACHINE'S PASSPHRASE") #vault-label
+                                        input "" #vault-phrase <-> vault_phrase
+                                          with
+                                            label=t(locale, "Passphrase for this machine's key file")
+                                            hint="what opens the file"
+                                            text-size=12.0
+                                            w=fill
+                                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                        text t(locale, "The Secure Enclave will not make a key for an unsigned build, so this app keeps its keys in a file it encrypts itself. This passphrase is the whole of what opens that file — weaker than Touch ID, which is the trade this machine is making, and nothing here can recover it if it is forgotten.") #vault-note
+                                          with
+                                            size=11.0
+                                            w=fill
+                                            wrap=word
+                                            @text-down
+                                    // The three acts in one row, in the order
+                                    // they are taken: unlock, register, lock.
+                                    row gap=8.0 w=fill
+                                      button #unlock -> unlock
+                                        with
+                                          label=unlock_label(locale, vault_wanted)
+                                          p=9.0
+                                          disabled=!empty(session_refusal(session))
+                                        active bg=fg text=fg_invert r=4.0
+                                        hovered bg=fg text=fg_invert r=4.0
+                                        disabled bg=raised text=faint r=4.0
+                                        text t(locale, "UNLOCK") size=11.0 tracking=1.1
+                                      button #enrol -> enrol_networks
+                                        with
+                                          label=t(locale, "Register a trading key on every network, with one Touch ID")
+                                          p=9.0
+                                          disabled=empty(address)
+                                        active bg=raised text=muted r=4.0
+                                        hovered bg=edge text=fg r=4.0
+                                        disabled bg=raised text=faint r=4.0
+                                        text t(locale, "ENROL ALL") size=11.0 tracking=1.1
+                                      button #lock -> lock
+                                        with
+                                          label=t(locale, "Lock and forget the key")
+                                          p=9.0
+                                        active bg=panel text=muted r=4.0
+                                        hovered bg=raised text=fg r=4.0
+                                        text t(locale, "LOCK") size=11.0 tracking=1.1
+                                    if !empty(session_refusal(session))
+                                      text session_refusal(session) #unlock-refusal
+                                        with
+                                          size=11.0
+                                          w=fill
+                                          wrap=word
+                                          @text-faint
+                                    // What ENROL ALL is about to sign for,
+                                    // network by network, each with what it
+                                    // costs to be wrong on it — as rows a
+                                    // finger can read, and as the one sentence
+                                    // the sheet names them in.
+                                    if !empty(enrolment_plan(address))
+                                      col #enrolment gap=4.0 w=fill
+                                        Label value=t(locale, "ONE KEY ON EACH OF")
+                                        for network in venue_list()
+                                          row #enrol-row(venue_name(network))
+                                            with
+                                              gap=8.0
+                                              align=center
+                                              w=fill
+                                            text venue_name(network) size=11.0 @text-muted
+                                            space w=fill
+                                            NetworkKind target=network
+                                        text enrolment_plan(address) #enrol-plan
+                                          with
+                                            size=10.0
+                                            w=fill
+                                            wrap=word
+                                            @text-faint
+                                    // The door to the other act of custody,
+                                    // which lives behind its own step: a phrase
+                                    // wants a screen with nothing else on it.
+                                    row
+                                      with
+                                        gap=8.0
+                                        align=center
+                                        w=fill
+                                      button #open-import -> open_import
+                                        with
+                                          label=t(locale, "Import a wallet from a recovery phrase")
+                                          p=9.0
+                                        active bg=panel text=muted r=4.0
+                                        hovered bg=raised text=fg r=4.0
+                                        text t(locale, "IMPORT A WALLET") size=11.0 tracking=1.1
+                                  rule horizontal thickness=1.0 color=edge
+                                  // The four sentences that say what each key
+                                  // can and cannot do. Kept whole: they are
+                                  // what a reader agrees to before a key is
+                                  // used, and a shorter version would be this
+                                  // page deciding what they do not need to know.
+                                  col gap=8.0 w=fill
+                                    Label value=t(locale, "WHAT EACH KEY CAN DO")
+                                    text t(locale, "The trading key is a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance, and it is the only key an order is ever signed with.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                    text t(locale, "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session above says rather than something this paragraph decides. Locking forgets it, and so does connecting a different address. Switching network does not: one unlock releases every network this address has enrolled, and each of them still holds a key of its own.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                    text t(locale, "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                    text t(locale, "Importing a wallet does put the account's own key on this Mac, behind Touch ID. It signs enrolments and nothing else — the app cannot spend it on an order even by mistake, because an order is a different type of thing and this key has no method that takes one. It never moves collateral and never withdraws.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                              // The keyboard, written where the app's own
+                              // facts are written rather than behind a `?`
+                              // overlay. The rows are the scheme itself: one
+                              // list in Rust answers the keys and prints them
+                              // here, so a binding that changes cannot leave
+                              // its documentation behind.
+                              box #settings-keyboard
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col #shortcuts gap=10.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "KEYBOARD")
+                                    text t(locale, "What the keys do, and where they stop.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  for bound in hotkey_list(locale)
+                                    row #shortcut(bound.keys)
+                                      with
+                                        gap=12.0
+                                        w=fill
+                                        align=center
+                                      text bound.keys
+                                        with
+                                          size=12.0
+                                          w=96.0
+                                          font=digits
+                                          @text-fg
+                                      text bound.act
+                                        with
+                                          size=12.0
+                                          w=fill
+                                          wrap=word
+                                          @text-muted
+                                  text hotkey_note(locale) #shortcuts-note
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      wrap=word
+                                      @text-faint
           layer
             box #venue-panel
               with
@@ -2848,7 +3452,7 @@ view
                 bg=panel
                 border=edge
               col gap=10.0 w=fill
-                Label value="NETWORK"
+                Label value=t(locale, "NETWORK")
                 // One row per entry in the registry, so a network added in
                 // Rust appears here without this file being touched. Every row
                 // states its kind beside its name, on the row already being
@@ -2866,7 +3470,7 @@ view
                 // it would be a second press for something that is already
                 // reversible — the panels refill from the network picked, and
                 // picking back refills them again.
-                text "Picking one points every panel at that network and throws away what this one filled them with. A network is an exchange and one of its deployments: they list different markets, hold a position to different margin, and know nothing of each other's orders."
+                text t(locale, "Picking one points every panel at that network and throws away what this one filled them with. A network is an exchange and one of its deployments: they list different markets, hold a position to different margin, and know nothing of each other's orders.")
                   with
                     size=11.0
                     w=fill
@@ -2889,13 +3493,16 @@ view
                     w=fill
                     gap=6.0
                     align=center
-                  Label value="INDICATORS"
+                  Label value=t(locale, "INDICATORS")
                   Label value=fmt_count(len(chart_indicators))
                   space w=fill
-                  button #indicator-close label="Close chart indicators" p=6.0 -> close_indicators
+                  button #indicator-close -> close_indicators
+                    with
+                      label=t(locale, "Close chart indicators")
+                      p=6.0
                     active bg=panel text=muted r=4.0
                     hovered bg=raised text=fg r=4.0
-                    text "DONE" size=9.0 tracking=0.7
+                    text t(locale, "DONE") size=9.0 tracking=0.7
                 rule horizontal thickness=1.0 color=edge
                 col #indicator-picker gap=4.0 w=fill
                   ChartIndicatorToggle #indicator-sma-20
@@ -2942,24 +3549,24 @@ view
                 border=edge
               col gap=16.0 w=fill
                 col gap=6.0 w=fill
-                  Label value="THIS MACHINE"
+                  Label value=t(locale, "THIS MACHINE")
                   // Keyed off the door rather than off the phrase. The phrase
                   // is cleared the instant it derives, so keying the title off
                   // it renamed this box "Import a wallet" at the exact moment a
                   // reader who had just made one was being shown their address.
                   if !create_made
-                    text "Import a wallet" size=22.0 @text-fg
+                    text t(locale, "Import a wallet") size=22.0 @text-fg
                   if create_made
-                    text "Make a wallet" size=22.0 @text-fg
+                    text t(locale, "Make a wallet") size=22.0 @text-fg
                   if !create_made
-                    text "Twelve to twenty-four words, or a private key. It is turned into the one key this app signs enrolments with, kept behind Touch ID, and never sent anywhere."
+                    text t(locale, "Twelve to twenty-four words, or a private key. It is turned into the one key this app signs enrolments with, kept behind Touch ID, and never sent anywhere.")
                       with
                         size=11.0
                         w=fill
                         wrap=word
                         @text-muted
                   if create_made
-                    text "Twenty-four words, made on this machine from the system's own randomness. They are the account: this app keeps what they derive, sealed to this Mac, and it will not show the words again."
+                    text t(locale, "Twenty-four words, made on this machine from the system's own randomness. They are the account: this app keeps what they derive, sealed to this Mac, and it will not show the words again.")
                       with
                         size=11.0
                         w=fill
@@ -2971,7 +3578,7 @@ view
                 // this, and the check on the far side is what it is for.
                 if !empty(create_phrase) && !create_shown
                   col gap=10.0 w=fill
-                    Label value="WRITE THIS DOWN"
+                    Label value=t(locale, "WRITE THIS DOWN")
                     text create_phrase #create-phrase
                       with
                         size=14.0
@@ -2979,7 +3586,7 @@ view
                         wrap=word
                         font=digits
                         @text-fg
-                    text "On paper. Not in a screenshot, not in a password manager's note field, not in a message to yourself. Anyone who reads these words owns this account, and nobody can take it back."
+                    text t(locale, "On paper. Not in a screenshot, not in a password manager's note field, not in a message to yourself. Anyone who reads these words owns this account, and nobody can take it back.")
                       with
                         size=11.0
                         w=fill
@@ -2987,14 +3594,14 @@ view
                         @text-faint
                 if !empty(create_phrase) && create_shown
                   col gap=10.0 w=fill
-                    Label value="CHECK YOUR COPY"
+                    Label value=t(locale, "CHECK YOUR COPY")
                     text backup_asks(create_positions) #backup-asks
                       with
                         size=14.0
                         w=fill
                         wrap=word
                         @text-fg
-                    text "One box each, in the order they are numbered. The phrase is off the screen on purpose: this is the step that finds out whether it reached paper."
+                    text t(locale, "One box each, in the order they are numbered. The phrase is off the screen on purpose: this is the step that finds out whether it reached paper.")
                       with
                         size=11.0
                         w=fill
@@ -3043,17 +3650,17 @@ view
                   col gap=10.0 w=fill
                     input "" #import-phrase <-> import_phrase
                       with
-                        label="Recovery phrase, or a private key"
+                        label=t(locale, "Recovery phrase, or a private key")
                         hint="abandon abandon abandon…"
                         text-size=12.0
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                     input "" #import-passphrase <-> import_passphrase
                       with
-                        label="Passphrase, if the wallet has one"
+                        label=t(locale, "Passphrase, if the wallet has one")
                         hint="usually empty"
                         text-size=12.0
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                    text "A passphrase makes different words into a different account. If your wallet asked for one, it belongs here."
+                    text t(locale, "A passphrase makes different words into a different account. If your wallet asked for one, it belongs here.")
                       with
                         size=10.0
                         w=fill
@@ -3061,7 +3668,7 @@ view
                         @text-faint
                 if !empty(import_address)
                   col gap=8.0 w=fill
-                    Label value="THIS PHRASE IS THE ACCOUNT"
+                    Label value=t(locale, "THIS PHRASE IS THE ACCOUNT")
                     text import_address #import-address
                       with
                         size=15.0
@@ -3074,14 +3681,14 @@ view
                     // wallet can do — the words are gone, on purpose, and the
                     // address is simply the account they now have.
                     if !create_made
-                      text "Nothing has been stored. If that is not the address you expect, go back and check the words."
+                      text t(locale, "Nothing has been stored. If that is not the address you expect, go back and check the words.")
                         with
                           size=11.0
                           w=fill
                           wrap=word
                           @text-muted
                     if create_made
-                      text "Nothing has been stored yet. This is the account those twenty-four words make — keep it, and this app can sign enrolments for it." #create-address-note
+                      text t(locale, "Nothing has been stored yet. This is the account those twenty-four words make — keep it, and this app can sign enrolments for it.") #create-address-note
                         with
                           size=11.0
                           w=fill
@@ -3092,15 +3699,15 @@ view
                 // that needs one, and it is the press this door is for.
                 if vault_wanted
                   col #import-vault gap=6.0 w=fill
-                    Label value="THIS MACHINE'S PASSPHRASE" #import-vault-label
+                    Label value=t(locale, "THIS MACHINE'S PASSPHRASE") #import-vault-label
                     input "" #import-vault-phrase <-> vault_phrase
                       with
-                        label="Passphrase for this machine's key file"
+                        label=t(locale, "Passphrase for this machine's key file")
                         hint="chosen once, and not recoverable"
                         text-size=12.0
                         w=fill
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                    text "This build cannot reach the Secure Enclave, so the key is sealed into a file with this passphrase instead. It is weaker than Touch ID and nothing here can recover it — write it down with the words." #import-vault-note
+                    text t(locale, "This build cannot reach the Secure Enclave, so the key is sealed into a file with this passphrase instead. It is weaker than Touch ID and nothing here can recover it — write it down with the words.") #import-vault-note
                       with
                         size=10.0
                         w=fill
@@ -3118,47 +3725,50 @@ view
                     gap=8.0
                     w=fill
                     align=center
-                  button #import-close label="Close without importing" p=11.0 -> close_import
+                  button #import-close -> close_import
+                    with
+                      label=t(locale, "Close without importing")
+                      p=11.0
                     active bg=raised text=muted r=4.0
                     hovered bg=edge text=fg r=4.0
-                    text "CLOSE" size=11.0 tracking=1.1
+                    text t(locale, "CLOSE") size=11.0 tracking=1.1
                   space w=fill
                   if !empty(create_phrase) && !create_shown
                     button #backup-written -> backup_written
                       with
-                        label="I have written the words down"
+                        label=t(locale, "I have written the words down")
                         p=11.0
                       active bg=fg text=fg_invert r=4.0
                       hovered bg=fg text=fg_invert r=4.0
-                      text "I'VE WRITTEN IT DOWN" size=11.0 tracking=1.1
+                      text t(locale, "I'VE WRITTEN IT DOWN") size=11.0 tracking=1.1
                   if !empty(create_phrase) && create_shown
                     button #backup-confirm -> confirm_backup
                       with
-                        label="Confirm the words you wrote down"
+                        label=t(locale, "Confirm the words you wrote down")
                         p=11.0
                         disabled=backup_incomplete
                       active bg=fg text=fg_invert r=4.0
                       hovered bg=fg text=fg_invert r=4.0
                       disabled bg=raised text=faint r=4.0
-                      text "CONFIRM" size=11.0 tracking=1.1
+                      text t(locale, "CONFIRM") size=11.0 tracking=1.1
                   if empty(import_address) && !create_made
                     button #import-check -> check_phrase
                       with
-                        label="Show the account these words derive"
+                        label=t(locale, "Show the account these words derive")
                         p=11.0
                         disabled=empty(import_phrase)
                       active bg=fg text=fg_invert r=4.0
                       hovered bg=fg text=fg_invert r=4.0
                       disabled bg=raised text=faint r=4.0
-                      text "CHECK" size=11.0 tracking=1.1
+                      text t(locale, "CHECK") size=11.0 tracking=1.1
                   if !empty(import_address)
                     button #import-keep -> store_wallet
                       with
-                        label="Keep this wallet on this Mac, behind Touch ID"
+                        label=t(locale, "Keep this wallet on this Mac, behind Touch ID")
                         p=11.0
                       active bg=fg text=fg_invert r=4.0
                       hovered bg=fg text=fg_invert r=4.0
-                      text "THIS IS MINE" size=11.0 tracking=1.1
+                      text t(locale, "THIS IS MINE") size=11.0 tracking=1.1
           if order_pending(confirm)
             // Everything below is a restatement. Not one figure here is
             // computed: each is the value the ticket already showed, frozen on
@@ -3217,9 +3827,9 @@ view
                         // is a promise, so the row is named for whichever one
                         // this order carries rather than for "price".
                         if draft.walked
-                          Label value="FILLS AT, ABOUT"
+                          Label value=t(locale, "FILLS AT, ABOUT")
                         if !draft.walked
-                          Label value="RESTS AT"
+                          Label value=t(locale, "RESTS AT")
                         space w=fill
                         text fmt_px(draft.price)
                           with
@@ -3227,7 +3837,7 @@ view
                             font=digits
                             @text-fg
                       row w=fill align=center
-                        Label value="SIZE"
+                        Label value=t(locale, "SIZE")
                         space w=fill
                         text fmt_size(draft.size)
                           with
@@ -3235,7 +3845,7 @@ view
                             font=digits
                             @text-fg
                       row w=fill align=center
-                        Label value="ORDER VALUE"
+                        Label value=t(locale, "ORDER VALUE")
                         space w=fill
                         text fmt_margin(draft.notional, focus)
                           with
@@ -3243,7 +3853,7 @@ view
                             font=digits
                             @text-muted
                       row w=fill align=center
-                        Label value="MARGIN REQUIRED"
+                        Label value=t(locale, "MARGIN REQUIRED")
                         space w=fill
                         text fmt_margin(draft.margin, focus)
                           with
@@ -3251,7 +3861,7 @@ view
                             font=digits
                             @text-muted
                       row w=fill align=center
-                        Label value="LIQUIDATION"
+                        Label value=t(locale, "LIQUIDATION")
                         space w=fill
                         if draft.liquidation > 0.0
                           text fmt_px(draft.liquidation)
@@ -3260,13 +3870,13 @@ view
                               font=digits
                               @text-down
                         if draft.liquidation <= 0.0
-                          text "not quoted"
+                          text t(locale, "not quoted")
                             with
                               size=13.0
                               font=digits
                               @text-faint
                       row w=fill align=center
-                        Label value="MARGIN MODE"
+                        Label value=t(locale, "MARGIN MODE")
                         space w=fill
                         text fmt_leverage_mode(draft.leverage, margin_mode(draft.cross))
                           with
@@ -3279,12 +3889,12 @@ view
                       // rule is the venue's and not a choice the ticket made.
                       if draft.minutes > 0.0
                         row w=fill align=center
-                          Label value="WORKED"
+                          Label value=t(locale, "WORKED")
                           space w=fill
                           text order_worked(fmt_size(draft.minutes)) size=13.0 @text-muted
                       if draft.minutes <= 0.0
                         row w=fill align=center
-                          Label value="RESTS"
+                          Label value=t(locale, "RESTS")
                           space w=fill
                           text tif_act(venue, ticket_tif) size=13.0 @text-muted
                       // The three promises an order can carry beyond its price
@@ -3293,12 +3903,12 @@ view
                       // to check to learn nothing.
                       if draft.reduce_only
                         row w=fill align=center
-                          Label value="REDUCE ONLY"
+                          Label value=t(locale, "REDUCE ONLY")
                           space w=fill
-                          text "closes only" size=13.0 @text-muted
+                          text t(locale, "closes only") size=13.0 @text-muted
                       if draft.tp > 0.0
                         row w=fill align=center
-                          Label value="TAKE PROFIT"
+                          Label value=t(locale, "TAKE PROFIT")
                           space w=fill
                           text fmt_px(draft.tp)
                             with
@@ -3307,7 +3917,7 @@ view
                               @text-up
                       if draft.sl > 0.0
                         row w=fill align=center
-                          Label value="STOP LOSS"
+                          Label value=t(locale, "STOP LOSS")
                           space w=fill
                           text fmt_px(draft.sl)
                             with
@@ -3342,13 +3952,13 @@ view
                     align=center
                   button #confirm-back -> modal_dismissed
                     with
-                      label="Go back without sending"
+                      label=t(locale, "Go back without sending")
                       p=11.0
                       disabled=sending
                     active bg=raised text=muted r=4.0
                     hovered bg=edge text=fg r=4.0
                     disabled bg=raised text=faint r=4.0
-                    text "GO BACK" size=11.0 tracking=1.1
+                    text t(locale, "GO BACK") size=11.0 tracking=1.1
                   space w=fill
                   match confirm
                     some(draft)
@@ -3360,7 +3970,7 @@ view
                         active bg=fg text=fg_invert r=4.0
                         hovered bg=fg text=fg_invert r=4.0
                         disabled bg=raised text=faint r=4.0
-                        text "SEND IT" size=11.0 tracking=1.1
+                        text t(locale, "SEND IT") size=11.0 tracking=1.1
                     none
                       space w=0.0
           // The same confirmation, for an act with a list instead of a price.
@@ -3446,13 +4056,13 @@ view
                     align=center
                   button #sweep-back -> modal_dismissed
                     with
-                      label="Go back without sending"
+                      label=t(locale, "Go back without sending")
                       p=11.0
                       disabled=sending
                     active bg=raised text=muted r=4.0
                     hovered bg=edge text=fg r=4.0
                     disabled bg=raised text=faint r=4.0
-                    text "GO BACK" size=11.0 tracking=1.1
+                    text t(locale, "GO BACK") size=11.0 tracking=1.1
                   space w=fill
                   button #sweep-send -> sweep_sent
                     with
@@ -3462,7 +4072,7 @@ view
                     active bg=fg text=fg_invert r=4.0
                     hovered bg=fg text=fg_invert r=4.0
                     disabled bg=raised text=faint r=4.0
-                    text "DO IT" size=11.0 tracking=1.1
+                    text t(locale, "DO IT") size=11.0 tracking=1.1
           if gate && !import_open
             box #gate
               with
@@ -3494,12 +4104,12 @@ view
                           size=9.0
                           tracking=1.0
                           @text-fg
-                  text "Trade from this Mac"
+                  text t(locale, "Trade from this Mac")
                     with
                       size=22.0
                       @text-fg
                       @font-bold
-                  text "Import the wallet that owns the account and this app derives its address, registers a trading key on every network, and can place orders. The key is kept behind Touch ID on this machine and is never sent anywhere."
+                  text t(locale, "Import the wallet that owns the account and this app derives its address, registers a trading key on every network, and can place orders. The key is kept behind Touch ID on this machine and is never sent anywhere.")
                     with
                       size=12.0
                       w=fill
@@ -3519,18 +4129,18 @@ view
                     with
                       p=12.0
                       w=fill
-                      label="Create a wallet, and trade this new account from this Mac"
+                      label=t(locale, "Create a wallet, and trade this new account from this Mac")
                     active bg=fg text=fg_invert r=4.0
                     hovered bg=fg text=fg_invert r=4.0
-                    text "CREATE A WALLET" size=12.0 tracking=1.1
+                    text t(locale, "CREATE A WALLET") size=12.0 tracking=1.1
                   button #gate-import -> open_import
                     with
                       p=12.0
                       w=fill
-                      label="Import a wallet, and trade this account from this Mac"
+                      label=t(locale, "Import a wallet, and trade this account from this Mac")
                     active bg=panel text=fg r=4.0 border-w=1.0 border=muted
                     hovered bg=raised text=fg r=4.0 border-w=1.0 border=fg
-                    text "IMPORT A WALLET" size=12.0 tracking=1.1
+                    text t(locale, "IMPORT A WALLET") size=12.0 tracking=1.1
                 rule horizontal thickness=1.0 color=edge
                 // The read-only path, named for what it is for rather than
                 // offered as the way in. Watching is an honest act — an account
@@ -3542,21 +4152,22 @@ view
                   button #gate-watch -> watch_address
                     with
                       p=10.0
-                      label="Watch an address, read-only, without holding its key"
+                      label=t(locale, "Watch an address, read-only, without holding its key")
                     active bg=panel text=muted r=4.0
                     hovered bg=raised text=fg r=4.0
-                    text "Watch an address" size=12.0
+                    text t(locale, "Watch an address") size=12.0
                 if gate_watch
                   col gap=10.0 w=fill
-                    text "Watch an address" size=13.0 @text-fg
-                    text "Open positions, resting orders, and every fill marked on the chart, for any address on this network. Nothing on this path can sign, because watching an account is not owning one."
+                    text t(locale, "Watch an address") size=13.0 @text-fg
+                    text t(locale, "Open positions, resting orders, and every fill marked on the chart, for any address on this network. Nothing on this path can sign, because watching an account is not owning one.")
                       with
                         size=11.0
                         w=fill
                         wrap=word
                         @text-muted
-                    input "Address" #address-input <-> draft
+                    input "" #address-input <-> draft
                       with
+                        label=t(locale, "Address")
                         hint="0x0000000000000000000000000000000000000000"
                         submit=connect
                         text-size=12.0
@@ -3565,7 +4176,7 @@ view
                       hovered bg=raised border=edge r=4.0 placeholder=faint value=fg
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                     if !empty(trim(draft)) && !valid_address(draft)
-                      text "An address is 0x and forty hexadecimal digits."
+                      text t(locale, "An address is 0x and forty hexadecimal digits.")
                         with
                           size=11.0
                           w=fill
@@ -3574,15 +4185,18 @@ view
                     button #connect -> connect
                       with
                         p=11.0
-                        label="Watch this address, read-only"
+                        label=t(locale, "Watch this address, read-only")
                         disabled=!valid_address(draft)
                       active bg=fg text=fg_invert r=4.0
                       hovered bg=fg text=fg_invert r=4.0
                       disabled bg=raised text=faint r=4.0
-                      text "Watch this address" size=12.0
+                      text t(locale, "Watch this address") size=12.0
                 // Neither an account nor a key: the markets, and nothing that
                 // needs an address to draw.
-                button #browse p=10.0 label="Browse markets only, with no account at all" -> browse
+                button #browse -> browse
+                  with
+                    p=10.0
+                    label=t(locale, "Browse markets only, with no account at all")
                   active bg=panel text=muted r=4.0
                   hovered bg=raised text=fg r=4.0
-                  text "Browse markets" size=12.0
+                  text t(locale, "Browse markets") size=12.0

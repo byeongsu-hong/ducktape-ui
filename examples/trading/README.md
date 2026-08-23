@@ -145,8 +145,12 @@ it re-marked on another.
 | Surface | What it holds |
 | --- | --- |
 | **Terminal** | the market rail, the chart and its intervals, the book, the tape, the levels being watched, the order ticket, and the account's positions, resting orders and recent fills |
-| **Portfolio** | what the account *is*, rather than what it is doing: equity and its parts, exposure, margin health, funding, and what the fill history says |
-| **Settings** | the address being read, what the feed is doing, and what this app will and will not do |
+| **Portfolio** | what the account *is*, rather than what it is doing: the account's value over a chosen window and how far it sits off its peak, the PnL each step of that window booked, exposure, margin health, funding, the positions with their entry, liquidation and margin, and the orders and fills behind them |
+| **Settings** | one card per fact: the address being read, the network and the picker that changes it, the language, what the feed is doing, what this app may sign with and what each key can do, and the keyboard |
+
+![The portfolio](screenshots/portfolio.png)
+
+![Settings](screenshots/settings.png)
 
 The line is between watching a market and reading an account. The terminal is
 the first, whole. The portfolio is the second, and it is not the terminal's
@@ -168,6 +172,20 @@ state a reader can hear.
 Picking a market goes to the terminal — from the market rail, and from any
 position, order or fill row, which have always been ways back to a market. A
 row that answers a request by leaving you where you were has not answered it.
+
+### The language is a setting
+
+Every sentence the view draws goes through `t(locale, "...")`, a `pure`
+extern over one Rust table in `i18n.rs`: the English is the key, and a key
+the table lacks comes back as itself, so an untranslated sentence reads as
+English rather than as a hole. The Korean table is complete for the view —
+a unit test walks every `.ice` source for its keys and fails on a missing
+arm — and the language card on settings offers each language in itself.
+The figures are the same figures. Sentences the Rust side composes at
+runtime — refusals, quotes, session readouts — are still English on either
+setting; they are the next table.
+
+![Settings, in Korean](screenshots/settings_ko.png)
 
 ### What the dashboard refuses to say
 

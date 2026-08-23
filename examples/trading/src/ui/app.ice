@@ -40,6 +40,7 @@ daemon Trading
       fullsize-content-view true
 
 use "theme.ice"
+use "extern/i18n.ice"
 use "extern/hyperliquid.ice"
 use "extern/lighter.ice"
 use "extern/portfolio.ice"
@@ -74,6 +75,7 @@ use "tests/render.ice"
 use "tests/indicators.ice"
 use "tests/export.ice"
 use "tests/scrolling.ice"
+use "tests/i18n.ice"
 
 font plex family="IBM Plex Sans KR" default=true
 font digits family="Monoplex KR"

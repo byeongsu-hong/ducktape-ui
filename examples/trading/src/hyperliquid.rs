@@ -91,7 +91,7 @@ fn rgb(hex: u32) -> Color {
 /// The chart wears the terminal's palette rather than the library default:
 /// a cold near-black ground, green and red reserved for money moving, and a
 /// distinct non-directional ink for each optional study.
-fn chart_theme() -> theme::Theme {
+pub fn chart_theme() -> theme::Theme {
     let mut chart = theme::DARK;
     chart.palette.background = rgb(0x14_12_0f);
     chart.palette.foreground = rgb(0xed_e8_df);
@@ -1774,7 +1774,7 @@ fn parse_account(value: &Value) -> Account {
         withdrawable: num(value, "withdrawable"),
         notional: num(&summary, "totalNtlPos"),
         maintenance,
-        health: margin_load(cross_value, maintenance) * RISK_RAIL_WIDTH,
+        health: rail(margin_load(cross_value, maintenance)),
         margin_pct: margin_load(cross_value, maintenance) * 100.0,
         positions,
     }
@@ -1796,6 +1796,17 @@ fn margin_load(equity: f64, maintenance: f64) -> f64 {
         return 1.0;
     }
     (maintenance / equity).clamp(0.0, 1.0)
+}
+
+/// A load as the width of the rail that draws it. Never under a pixel while
+/// there is any load at all: a 0.6% load drew half a pixel, which is the same
+/// rail as no requirement.
+fn rail(load: f64) -> f64 {
+    if load > 0.0 {
+        (load * RISK_RAIL_WIDTH).max(1.0)
+    } else {
+        0.0
+    }
 }
 
 pub async fn hl_account(chain: Chain, address: String) -> Result<Account, HlError> {
@@ -2690,7 +2701,7 @@ pub fn mark_account(account: Option<Account>, positions: Vec<Position>) -> Optio
         value,
         cross_value,
         pnl,
-        health: margin_load(cross_value, account.maintenance) * RISK_RAIL_WIDTH,
+        health: rail(margin_load(cross_value, account.maintenance)),
         margin_pct: margin_load(cross_value, account.maintenance) * 100.0,
         notional: positions
             .iter()
@@ -2868,8 +2879,17 @@ pub fn fmt_funding(percent: f64) -> String {
 
 /// A plain share, for a figure that is a proportion rather than a move: no
 /// sign, because a margin requirement is never a gain.
+///
+/// A small share keeps one decimal. Rounded to a whole number, a margin load
+/// of 0.64% printed as 1% — rounded *up*, on the one figure a reader checks
+/// to know how close the engine is — and a 0.09% weight printed as 0%, the
+/// same pixels as no exposure at all.
 pub fn fmt_share(percent: f64) -> String {
-    format!("{percent:.0}%")
+    if percent.abs() < 0.05 || percent.abs() >= 10.0 {
+        format!("{percent:.0}%")
+    } else {
+        format!("{percent:.1}%")
+    }
 }
 
 /// The spread as a share of the mid, in basis points. A spread is only worth
@@ -3734,16 +3754,16 @@ pub fn finer_interval(interval: String, bars: i64) -> String {
 /// a reader hears is the act the button performs. It says "hide" while the pane
 /// is open because that is what pressing it does — a control that announced the
 /// pane's current state would leave a reader guessing at the verb.
-pub fn pane_label(pane: String, open: bool) -> String {
+pub fn pane_label(locale: crate::Locale, pane: String, open: bool) -> String {
     let act = if open { "Hide" } else { "Show" };
-    format!("{act} the {} pane", pane.to_lowercase())
+    crate::i18n::t(locale, format!("{act} the {} pane", pane.to_lowercase()))
 }
 
 /// A page tab by the same rule. The tab draws its page's name in capitals
 /// because it is a heading for the surface it opens; the selected state is
 /// exposed separately on the button.
-pub fn page_label(page: String) -> String {
-    format!("Show the {} page", page.to_lowercase())
+pub fn page_label(locale: crate::Locale, page: String) -> String {
+    crate::i18n::t(locale, format!("Show the {} page", page.to_lowercase()))
 }
 
 /// A hovered candle's figures, one per cell of the crosshair readout. The demo
@@ -4006,7 +4026,11 @@ pub fn demo_positions() -> Vec<Position> {
             64_000.0,
             40.0,
             Some(174_000.0),
-            -3_309_304.0,
+            // Credited a little over 1.7% of the notional: a short held
+            // through a stretch of positive funding. The figure was once a
+            // hundred times this — 172% of the position — which every other
+            // panel then had to draw as the account's biggest number.
+            -33_094.0,
         ),
         // The state the risk rail exists for, and the one no capture had
         // ever drawn: an isolated long most of the way to its cliff.
@@ -4369,7 +4393,7 @@ fn demo_account_of(
             .map(|position| position.mark * position.size.abs())
             .sum(),
         maintenance,
-        health: margin_load(cross_value, maintenance) * RISK_RAIL_WIDTH,
+        health: rail(margin_load(cross_value, maintenance)),
         margin_pct: margin_load(cross_value, maintenance) * 100.0,
         positions,
     }
@@ -5655,7 +5679,7 @@ mod tests {
                 "the figure and the bar disagree"
             );
             assert!(
-                (account.health - account.margin_pct / 100.0 * RISK_RAIL_WIDTH).abs() < 1e-9,
+                (account.health - rail(account.margin_pct / 100.0)).abs() < 1e-9,
                 "the bar is not that figure"
             );
         }
@@ -6690,7 +6714,10 @@ mod tests {
 
         // A page tab draws a heading and is heard as the act; its selected
         // state is exposed separately on the button.
-        assert_eq!(page_label("PORTFOLIO".into()), "Show the portfolio page");
+        assert_eq!(
+            page_label(crate::Locale::En, "PORTFOLIO".into()),
+            "Show the portfolio page"
+        );
     }
 
     #[test]

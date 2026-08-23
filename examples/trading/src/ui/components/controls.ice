@@ -88,20 +88,20 @@ component Choice(name:str, act:str, on:bool)
 // One tab per page, named by the act of going there. The page already drawn is
 // still a button, so the selected state is exposed separately from its action
 // name.
-component NavTab(name:str, target:Page, current:Page)
+component NavTab(name:str, target:Page, current:Page, locale:Locale)
   emits
     pick(Page)
   col #root
     if target == current
       button #tab-on -> emit(pick, target)
         with
-          label=page_label(name)
+          label=page_label(locale, name)
           checked=true
           w=80.0
           p=7.0
         active bg=raised text=fg r=4.0
         hovered bg=raised text=fg r=4.0
-        text name
+        text t(locale, name)
           with
             size=10.0
             w=fill
@@ -111,13 +111,13 @@ component NavTab(name:str, target:Page, current:Page)
     if target != current
       button #tab-off -> emit(pick, target)
         with
-          label=page_label(name)
+          label=page_label(locale, name)
           checked=false
           w=80.0
           p=7.0
         active bg=panel text=muted r=4.0
         hovered bg=raised text=fg r=4.0
-        text name
+        text t(locale, name)
           with
             size=10.0
             w=fill
@@ -335,25 +335,55 @@ component ChartIndicatorToggle(target:ChartIndicator, on:bool)
 // screen beside everything already on it, and nothing leaves to make room. The
 // button says the act it performs rather than the pane's state, because a
 // button carries no state a reader can hear.
-component PaneToggle(name:str, open:bool)
+component PaneToggle(name:str, open:bool, locale:Locale)
   emits
     pick
   col #root
     if open
-      button #toggle-on label=pane_label(name, true) p=5.0 -> emit(pick)
+      button #toggle-on label=pane_label(locale, name, true) p=5.0 -> emit(pick)
         active bg=raised text=fg r=4.0
         hovered bg=raised text=fg r=4.0
-        text name
+        text t(locale, name)
           with
             size=10.0
             tracking=1.0
             @text-fg
     if !open
-      button #toggle-off label=pane_label(name, false) p=5.0 -> emit(pick)
+      button #toggle-off label=pane_label(locale, name, false) p=5.0 -> emit(pick)
         active bg=panel text=muted r=4.0
         hovered bg=raised text=fg r=4.0
-        text name
+        text t(locale, name)
           with
             size=10.0
             tracking=1.0
             @text-muted
+
+// Where the session stands, as a chip: the one state that can send is lit,
+// and the rest are the same box in the quiet colour, so the header's four
+// words read as state rather than as a second heading beside SESSION.
+component SessionChip(session:Session, now:i64)
+  col #root
+    if session_can_trade(session, now)
+      box #chip-unlocked
+        with
+          px=5.0
+          py=2.0
+          bg=up
+          r=2.0
+        text session_badge(session, now)
+          with
+            size=8.0
+            tracking=1.1
+            @text-fg
+    if !session_can_trade(session, now)
+      box #chip-locked
+        with
+          px=5.0
+          py=2.0
+          bg=edge
+          r=2.0
+        text session_badge(session, now)
+          with
+            size=8.0
+            tracking=1.1
+            @text-faint

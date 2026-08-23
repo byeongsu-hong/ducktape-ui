@@ -11,7 +11,7 @@ publish = false
 # reads them. Already in the lockfile as a transitive dependency, so naming it
 # costs a line and no build time.
 base64 = "0.23"
-ui-lang-components = { workspace = true, features = ["candle-chart"] }
+ui-lang-components = { workspace = true, features = ["candle-chart", "chart"] }
 # Thomas Pornin's reference ECgFp5, pinned by revision. This is the
 # implementation Lighter's own open signer cites as the design and first
 # implementation of the curve, it has no dependencies of its own, and it is

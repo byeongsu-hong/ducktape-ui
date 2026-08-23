@@ -8,6 +8,16 @@ enum Page
   portfolio
   settings
 
+// The language every sentence on screen is read in. State rather than a
+// build-time choice because it is picked on the settings page and nothing
+// else about the app changes with it: the figures are the same figures. The
+// English of every string stays in the `.ice` source as the key the other
+// languages are looked up by, so a key no table carries reads as English
+// rather than as a hole — see `i18n.rs`.
+enum Locale
+  en
+  ko
+
 // Which network the terminal is reading. Not a build-time choice and not a
 // filter over one exchange's data: every panel on screen was read from a
 // network, and they disagree about which markets exist, what they are called,
@@ -71,6 +81,7 @@ enum ChartIndicator
 
 state
   page:Page = Page.terminal
+  locale:Locale = Locale.en
   venue:Venue = Venue.hyperliquid
   gate = true
   // Whether the network picker is dropped over the terminal. A display flag
@@ -175,6 +186,10 @@ state
   fills_open = false
   portfolio_history:PortfolioHistory = portfolio_empty()
   portfolio_range = "month"
+  // The point under the pointer on whichever portfolio chart has it, or none.
+  // One slot for both charts: a pointer is over at most one of them.
+  portfolio_hover:PortfolioHover? = none
+  pnl_hover:PortfolioHover? = none
   // What this app may sign with. Opaque: the rules that move it are a tested
   // state machine in Rust, and a copy of them here would be a second opinion
   // about when an order may be signed.
@@ -557,6 +572,50 @@ preset held
     ticket_price = "64,000.00"
     ticket_size = "3.00"
     portfolio_history = demo_portfolio_history()
+
+// The same account on its two other pages, so each can be drawn and tested
+// without clicking there first.
+preset portfolio
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    interval = "1m"
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+    alerts = add_alert(add_alert(demo_alerts(), "BTC", "64,400.00", 64000.0), "BTC", "63,700.00", 64000.0)
+    fills = demo_fills()
+    orders = demo_orders()
+    live = true
+    ticket_price = "64,000.00"
+    ticket_size = "3.00"
+    portfolio_history = demo_portfolio_history()
+    page = Page.portfolio
+
+preset settings
+  state
+    gate = false
+    address = "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+    symbols = demo_symbols()
+    focus = symbol_row(demo_symbols(), "BTC")
+    positions = demo_positions()
+    account = some(demo_account())
+    interval = "1m"
+    tape = demo_candles()
+    book = some(demo_book())
+    tape_prints = demo_tape()
+    alerts = add_alert(add_alert(demo_alerts(), "BTC", "64,400.00", 64000.0), "BTC", "63,700.00", 64000.0)
+    fills = demo_fills()
+    orders = demo_orders()
+    live = true
+    ticket_price = "64,000.00"
+    ticket_size = "3.00"
+    portfolio_history = demo_portfolio_history()
+    page = Page.settings
 
 // The terminal as the other venue actually leaves it, which is the whole point
 // of having the fixture: markets, candles, a book, a tape and an account, and

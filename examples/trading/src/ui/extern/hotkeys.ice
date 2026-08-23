@@ -10,8 +10,8 @@ extern crate::hotkeys
   Hotkey(keys:str, act:str)
   // The scheme itself, so Settings prints the list the handler answers rather
   // than a second copy of it kept by hand.
-  pure hotkey_list() -> [Hotkey]
-  pure hotkey_note() -> str
+  pure hotkey_list(locale:Locale) -> [Hotkey]
+  pure hotkey_note(locale:Locale) -> str
   pure hotkey_side(pressed:key, current:bool) -> bool
   pure hotkey_share(pressed:key) -> f64
   pure hotkey_price(pressed:key, typed:str, book:Book?) -> str

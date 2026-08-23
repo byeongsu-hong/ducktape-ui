@@ -25,7 +25,9 @@
 
 use iced::keyboard::{Key, key::Named};
 
+use crate::Locale;
 use crate::hyperliquid::{Book, amount, book_tick, fmt_px};
+use crate::i18n::t;
 
 /// One line of the scheme, for the panel that documents it.
 ///
@@ -38,33 +40,36 @@ pub struct Hotkey {
     pub act: String,
 }
 
-fn hotkey(keys: &str, act: &str) -> Hotkey {
+fn hotkey(locale: Locale, keys: &str, act: &str) -> Hotkey {
     Hotkey {
         keys: keys.to_owned(),
-        act: act.to_owned(),
+        act: t(locale, act.to_owned()),
     }
 }
 
 /// The scheme, in the order a reader meets it: which side, how big, what price,
 /// and then the one that opens the confirmation.
-pub fn hotkey_list() -> Vec<Hotkey> {
+pub fn hotkey_list(locale: Locale) -> Vec<Hotkey> {
     vec![
-        hotkey("B", "Buy / long"),
-        hotkey("S", "Sell / short"),
-        hotkey("1 2 3 4", "Size to 25%, 50%, 75%, all"),
-        hotkey("↑ ↓", "Move the limit price one tick"),
-        hotkey("Enter", "Review the order — in a ticket field"),
-        hotkey("Esc", "Close an open picker, then the search"),
+        hotkey(locale, "B", "Buy / long"),
+        hotkey(locale, "S", "Sell / short"),
+        hotkey(locale, "1 2 3 4", "Size to 25%, 50%, 75%, all"),
+        hotkey(locale, "↑ ↓", "Move the limit price one tick"),
+        hotkey(locale, "Enter", "Review the order — in a ticket field"),
+        hotkey(locale, "Esc", "Close an open picker, then the search"),
     ]
 }
 
 /// What the scheme will not do, said where the scheme is read.
-pub fn hotkey_note() -> String {
-    "No key sends an order. The keys above reach the confirmation and stop \
-     there, and they are off entirely while one is open — SEND IT is pressed by \
-     hand. A field you are typing in keeps its own keystrokes, so these do \
-     nothing while the search box or a ticket field has the cursor."
-        .to_owned()
+pub fn hotkey_note(locale: Locale) -> String {
+    t(
+        locale,
+        "No key sends an order. The keys above reach the confirmation and stop \
+         there, and they are off entirely while one is open — SEND IT is pressed by \
+         hand. A field you are typing in keeps its own keystrokes, so these do \
+         nothing while the search box or a ticket field has the cursor."
+            .to_owned(),
+    )
 }
 
 fn character(pressed: &Key) -> Option<&str> {

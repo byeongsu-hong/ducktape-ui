@@ -112,8 +112,8 @@ extern crate::hyperliquid
   pure position_label(held:Position) -> str
   pure interval_label(interval:str) -> str
   pure finer_interval(interval:str, bars:i64) -> str
-  pure page_label(page:str) -> str
-  pure pane_label(pane:str, open:bool) -> str
+  pure page_label(locale:Locale, page:str) -> str
+  pure pane_label(locale:Locale, pane:str, open:bool) -> str
   pure hit_open(hit:CandleHit) -> f64
   pure hit_high(hit:CandleHit) -> f64
   pure hit_low(hit:CandleHit) -> f64

@@ -4,16 +4,23 @@
 //! rows, stat cells, or chart package. The dashboard is a separate reading of
 //! the account: gross exposure allocation now, and account value over time.
 
-use iced::widget::canvas::{self, Path, Stroke};
-use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, mouse};
+use iced::{Element, Length};
 use serde_json::{Value, json};
+use ui_lang_components::ui::candle_chart::format_ts;
+use ui_lang_components::ui::chart::{
+    AxisDomain, BarLayout, CartesianCurve, CartesianKind, ChartColor, ChartConfig, ChartData,
+    ChartDatum, ChartHit, DomainSpec, SeriesConfig, cartesian_chart,
+};
 
 use crate::Venue;
-use crate::hyperliquid::{Account, Fill, HlError, Position, info};
+use crate::hyperliquid::{Account, Fill, HlError, Position, chart_theme, fmt_usd, info};
 use crate::signing::Chain;
 use crate::venue::Network;
 
 const BAR_WIDTH: f64 = 248.0;
+/// The rail under the LONG / SHORT tile's two figures; `view.ice` draws it at
+/// this width.
+const EXPOSURE_RAIL_WIDTH: f64 = 200.0;
 
 /// What this account's fill history says about it.
 ///
@@ -134,7 +141,13 @@ pub struct PortfolioAsset {
     pub coin: String,
     pub side: String,
     pub size: f64,
+    pub entry: f64,
     pub mark: f64,
+    pub liq: f64,
+    pub leverage: f64,
+    pub margin_mode: String,
+    pub margin: f64,
+    pub funding: f64,
     pub value: f64,
     pub share: f64,
     pub bar: f64,
@@ -142,9 +155,15 @@ pub struct PortfolioAsset {
     pub roe_pct: f64,
 }
 
+/// One window of the venue's portfolio answer: the account's value at each
+/// point, and the PnL it had booked by then, cumulative over the window.
+/// The venue reports the two as separate series and they are kept separate
+/// here, because value moves on deposits and withdrawals as well as on
+/// trading and only the second is performance.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Series {
     values: Vec<(i64, f64)>,
+    pnl: Vec<(i64, f64)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -154,6 +173,16 @@ pub struct PortfolioHistory {
     month: Series,
     all: Series,
     pub note: String,
+}
+
+/// A point the reader is holding the pointer over on one of the portfolio
+/// charts. Opaque to Ice the way `Draft` is: the view reads it through the
+/// accessors below and passes it back to the chart unchanged.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PortfolioHover {
+    hit: ChartHit,
+    label: String,
+    value: f64,
 }
 
 fn notional(position: &Position) -> f64 {
@@ -180,7 +209,13 @@ pub fn portfolio_assets(positions: Vec<Position>) -> Vec<PortfolioAsset> {
                 }
                 .to_owned(),
                 size: position.size,
+                entry: position.entry,
                 mark: position.mark,
+                liq: position.liq,
+                leverage: position.leverage,
+                margin_mode: position.margin_mode.clone(),
+                margin: position.margin,
+                funding: position.funding,
                 value,
                 share,
                 bar: share / 100.0 * BAR_WIDTH,
@@ -193,6 +228,12 @@ pub fn portfolio_assets(positions: Vec<Position>) -> Vec<PortfolioAsset> {
     assets
 }
 
+/// What pressing an asset row does. The same sentence the terminal's
+/// position row announces, because it is the same act.
+pub fn asset_label(asset: PortfolioAsset) -> String {
+    format!("Open the {} market", asset.coin)
+}
+
 pub fn portfolio_exposure(positions: Vec<Position>) -> f64 {
     positions.iter().map(notional).sum()
 }
@@ -203,6 +244,18 @@ pub fn portfolio_long_exposure(positions: Vec<Position>) -> f64 {
         .filter(|position| position.size > 0.0)
         .map(notional)
         .sum()
+}
+
+/// The long side's share of gross exposure as the width of a rail
+/// [`EXPOSURE_RAIL_WIDTH`] wide, so the LONG / SHORT tile can draw the split
+/// rather than leave the reader to compare two figures.
+pub fn portfolio_long_rail(positions: Vec<Position>) -> f64 {
+    let long = portfolio_long_exposure(positions.clone());
+    let total = portfolio_exposure(positions);
+    if total <= 0.0 {
+        return 0.0;
+    }
+    long / total * EXPOSURE_RAIL_WIDTH
 }
 
 pub fn portfolio_short_exposure(positions: Vec<Position>) -> f64 {
@@ -221,9 +274,9 @@ fn number(value: &Value) -> f64 {
     }
 }
 
-fn parse_series(value: &Value) -> Series {
-    let values = value
-        .get("accountValueHistory")
+fn parse_points(value: &Value, key: &str) -> Vec<(i64, f64)> {
+    value
+        .get(key)
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default()
@@ -232,8 +285,14 @@ fn parse_series(value: &Value) -> Series {
             let point = point.as_array()?;
             Some((point.first()?.as_i64()?, number(point.get(1)?)))
         })
-        .collect();
-    Series { values }
+        .collect()
+}
+
+fn parse_series(value: &Value) -> Series {
+    Series {
+        values: parse_points(value, "accountValueHistory"),
+        pnl: parse_points(value, "pnlHistory"),
+    }
 }
 
 fn parse_history(value: &Value) -> PortfolioHistory {
@@ -295,6 +354,20 @@ pub fn range_label(range: String) -> String {
     format!("Show account value over {span}")
 }
 
+/// The window as a heading over the figures read off it.
+pub fn range_heading(locale: crate::Locale, range: String) -> String {
+    crate::i18n::t(
+        locale,
+        match range.as_str() {
+            "day" => "LAST DAY",
+            "week" => "LAST WEEK",
+            "month" => "LAST MONTH",
+            _ => "ALL TIME",
+        }
+        .to_owned(),
+    )
+}
+
 pub fn portfolio_empty() -> PortfolioHistory {
     PortfolioHistory {
         note: "Connect an address to load portfolio performance.".to_owned(),
@@ -309,27 +382,41 @@ pub fn portfolio_unavailable(message: String) -> PortfolioHistory {
     }
 }
 
+/// The account every other panel reads, given a past.
+///
+/// Anchored on `demo_account().value` rather than invented beside it: the
+/// tile at the top of the page and the headline over this chart both say
+/// ACCOUNT VALUE, and a fixture that ended anywhere else had them disagree
+/// by 27x on one screen. Each range is its own walk at its own sample rate —
+/// a day of hours, a week of quarter-days, a month of half-days, a year of
+/// days — so the four buttons draw four different lines, and `all` is not
+/// `month` under another name.
 pub fn demo_portfolio_history() -> PortfolioHistory {
-    let month: Vec<_> = (0..48)
-        .map(|index: i64| {
-            let wave = ((index as f64) * 0.43).sin() * 1_850.0;
-            (
-                1_780_000_000_000 + index * 43_200_000,
-                118_000.0 + index as f64 * 420.0 + wave,
-            )
-        })
-        .collect();
+    const NOW_MS: i64 = 1_786_100_000_000;
+    let end = crate::hyperliquid::demo_account().value;
+    let walk = |points: i64, step_ms: i64, swing: f64, drift: f64, phase: f64| {
+        let values: Vec<(i64, f64)> = (0..points)
+            .map(|index| {
+                let t = index as f64 / (points - 1) as f64;
+                let wave = (t * 9.0 + phase).sin() * swing + (t * 23.0 + phase).sin() * swing * 0.3;
+                // Pinned to the account at the last point, whatever the wave
+                // did on the way: the fixture's one promise is where it ends.
+                let value = end - drift * (1.0 - t) - wave * (1.0 - t);
+                (NOW_MS - (points - 1 - index) * step_ms, value)
+            })
+            .collect();
+        let first = values[0].1;
+        let pnl = values
+            .iter()
+            .map(|(ts, value)| (*ts, value - first))
+            .collect();
+        Series { values, pnl }
+    };
     PortfolioHistory {
-        day: Series {
-            values: month[44..].to_vec(),
-        },
-        week: Series {
-            values: month[34..].to_vec(),
-        },
-        month: Series {
-            values: month.clone(),
-        },
-        all: Series { values: month },
+        day: walk(25, 3_600_000, 2_400.0, -1_150.0, 0.4),
+        week: walk(29, 6 * 3_600_000, 9_800.0, 21_549.22, 1.3),
+        month: walk(61, 12 * 3_600_000, 38_000.0, 176_400.0, 2.1),
+        all: walk(181, 24 * 3_600_000, 120_000.0, 611_000.0, 0.9),
         note: String::new(),
     }
 }
@@ -378,87 +465,221 @@ pub fn portfolio_history_change_pct(history: PortfolioHistory, range: String) ->
     }
 }
 
-struct PerformanceProgram {
-    values: Vec<f64>,
+/// The highest the account stood over the window.
+pub fn portfolio_history_peak(history: PortfolioHistory, range: String) -> f64 {
+    selected(&history, &range)
+        .values
+        .iter()
+        .map(|(_, value)| *value)
+        .fold(f64::NEG_INFINITY, f64::max)
+        .max(0.0)
 }
 
-impl canvas::Program<()> for PerformanceProgram {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<canvas::Geometry> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let edge = Color::from_rgb8(0x2f, 0x28, 0x23);
-        let faint = Color::from_rgb8(0x6b, 0x61, 0x57);
-        let up = Color::from_rgb8(0x5f, 0xae, 0x7e);
-        let down = Color::from_rgb8(0xd0, 0x64, 0x5a);
-        let inset = 12.0;
-        let width = (bounds.width - inset * 2.0).max(1.0);
-        let height = (bounds.height - inset * 2.0).max(1.0);
-
-        for step in 0..=4 {
-            let y = inset + height * step as f32 / 4.0;
-            frame.stroke(
-                &Path::line(Point::new(inset, y), Point::new(inset + width, y)),
-                Stroke::default().with_color(edge).with_width(1.0),
-            );
-        }
-        if self.values.len() < 2 {
-            frame.stroke(
-                &Path::line(
-                    Point::new(inset, inset + height / 2.0),
-                    Point::new(inset + width, inset + height / 2.0),
-                ),
-                Stroke::default().with_color(faint).with_width(1.0),
-            );
-            return vec![frame.into_geometry()];
-        }
-
-        let low = self.values.iter().copied().fold(f64::INFINITY, f64::min);
-        let high = self
-            .values
-            .iter()
-            .copied()
-            .fold(f64::NEG_INFINITY, f64::max);
-        let span = (high - low).max(f64::EPSILON);
-        let line = Path::new(|path| {
-            for (index, value) in self.values.iter().enumerate() {
-                let x = inset + width * index as f32 / (self.values.len() - 1) as f32;
-                let y = inset + height - ((*value - low) / span) as f32 * height;
-                if index == 0 {
-                    path.move_to(Point::new(x, y));
-                } else {
-                    path.line_to(Point::new(x, y));
-                }
-            }
-        });
-        let color = if self.values.last() >= self.values.first() {
-            up
-        } else {
-            down
-        };
-        frame.stroke(&line, Stroke::default().with_color(color).with_width(2.0));
-        vec![frame.into_geometry()]
+/// How far under its peak the account stands now, as a share of that peak.
+/// Zero at a new high; never negative.
+pub fn portfolio_history_drawdown(history: PortfolioHistory, range: String) -> f64 {
+    let peak = portfolio_history_peak(history.clone(), range.clone());
+    let end = portfolio_history_end(history, range);
+    if peak <= 0.0 {
+        0.0
+    } else {
+        ((peak - end) / peak * 100.0).max(0.0)
     }
 }
 
-pub fn portfolio_performance(history: &PortfolioHistory, range: String) -> Element<'static, ()> {
-    iced::widget::canvas(PerformanceProgram {
-        values: selected(history, &range)
-            .values
-            .iter()
-            .map(|(_, value)| *value)
-            .collect(),
+/// The deepest peak-to-trough fall anywhere in the window, as a share of the
+/// peak it fell from — what a reader asks about a curve before anything else.
+pub fn portfolio_history_max_drawdown(history: PortfolioHistory, range: String) -> f64 {
+    let mut peak = f64::NEG_INFINITY;
+    let mut worst: f64 = 0.0;
+    for (_, value) in &selected(&history, &range).values {
+        peak = peak.max(*value);
+        if peak > 0.0 {
+            worst = worst.max((peak - value) / peak * 100.0);
+        }
+    }
+    worst
+}
+
+/// PnL booked over the window: the cumulative series' last point less its
+/// first, which is also what the bars under it sum to. The two are one figure
+/// whether or not the venue starts the window's series at zero. Distinct from
+/// the change in value: a deposit moves one and not the other.
+pub fn portfolio_history_pnl(history: PortfolioHistory, range: String) -> f64 {
+    let pnl = &selected(&history, &range).pnl;
+    match (pnl.first(), pnl.last()) {
+        (Some((_, first)), Some((_, last))) => last - first,
+        _ => 0.0,
+    }
+}
+
+/// Whether the venue sent a PnL series at all for this window. Hyperliquid
+/// does; a venue read through an address alone does not, and the bars then
+/// say so rather than drawing a flat zero.
+pub fn portfolio_pnl_ready(history: PortfolioHistory, range: String) -> bool {
+    selected(&history, &range).pnl.len() > 1
+}
+
+pub fn hover_label(hover: PortfolioHover) -> String {
+    hover.label
+}
+
+pub fn hover_value(hover: PortfolioHover) -> f64 {
+    hover.value
+}
+
+/// The time-axis label for one point, at the granularity the window's
+/// spacing calls for: a day of hours reads as clock time, a month of
+/// half-days as dates.
+fn point_label(points: &[(i64, f64)], index: usize) -> String {
+    let step = match points {
+        [(first, _), (second, _), ..] => (second - first) / 1_000,
+        _ => 86_400,
+    };
+    // Steps of a quarter-day and up are read as dates: a month of half-days
+    // labelled by the clock is a row of `10:53`s saying nothing about which
+    // day any of them is.
+    let step = if step >= 6 * 3_600 {
+        step.max(86_400)
+    } else {
+        step
+    };
+    format_ts(points[index].0 / 1_000, step)
+}
+
+/// The value axis of a curve, held to the curve: from zero, a month that
+/// moved 6% on a seven-figure account is a flat line under the ceiling.
+fn value_domain(points: &[(i64, f64)]) -> DomainSpec {
+    let (low, high) = points.iter().fold(
+        (f64::INFINITY, f64::NEG_INFINITY),
+        |(low, high), (_, value)| (low.min(*value), high.max(*value)),
+    );
+    if !low.is_finite() || !high.is_finite() {
+        return DomainSpec::default();
+    }
+    let pad = ((high - low) * 0.08).max(high.abs() * 0.001).max(1.0);
+    DomainSpec {
+        x: None,
+        y: Some(AxisDomain::new((low - pad) as f32, (high + pad) as f32)),
+    }
+}
+
+/// A money axis tick. Two more digits than the compact figures elsewhere
+/// carry, because five ticks a few percent apart all read `$3.7M` at one.
+fn money_tick(value: f32) -> String {
+    let sign = if value < 0.0 { "-" } else { "" };
+    let magnitude = value.abs();
+    if magnitude >= 1_000_000.0 {
+        format!("{sign}${:.2}M", magnitude / 1_000_000.0)
+    } else if magnitude >= 1_000.0 {
+        format!("{sign}${:.1}K", magnitude / 1_000.0)
+    } else {
+        format!("{sign}${magnitude:.0}")
+    }
+}
+
+/// One series of points as the chart kit reads them.
+fn chart_data(points: &[(i64, f64)], key: &str) -> ChartData {
+    ChartData::new(points.iter().enumerate().map(|(index, (_, value))| {
+        ChartDatum::new(index as f32, point_label(points, index)).with_value(key, *value as f32)
+    }))
+}
+
+fn hovered(points: &[(i64, f64)], hover: Option<PortfolioHover>) -> Option<ChartHit> {
+    hover
+        .filter(|hover| hover.hit.datum_index < points.len())
+        .map(|hover| hover.hit)
+}
+
+fn hover_at(points: &[(i64, f64)], hit: Option<ChartHit>) -> Option<PortfolioHover> {
+    let hit = hit?;
+    let (_, value) = points.get(hit.datum_index)?;
+    Some(PortfolioHover {
+        label: point_label(points, hit.datum_index),
+        value: *value,
+        hit,
     })
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
+}
+
+/// Account value over the window: an area under a line, a money axis, and
+/// the point under the pointer answered back so the panel can print it.
+///
+/// Drawn with the workspace's chart kit rather than a program of its own:
+/// the kit owns the axes, the hover geometry and the cache, and a second
+/// renderer for one line is a second place for a gridline to go wrong.
+pub fn portfolio_performance(
+    history: &PortfolioHistory,
+    range: String,
+    hover: Option<PortfolioHover>,
+) -> Element<'static, Option<PortfolioHover>> {
+    let points = selected(history, &range).values.clone();
+    let up = points.last().map(|(_, v)| *v) >= points.first().map(|(_, v)| *v);
+    let config = ChartConfig::new([SeriesConfig::new(
+        "value",
+        "Account value",
+        if up {
+            ChartColor::Success
+        } else {
+            ChartColor::Destructive
+        },
+    )]);
+    let data = chart_data(&points, "value");
+    let for_hover = points.clone();
+    cartesian_chart(&config, &data, &chart_theme())
+        .kind(CartesianKind::Area { points: false })
+        .curve(CartesianCurve::Monotone)
+        .domain(value_domain(&points))
+        .tick_format(money_tick)
+        .hovered(hovered(&points, hover))
+        .on_hover(move |hit| hover_at(&for_hover, hit))
+        .height(Length::Fill)
+        .into()
+}
+
+/// PnL booked per step of the window, as bars: what each hour, quarter-day
+/// or day actually made or lost, read off the venue's cumulative series by
+/// differencing it. Gains and losses are two series so each carries its own
+/// colour; the one that does not apply at a point is zero and draws nothing.
+pub fn portfolio_pnl_bars(
+    history: &PortfolioHistory,
+    range: String,
+    hover: Option<PortfolioHover>,
+) -> Element<'static, Option<PortfolioHover>> {
+    let cumulative = &selected(history, &range).pnl;
+    let steps: Vec<(i64, f64)> = cumulative
+        .windows(2)
+        .map(|pair| (pair[1].0, pair[1].1 - pair[0].1))
+        .collect();
+    let config = ChartConfig::new([
+        SeriesConfig::new("gain", "Gain", ChartColor::Success),
+        SeriesConfig::new("loss", "Loss", ChartColor::Destructive),
+    ]);
+    let data = ChartData::new(steps.iter().enumerate().map(|(index, (_, delta))| {
+        ChartDatum::new(index as f32, point_label(&steps, index))
+            .with_value("gain", delta.max(0.0) as f32)
+            .with_value("loss", delta.min(0.0) as f32)
+    }));
+    let for_hover = steps.clone();
+    cartesian_chart(&config, &data, &chart_theme())
+        .kind(CartesianKind::Bar(BarLayout::Stacked))
+        .tick_format(money_tick)
+        .hovered(hovered(&steps, hover))
+        .on_hover(move |hit| hover_at(&for_hover, hit))
+        .height(Length::Fill)
+        .into()
+}
+
+/// What the readout over a chart says for the point under the pointer.
+pub fn hover_readout(hover: Option<PortfolioHover>, signed: bool) -> String {
+    let Some(hover) = hover else {
+        return String::new();
+    };
+    let value = if signed {
+        crate::hyperliquid::fmt_pnl(hover.value)
+    } else {
+        fmt_usd(hover.value)
+    };
+    format!("{}  {value}", hover.label)
 }
 
 #[cfg(test)]
@@ -512,6 +733,99 @@ mod tests {
             levered.is_some(),
             "no fixture position separates a return over margin from one over notional"
         );
+    }
+
+    /// The fixture's one promise: it ends where the account the tiles read
+    /// stands, on every range, so two ACCOUNT VALUE labels on one page cannot
+    /// name two accounts.
+    #[test]
+    fn the_demo_history_ends_where_the_demo_account_stands() {
+        let value = crate::hyperliquid::demo_account().value;
+        for range in ["day", "week", "month", "all"] {
+            let end = portfolio_history_end(demo_portfolio_history(), range.to_owned());
+            assert!((end - value).abs() < 1e-6, "{range}: {end} vs {value}");
+        }
+    }
+
+    /// Four buttons draw four lines: each range has its own span and its own
+    /// start, and `all` is not `month` under another name.
+    #[test]
+    fn the_demo_ranges_are_four_different_windows() {
+        let history = demo_portfolio_history();
+        let starts: Vec<f64> = ["day", "week", "month", "all"]
+            .into_iter()
+            .map(|range| portfolio_history_start(history.clone(), range.to_owned()))
+            .collect();
+        for pair in starts.windows(2) {
+            assert!((pair[0] - pair[1]).abs() > 1.0, "{starts:?}");
+        }
+        let spans: Vec<i64> = [&history.day, &history.week, &history.month, &history.all]
+            .into_iter()
+            .map(|series| series.values.last().unwrap().0 - series.values.first().unwrap().0)
+            .collect();
+        assert!(spans.windows(2).all(|pair| pair[0] < pair[1]), "{spans:?}");
+    }
+
+    /// Drawdown is read off the curve: a series that only ever rose stands at
+    /// its peak, and one that fell from a high and did not recover is under
+    /// it by exactly that much.
+    #[test]
+    fn drawdown_is_the_fall_from_the_running_peak() {
+        let series = |values: &[f64]| PortfolioHistory {
+            month: Series {
+                values: values
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (i as i64, *v))
+                    .collect(),
+                pnl: Vec::new(),
+            },
+            ..PortfolioHistory::default()
+        };
+        let rising = series(&[100.0, 110.0, 120.0]);
+        assert_eq!(
+            portfolio_history_drawdown(rising.clone(), "month".into()),
+            0.0
+        );
+        assert_eq!(portfolio_history_max_drawdown(rising, "month".into()), 0.0);
+        let fallen = series(&[100.0, 200.0, 150.0, 160.0]);
+        assert!((portfolio_history_drawdown(fallen.clone(), "month".into()) - 20.0).abs() < 1e-9);
+        assert!((portfolio_history_max_drawdown(fallen, "month".into()) - 25.0).abs() < 1e-9);
+    }
+
+    /// The bars are the venue's cumulative PnL differenced, so they sum back
+    /// to the window's PnL and a point between two equal readings is a zero
+    /// bar rather than a missing one.
+    #[test]
+    fn pnl_bars_difference_the_cumulative_series() {
+        let history = PortfolioHistory {
+            month: Series {
+                values: vec![(0, 100.0), (1, 100.0), (2, 100.0)],
+                pnl: vec![(0, 0.0), (1, 5.0), (2, 2.0)],
+            },
+            ..PortfolioHistory::default()
+        };
+        assert!(portfolio_pnl_ready(history.clone(), "month".into()));
+        assert_eq!(portfolio_history_pnl(history.clone(), "month".into()), 2.0);
+        let cumulative = &selected(&history, "month").pnl;
+        let steps: Vec<f64> = cumulative
+            .windows(2)
+            .map(|pair| pair[1].1 - pair[0].1)
+            .collect();
+        assert_eq!(steps, vec![5.0, -3.0]);
+        assert_eq!(steps.iter().sum::<f64>(), 2.0);
+    }
+
+    #[test]
+    fn portfolio_payload_reads_both_series() {
+        let parsed = parse_history(&json!([
+            ["perpMonth", { "accountValueHistory": [[1, "10"], [2, "12"]], "pnlHistory": [[1, "0"], [2, "2"]] }]
+        ]));
+        assert_eq!(
+            portfolio_history_pnl(parsed.clone(), "month".to_owned()),
+            2.0
+        );
+        assert!(portfolio_pnl_ready(parsed, "month".to_owned()));
     }
 
     #[test]
