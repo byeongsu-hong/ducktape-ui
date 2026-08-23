@@ -36,7 +36,7 @@ pub(in crate::codegen) fn render_text(
                 ""
             };
             Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; {selection} ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).value(__text_value).into() }}"
+                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; {selection} ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key).value(__text_value).into() }}"
             ))
         }
         ResolvedTextContent::Rich {
@@ -287,7 +287,7 @@ fn render_resolved_rich_text(
     };
     let id = resolved_view_identity_code(identity, scope, env, document)?;
     Ok(format!(
-        "{{ let __a11y_key = {id}; let __identified_text: __IceElement<'_, {message}> = {rendered}; ::ui_lang_runtime::accessible(__identified_text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key.clone()).into() }}"
+        "{{ let __a11y_key = {id}; let __identified_text: __IceElement<'_, {message}> = {rendered}; ::ui_lang_runtime::accessible(__identified_text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key).into() }}"
     ))
 }
 

@@ -202,12 +202,12 @@ pub(in crate::codegen) fn render_text_editor(
             "if __disabled {{ {disabled_editor}.into() }} else {{ {enabled_editor}.into() }}"
         );
         Ok(format!(
-            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __disabled = {disabled}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key.clone()).label({accessibility_label}).value(__editor_value).disabled(__disabled).into() }}"
+            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __disabled = {disabled}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key).label({accessibility_label}).value(__editor_value).disabled(__disabled).into() }}"
         ))
     } else {
         let editor_code = format!("{}.into()", finish(enabled)?);
         Ok(format!(
-            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key.clone()).label({accessibility_label}).value(__editor_value).into() }}"
+            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id(__a11y_key).label({accessibility_label}).value(__editor_value).into() }}"
         ))
     }
 }

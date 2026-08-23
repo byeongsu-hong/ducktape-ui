@@ -390,7 +390,7 @@ fn render_resolved_regular_layout(
     }
     write!(
         body,
-        " let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+        " let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key).into() }}"
     )
     .unwrap();
     Ok(body)
@@ -546,7 +546,7 @@ fn render_resolved_flexbox(
     body.push_str(&container_style_code(style));
     write!(
         body,
-        "; let __layout_content: __IceElement<'_, {message}> = __content.into(); let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+        "; let __layout_content: __IceElement<'_, {message}> = __content.into(); let __a11y_key = {accessibility_key}; ::ui_lang_runtime::accessible(__layout_content, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key).into() }}"
     )
     .unwrap();
     Ok(body)
@@ -692,7 +692,7 @@ fn render_resolved_scroll(
         code = format!("::ui_lang_runtime::scroll_anchor({code})");
     }
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key.clone()).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __scroll_content: __IceElement<'_, {message}> = {child}; let __layout = {code}; ::ui_lang_runtime::accessible(__layout, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key).into() }}"
     ))
 }
 
@@ -874,10 +874,18 @@ fn render_flex_children(
                     env,
                     ValueMode::TransientBorrowed,
                 )?;
+                // Copy rows are free to copy; anything else iterates by
+                // reference, exactly as a `for` outside a flex layout does.
+                let element_ty = &program.expressions().local(iteration.item.local).ty;
+                let iterate = if copy_expression_type(element_ty) {
+                    ".iter().cloned().enumerate()"
+                } else {
+                    ".iter().enumerate()"
+                };
                 let reconciliation_scope = borrowed_scope(reconciliation_scope(scope, env));
                 write!(
                     out,
-                    " for (__ice_index, {item_name}) in {items}.iter().cloned().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
+                    " for (__ice_index, {item_name}) in {items}{iterate} {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
                     iteration.reconciliation_line
                 )
                 .unwrap();

@@ -492,6 +492,46 @@ view
 }
 
 #[test]
+fn keeps_flex_for_rows_borrowed() {
+    let source = r#"app Repeated
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  groups = [["One", "Two"], ["Three"]]
+component Frame()
+  col #body
+    slot
+component Private(value:str)
+  state
+    seen = ""
+  text value
+view
+  flex #list
+    for group in groups
+      for item in group
+        Frame #frame(item)
+          text item #slotted(item)
+        Private value=item
+"#;
+    let generated = compile(source, "repeated_flex.ice").unwrap();
+
+    assert!(generated.contains("::ui_lang_runtime::flex("));
+    assert_eq!(generated.matches("let __for_scope = format!").count(), 2);
+    // A `for` nested in a `flex` borrows its rows for the same reason a `for`
+    // nested in a `col` does: the deep clone per row per frame bought nothing.
+    assert_eq!(generated.matches(".iter().cloned().enumerate()").count(), 0);
+    assert_eq!(generated.matches(".iter().enumerate()").count(), 2);
+}
+
+#[test]
 fn lowers_named_slots_and_named_slot_forwarding() {
     let source = r#"app Composition
 theme contract AppTheme
