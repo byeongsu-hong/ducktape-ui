@@ -176,7 +176,11 @@ view
                     button #venues label=venue_switch_label(venue) p=0.0 -> open_venues
                       active bg=panel text=fg r=3.0
                       hovered bg=raised text=fg r=3.0
-                      col w=138.0 gap=3.0 align=center
+                      col
+                        with
+                          w=138.0
+                          gap=3.0
+                          align=center
                         text venue_name(venue) #venue-name
                           with
                             size=10.0
@@ -2082,6 +2086,21 @@ view
                                     size=14.0
                                     font=digits
                                     @text-down
+                              // The split, drawn: two figures side by side
+                              // ask the reader to do the division.
+                              row #long-short-rail w=200.0 h=4.0
+                                box
+                                  with
+                                    w=portfolio_long_rail(positions)
+                                    h=4.0
+                                    bg=up
+                                  space w=fill h=fill
+                                box
+                                  with
+                                    w=(200.0 - portfolio_long_rail(positions))
+                                    h=4.0
+                                    bg=down
+                                  space w=fill h=fill
                           box #tile-leverage
                             with
                               w=fill
@@ -2130,10 +2149,17 @@ view
                                   size=18.0
                                   font=digits
                                   @text-fg
+                        // The curve and the allocation beside it. The curve's
+                        // card carries everything a reader asks of an equity
+                        // line before the line itself: where it ended, what it
+                        // moved, how far under its own high it stands, and the
+                        // worst it fell on the way. The point under the pointer
+                        // is printed in the card rather than in a tooltip the
+                        // capture cannot read.
                         row
                           with
                             w=fill
-                            h=250.0
+                            h=290.0
                             gap=12.0
                           box #performance
                             with
@@ -2149,7 +2175,11 @@ view
                                 w=fill
                                 h=fill
                                 gap=12.0
-                              row w=fill align=center
+                              row
+                                with
+                                  w=fill
+                                  align=center
+                                  gap=24.0
                                 col gap=3.0
                                   text "ACCOUNT VALUE"
                                     with
@@ -2164,46 +2194,77 @@ view
                                         @text-fg
                                   if !portfolio_history_ready(portfolio_history, portfolio_range)
                                     text "Historical performance" size=18.0 @text-fg
+                                if portfolio_history_ready(portfolio_history, portfolio_range)
+                                  col gap=3.0
+                                    text range_heading(portfolio_range)
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    row gap=8.0 align=center
+                                      Delta #range-change
+                                        with
+                                          value=fmt_pnl(portfolio_history_change(portfolio_history, portfolio_range))
+                                          up=(portfolio_history_change(portfolio_history, portfolio_range) >= 0.0)
+                                          size=13.0
+                                          width=96.0
+                                          hug=true
+                                      Delta #range-change-pct
+                                        with
+                                          value=fmt_pct(portfolio_history_change_pct(portfolio_history, portfolio_range))
+                                          up=(portfolio_history_change(portfolio_history, portfolio_range) >= 0.0)
+                                          size=11.0
+                                          width=72.0
+                                          hug=true
+                                  col gap=3.0
+                                    text "PEAK"
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    text fmt_usd(portfolio_history_peak(portfolio_history, portfolio_range)) #peak
+                                      with
+                                        size=13.0
+                                        font=digits
+                                        @text-muted
+                                  col gap=3.0
+                                    text "OFF PEAK"
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    text fmt_share(portfolio_history_drawdown(portfolio_history, portfolio_range)) #drawdown
+                                      with
+                                        size=13.0
+                                        font=digits
+                                        @text-muted
+                                  col gap=3.0
+                                    text "MAX DRAWDOWN"
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    text fmt_share(portfolio_history_max_drawdown(portfolio_history, portfolio_range)) #max-drawdown
+                                      with
+                                        size=13.0
+                                        font=digits
+                                        @text-down
                                 space w=fill
-                                if portfolio_history_change(portfolio_history, portfolio_range) >= 0.0 && portfolio_history_ready(portfolio_history, portfolio_range)
-                                  col gap=2.0
-                                    text fmt_pnl(portfolio_history_change(portfolio_history, portfolio_range))
-                                      with
-                                        size=12.0
-                                        w=104.0
-                                        align-x=right
-                                        font=digits
-                                        @text-up
-                                    text fmt_pct(portfolio_history_change_pct(portfolio_history, portfolio_range))
-                                      with
-                                        size=10.0
-                                        w=104.0
-                                        align-x=right
-                                        font=digits
-                                        @text-up
-                                if portfolio_history_change(portfolio_history, portfolio_range) < 0.0 && portfolio_history_ready(portfolio_history, portfolio_range)
-                                  col gap=2.0
-                                    text fmt_pnl(portfolio_history_change(portfolio_history, portfolio_range))
-                                      with
-                                        size=12.0
-                                        w=104.0
-                                        align-x=right
-                                        font=digits
-                                        @text-down
-                                    text fmt_pct(portfolio_history_change_pct(portfolio_history, portfolio_range))
-                                      with
-                                        size=10.0
-                                        w=104.0
-                                        align-x=right
-                                        font=digits
-                                        @text-down
+                                // The point under the pointer, or nothing. A
+                                // fixed width so the readout appearing does not
+                                // move the figures beside it.
+                                text hover_readout(portfolio_hover, false) #performance-readout
+                                  with
+                                    size=12.0
+                                    w=220.0
+                                    align-x=right
+                                    font=digits
+                                    @text-fg
                               if portfolio_history_ready(portfolio_history, portfolio_range)
                                 // The canvas takes its size from the box around
-                                // it, the way the terminal's chart does. Left as
-                                // a bare `h=fill` child of this column it drew
-                                // into nothing and the panel read as empty.
+                                // it, the way the terminal's chart does.
                                 box #performance-frame w=fill h=fill
-                                  extern portfolio_performance(portfolio_history, portfolio_range) #performance-chart
+                                  extern portfolio_performance(portfolio_history, portfolio_range, portfolio_hover) #performance-chart -> portfolio_hovered _
                               if !portfolio_history_ready(portfolio_history, portfolio_range)
                                 box
                                   with
@@ -2275,6 +2336,144 @@ view
                                       text "No open exposure." size=11.0 @text-faint
                                   for asset in portfolio_assets(positions)
                                     PortfolioAllocation asset=asset
+                        // What each step of the window booked, beside the
+                        // fold over the fills. The bars are the venue's own
+                        // cumulative PnL differenced, so a deposit that lifts
+                        // the curve above does not paint a bar here.
+                        row
+                          with
+                            w=fill
+                            h=220.0
+                            gap=12.0
+                          box #pnl-bars
+                            with
+                              w=fill
+                              h=fill
+                              p=16.0
+                              bg=panel
+                              r=4.0
+                              border-w=1.0
+                              border=edge
+                            col
+                              with
+                                w=fill
+                                h=fill
+                                gap=12.0
+                              row
+                                with
+                                  w=fill
+                                  align=center
+                                  gap=24.0
+                                col gap=3.0
+                                  text "PNL BY PERIOD"
+                                    with
+                                      size=10.0
+                                      tracking=1.0
+                                      @text-faint
+                                  text "What each step of the window booked, from the venue's own ledger"
+                                    with
+                                      size=11.0
+                                      @text-muted
+                                if portfolio_pnl_ready(portfolio_history, portfolio_range)
+                                  col gap=3.0
+                                    text range_heading(portfolio_range)
+                                      with
+                                        size=10.0
+                                        tracking=1.0
+                                        @text-faint
+                                    Delta #range-pnl
+                                      with
+                                        value=fmt_pnl(portfolio_history_pnl(portfolio_history, portfolio_range))
+                                        up=(portfolio_history_pnl(portfolio_history, portfolio_range) >= 0.0)
+                                        size=13.0
+                                        width=96.0
+                                        hug=true
+                                space w=fill
+                                text hover_readout(portfolio_hover, true) #pnl-readout
+                                  with
+                                    size=12.0
+                                    w=220.0
+                                    align-x=right
+                                    font=digits
+                                    @text-fg
+                              if portfolio_pnl_ready(portfolio_history, portfolio_range)
+                                box #pnl-frame w=fill h=fill
+                                  extern portfolio_pnl_bars(portfolio_history, portfolio_range, portfolio_hover) #pnl-chart -> portfolio_hovered _
+                              if !portfolio_pnl_ready(portfolio_history, portfolio_range)
+                                box
+                                  with
+                                    w=fill
+                                    h=fill
+                                    p=20.0
+                                    bg=raised
+                                    r=3.0
+                                    align-x=center
+                                    align-y=center
+                                  text portfolio_history_note(portfolio_history) #pnl-note
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      align-x=center
+                                      wrap=word
+                                      @text-muted
+                          box #fill-history
+                            with
+                              w=300.0
+                              h=fill
+                              p=16.0
+                              bg=panel
+                              r=4.0
+                              border-w=1.0
+                              border=edge
+                            col
+                              with
+                                w=fill
+                                h=fill
+                                gap=12.0
+                              col gap=4.0
+                                text "FILL HISTORY"
+                                  with
+                                    size=10.0
+                                    tracking=1.0
+                                    @text-faint
+                                text "What this account has actually traded" size=11.0 @text-muted
+                              rule horizontal thickness=1.0 color=edge
+                              // Three different empty states, and only the first
+                              // is about this app: the venue will not serve fills
+                              // at all, the venue serves them and there are none,
+                              // or no address has been given to ask about. Each
+                              // says which, because a shared blank would let the
+                              // unreadable one pass as the quiet one.
+                              if !empty(venue_account_gap(venue))
+                                box
+                                  with
+                                    w=fill
+                                    h=fill
+                                    align-x=center
+                                    align-y=center
+                                  text venue_account_gap(venue) #fill-history-gap
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      align-x=center
+                                      wrap=word
+                                      @text-faint
+                              if empty(venue_account_gap(venue)) && empty(fills)
+                                box
+                                  with
+                                    w=fill
+                                    h=fill
+                                    align-x=center
+                                    align-y=center
+                                  text venue_fills_note(venue, watching, fills_error)
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      align-x=center
+                                      wrap=word
+                                      @text-faint
+                              if empty(venue_account_gap(venue)) && !empty(fills)
+                                PortfolioFillRows #fill-rows flow=portfolio_flow(fills)
                         row
                           with
                             w=fill
@@ -2405,73 +2604,14 @@ view
                                 PortfolioFundingRows #funding-rows
                                   with
                                     funding=portfolio_funding(positions)
-                          box #fill-history
-                            with
-                              w=300.0
-                              h=fill
-                              p=16.0
-                              bg=panel
-                              r=4.0
-                              border-w=1.0
-                              border=edge
-                            col
-                              with
-                                w=fill
-                                h=fill
-                                gap=12.0
-                              col gap=4.0
-                                text "FILL HISTORY"
-                                  with
-                                    size=10.0
-                                    tracking=1.0
-                                    @text-faint
-                                text "What this account has actually traded" size=11.0 @text-muted
-                              rule horizontal thickness=1.0 color=edge
-                              // Three different empty states, and only the first
-                              // is about this app: the venue will not serve fills
-                              // at all, the venue serves them and there are none,
-                              // or no address has been given to ask about. Each
-                              // says which, because a shared blank would let the
-                              // unreadable one pass as the quiet one.
-                              if !empty(venue_account_gap(venue))
-                                box
-                                  with
-                                    w=fill
-                                    h=fill
-                                    align-x=center
-                                    align-y=center
-                                  text venue_account_gap(venue) #fill-history-gap
-                                    with
-                                      size=11.0
-                                      w=fill
-                                      align-x=center
-                                      wrap=word
-                                      @text-faint
-                              if empty(venue_account_gap(venue)) && empty(fills)
-                                box
-                                  with
-                                    w=fill
-                                    h=fill
-                                    align-x=center
-                                    align-y=center
-                                  text venue_fills_note(venue, watching, fills_error)
-                                    with
-                                      size=11.0
-                                      w=fill
-                                      align-x=center
-                                      wrap=word
-                                      @text-faint
-                              if empty(venue_account_gap(venue)) && !empty(fills)
-                                PortfolioFillRows #fill-rows flow=portfolio_flow(fills)
                         box #portfolio-assets
                           with
                             w=fill
-                            h=fill
                             bg=panel
                             r=4.0
                             border-w=1.0
                             border=edge
-                          col w=fill h=fill
+                          col w=fill
                             row
                               with
                                 w=fill
@@ -2486,48 +2626,69 @@ view
                                   @text-faint
                               text fmt_count(len(portfolio_assets(positions))) size=10.0 @text-faint
                               space w=fill
+                              // Every row is a way to its market, the same
+                              // way a position row in the terminal is.
+                              text "Pick a row to open its market" size=10.0 @text-faint
+                            // The same facts the terminal's position row
+                            // carries, in the order a risk desk reads them:
+                            // what was paid, what it is worth, where it dies.
                             row
                               with
                                 w=fill
                                 px=14.0
                                 pb=8.0
                                 gap=10.0
-                              text "MARKET / SIDE"
+                              Head #asset-head-market
                                 with
-                                  size=9.0
-                                  w=120.0
-                                  @text-faint
-                              text "SIZE"
+                                  name="MARKET / SIDE"
+                                  width=120.0
+                                  right=false
+                              Head #asset-head-size
                                 with
-                                  size=9.0
-                                  w=90.0
-                                  align-x=right
-                                  @text-faint
-                              text "MARK"
+                                  name="SIZE"
+                                  width=80.0
+                                  right=true
+                              Head #asset-head-entry
                                 with
-                                  size=9.0
-                                  w=100.0
-                                  align-x=right
-                                  @text-faint
+                                  name="ENTRY"
+                                  width=100.0
+                                  right=true
+                              Head #asset-head-mark
+                                with
+                                  name="MARK"
+                                  width=100.0
+                                  right=true
+                              Head #asset-head-liq
+                                with
+                                  name="LIQ"
+                                  width=100.0
+                                  right=true
+                              Head #asset-head-margin
+                                with
+                                  name="MARGIN"
+                                  width=100.0
+                                  right=true
+                              Head #asset-head-funding
+                                with
+                                  name="FUNDING"
+                                  width=100.0
+                                  right=true
                               space w=fill
-                              text "VALUE"
+                              Head #asset-head-value
                                 with
-                                  size=9.0
-                                  w=112.0
-                                  align-x=right
-                                  @text-faint
-                              text "WEIGHT"
+                                  name="VALUE"
+                                  width=112.0
+                                  right=true
+                              Head #asset-head-weight
                                 with
-                                  size=9.0
-                                  w=76.0
-                                  align-x=right
-                                  @text-faint
-                              text "UNREALIZED"
+                                  name="WEIGHT"
+                                  width=64.0
+                                  right=true
+                              Head #asset-head-unrealized
                                 with
-                                  size=9.0
-                                  w=104.0
-                                  align-x=right
-                                  @text-faint
+                                  name="UNREALIZED"
+                                  width=104.0
+                                  right=true
                             rule horizontal thickness=1.0 color=edge
                             if empty(positions)
                               box
@@ -2538,7 +2699,225 @@ view
                                   align-y=center
                                 text "No open positions to list." size=11.0 @text-faint
                             for asset in portfolio_assets(positions)
-                              PortfolioAssetRow asset=asset
+                              PortfolioAssetRow #asset(asset.coin) asset=asset
+                                events
+                                  pick -> pick_symbol _
+                        // What is resting and what has filled, drawn from the
+                        // same rows the terminal draws them from: a reader on
+                        // this page should not have to leave it to see what
+                        // is still out there or what actually printed.
+                        box #portfolio-orders
+                          with
+                            w=fill
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col w=fill
+                            row
+                              with
+                                w=fill
+                                h=42.0
+                                px=14.0
+                                gap=10.0
+                                align=center
+                              text "OPEN ORDERS"
+                                with
+                                  size=10.0
+                                  tracking=1.0
+                                  @text-faint
+                              text fmt_count(len(orders)) size=10.0 @text-faint
+                              space w=fill
+                              Sweeper #portfolio-cancel-all
+                                with
+                                  name="CANCEL ALL"
+                                  count=len(orders)
+                                  cancel=true
+                                  refusal=cancel_all_refusal
+                                events
+                                  pick -> cancel_all
+                            row
+                              with
+                                w=fill
+                                pl=14.0
+                                pr=18.0
+                                pb=8.0
+                                gap=8.0
+                              Head
+                                with
+                                  name="AGE"
+                                  width=44.0
+                                  right=false
+                              Head
+                                with
+                                  name="COIN"
+                                  width=52.0
+                                  right=false
+                              Head
+                                with
+                                  name="SIDE"
+                                  width=52.0
+                                  right=false
+                              space w=fill
+                              Head
+                                with
+                                  name="PRICE"
+                                  width=88.0
+                                  right=true
+                              Head
+                                with
+                                  name="SIZE"
+                                  width=72.0
+                                  right=true
+                              space w=70.0
+                            rule horizontal thickness=1.0 color=edge
+                            if !empty(venue_account_gap(venue))
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_account_gap(venue) #orders-gap
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            if empty(venue_account_gap(venue)) && empty(orders)
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_orders_note(venue, watching, orders_error)
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            for order in orders
+                              OrderRow #portfolio-order(order.oid)
+                                with
+                                  order=order
+                                  now=clock
+                                  refusal=cancel_refusal
+                                events
+                                  pick -> pick_resting _
+                                  cancel -> cancel_order _ _
+                        box #portfolio-fills
+                          with
+                            w=fill
+                            bg=panel
+                            r=4.0
+                            border-w=1.0
+                            border=edge
+                          col w=fill
+                            row
+                              with
+                                w=fill
+                                h=42.0
+                                px=14.0
+                                gap=10.0
+                                align=center
+                              text "FILLS"
+                                with
+                                  size=10.0
+                                  tracking=1.0
+                                  @text-faint
+                              text fmt_count(len(fills)) size=10.0 @text-faint
+                              space w=fill
+                              button #portfolio-export -> export_fills
+                                with
+                                  label="Export these fills to a CSV file"
+                                  disabled=empty(fills)
+                                  p=4.0
+                                active bg=panel text=muted r=3.0
+                                hovered bg=raised text=fg r=3.0
+                                disabled bg=panel text=faint r=3.0
+                                text "CSV"
+                                  with
+                                    size=9.0
+                                    tracking=1.0
+                                    @text-faint
+                            row
+                              with
+                                w=fill
+                                pl=14.0
+                                pr=18.0
+                                pb=8.0
+                                gap=6.0
+                              Head
+                                with
+                                  name="TIME"
+                                  width=52.0
+                                  right=false
+                              Head
+                                with
+                                  name="COIN"
+                                  width=52.0
+                                  right=false
+                              Head
+                                with
+                                  name="SIDE"
+                                  width=52.0
+                                  right=false
+                              space w=fill
+                              Head
+                                with
+                                  name="PRICE"
+                                  width=88.0
+                                  right=true
+                              Head
+                                with
+                                  name="SIZE"
+                                  width=72.0
+                                  right=true
+                              Head
+                                with
+                                  name="REALIZED"
+                                  width=88.0
+                                  right=true
+                            rule horizontal thickness=1.0 color=edge
+                            if !empty(venue_account_gap(venue))
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_account_gap(venue) #fills-gap
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            if empty(venue_account_gap(venue)) && empty(fills)
+                              box
+                                with
+                                  w=fill
+                                  h=72.0
+                                  p=10.0
+                                  align-x=center
+                                  align-y=center
+                                text venue_fills_note(venue, watching, fills_error)
+                                  with
+                                    size=11.0
+                                    w=fill
+                                    align-x=center
+                                    wrap=word
+                                    @text-faint
+                            for fill in fills
+                              FillRow fill=fill #portfolio-fill(fill.tid)
+                                events
+                                  pick -> pick_symbol _
                   Page.settings
                     scroll #settings
                       with

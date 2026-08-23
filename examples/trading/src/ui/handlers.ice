@@ -518,6 +518,11 @@ on tick_portfolio
 
 on pick_portfolio_range(next)
   portfolio_range = next
+  // A point held on the range being left is a point on a line no longer drawn.
+  portfolio_hover = none
+
+on portfolio_hovered(next)
+  portfolio_hover = next
 
 // A universe is the first thing that can say whether the market on screen
 // exists here. The ticker does not travel: the venues list different markets

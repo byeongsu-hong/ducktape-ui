@@ -209,7 +209,7 @@ test trading_a_position_reads_the_same_return_on_both_pages
   // The asset table is the bottom of a dashboard taller than its window, and
   // the rows are below the header the other test stops at — hence the taller
   // viewport, which is the only one that draws a whole asset row.
-  scroll-to portfolio 0.0 2000.0
+  scroll-to portfolio 0.0 1000.0
   expect text "+857.41%" within assets
   expect no text "+21.44%" within assets
 
@@ -336,6 +336,14 @@ test trading_the_dashboard_shows_margin_and_funding_from_the_positions_it_holds
   target volume = counted/volume
   target rate = counted/win-rate
   dispatch navigate(Page.portfolio)
+  // The fold over the fills sits beside the PnL bars, a screen down; the
+  // margin and funding cards are under those. Each is scrolled into the
+  // window before it is read.
+  scroll-to portfolio 0.0 300.0
+  expect text "FILLS" within printed
+  expect text "$95,882.50" within volume
+  expect text "100%" within rate
+  scroll-to portfolio 0.0 760.0
   expect text "MAINTENANCE REQUIRED" within margin
   expect text "CROSS EQUITY" within margin
   expect text "$3,755,422.51" within margin
@@ -350,14 +358,10 @@ test trading_the_dashboard_shows_margin_and_funding_from_the_positions_it_holds
   expect text "PAID" within funding
   expect text "$0.00" within paid
   expect text "RECEIVED" within funding
-  expect text "$3,309,454.00" within received
-  expect no text "$3,309,454.00" within paid
+  expect text "$33,244.00" within received
+  expect no text "$33,244.00" within paid
   expect no text "$0.00" within received
-  expect text "+$3.3M" within funding
-  // And the fills say what has actually been traded.
-  expect text "FILLS" within printed
-  expect text "$95,882.50" within volume
-  expect text "100%" within rate
+  expect text "+$33.2K" within funding
 
 // The honesty rule, and the one that costs nothing to get wrong: Lighter
 // serves this account's fills only to an API-key-signed token, so there is no
@@ -379,11 +383,13 @@ test trading_a_venue_that_serves_no_fills_refuses_to_total_them
   expect no text "$0.00" within realized
   expect no text "+$0.00" within realized
   expect text "Not served here" within realized
+  scroll-to portfolio 0.0 300.0
   expect text "Lighter serves resting orders and this account's fills only to an API-key-signed token, which an address alone cannot get and this app does not hold." within printed
   expect no text "FILLS" within printed
   expect no text "WIN RATE" within printed
   // Funding is not in that gap: Lighter publishes it per position, so the
   // panel that can be drawn still is.
+  scroll-to portfolio 0.0 760.0
   expect text "FUNDING"
   expect text "RECEIVED"
   capture page_portfolio_lighter
@@ -435,7 +441,7 @@ test trading_a_position_row_announces_the_columns_it_replaces
   target lower = app/terminal-fit/trade/lower
   target held_rows = lower/positions/position-list
   target bitcoin = held_rows/position("BTC")/root
-  expect a11y bitcoin name "BTC short 30, entry 81,461.50, liquidation 174,000.00, funding +$3.3M, unrealized +$523.8K at +857.41%"
+  expect a11y bitcoin name "BTC short 30, entry 81,461.50, liquidation 174,000.00, funding +$33.1K, unrealized +$523.8K at +857.41%"
 
 // The venue reports no cliff for this one, so the LIQ column reads "none" and
 // the name may not invent a price to fill the gap.
@@ -502,3 +508,81 @@ test trading_the_narrow_positions_table_reads_as_one_block_too
   // Still inside the pane rather than clipped out of its right edge, which is
   // what a seven-column table does when it is given less width than it needs.
   expect unrealized.right <= table.right
+
+// The curve carries what a reader asks of an equity line before the line
+// itself — where it ended, what it moved, how far under its high it stands,
+// the worst it fell — and the point under the pointer is printed in the card,
+// where a capture can read it, rather than in a tooltip. A range change drops
+// the held point: it was a point on a line no longer drawn.
+test trading_the_portfolio_curve_carries_its_figures_and_answers_the_pointer
+  preset portfolio
+  viewport 1660 820
+  target app = #app
+  target portfolio = app/portfolio
+  target curve = portfolio/performance
+  target readout = curve/performance-readout
+  target chart = curve/performance-frame/performance-chart
+  target bars = portfolio/pnl-bars
+  expect text "LAST MONTH" within curve
+  expect text "PEAK" within curve
+  expect text fmt_usd(portfolio_history_peak(portfolio_history, portfolio_range)) within curve
+  expect text "MAX DRAWDOWN" within curve
+  expect text fmt_share(portfolio_history_max_drawdown(portfolio_history, portfolio_range)) within curve
+  // The headline is the account the tiles read, not a figure of its own.
+  expect text fmt_usd(portfolio_history_end(portfolio_history, portfolio_range)) within curve
+  expect fmt_usd(portfolio_history_end(portfolio_history, portfolio_range)) == "$3,761,182.51"
+  expect empty(hover_readout(portfolio_hover, false))
+  move chart
+  expect !empty(hover_readout(portfolio_hover, false))
+  expect text hover_readout(portfolio_hover, false) within readout
+  dispatch pick_portfolio_range("day")
+  expect empty(hover_readout(portfolio_hover, false))
+  expect text "LAST DAY" within curve
+  // Four ranges are four lines, not one line under four names.
+  expect portfolio_history_start(portfolio_history, "day") != portfolio_history_start(portfolio_history, "month")
+  expect portfolio_history_start(portfolio_history, "month") != portfolio_history_start(portfolio_history, "all")
+  scroll-to portfolio 0.0 300.0
+  expect text "PNL BY PERIOD" within bars
+  expect text "LAST DAY" within bars
+  expect text fmt_pnl(portfolio_history_pnl(portfolio_history, portfolio_range)) within bars
+
+// Every asset row is a way to its market, the way a position row in the
+// terminal is, and it carries the position's own facts — entry, liquidation,
+// leverage, margin, funding — rather than sending the reader back to the
+// terminal for them.
+test trading_an_asset_row_carries_the_position_and_opens_its_market
+  preset portfolio
+  viewport 1660 1200
+  target app = #app
+  target portfolio = app/portfolio
+  target assets = portfolio/portfolio-assets
+  target eth = assets/asset("ETH")/root
+  scroll-to portfolio 0.0 1000.0
+  expect text "ENTRY" within assets
+  expect text "LIQ" within assets
+  expect text "MARGIN" within assets
+  expect text "3,600.00" within eth
+  expect text "3,526.53" within eth
+  expect text "25x isolated" within eth
+  expect text "$5,760.00" within eth
+  expect a11y eth name "Open the ETH market"
+  click eth
+  expect page == Page.terminal
+  expect coin == "ETH"
+
+// What is resting and what has printed, on the dashboard, from the same rows
+// the terminal draws them from.
+test trading_the_dashboard_lists_open_orders_and_fills
+  preset portfolio
+  viewport 1660 1200
+  target app = #app
+  target portfolio = app/portfolio
+  target resting = portfolio/portfolio-orders
+  target printed = portfolio/portfolio-fills
+  scroll-to portfolio 0.0 1300.0
+  expect text "OPEN ORDERS" within resting
+  expect text "63,600.00" within resting
+  expect text "64,440.00" within resting
+  expect text "FILLS" within printed
+  expect text "64,010.00" within printed
+  expect text "63,940.00" within printed

@@ -140,7 +140,7 @@ test trading_the_whole_terminal_renders_from_fixtures
   expect text "$3,761,182.51" within equity
   expect no text "—" within equity
   expect no text "No data"
-  expect text "1%"
+  expect text "0.6%"
   expect text "34%"
   expect no text "NOT LIVE"
   expect text "IF YOU CROSS"

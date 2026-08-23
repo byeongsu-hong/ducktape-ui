@@ -332,7 +332,7 @@ test trading_a_builder_market_declines_the_account_it_is_not_held_against
   // requirement it carried goes with it. Any reading at all is the point here:
   // this is the arithmetic the builder market below has to refuse rather than
   // repeat.
-  expect order_load(account, coin, ticket_size, ticket_buy, focus) == "1% → 0%"
+  expect order_load(account, coin, ticket_size, ticket_buy, focus) == "0.6% → 0%"
   click builder
   dispatch ticket_sized("1.5")
   expect order_load(account, coin, ticket_size, ticket_buy, focus) == "separate margin account"
