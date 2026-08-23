@@ -2,7 +2,7 @@ use super::focus_control::FocusControl;
 use super::theme::{Theme, alpha, mix};
 use iced::widget::text::IntoFragment;
 use iced::widget::{Checkbox as IcedCheckbox, checkbox as iced_checkbox};
-use iced::{Background, Border, Element};
+use iced::{Background, Border, Color, Element};
 
 /// A styled native checkbox with keyboard focus and Space/Enter activation.
 pub struct Checkbox<'a, Message>
@@ -23,6 +23,7 @@ pub fn checkbox<'a, Message>(
 where
     Message: Clone + 'a,
 {
+    let tokens = CheckboxTokens::from(theme);
     let theme = *theme;
     Checkbox {
         widget: iced_checkbox(checked)
@@ -30,7 +31,7 @@ where
             .size(16)
             .spacing(theme.spacing.sm)
             .text_size(theme.typography.caption)
-            .style(move |_iced_theme, status| style(&theme, status)),
+            .style(move |_iced_theme, status| style(tokens, status)),
         checked,
         on_toggle: None,
         theme,
@@ -68,8 +69,41 @@ where
     }
 }
 
-pub fn style(theme: &Theme, status: iced_checkbox::Status) -> iced_checkbox::Style {
-    let palette = theme.palette;
+/// The theme tokens a checkbox's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per checkbox per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct CheckboxTokens {
+    accent: Color,
+    background: Color,
+    foreground: Color,
+    input: Color,
+    muted: Color,
+    primary: Color,
+    primary_foreground: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for CheckboxTokens {
+    fn from(theme: &Theme) -> Self {
+        let palette = theme.palette;
+        Self {
+            accent: palette.accent,
+            background: palette.background,
+            foreground: palette.foreground,
+            input: palette.input,
+            muted: palette.muted,
+            primary: palette.primary,
+            primary_foreground: palette.primary_foreground,
+            radius: theme.radius.row,
+        }
+    }
+}
+
+pub fn style(tokens: CheckboxTokens, status: iced_checkbox::Status) -> iced_checkbox::Style {
+    let palette = tokens;
     let (is_checked, hovered, disabled) = match status {
         iced_checkbox::Status::Active { is_checked } => (is_checked, false, false),
         iced_checkbox::Status::Hovered { is_checked } => (is_checked, true, false),
@@ -124,7 +158,7 @@ pub fn style(theme: &Theme, status: iced_checkbox::Status) -> iced_checkbox::Sty
         border: Border {
             color: border,
             width: 1.0,
-            radius: theme.radius.row.into(),
+            radius: tokens.radius.into(),
         },
         text_color: Some(text),
     }
@@ -139,16 +173,28 @@ mod tests {
 
     #[test]
     fn state_styles_preserve_semantic_feedback() {
-        let checked = style(&LIGHT, iced_checkbox::Status::Active { is_checked: true });
+        let checked = style(
+            CheckboxTokens::from(&LIGHT),
+            iced_checkbox::Status::Active { is_checked: true },
+        );
         assert_eq!(checked.background, Background::Color(LIGHT.palette.primary));
         assert_eq!(checked.icon_color, LIGHT.palette.primary_foreground);
 
-        let active = style(&LIGHT, iced_checkbox::Status::Active { is_checked: false });
-        let hovered = style(&LIGHT, iced_checkbox::Status::Hovered { is_checked: false });
+        let active = style(
+            CheckboxTokens::from(&LIGHT),
+            iced_checkbox::Status::Active { is_checked: false },
+        );
+        let hovered = style(
+            CheckboxTokens::from(&LIGHT),
+            iced_checkbox::Status::Hovered { is_checked: false },
+        );
         assert_ne!(hovered.background, active.background);
         assert_ne!(hovered.border.color, active.border.color);
 
-        let disabled = style(&LIGHT, iced_checkbox::Status::Disabled { is_checked: true });
+        let disabled = style(
+            CheckboxTokens::from(&LIGHT),
+            iced_checkbox::Status::Disabled { is_checked: true },
+        );
         assert!(disabled.icon_color.a < checked.icon_color.a);
         assert!(disabled.text_color.unwrap().a < checked.text_color.unwrap().a);
     }

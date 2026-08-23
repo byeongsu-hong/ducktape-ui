@@ -1,6 +1,6 @@
 use super::theme::{Theme, alpha};
 use iced::widget::{TextInput, text_input};
-use iced::{Background, Border};
+use iced::{Background, Border, Color};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InputVariant {
@@ -25,19 +25,54 @@ pub fn input_with_variant<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let theme = *theme;
+    let tokens = InputTokens::from(theme);
     text_input(placeholder, value)
         .padding(theme.controls.input_padding)
         .size(theme.typography.body)
-        .style(move |_iced_theme, status| style(&theme, variant, status))
+        .style(move |_iced_theme, status| style(tokens, variant, status))
+}
+
+/// The theme tokens a text field's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per field per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct InputTokens {
+    pub(crate) background: Color,
+    pub(crate) destructive: Color,
+    pub(crate) foreground: Color,
+    pub(crate) input: Color,
+    pub(crate) muted: Color,
+    pub(crate) muted_foreground: Color,
+    pub(crate) primary: Color,
+    pub(crate) ring: Color,
+    pub(crate) radius: f32,
+}
+
+impl From<&Theme> for InputTokens {
+    fn from(theme: &Theme) -> Self {
+        let palette = theme.palette;
+        Self {
+            background: palette.background,
+            destructive: palette.destructive,
+            foreground: palette.foreground,
+            input: palette.input,
+            muted: palette.muted,
+            muted_foreground: palette.muted_foreground,
+            primary: palette.primary,
+            ring: palette.ring,
+            radius: theme.radius.button,
+        }
+    }
 }
 
 pub fn style(
-    theme: &Theme,
+    tokens: InputTokens,
     variant: InputVariant,
     status: text_input::Status,
 ) -> text_input::Style {
-    let palette = theme.palette;
+    let palette = tokens;
     let invalid = variant == InputVariant::Invalid;
     let mut border = if invalid {
         palette.destructive
@@ -73,7 +108,7 @@ pub fn style(
         border: Border {
             color: border,
             width,
-            radius: theme.radius.button.into(),
+            radius: tokens.radius.into(),
         },
         icon: palette.muted_foreground,
         placeholder,
@@ -89,7 +124,11 @@ mod tests {
 
     #[test]
     fn invalid_input_uses_destructive_border() {
-        let style = style(&LIGHT, InputVariant::Invalid, text_input::Status::Active);
+        let style = style(
+            InputTokens::from(&LIGHT),
+            InputVariant::Invalid,
+            text_input::Status::Active,
+        );
         assert_eq!(style.border.color, LIGHT.palette.destructive);
     }
 }

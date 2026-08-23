@@ -159,8 +159,7 @@ where
         let selected_label = selected.as_ref().map(ToString::to_string);
         let on_selected: Rc<SelectFn<'a, T, Message>> = Rc::new(on_selected);
         let select = Rc::clone(&on_selected);
-        let theme = *theme;
-
+        let menu = menu_style(theme);
         let pick_list = pick_list(Rc::clone(&options), selected, move |option| select(option))
             .padding(Padding::from([8.0, HORIZONTAL_PADDING]))
             .text_size(theme.typography.caption)
@@ -168,7 +167,7 @@ where
                 NATIVE_SELECT_TEXT_LINE_HEIGHT,
             )))
             .handle(Handle::None)
-            .menu_style(move |_iced_theme| menu_style(&theme));
+            .menu_style(move |_iced_theme| menu);
 
         Self {
             id,
@@ -182,7 +181,7 @@ where
             direction: Direction::LeftToRight,
             disabled: false,
             invalid: false,
-            theme,
+            theme: *theme,
         }
         .restyle()
     }
@@ -247,12 +246,12 @@ where
     }
 
     fn restyle(mut self) -> Self {
-        let theme = self.theme;
+        let tokens = TriggerTokens::from(&self.theme);
         let disabled = self.disabled;
         let invalid = self.invalid;
 
         self.pick_list = self.pick_list.style(move |_iced_theme, status| {
-            let mut style = state_style(&theme, status, disabled, invalid);
+            let mut style = state_style(tokens, status, disabled, invalid);
             // The wrapper draws trigger content so reading direction is explicit.
             style.text_color = Color::TRANSPARENT;
             style.placeholder_color = Color::TRANSPARENT;
@@ -722,11 +721,43 @@ pub fn style(
     theme: &Theme,
     status: iced::widget::pick_list::Status,
 ) -> iced::widget::pick_list::Style {
-    state_style(theme, status, false, false)
+    state_style(TriggerTokens::from(theme), status, false, false)
+}
+
+/// The theme tokens a native-select trigger's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per select per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct TriggerTokens {
+    background: Color,
+    destructive: Color,
+    foreground: Color,
+    input: Color,
+    muted: Color,
+    muted_foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for TriggerTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            background: theme.palette.background,
+            destructive: theme.palette.destructive,
+            foreground: theme.palette.foreground,
+            input: theme.palette.input,
+            muted: theme.palette.muted,
+            muted_foreground: theme.palette.muted_foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
 }
 
 pub fn state_style(
-    theme: &Theme,
+    tokens: TriggerTokens,
     status: iced::widget::pick_list::Status,
     disabled: bool,
     invalid: bool,
@@ -734,18 +765,18 @@ pub fn state_style(
     use iced::widget::pick_list::Status;
 
     let mut border_color = if invalid {
-        theme.palette.destructive
+        tokens.destructive
     } else {
-        theme.palette.input
+        tokens.input
     };
     let mut border_width = 1.0;
-    let mut background = theme.palette.background;
-    let mut text_color = theme.palette.foreground;
-    let mut placeholder_color = theme.palette.muted_foreground;
-    let mut handle_color = theme.palette.muted_foreground;
+    let mut background = tokens.background;
+    let mut text_color = tokens.foreground;
+    let mut placeholder_color = tokens.muted_foreground;
+    let mut handle_color = tokens.muted_foreground;
 
     if disabled {
-        background = theme.palette.muted;
+        background = tokens.muted;
         border_color = alpha(border_color, 0.5);
         text_color = alpha(text_color, 0.5);
         placeholder_color = alpha(placeholder_color, 0.5);
@@ -754,17 +785,17 @@ pub fn state_style(
         match status {
             Status::Active => {}
             Status::Hovered if !invalid => {
-                border_color = theme.palette.foreground;
-                handle_color = theme.palette.foreground;
+                border_color = tokens.foreground;
+                handle_color = tokens.foreground;
             }
             Status::Opened { .. } => {
                 border_color = if invalid {
-                    theme.palette.destructive
+                    tokens.destructive
                 } else {
-                    theme.palette.ring
+                    tokens.ring
                 };
                 border_width = 2.0;
-                handle_color = theme.palette.foreground;
+                handle_color = tokens.foreground;
             }
             Status::Hovered => {}
         }
@@ -778,7 +809,7 @@ pub fn state_style(
         border: Border {
             color: border_color,
             width: border_width,
-            radius: theme.radius.button.into(),
+            radius: tokens.radius.into(),
         },
     }
 }
@@ -860,13 +891,13 @@ mod tests {
     #[test]
     fn disabled_and_invalid_styles_keep_semantic_states() {
         let invalid = state_style(
-            &LIGHT,
+            TriggerTokens::from(&LIGHT),
             iced::widget::pick_list::Status::Hovered,
             false,
             true,
         );
         let disabled = state_style(
-            &LIGHT,
+            TriggerTokens::from(&LIGHT),
             iced::widget::pick_list::Status::Hovered,
             true,
             false,

@@ -55,5 +55,9 @@ fn radio_group_build_shares_keyboard_snapshots() {
         stats.allocations <= ALLOCATION_BUDGET,
         "each key handler should share the group snapshots: {stats:?}"
     );
+    assert!(
+        stats.bytes_allocated <= 10_227,
+        "a style closure should capture tokens, not a whole theme: {stats:?}"
+    );
     assert_eq!(clones, OPTIONS, "each value should be snapshotted once");
 }

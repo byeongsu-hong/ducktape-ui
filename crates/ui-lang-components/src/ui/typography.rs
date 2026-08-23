@@ -40,10 +40,9 @@ pub fn inline_code<'a, Message>(
 where
     Message: 'a,
 {
-    let styled_theme = *theme;
     container(typography(content, TextRole::Machine, theme))
         .padding([theme.spacing.xs / 2.0, theme.spacing.xs])
-        .style(move |_iced_theme| inline_code_style(&styled_theme))
+        .class(inline_code_style(theme))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

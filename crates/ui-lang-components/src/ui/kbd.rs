@@ -13,8 +13,6 @@ where
         weight: Weight::Medium,
         ..theme.typography.monospace_font
     };
-    let styled_theme = *theme;
-
     container(
         text(key)
             .size(theme.typography.meta)
@@ -22,7 +20,7 @@ where
             .color(theme.palette.muted_foreground),
     )
     .padding([theme.spacing.xs / 2.0, theme.spacing.xs])
-    .style(move |_iced_theme| style(&styled_theme))
+    .class(style(theme))
 }
 
 pub fn style(theme: &Theme) -> iced::widget::container::Style {

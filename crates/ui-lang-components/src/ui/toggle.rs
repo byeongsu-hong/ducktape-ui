@@ -114,13 +114,14 @@ where
             .center_y(Length::Fixed(metrics.height));
         let content = MinimumWidth::new(content, metrics.minimum_width);
         let theme = self.theme;
+        let tokens = ToggleTokens::from(&theme);
         let variant = self.variant;
         let pressed = self.pressed;
         let radius = self.radius;
         let mut control = FocusControl::new(self.id, content, self.on_toggle, &theme)
             .disabled(self.disabled)
             .style(move |_iced_theme, status| {
-                style_with_radius(&theme, variant, pressed, status, radius)
+                style_with_radius(tokens, variant, pressed, status, radius)
             });
 
         if let Some(handler) = self.on_key_press {
@@ -141,17 +142,54 @@ where
 }
 
 pub fn style(theme: &Theme, variant: ToggleVariant, pressed: bool, status: Status) -> Style {
-    style_with_radius(theme, variant, pressed, status, theme.radius.button.into())
+    style_with_radius(
+        ToggleTokens::from(theme),
+        variant,
+        pressed,
+        status,
+        theme.radius.button.into(),
+    )
+}
+
+/// The theme tokens a toggle's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per toggle per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+struct ToggleTokens {
+    accent: Color,
+    accent_foreground: Color,
+    foreground: Color,
+    input: Color,
+    muted: Color,
+    muted_foreground: Color,
+    ring: Color,
+}
+
+impl From<&Theme> for ToggleTokens {
+    fn from(theme: &Theme) -> Self {
+        let palette = theme.palette;
+        Self {
+            accent: palette.accent,
+            accent_foreground: palette.accent_foreground,
+            foreground: palette.foreground,
+            input: palette.input,
+            muted: palette.muted,
+            muted_foreground: palette.muted_foreground,
+            ring: palette.ring,
+        }
+    }
 }
 
 fn style_with_radius(
-    theme: &Theme,
+    tokens: ToggleTokens,
     variant: ToggleVariant,
     pressed: bool,
     status: Status,
     radius: border::Radius,
 ) -> Style {
-    let palette = theme.palette;
+    let palette = tokens;
     let disabled = status == Status::Disabled;
     let active_background = pressed.then_some(palette.accent);
     let mut background = match status {
@@ -194,7 +232,7 @@ fn style_with_radius(
         },
         shadow: Shadow::default(),
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: palette.ring,
             width: 2.0,
             radius: expanded_radius(radius, 2.0),
         },

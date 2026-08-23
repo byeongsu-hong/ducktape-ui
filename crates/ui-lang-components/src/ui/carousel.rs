@@ -13,8 +13,8 @@ use iced::advanced::{
 use iced::keyboard::{self, key::Named};
 use iced::widget::{Column, Row, Space, container, text};
 use iced::{
-    Alignment, Background, Border, Element, Event, Length, Point, Rectangle, Size, Vector, touch,
-    window,
+    Alignment, Background, Border, Color, Element, Event, Length, Point, Rectangle, Size, Vector,
+    touch, window,
 };
 
 pub const DEFAULT_SWIPE_THRESHOLD: f32 = 48.0;
@@ -908,11 +908,11 @@ where
     Message: Clone + 'a,
 {
     let content = container(content).padding([8, 12]).center_y(36);
-    let theme = *theme;
+    let tokens = ControlTokens::from(theme);
 
-    FocusControl::new(id, content, on_press, &theme)
+    FocusControl::new(id, content, on_press, theme)
         .disabled(disabled)
-        .style(move |_iced_theme, status| control_style(&theme, status))
+        .style(move |_iced_theme, status| control_style(tokens, status))
 }
 
 fn control_label(
@@ -930,25 +930,53 @@ fn control_label(
     }
 }
 
-fn control_style(theme: &Theme, status: Status) -> focus_control::Style {
-    let mut style = focus_control::style(theme, status);
+/// The theme tokens a carousel navigation control's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per control per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+struct ControlTokens {
+    accent: Color,
+    foreground: Color,
+    input: Color,
+    muted_foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for ControlTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            foreground: theme.palette.foreground,
+            input: theme.palette.input,
+            muted_foreground: theme.palette.muted_foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
+fn control_style(tokens: ControlTokens, status: Status) -> focus_control::Style {
+    let mut style = focus_control::ring_style(tokens.ring, tokens.radius);
     style.background = match status {
-        Status::Hovered | Status::Pressed => Some(Background::Color(theme.palette.accent)),
+        Status::Hovered | Status::Pressed => Some(Background::Color(tokens.accent)),
         _ => None,
     };
     style.text_color = Some(if status == Status::Disabled {
-        alpha(theme.palette.muted_foreground, 0.5)
+        alpha(tokens.muted_foreground, 0.5)
     } else {
-        theme.palette.foreground
+        tokens.foreground
     });
     style.border = Border {
         color: if status == Status::Disabled {
-            alpha(theme.palette.input, 0.5)
+            alpha(tokens.input, 0.5)
         } else {
-            theme.palette.input
+            tokens.input
         },
         width: 1.0,
-        radius: theme.radius.button.into(),
+        radius: tokens.radius.into(),
     };
     style
 }
@@ -998,13 +1026,13 @@ where
         indices.reverse();
     }
 
+    let tokens = IndicatorTokens::from(theme);
     let controls = indices.into_iter().map(|index| {
         let selected = index == state.index();
         let content = container(content(index, selected)).center(28);
-        let theme = *theme;
         Element::from(
-            FocusControl::new(focus_id(index), content, on_select(index), &theme)
-                .style(move |_iced_theme, status| indicator_style(&theme, selected, status)),
+            FocusControl::new(focus_id(index), content, on_select(index), theme)
+                .style(move |_iced_theme, status| indicator_style(tokens, selected, status)),
         )
     });
 
@@ -1019,24 +1047,58 @@ where
     }
 }
 
-fn indicator_style(theme: &Theme, selected: bool, status: Status) -> focus_control::Style {
-    let mut style = focus_control::style(theme, status);
+/// The theme tokens a carousel indicator's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per indicator per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+struct IndicatorTokens {
+    accent: Color,
+    input: Color,
+    muted_foreground: Color,
+    primary: Color,
+    primary_foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for IndicatorTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            input: theme.palette.input,
+            muted_foreground: theme.palette.muted_foreground,
+            primary: theme.palette.primary,
+            primary_foreground: theme.palette.primary_foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
+fn indicator_style(
+    tokens: IndicatorTokens,
+    selected: bool,
+    status: Status,
+) -> focus_control::Style {
+    let mut style = focus_control::ring_style(tokens.ring, tokens.radius);
     style.background = match (selected, status) {
-        (true, Status::Disabled) => Some(Background::Color(alpha(theme.palette.primary, 0.5))),
-        (true, _) => Some(Background::Color(theme.palette.primary)),
-        (false, Status::Hovered | Status::Pressed) => Some(Background::Color(theme.palette.accent)),
+        (true, Status::Disabled) => Some(Background::Color(alpha(tokens.primary, 0.5))),
+        (true, _) => Some(Background::Color(tokens.primary)),
+        (false, Status::Hovered | Status::Pressed) => Some(Background::Color(tokens.accent)),
         _ => None,
     };
     style.text_color = Some(if selected {
-        theme.palette.primary_foreground
+        tokens.primary_foreground
     } else {
-        theme.palette.muted_foreground
+        tokens.muted_foreground
     });
     style.border = Border {
         color: if selected {
-            theme.palette.primary
+            tokens.primary
         } else {
-            theme.palette.input
+            tokens.input
         },
         width: 1.0,
         radius: 999.0.into(),

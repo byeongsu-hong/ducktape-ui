@@ -360,7 +360,10 @@ pub fn checkbox_style(
     _iced_theme: &iced::Theme,
     status: iced::widget::checkbox::Status,
 ) -> iced::widget::checkbox::Style {
-    ui_lang_components::ui::checkbox::style(&theme(), status)
+    ui_lang_components::ui::checkbox::style(
+        ui_lang_components::ui::checkbox::CheckboxTokens::from(&theme()),
+        status,
+    )
 }
 
 pub fn switch(id: &str, checked: bool, disabled: bool) -> Element<'static, bool> {

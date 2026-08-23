@@ -494,15 +494,12 @@ where
             .align_y(Alignment::Center)
             .spacing(self.theme.spacing.sm)
             .width(Length::Fill);
-            let theme = self.theme;
-            let invalid = self.invalid;
-            let disabled = self.disabled;
             container(trigger_content)
                 .width(self.width)
                 .height(DATE_PICKER_HEIGHT)
                 .padding([0.0, 12.0])
                 .align_y(Vertical::Center)
-                .style(move |_iced_theme| trigger_style(&theme, invalid, disabled))
+                .class(trigger_style(&self.theme, self.invalid, self.disabled))
                 .into()
         };
 

@@ -40,7 +40,7 @@ fn performance_contract_toggle_group_reuses_control_storage() {
     for orientation in orientations {
         render(&ids, &state, orientation);
     }
-    let stats = clean_window((132_096, 45_130_752), || {
+    let stats = clean_window((132_096, 9_741_312), || {
         for _ in 0..RENDERS {
             for orientation in orientations {
                 render(&ids, &state, orientation);
@@ -55,6 +55,6 @@ fn performance_contract_toggle_group_reuses_control_storage() {
     );
     assert_eq!(stats.allocations, 132_096, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, 45_130_752, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 9_741_312, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 0, "{stats:?}");
 }

@@ -50,7 +50,7 @@ where
                     bottom: 0.0,
                     left,
                 })
-                .style(move |_| row_style(&theme, selected))
+                .class(row_style(&theme, selected))
                 .into()
         },
         on_event,

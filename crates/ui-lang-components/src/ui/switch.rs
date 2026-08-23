@@ -91,12 +91,13 @@ where
             .padding((metrics.height - metrics.thumb) / 2.0)
             .width(metrics.width)
             .height(metrics.height);
+        let tokens = SwitchTokens::from(&self.theme);
         let theme = self.theme;
         let checked = self.checked;
 
         FocusControl::new(self.id, content, self.on_toggle, &theme)
             .disabled(self.disabled)
-            .style(move |_iced_theme, status| style(&theme, checked, status))
+            .style(move |_iced_theme, status| style(tokens, checked, status))
     }
 }
 
@@ -109,8 +110,32 @@ where
     }
 }
 
-pub fn style(theme: &Theme, checked: bool, status: Status) -> Style {
-    let palette = theme.palette;
+/// The theme tokens a switch's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per switch per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct SwitchTokens {
+    foreground: Color,
+    input: Color,
+    primary: Color,
+    ring: Color,
+}
+
+impl From<&Theme> for SwitchTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            foreground: theme.palette.foreground,
+            input: theme.palette.input,
+            primary: theme.palette.primary,
+            ring: theme.palette.ring,
+        }
+    }
+}
+
+pub fn style(tokens: SwitchTokens, checked: bool, status: Status) -> Style {
+    let palette = tokens;
     let base = if checked {
         palette.primary
     } else {
@@ -201,10 +226,10 @@ mod tests {
 
     #[test]
     fn switch_styles_distinguish_state_and_preserve_focus_color() {
-        let off = style(&LIGHT, false, Status::Active);
-        let on = style(&LIGHT, true, Status::Active);
-        let hovered = style(&LIGHT, true, Status::Hovered);
-        let disabled = style(&LIGHT, true, Status::Disabled);
+        let off = style(SwitchTokens::from(&LIGHT), false, Status::Active);
+        let on = style(SwitchTokens::from(&LIGHT), true, Status::Active);
+        let hovered = style(SwitchTokens::from(&LIGHT), true, Status::Hovered);
+        let disabled = style(SwitchTokens::from(&LIGHT), true, Status::Disabled);
 
         assert_eq!(off.background, Some(Background::Color(LIGHT.palette.input)));
         assert_eq!(
@@ -216,7 +241,7 @@ mod tests {
         assert!(disabled.border.color.a < on.border.color.a);
 
         for theme in [LIGHT, DARK] {
-            let focused = style(&theme, true, Status::Focused);
+            let focused = style(SwitchTokens::from(&theme), true, Status::Focused);
             assert!(
                 focused
                     .focus_ring
@@ -226,7 +251,7 @@ mod tests {
             );
             assert_eq!(focused.focus_offset, 0.0);
 
-            let disabled = style(&theme, false, Status::Disabled);
+            let disabled = style(SwitchTokens::from(&theme), false, Status::Disabled);
             assert!((0.45..=0.5).contains(&disabled.border.color.a));
         }
     }

@@ -37,15 +37,24 @@ pub struct Style {
 
 /// The default transparent shell and semantic focus ring.
 pub fn style(theme: &UiTheme, _status: Status) -> Style {
+    ring_style(theme.palette.ring, theme.radius.button)
+}
+
+/// The default style from the only two tokens it reads.
+///
+/// Every styled widget boxes its style closure, so a closure that captures a
+/// whole [`UiTheme`] heap-allocates 1.1 KB per widget per frame to read these
+/// twenty bytes.
+pub(crate) fn ring_style(ring: Color, radius: f32) -> Style {
     Style {
         background: None,
         text_color: None,
         border: Border::default(),
         shadow: Shadow::default(),
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: ring,
             width: 2.0,
-            radius: (theme.radius.button + 4.0).into(),
+            radius: (radius + 4.0).into(),
         },
         focus_offset: 2.0,
     }
@@ -174,7 +183,7 @@ where
         on_activate: Message,
         theme: &UiTheme,
     ) -> Self {
-        let theme = *theme;
+        let (ring, radius) = (theme.palette.ring, theme.radius.button);
 
         Self {
             id,
@@ -186,7 +195,7 @@ where
             on_scroll_intent: None,
             repeat_key_presses: false,
             disabled: false,
-            style: Box::new(move |_iced_theme, status| style(&theme, status)),
+            style: Box::new(move |_iced_theme, _status| ring_style(ring, radius)),
         }
     }
 
@@ -196,7 +205,7 @@ where
         content: impl Into<Element<'a, Message, Theme, Renderer>>,
         theme: &UiTheme,
     ) -> Self {
-        let theme = *theme;
+        let (ring, radius) = (theme.palette.ring, theme.radius.button);
 
         Self {
             id,
@@ -208,7 +217,7 @@ where
             on_scroll_intent: None,
             repeat_key_presses: false,
             disabled: false,
-            style: Box::new(move |_iced_theme, status| style(&theme, status)),
+            style: Box::new(move |_iced_theme, _status| ring_style(ring, radius)),
         }
     }
 

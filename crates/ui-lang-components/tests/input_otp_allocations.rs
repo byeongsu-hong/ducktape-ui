@@ -56,7 +56,7 @@ fn performance_contract_otp_preallocates_slot_storage() {
     const RENDERS: usize = 256;
 
     render();
-    let stats = clean_window((112_128, 24_888_320), || {
+    let stats = clean_window((112_128, 10_667_008), || {
         for _ in 0..RENDERS {
             render();
         }
@@ -69,6 +69,6 @@ fn performance_contract_otp_preallocates_slot_storage() {
     );
     assert_eq!(stats.allocations, 112_128, "{stats:?}");
     assert_eq!(stats.reallocations, 2_816, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, 24_888_320, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 10_667_008, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 432_128, "{stats:?}");
 }

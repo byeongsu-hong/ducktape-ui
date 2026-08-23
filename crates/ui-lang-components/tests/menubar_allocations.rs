@@ -37,7 +37,7 @@ fn performance_contract_menubar_reverses_trigger_storage_in_place() {
     let menu_state = MenuState::default();
 
     render(&menus, &state, &menu_state);
-    let stats = clean_window((167_424, 47_547_648), || {
+    let stats = clean_window((167_424, 10_732_800), || {
         for _ in 0..RENDERS {
             render(&menus, &state, &menu_state);
         }
@@ -49,5 +49,5 @@ fn performance_contract_menubar_reverses_trigger_storage_in_place() {
     );
     assert!(stats.allocations <= 167_426, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert!(stats.bytes_allocated <= 47_547_792, "{stats:?}");
+    assert!(stats.bytes_allocated <= 10_732_944, "{stats:?}");
 }

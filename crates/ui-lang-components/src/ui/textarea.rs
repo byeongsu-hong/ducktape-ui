@@ -2,7 +2,7 @@ use super::theme::{Theme, alpha};
 use iced::advanced::text::highlighter;
 use iced::widget::text::IntoFragment;
 use iced::widget::{TextEditor, text_editor, text_editor::Content};
-use iced::{Background, Border, Element};
+use iced::{Background, Border, Color, Element};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TextareaVariant {
@@ -28,14 +28,14 @@ pub fn textarea_control<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let theme = *theme;
+    let tokens = TextareaTokens::from(theme);
 
     text_editor(content)
         .placeholder(placeholder)
         .min_height(96)
         .padding([theme.spacing.sm, theme.spacing.md])
         .size(theme.typography.body)
-        .style(move |_iced_theme, status| style(&theme, variant, status))
+        .style(move |_iced_theme, status| style(tokens, variant, status))
 }
 
 /// Builds an editable textarea with the standard ducktape styling.
@@ -54,12 +54,47 @@ where
         .into()
 }
 
+/// The theme tokens a text field's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per field per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct TextareaTokens {
+    pub(crate) background: Color,
+    pub(crate) destructive: Color,
+    pub(crate) foreground: Color,
+    pub(crate) input: Color,
+    pub(crate) muted: Color,
+    pub(crate) muted_foreground: Color,
+    pub(crate) primary: Color,
+    pub(crate) ring: Color,
+    pub(crate) radius: f32,
+}
+
+impl From<&Theme> for TextareaTokens {
+    fn from(theme: &Theme) -> Self {
+        let palette = theme.palette;
+        Self {
+            background: palette.background,
+            destructive: palette.destructive,
+            foreground: palette.foreground,
+            input: palette.input,
+            muted: palette.muted,
+            muted_foreground: palette.muted_foreground,
+            primary: palette.primary,
+            ring: palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
 pub fn style(
-    theme: &Theme,
+    tokens: TextareaTokens,
     variant: TextareaVariant,
     status: text_editor::Status,
 ) -> text_editor::Style {
-    let palette = theme.palette;
+    let palette = tokens;
     let invalid = variant == TextareaVariant::Invalid;
     let mut border = if invalid {
         palette.destructive
@@ -95,7 +130,7 @@ pub fn style(
         border: Border {
             color: border,
             width,
-            radius: theme.radius.button.into(),
+            radius: tokens.radius.into(),
         },
         placeholder,
         value,
@@ -112,7 +147,11 @@ mod tests {
 
     #[test]
     fn focused_textarea_uses_ring() {
-        let style = style(&LIGHT, TextareaVariant::Default, FOCUSED);
+        let style = style(
+            TextareaTokens::from(&LIGHT),
+            TextareaVariant::Default,
+            FOCUSED,
+        );
 
         assert_eq!(style.border.color, LIGHT.palette.ring);
         assert_eq!(style.border.width, 2.0);
@@ -120,7 +159,11 @@ mod tests {
 
     #[test]
     fn focused_invalid_textarea_keeps_destructive_border() {
-        let style = style(&LIGHT, TextareaVariant::Invalid, FOCUSED);
+        let style = style(
+            TextareaTokens::from(&LIGHT),
+            TextareaVariant::Invalid,
+            FOCUSED,
+        );
 
         assert_eq!(style.border.color, LIGHT.palette.destructive);
         assert_eq!(style.border.width, 2.0);

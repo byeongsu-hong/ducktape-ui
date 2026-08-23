@@ -1,4 +1,4 @@
-use super::input::{InputVariant, style as input_style};
+use super::input::{InputTokens, InputVariant, style as input_style};
 use super::theme::Theme;
 use iced::widget::{Container, Row, TextInput, container, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length};
@@ -30,11 +30,10 @@ where
         content = content.push(trailing);
     }
 
-    let theme = *theme;
     container(content)
         .padding([0.0, theme.spacing.md])
         .width(Length::Fill)
-        .style(move |_| style(&theme, variant))
+        .class(style(theme, variant))
 }
 
 /// A native Iced text input styled for [`input_group`].
@@ -48,11 +47,11 @@ pub fn group_input<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let theme = *theme;
+    let tokens = InputTokens::from(theme);
     text_input(placeholder, value)
         .padding([theme.spacing.sm, 0.0])
         .size(theme.typography.caption)
-        .style(move |_iced_theme, status| group_input_style(&theme, status))
+        .style(move |_iced_theme, status| group_input_style(tokens, status))
 }
 
 pub fn style(theme: &Theme, variant: InputVariant) -> iced::widget::container::Style {
@@ -70,8 +69,8 @@ pub fn style(theme: &Theme, variant: InputVariant) -> iced::widget::container::S
     }
 }
 
-pub fn group_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let mut style = input_style(theme, InputVariant::Default, status);
+pub fn group_input_style(tokens: InputTokens, status: text_input::Status) -> text_input::Style {
+    let mut style = input_style(tokens, InputVariant::Default, status);
     style.border = Border::default();
     if !matches!(status, text_input::Status::Disabled) {
         style.background = Background::Color(Color::TRANSPARENT);
@@ -100,14 +99,22 @@ mod tests {
             text_input::Status::Focused { is_hovered: false },
             text_input::Status::Disabled,
         ] {
-            assert_eq!(group_input_style(&LIGHT, status).border.width, 0.0);
+            assert_eq!(
+                group_input_style(InputTokens::from(&LIGHT), status)
+                    .border
+                    .width,
+                0.0
+            );
         }
     }
 
     #[test]
     fn child_never_paints_only_part_of_the_group_background() {
-        let active = group_input_style(&LIGHT, text_input::Status::Active);
-        let focused = group_input_style(&LIGHT, text_input::Status::Focused { is_hovered: true });
+        let active = group_input_style(InputTokens::from(&LIGHT), text_input::Status::Active);
+        let focused = group_input_style(
+            InputTokens::from(&LIGHT),
+            text_input::Status::Focused { is_hovered: true },
+        );
 
         assert_eq!(focused.background, active.background);
         assert_eq!(focused.border.width, 0.0);

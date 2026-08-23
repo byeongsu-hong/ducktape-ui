@@ -13,10 +13,10 @@ pub enum ProgressVariant {
 
 /// Builds a compact progress bar for a bounded percentage.
 pub fn progress(percent: f32, variant: ProgressVariant, theme: &Theme) -> ProgressBar<'static> {
-    let theme = *theme;
+    let visuals = style(theme, variant);
     progress_bar(0.0..=100.0, normalized(percent))
         .girth(5)
-        .style(move |_iced_theme| style(&theme, variant))
+        .style(move |_iced_theme| visuals)
 }
 
 pub fn style(theme: &Theme, variant: ProgressVariant) -> iced::widget::progress_bar::Style {

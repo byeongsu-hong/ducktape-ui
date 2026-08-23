@@ -31,7 +31,7 @@ fn performance_contract_accordion_preallocates_section_storage() {
 
     let focus_ids = (0..ITEMS).map(|_| widget::Id::unique()).collect::<Vec<_>>();
     render(&focus_ids);
-    let stats = clean_window((247_296, 55_883_776), || {
+    let stats = clean_window((247_296, 19_576_832), || {
         for _ in 0..RENDERS {
             render(&focus_ids);
         }
@@ -43,6 +43,6 @@ fn performance_contract_accordion_preallocates_section_storage() {
     );
     assert!(stats.allocations <= 247_296, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert!(stats.bytes_allocated <= 55_883_776, "{stats:?}");
+    assert!(stats.bytes_allocated <= 19_576_832, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 0, "{stats:?}");
 }

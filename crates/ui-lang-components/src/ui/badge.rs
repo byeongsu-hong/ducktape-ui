@@ -77,17 +77,12 @@ impl<'a> Badge<'a> {
         }
         content = content.push(self.label.size(metrics.text));
 
-        let theme = self.theme;
-        let variant = self.variant;
-        let dot = self.dot;
         container(content)
             .padding([metrics.vertical, metrics.horizontal])
-            .style(move |_iced_theme| {
-                if dot {
-                    style_with_dot(&theme, variant, true)
-                } else {
-                    style(&theme, variant)
-                }
+            .class(if self.dot {
+                style_with_dot(&self.theme, self.variant, true)
+            } else {
+                style(&self.theme, self.variant)
             })
     }
 }

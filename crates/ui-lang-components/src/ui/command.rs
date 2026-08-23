@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use super::focus_control::{self, FocusControl, Status};
-use super::input::{InputVariant, style as base_input_style};
+use super::input::{InputTokens, InputVariant, style as base_input_style};
 use super::scroll_area::scroll_area;
 use super::theme::{Theme, alpha, mix};
 use iced::advanced::{
@@ -513,7 +513,8 @@ where
             })
             .or_else(|| enabled.iter().position(|enabled| *enabled));
         let input_id = command_input_id(&self.id);
-        let input_theme = self.theme;
+        let input_tokens = InputTokens::from(&self.theme);
+        let card_radius = self.theme.radius.card;
         let on_query = Rc::clone(&self.on_event);
         let on_submit = active.map(|index| {
             let target = &targets[index];
@@ -530,7 +531,9 @@ where
             .size(self.theme.typography.caption)
             .line_height(LineHeight::Absolute(Pixels(20.0)))
             .width(Length::Fill)
-            .style(move |_iced_theme, status| command_input_style(&input_theme, status));
+            .style(move |_iced_theme, status| {
+                command_input_style(input_tokens, card_radius, status)
+            });
         let input_targets = Rc::clone(&targets);
         let input_enabled = Rc::clone(&enabled);
         let input_event = Rc::clone(&self.on_event);
@@ -609,7 +612,7 @@ where
                 let key_targets = Rc::clone(&targets);
                 let key_enabled = Rc::clone(&enabled);
                 let key_event = Rc::clone(&self.on_event);
-                let item_theme = self.theme;
+                let tokens = ItemTokens::from(&self.theme);
 
                 results = results.push(
                     FocusControl::new(
@@ -628,9 +631,7 @@ where
                             focus_item: true,
                         }))
                     })
-                    .style(move |_iced_theme, status| {
-                        command_item_style(&item_theme, selected, status)
-                    }),
+                    .style(move |_iced_theme, status| command_item_style(tokens, selected, status)),
                 );
             }
         }
@@ -652,8 +653,6 @@ where
         let results = scroll_area(results, &self.theme)
             .id(command_results_id(&self.id))
             .height(self.results_height);
-        let theme = self.theme;
-
         container(
             Column::new()
                 .push(input)
@@ -662,7 +661,7 @@ where
                 .width(Length::Fill),
         )
         .width(self.width)
-        .style(move |_iced_theme| command_surface_style(&theme))
+        .class(command_surface_style(&self.theme))
         .into()
     }
 }
@@ -852,14 +851,18 @@ pub fn command_surface_style(theme: &Theme) -> iced::widget::container::Style {
     }
 }
 
-pub fn command_input_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
-    let mut style = base_input_style(theme, InputVariant::Default, status);
+pub fn command_input_style(
+    tokens: InputTokens,
+    card_radius: f32,
+    status: text_input::Status,
+) -> text_input::Style {
+    let mut style = base_input_style(tokens, InputVariant::Default, status);
     style.border = Border {
-        radius: theme.radius.card.into(),
+        radius: card_radius.into(),
         ..Border::default()
     };
     style.background = match status {
-        text_input::Status::Focused { .. } => Background::Color(alpha(theme.palette.ring, 0.07)),
+        text_input::Status::Focused { .. } => Background::Color(alpha(tokens.ring, 0.07)),
         text_input::Status::Disabled => style.background,
         text_input::Status::Active | text_input::Status::Hovered => {
             Background::Color(Color::TRANSPARENT)
@@ -868,33 +871,61 @@ pub fn command_input_style(theme: &Theme, status: text_input::Status) -> text_in
     style
 }
 
-pub fn command_item_style(theme: &Theme, selected: bool, status: Status) -> focus_control::Style {
-    let mut style = focus_control::style(theme, status);
+/// The theme tokens a command item's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per item per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct ItemTokens {
+    accent: Color,
+    foreground: Color,
+    popover_foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for ItemTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            foreground: theme.palette.foreground,
+            popover_foreground: theme.palette.popover_foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.row,
+        }
+    }
+}
+
+pub fn command_item_style(
+    tokens: ItemTokens,
+    selected: bool,
+    status: Status,
+) -> focus_control::Style {
+    let mut style = focus_control::ring_style(tokens.ring, tokens.radius);
     style.background = match status {
-        Status::Disabled => selected.then_some(Background::Color(alpha(theme.palette.accent, 0.5))),
+        Status::Disabled => selected.then_some(Background::Color(alpha(tokens.accent, 0.5))),
         Status::Pressed => Some(Background::Color(mix(
-            theme.palette.accent,
-            theme.palette.foreground,
+            tokens.accent,
+            tokens.foreground,
             0.08,
         ))),
         Status::Hovered => Some(Background::Color(if selected {
-            mix(theme.palette.accent, theme.palette.foreground, 0.04)
+            mix(tokens.accent, tokens.foreground, 0.04)
         } else {
-            theme.palette.accent
+            tokens.accent
         })),
-        Status::Focused | Status::Active if selected => {
-            Some(Background::Color(theme.palette.accent))
-        }
-        Status::Focused => Some(Background::Color(alpha(theme.palette.accent, 0.55))),
+        Status::Focused | Status::Active if selected => Some(Background::Color(tokens.accent)),
+        Status::Focused => Some(Background::Color(alpha(tokens.accent, 0.55))),
         Status::Active => None,
     };
     style.text_color = Some(if status == Status::Disabled {
-        alpha(theme.palette.popover_foreground, 0.5)
+        alpha(tokens.popover_foreground, 0.5)
     } else {
-        theme.palette.popover_foreground
+        tokens.popover_foreground
     });
-    style.border.radius = theme.radius.row.into();
-    style.focus_ring.radius = (theme.radius.row + 2.0).into();
+    style.border.radius = tokens.radius.into();
+    style.focus_ring.radius = (tokens.radius + 2.0).into();
     style.focus_ring.width = 1.5;
     style.focus_offset = 1.0;
     style
@@ -1291,24 +1322,27 @@ mod tests {
             );
             assert_eq!(surface.border.color, theme.palette.border);
 
-            let selected = command_item_style(&theme, true, Status::Active);
+            let selected = command_item_style(ItemTokens::from(&theme), true, Status::Active);
             assert_eq!(
                 selected.background,
                 Some(Background::Color(theme.palette.accent))
             );
 
-            let focused = command_item_style(&theme, false, Status::Focused);
+            let focused = command_item_style(ItemTokens::from(&theme), false, Status::Focused);
             assert_eq!(focused.focus_ring.color, theme.palette.ring);
             assert!(focused.focus_ring.width > 0.0);
 
-            let disabled = command_item_style(&theme, false, Status::Disabled);
+            let disabled = command_item_style(ItemTokens::from(&theme), false, Status::Disabled);
             assert_eq!(
                 disabled.text_color,
                 Some(alpha(theme.palette.popover_foreground, 0.5))
             );
 
-            let input =
-                command_input_style(&theme, text_input::Status::Focused { is_hovered: false });
+            let input = command_input_style(
+                InputTokens::from(&theme),
+                theme.radius.card,
+                text_input::Status::Focused { is_hovered: false },
+            );
             assert_eq!(input.border.width, 0.0);
             assert_ne!(input.background, Background::Color(Color::TRANSPARENT));
         }

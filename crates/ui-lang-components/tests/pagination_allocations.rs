@@ -32,7 +32,7 @@ fn performance_contract_pagination_preallocates_row_storage() {
         .collect::<Vec<_>>();
 
     render(&items);
-    let stats = clean_window((132_096, 46_986_752), || {
+    let stats = clean_window((132_096, 14_022_144), || {
         for _ in 0..RENDERS {
             render(&items);
         }
@@ -45,6 +45,6 @@ fn performance_contract_pagination_preallocates_row_storage() {
     );
     assert_eq!(stats.allocations, 132_096, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, 46_986_752, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 14_022_144, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 0, "{stats:?}");
 }

@@ -32,7 +32,7 @@ fn performance_contract_calendar_reuses_rtl_caption_storage() {
     );
 
     render(&state);
-    let stats = clean_window((122_112, 34_757_888), || {
+    let stats = clean_window((122_112, 9_553_152), || {
         for _ in 0..RENDERS {
             render(&state);
         }
@@ -44,5 +44,5 @@ fn performance_contract_calendar_reuses_rtl_caption_storage() {
     );
     assert!(stats.allocations <= 122_624, "{stats:?}");
     assert!(stats.reallocations <= 13_312, "{stats:?}");
-    assert!(stats.bytes_allocated <= 34_959_616, "{stats:?}");
+    assert!(stats.bytes_allocated <= 9_754_880, "{stats:?}");
 }

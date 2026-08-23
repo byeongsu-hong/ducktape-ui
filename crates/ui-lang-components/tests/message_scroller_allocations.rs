@@ -32,7 +32,7 @@ fn performance_contract_message_scroller_reuses_row_buffer() {
     let state = MessageScrollerState::new("allocation-contract");
     render(&state);
 
-    let stats = clean_window((50_368, 4_590_208), || {
+    let stats = clean_window((50_368, 4_518_272), || {
         for _ in 0..RENDERS {
             render(&state);
         }
@@ -44,5 +44,5 @@ fn performance_contract_message_scroller_reuses_row_buffer() {
     );
     assert!(stats.allocations <= 50_368, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert!(stats.bytes_allocated <= 4_590_208, "{stats:?}");
+    assert!(stats.bytes_allocated <= 4_518_272, "{stats:?}");
 }

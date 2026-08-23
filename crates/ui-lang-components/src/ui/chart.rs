@@ -2039,11 +2039,10 @@ where
             .width(Length::Fill),
         );
     }
-    let theme = *theme;
     container(content)
         .width(Length::Fixed(180.0))
         .padding(theme.spacing.md)
-        .style(move |_| tooltip_style(&theme))
+        .class(tooltip_style(theme))
 }
 
 fn tooltip_indicator<'a, Message>(color: Color, indicator: TooltipIndicator) -> Element<'a, Message>
@@ -2207,11 +2206,10 @@ where
     for values in &model.rows {
         body = body.push(companion_row(values, false, theme));
     }
-    let theme = *theme;
     container(body.spacing(theme.spacing.sm))
         .width(Length::Fill)
         .padding(theme.spacing.md)
-        .style(move |_| iced::widget::container::Style {
+        .class(iced::widget::container::Style {
             background: Some(Background::Color(theme.palette.card)),
             text_color: Some(theme.palette.card_foreground),
             border: Border {

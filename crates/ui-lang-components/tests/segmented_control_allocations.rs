@@ -24,7 +24,7 @@ fn performance_contract_segmented_control_preallocates_child_storage() {
     const SEGMENTS: usize = 64;
 
     render(SEGMENTS);
-    let stats = clean_window((99_072, 44_327_936), || {
+    let stats = clean_window((99_072, 11_426_816), || {
         for _ in 0..RENDERS {
             render(SEGMENTS);
         }
@@ -36,6 +36,6 @@ fn performance_contract_segmented_control_preallocates_child_storage() {
     );
     assert!(stats.allocations <= 99_072, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert!(stats.bytes_allocated <= 44_327_936, "{stats:?}");
+    assert!(stats.bytes_allocated <= 11_426_816, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 0, "{stats:?}");
 }

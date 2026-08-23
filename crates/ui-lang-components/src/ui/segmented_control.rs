@@ -51,11 +51,9 @@ where
                 .on_press(on_select(value)),
         )
     }));
-    let theme = *theme;
-
     container(content)
         .padding(2)
-        .style(move |_iced_theme| iced::widget::container::Style {
+        .class(iced::widget::container::Style {
             background: Some(Background::Color(theme.palette.muted)),
             border: Border {
                 color: theme.palette.border,

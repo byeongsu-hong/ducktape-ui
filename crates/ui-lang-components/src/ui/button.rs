@@ -161,6 +161,7 @@ where
             .align_x(self.alignment)
             .align_y(Vertical::Center);
         let theme = self.theme;
+        let tokens = ButtonTokens::from(&theme);
         let variant = self.variant;
         let on_press = (!self.disabled).then_some(self.on_press).flatten();
         let widget = iced_button(content)
@@ -175,7 +176,7 @@ where
         };
         let widget = match self.style {
             Some(custom) => widget.style(custom),
-            None => widget.style(move |_iced_theme, status| style(&theme, variant, status)),
+            None => widget.style(move |_iced_theme, status| style(tokens, variant, status)),
         };
 
         match on_press {
@@ -223,12 +224,63 @@ where
     }
 }
 
+/// The theme tokens a button's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per button per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct ButtonTokens {
+    accent: Color,
+    accent_foreground: Color,
+    border: Color,
+    brand: Color,
+    card: Color,
+    control_line: Color,
+    destructive: Color,
+    destructive_foreground: Color,
+    disabled: Color,
+    disabled_foreground: Color,
+    foreground: Color,
+    primary: Color,
+    primary_foreground: Color,
+    primary_hover: Color,
+    secondary: Color,
+    secondary_foreground: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for ButtonTokens {
+    fn from(theme: &Theme) -> Self {
+        let palette = theme.palette;
+        Self {
+            accent: palette.accent,
+            accent_foreground: palette.accent_foreground,
+            border: palette.border,
+            brand: palette.brand,
+            card: palette.card,
+            control_line: palette.control_line,
+            destructive: palette.destructive,
+            destructive_foreground: palette.destructive_foreground,
+            disabled: palette.disabled,
+            disabled_foreground: palette.disabled_foreground,
+            foreground: palette.foreground,
+            primary: palette.primary,
+            primary_foreground: palette.primary_foreground,
+            primary_hover: palette.primary_hover,
+            secondary: palette.secondary,
+            secondary_foreground: palette.secondary_foreground,
+            radius: theme.radius.button,
+        }
+    }
+}
+
 pub fn style(
-    theme: &Theme,
+    tokens: ButtonTokens,
     variant: ButtonVariant,
     status: iced_button::Status,
 ) -> iced_button::Style {
-    let palette = theme.palette;
+    let palette = tokens;
     let (mut background, mut foreground, border_color, border_width) = match variant {
         ButtonVariant::Default => (
             Some(palette.primary),
@@ -307,7 +359,7 @@ pub fn style(
             radius: if matches!(variant, ButtonVariant::Outline | ButtonVariant::Ghost) {
                 8.0.into()
             } else {
-                theme.radius.button.into()
+                tokens.radius.into()
             },
         },
         ..iced_button::Style::default()
@@ -323,9 +375,13 @@ mod tests {
 
     #[test]
     fn disabled_button_uses_the_semantic_disabled_pair() {
-        let active = style(&LIGHT, ButtonVariant::Default, iced_button::Status::Active);
+        let active = style(
+            ButtonTokens::from(&LIGHT),
+            ButtonVariant::Default,
+            iced_button::Status::Active,
+        );
         let disabled = style(
-            &LIGHT,
+            ButtonTokens::from(&LIGHT),
             ButtonVariant::Default,
             iced_button::Status::Disabled,
         );
@@ -386,9 +442,13 @@ mod tests {
             );
         }
         assert_eq!(
-            style(&LIGHT, ButtonVariant::Outline, iced_button::Status::Active)
-                .border
-                .radius,
+            style(
+                ButtonTokens::from(&LIGHT),
+                ButtonVariant::Outline,
+                iced_button::Status::Active
+            )
+            .border
+            .radius,
             8.0.into()
         );
     }
@@ -404,7 +464,7 @@ mod tests {
         );
         assert_eq!(
             style(
-                &SHADCN_LIGHT,
+                ButtonTokens::from(&SHADCN_LIGHT),
                 ButtonVariant::Default,
                 iced_button::Status::Active
             )
@@ -437,7 +497,7 @@ mod tests {
                     iced_button::Status::Hovered,
                     iced_button::Status::Pressed,
                 ] {
-                    let appearance = style(&theme, variant, status);
+                    let appearance = style(ButtonTokens::from(&theme), variant, status);
                     let background = match appearance.background {
                         Some(Background::Color(color)) => color,
                         _ => theme.palette.background,
@@ -454,7 +514,11 @@ mod tests {
 
     #[test]
     fn link_buttons_use_the_sparse_brand_action_color() {
-        let link = style(&LIGHT, ButtonVariant::Link, iced_button::Status::Active);
+        let link = style(
+            ButtonTokens::from(&LIGHT),
+            ButtonVariant::Link,
+            iced_button::Status::Active,
+        );
 
         assert_eq!(link.text_color, LIGHT.palette.brand);
     }

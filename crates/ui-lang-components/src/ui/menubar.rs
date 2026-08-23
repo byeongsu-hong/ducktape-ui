@@ -18,8 +18,8 @@ use iced::keyboard::{self, key::Named};
 use iced::widget::text::LineHeight;
 use iced::widget::{Row, container, text};
 use iced::{
-    Alignment as IcedAlignment, Background, Border, Element, Event, Length, Padding, Pixels,
-    Rectangle, Size, Task, Vector, touch,
+    Alignment as IcedAlignment, Background, Border, Color, Element, Event, Length, Padding, Pixels,
+    Rectangle, Shadow, Size, Task, Vector, touch,
 };
 
 pub const MENUBAR_HEIGHT: f32 = 36.0;
@@ -298,7 +298,7 @@ where
                 let key_enabled = Rc::clone(&enabled);
                 let key_event = Rc::clone(&self.on_event);
                 let direction = self.direction;
-                let trigger_theme = self.theme;
+                let tokens = MenubarTriggerTokens::from(&self.theme);
                 let content = container(
                     text(menu.label.clone())
                         .size(self.theme.typography.caption)
@@ -327,7 +327,7 @@ where
                         ))))
                     })
                     .style(move |_iced_theme, status| {
-                        menubar_trigger_style(&trigger_theme, opened, status)
+                        menubar_trigger_style(tokens, opened, status)
                     }),
                 )
             })
@@ -342,10 +342,7 @@ where
         )
         .padding(2)
         .height(MENUBAR_HEIGHT)
-        .style({
-            let theme = self.theme;
-            move |_iced_theme| menubar_style(&theme)
-        })
+        .class(menubar_style(&self.theme))
         .into();
 
         let open_index = self
@@ -465,28 +462,63 @@ pub fn menubar_style(theme: &Theme) -> iced::widget::container::Style {
     }
 }
 
-pub fn menubar_trigger_style(theme: &Theme, opened: bool, status: Status) -> focus_control::Style {
-    let mut style = focus_control::style(theme, status);
-    style.background = match status {
-        Status::Hovered | Status::Focused => Some(Background::Color(theme.palette.accent)),
-        Status::Pressed => Some(Background::Color(mix(
-            theme.palette.accent,
-            theme.palette.foreground,
-            0.08,
-        ))),
-        _ if opened => Some(Background::Color(theme.palette.accent)),
-        _ => None,
-    };
-    style.text_color = Some(if status == Status::Disabled {
-        alpha(theme.palette.foreground, 0.5)
-    } else {
-        theme.palette.foreground
-    });
-    style.border.radius = theme.radius.row.into();
-    style.focus_ring.width = 1.0;
-    style.focus_ring.radius = theme.radius.row.into();
-    style.focus_offset = 0.0;
-    style
+/// The theme tokens a menubar trigger's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per trigger per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct MenubarTriggerTokens {
+    accent: Color,
+    foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for MenubarTriggerTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            foreground: theme.palette.foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.row,
+        }
+    }
+}
+
+pub fn menubar_trigger_style(
+    tokens: MenubarTriggerTokens,
+    opened: bool,
+    status: Status,
+) -> focus_control::Style {
+    focus_control::Style {
+        background: match status {
+            Status::Hovered | Status::Focused => Some(Background::Color(tokens.accent)),
+            Status::Pressed => Some(Background::Color(mix(
+                tokens.accent,
+                tokens.foreground,
+                0.08,
+            ))),
+            _ if opened => Some(Background::Color(tokens.accent)),
+            _ => None,
+        },
+        text_color: Some(if status == Status::Disabled {
+            alpha(tokens.foreground, 0.5)
+        } else {
+            tokens.foreground
+        }),
+        border: Border {
+            radius: tokens.radius.into(),
+            ..Border::default()
+        },
+        shadow: Shadow::default(),
+        focus_ring: Border {
+            color: tokens.ring,
+            width: 1.0,
+            radius: tokens.radius.into(),
+        },
+        focus_offset: 0.0,
+    }
 }
 
 struct MenubarWidget<'a, Message> {
@@ -914,7 +946,8 @@ mod tests {
         assert_eq!(MENUBAR_HEIGHT, 36.0);
         for theme in [LIGHT, DARK] {
             let bar = menubar_style(&theme);
-            let open = menubar_trigger_style(&theme, true, Status::Active);
+            let open =
+                menubar_trigger_style(MenubarTriggerTokens::from(&theme), true, Status::Active);
             assert_eq!(bar.border.width, 1.0);
             assert_eq!(
                 open.background,

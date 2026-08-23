@@ -49,7 +49,7 @@ where
                 .height(Length::Fill)
                 .padding(Padding::from([0.0, theme.spacing.md]))
                 .align_y(iced::alignment::Vertical::Center)
-                .style(move |_| header_style(&theme))
+                .class(header_style(&theme))
                 .into()
         },
         move |context| {
@@ -61,7 +61,7 @@ where
                 .height(Length::Fill)
                 .padding(Padding::from([0.0, theme.spacing.md]))
                 .align_y(iced::alignment::Vertical::Center)
-                .style(move |_| cell_style(&theme, selected, active, editing))
+                .class(cell_style(&theme, selected, active, editing))
                 .into()
         },
         on_event,

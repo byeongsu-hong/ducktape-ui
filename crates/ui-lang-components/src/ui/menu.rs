@@ -14,7 +14,9 @@ use iced::font::Weight;
 use iced::keyboard::{self, key::Named};
 use iced::widget::text::LineHeight;
 use iced::widget::{Column, Row, Space, container, rule, text};
-use iced::{Alignment, Background, Border, Element, Font, Length, Padding, Pixels, Task};
+use iced::{
+    Alignment, Background, Border, Color, Element, Font, Length, Padding, Pixels, Shadow, Task,
+};
 
 pub const MENU_ROW_HEIGHT: f32 = 32.0;
 pub const MENU_PANEL_PADDING: f32 = 8.0;
@@ -823,7 +825,7 @@ where
     let key_state = Rc::clone(&state);
     let key_event = Rc::clone(on_event);
     let key_direction = direction;
-    let item_theme = *theme;
+    let tokens = MenuItemTokens::from(theme);
 
     FocusControl::new(menu_item_id(menu_id, &item.id), content, activate, theme)
         .disabled(disabled)
@@ -837,7 +839,7 @@ where
                 .event
                 .map(|event| key_event(event))
         })
-        .style(move |_iced_theme, status| menu_item_style(&item_theme, selected, status))
+        .style(move |_iced_theme, status| menu_item_style(tokens, selected, status))
         .into()
 }
 
@@ -904,34 +906,65 @@ pub fn focus_menu_state<Message>(
         .map_or_else(Task::none, |(_, item)| focus_menu_item(menu_id, &item.id))
 }
 
-pub fn menu_item_style(theme: &Theme, selected: bool, status: Status) -> focus_control::Style {
-    let mut style = focus_control::style(theme, status);
-    style.background = match status {
-        Status::Hovered | Status::Focused => Some(Background::Color(theme.palette.accent)),
-        Status::Pressed => Some(Background::Color(mix(
-            theme.palette.accent,
-            theme.palette.foreground,
-            0.08,
-        ))),
-        Status::Active if selected => Some(Background::Color(theme.palette.accent)),
-        Status::Active | Status::Disabled => None,
-    };
-    style.text_color = Some(if status == Status::Disabled {
-        alpha(theme.palette.popover_foreground, 0.5)
-    } else {
-        theme.palette.popover_foreground
-    });
-    style.border = Border {
-        radius: theme.radius.row.into(),
-        ..Border::default()
-    };
-    style.focus_ring = Border {
-        color: theme.palette.ring,
-        width: 1.0,
-        radius: theme.radius.row.into(),
-    };
-    style.focus_offset = 0.0;
-    style
+/// The theme tokens a menu item's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per item per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct MenuItemTokens {
+    accent: Color,
+    foreground: Color,
+    popover_foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for MenuItemTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            foreground: theme.palette.foreground,
+            popover_foreground: theme.palette.popover_foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.row,
+        }
+    }
+}
+
+pub fn menu_item_style(
+    tokens: MenuItemTokens,
+    selected: bool,
+    status: Status,
+) -> focus_control::Style {
+    focus_control::Style {
+        background: match status {
+            Status::Hovered | Status::Focused => Some(Background::Color(tokens.accent)),
+            Status::Pressed => Some(Background::Color(mix(
+                tokens.accent,
+                tokens.foreground,
+                0.08,
+            ))),
+            Status::Active if selected => Some(Background::Color(tokens.accent)),
+            Status::Active | Status::Disabled => None,
+        },
+        text_color: Some(if status == Status::Disabled {
+            alpha(tokens.popover_foreground, 0.5)
+        } else {
+            tokens.popover_foreground
+        }),
+        border: Border {
+            radius: tokens.radius.into(),
+            ..Border::default()
+        },
+        shadow: Shadow::default(),
+        focus_ring: Border {
+            color: tokens.ring,
+            width: 1.0,
+            radius: tokens.radius.into(),
+        },
+        focus_offset: 0.0,
+    }
 }
 
 #[cfg(test)]
@@ -1094,9 +1127,9 @@ mod tests {
         assert_eq!(MENU_ROW_HEIGHT, 32.0);
         assert_eq!(MENU_PANEL_PADDING, 8.0);
         for theme in [LIGHT, DARK] {
-            let active = menu_item_style(&theme, true, Status::Active);
-            let disabled = menu_item_style(&theme, false, Status::Disabled);
-            let focused = menu_item_style(&theme, false, Status::Focused);
+            let active = menu_item_style(MenuItemTokens::from(&theme), true, Status::Active);
+            let disabled = menu_item_style(MenuItemTokens::from(&theme), false, Status::Disabled);
+            let focused = menu_item_style(MenuItemTokens::from(&theme), false, Status::Focused);
             assert_eq!(
                 active.background,
                 Some(Background::Color(theme.palette.accent))

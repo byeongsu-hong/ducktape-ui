@@ -28,7 +28,7 @@ fn performance_contract_native_select_clones_options_directly() {
     let id = widget::Id::new("native-select-allocation-contract");
 
     render(&options, &id);
-    let stats = clean_window((RENDERS * 5, RENDERS * 2_856), || {
+    let stats = clean_window((RENDERS * 5, RENDERS * 1_168), || {
         for _ in 0..RENDERS {
             render(&options, &id);
         }
@@ -42,6 +42,6 @@ fn performance_contract_native_select_clones_options_directly() {
 
     assert_eq!(stats.allocations, RENDERS * 5, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, RENDERS * 2_856, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, RENDERS * 1_168, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 0, "{stats:?}");
 }

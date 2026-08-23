@@ -1017,11 +1017,10 @@ pub(crate) fn panel<'a, Message>(
 where
     Message: 'a,
 {
-    let theme = *theme;
     let mut panel = container(content)
         .padding(padding)
         .max_width(max_width)
-        .style(move |_iced_theme| panel_style(&theme, kind));
+        .class(panel_style(theme, kind));
 
     if let Some(width) = width {
         panel = panel.width(Length::Fixed(width));

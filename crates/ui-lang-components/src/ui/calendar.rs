@@ -875,28 +875,58 @@ pub fn day_visual_state(
     }
 }
 
-pub fn day_style(theme: &Theme, state: DayVisualState, status: Status) -> FocusStyle {
+/// The theme tokens a calendar day's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per day cell per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct DayTokens {
+    accent: Color,
+    foreground: Color,
+    muted_foreground: Color,
+    primary: Color,
+    primary_foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for DayTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            foreground: theme.palette.foreground,
+            muted_foreground: theme.palette.muted_foreground,
+            primary: theme.palette.primary,
+            primary_foreground: theme.palette.primary_foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
+pub fn day_style(tokens: DayTokens, state: DayVisualState, status: Status) -> FocusStyle {
     let disabled = state.disabled || status == Status::Disabled;
     let endpoint = state.selected && (state.range_start || state.range_end);
     let selected = state.selected && (!state.range_middle || endpoint);
     let mut style = FocusStyle {
         background: if selected {
-            Some(Background::Color(theme.palette.primary))
+            Some(Background::Color(tokens.primary))
         } else if state.range_middle {
-            Some(Background::Color(theme.palette.accent))
+            Some(Background::Color(tokens.accent))
         } else {
             None
         },
         text_color: Some(if selected {
-            theme.palette.primary_foreground
+            tokens.primary_foreground
         } else if disabled || state.outside {
-            alpha(theme.palette.muted_foreground, 0.5)
+            alpha(tokens.muted_foreground, 0.5)
         } else {
-            theme.palette.foreground
+            tokens.foreground
         }),
         border: Border {
             color: if state.today && !selected {
-                theme.palette.ring
+                tokens.ring
             } else {
                 Color::TRANSPARENT
             },
@@ -904,24 +934,24 @@ pub fn day_style(theme: &Theme, state: DayVisualState, status: Status) -> FocusS
             radius: if state.range_middle && !endpoint {
                 0.0.into()
             } else {
-                theme.radius.button.into()
+                tokens.radius.into()
             },
         },
         shadow: Shadow::default(),
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: tokens.ring,
             width: 2.0,
-            radius: (theme.radius.button + 2.0).into(),
+            radius: (tokens.radius + 2.0).into(),
         },
         focus_offset: 1.0,
     };
 
     if !disabled && !selected && !state.range_middle {
         style.background = match status {
-            Status::Hovered => Some(Background::Color(theme.palette.accent)),
+            Status::Hovered => Some(Background::Color(tokens.accent)),
             Status::Pressed => Some(Background::Color(mix(
-                theme.palette.accent,
-                theme.palette.foreground,
+                tokens.accent,
+                tokens.foreground,
                 0.08,
             ))),
             Status::Active | Status::Focused | Status::Disabled => style.background,
@@ -1399,7 +1429,7 @@ where
         let constraints = self.constraints.clone();
         let direction = self.direction;
         let key_event = Rc::clone(&self.on_event);
-        let theme = self.theme;
+        let tokens = DayTokens::from(&self.theme);
 
         FocusControl::new(day_focus_id(&self.id, date), content, activate, &self.theme)
             .disabled(disabled)
@@ -1412,7 +1442,7 @@ where
                     month: target.month(),
                 }))
             })
-            .style(move |_iced_theme, status| day_style(&theme, visual, status))
+            .style(move |_iced_theme, status| day_style(tokens, visual, status))
             .into()
     }
 }
@@ -1785,7 +1815,7 @@ mod tests {
     fn day_styles_keep_center_state_contrast_in_light_and_dark() {
         for theme in [LIGHT, DARK] {
             let selected = day_style(
-                &theme,
+                DayTokens::from(&theme),
                 DayVisualState {
                     selected: true,
                     range_start: true,
@@ -1794,7 +1824,7 @@ mod tests {
                 Status::Focused,
             );
             let disabled = day_style(
-                &theme,
+                DayTokens::from(&theme),
                 DayVisualState {
                     disabled: true,
                     ..DayVisualState::default()
