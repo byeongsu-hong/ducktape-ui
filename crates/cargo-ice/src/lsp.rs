@@ -3929,7 +3929,13 @@ mod tests {
     #[ignore = "formatter allocation contract; run alone with --test-threads=1"]
     fn allocation_contract_formatter_avoids_per_line_scratch_strings() {
         const LINES: usize = 256;
-        const MAX_BLOCKS: u64 = LINES as u64 * 2 + 64;
+        // One block per line, plus a fixed allowance for the document itself.
+        // The coefficient is the claim: a formatter that built a scratch String
+        // per line as well as the output line would sit at 2. It measured 550
+        // against `* 2 + 64` until the line tokenizer stopped owning its words,
+        // and 294 after — so the old bound had stopped describing the code and
+        // would have let the per-line scratch string come back unnoticed.
+        const MAX_BLOCKS: u64 = LINES as u64 + 64;
 
         let mut source = String::from("view\n");
         let mut expected = String::from("view\n");
