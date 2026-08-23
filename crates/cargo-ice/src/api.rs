@@ -1115,7 +1115,7 @@ view
         let mut changes = Vec::new();
 
         let _profiler = dhat::Profiler::builder().testing().build();
-        let measured = crate::allocation::clean_window((0, 0), || {
+        let measured = crate::allocation::clean_window(0, || {
             diff_theme(Some(&baseline), Some(&current), &mut changes);
         });
 

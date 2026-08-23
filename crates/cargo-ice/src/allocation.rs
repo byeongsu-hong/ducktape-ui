@@ -14,12 +14,17 @@
 const WINDOWS: usize = 4;
 
 /// Runs `batch` in its own [`dhat::HeapStats`] window, up to [`WINDOWS`] times,
-/// and returns the first `(blocks, bytes)` that equal `expected` — or the last
-/// window's, when none did, so the caller's assertion reports a real overrun.
+/// and returns the `(blocks, bytes)` of the first window that allocated
+/// `expected_blocks` — or the last window's, when none did, so the caller's
+/// assertion reports a real overrun.
+///
+/// Blocks alone decide whether a window is clean: dhat counts one block per
+/// allocation, so foreign bytes never arrive without a foreign block. Callers
+/// assert whatever they want about the bytes.
 ///
 /// The caller owns the profiler: build it before the first window and hold it
 /// until after the assertion.
-pub fn clean_window(expected: (u64, u64), mut batch: impl FnMut()) -> (u64, u64) {
+pub fn clean_window(expected_blocks: u64, mut batch: impl FnMut()) -> (u64, u64) {
     let mut measured = (0, 0);
     for _ in 0..WINDOWS {
         let before = dhat::HeapStats::get();
@@ -29,7 +34,7 @@ pub fn clean_window(expected: (u64, u64), mut batch: impl FnMut()) -> (u64, u64)
             after.total_blocks - before.total_blocks,
             after.total_bytes - before.total_bytes,
         );
-        if measured == expected {
+        if measured.0 == expected_blocks {
             break;
         }
     }

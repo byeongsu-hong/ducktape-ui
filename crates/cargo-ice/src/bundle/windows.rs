@@ -310,7 +310,7 @@ mod tests {
 
         let expected = upgrade_code("dev.ducktape.ui.showcase");
         let _profiler = dhat::Profiler::builder().testing().build();
-        let measured = crate::allocation::clean_window((CODES, CODES * 36), || {
+        let measured = crate::allocation::clean_window(CODES, || {
             for _ in 0..CODES {
                 assert_eq!(upgrade_code("dev.ducktape.ui.showcase"), expected);
             }
