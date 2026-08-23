@@ -188,16 +188,19 @@ pub(in crate::codegen) fn push_outlined_method(
     })
 }
 
-/// Stores an outlined lazy BODY as an associated fn (no `self`: the lazy
-/// closure is `'static`) over the memoized dependency tuple plus the hoisted
-/// routing context, and returns the fn name. Bodies fold through the same
-/// dedup map as component methods after per-site hoist locals are rewritten
-/// to positional names.
+/// Stores an outlined lazy BODY as an associated fn over the memoized
+/// dependency tuple plus the hoisted routing context, and returns the fn
+/// name. An eager body takes no `self` (the lazy closure is `'static`); a
+/// revision-keyed body borrows `self` to read the state it materializes
+/// inside the builder — the built element is still `'static`. Bodies fold
+/// through the same dedup map as component methods after per-site hoist
+/// locals are rewritten to positional names.
 pub(in crate::codegen) fn push_lazy_body(
     message: &str,
     group: &str,
     dependency_tuple: &str,
     context_params: &[(String, String)],
+    borrows_self: bool,
     body: &str,
 ) -> String {
     let mut renames: Vec<(String, String)> = context_params
@@ -215,8 +218,9 @@ pub(in crate::codegen) fn push_lazy_body(
         .enumerate()
         .map(|(index, (_, ty))| format!(", __ice_lazy_p{index}: {ty}"))
         .collect::<String>();
+    let receiver = if borrows_self { "&self, " } else { "" };
     let key = format!(
-        "(__ice_palette: __IcePalette, __dependency: &{dependency_tuple}{params}) -> __IceElement<'static, {message}> {{ {normalized} }}"
+        "({receiver}__ice_palette: __IcePalette, __dependency: &{dependency_tuple}{params}) -> __IceElement<'static, {message}> {{ {normalized} }}"
     );
     OUTLINE.with_borrow_mut(|state| {
         if let Some(existing) = state.dedup.get(&key) {

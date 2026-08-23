@@ -3,10 +3,10 @@ fn __ui_lang_check_pure_title_of<'a>(arg0: &'a str) { let _: ::std::string::Stri
 fn __ui_lang_check_pure_page_text<'a>(arg0: &'a ::iced::widget::text_editor::Content) { let _: ::std::string::String = crate::backend::page_text(arg0); }
 fn __ui_lang_check_pure_row_label<'a>(arg0: &'a crate::backend::Row) { let _: ::std::string::String = crate::backend::row_label(arg0); }
 fn __ui_lang_check_sync_stamp<'a>(arg0: &'a str) { let _: ::std::string::String = crate::backend::stamp(arg0); }
-self.rows = crate::backend::keep_rows(::std::convert::AsRef::as_ref(&(self.rows)), crate::backend::make_row(::std::convert::AsRef::as_ref(&(self.name))));
-self.last = crate::backend::stamp(::std::convert::AsRef::as_ref(&(self.name)));
-self.total = crate::backend::count_rows(::std::convert::AsRef::as_ref(&(self.rows)));
-self.last = crate::backend::page_text(::std::borrow::Borrow::borrow(&(self.doc)));
+let __ice_next = crate::backend::keep_rows(::std::convert::AsRef::as_ref(&(self.rows)), crate::backend::make_row(::std::convert::AsRef::as_ref(&(self.name)))); if ::ui_lang_runtime::state_changed!(self.rows, __ice_next)
+let __ice_next = crate::backend::stamp(::std::convert::AsRef::as_ref(&(self.name))); if ::ui_lang_runtime::state_changed!(self.last, __ice_next)
+let __ice_next = crate::backend::count_rows(::std::convert::AsRef::as_ref(&(self.rows))); if ::ui_lang_runtime::state_changed!(self.total, __ice_next)
+let __ice_next = crate::backend::page_text(::std::borrow::Borrow::borrow(&(self.doc))); if ::ui_lang_runtime::state_changed!(self.last, __ice_next)
 crate::backend::title_of(::std::convert::AsRef::as_ref(&(self.name)))
 crate::backend::page_text(::std::borrow::Borrow::borrow(&(self.doc)))
 crate::backend::row_label(::std::borrow::Borrow::borrow(&(row)))

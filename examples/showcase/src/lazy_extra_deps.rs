@@ -40,7 +40,13 @@ fn extra_dependency_keeps_unchanged_rows_memoized() {
         "a redraw of {rows} unchanged rows must rebuild none of them"
     );
 
-    driver.state_mut().tasks[0].title.push('!');
+    // Through the handlers, not `state_mut`: `locale` is a state-field
+    // extra, so the row memo is keyed on its revision, which only a
+    // generated write ticks.
+    driver.dispatch(
+        __LazyExtraDepsMessage::Retitle(1, "Seeded one!".into()),
+        here,
+    );
     driver.redraw(here);
     assert_eq!(
         COUNTED_TITLES.with(Cell::take),
@@ -48,7 +54,7 @@ fn extra_dependency_keeps_unchanged_rows_memoized() {
         "retitling one task must rebuild that row and no other"
     );
 
-    driver.state_mut().locale = Locale::Ko;
+    driver.dispatch(__LazyExtraDepsMessage::Translate(Locale::Ko), here);
     driver.redraw(here);
     assert_eq!(
         COUNTED_TITLES.with(Cell::take),

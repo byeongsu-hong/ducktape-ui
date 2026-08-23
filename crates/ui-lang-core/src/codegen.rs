@@ -536,6 +536,36 @@ pub(in crate::codegen) fn event_filter_type(name: &str) -> String {
     }
 }
 
+/// Whether a generated type can derive `PartialEq` over a field of `ty`: the
+/// scalar and collection types whose Rust images compare, and generated
+/// enums whose payloads do in turn. Everything else — an extern struct, a
+/// widget state — is left alone.
+///
+/// The walk through enum payloads terminates because the checker rejects a
+/// recursive enum (`E103`), through lists and optionals included.
+fn comparable_type(program: &LoweredProgram, ty: &Type) -> bool {
+    match ty {
+        Type::Bool | Type::I64 | Type::F64 | Type::Str | Type::Bytes => true,
+        Type::List(inner) | Type::Option(inner) => comparable_type(program, inner),
+        Type::Result(output, error) => {
+            comparable_type(program, output) && comparable_type(program, error)
+        }
+        Type::Named(name) => program
+            .enum_declarations()
+            .iter()
+            .find(|item| item.name == *name)
+            .is_some_and(|item| {
+                item.variants.iter().all(|variant| {
+                    variant
+                        .payload
+                        .as_ref()
+                        .is_none_or(|payload| comparable_type(program, payload))
+                })
+            }),
+        _ => false,
+    }
+}
+
 /// A view published as data, with the fingerprint that decides whether a
 /// running process can accept it.
 #[derive(Clone, Debug)]
@@ -642,12 +672,22 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_derived_cache_type(&mut out, program);
 
     for item in program.enum_declarations() {
+        // A payload enum compares when every payload does, so a state write
+        // storing an equal value leaves its revision alone; an extern payload
+        // is whatever the author wrote and stays a plain `Clone`.
         let derives = if item
             .variants
             .iter()
             .all(|variant| variant.payload.is_none())
         {
             "Debug, Clone, Copy, PartialEq, Eq, Hash"
+        } else if item.variants.iter().all(|variant| {
+            variant
+                .payload
+                .as_ref()
+                .is_none_or(|payload| comparable_type(program, payload))
+        }) {
+            "Clone, PartialEq"
         } else {
             "Clone"
         };
@@ -686,6 +726,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
+        writeln!(out, "{}", revisions_field_code(component.states.len())).unwrap();
         for (lane, _, _) in component_run_lanes(program, &component.handlers) {
             writeln!(out, "{}: u64,", run_lane_generation_field(lane.0 as usize)).unwrap();
         }
@@ -716,6 +757,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap();
             writeln!(out, "{SOURCE_MARKER_END}").unwrap();
         }
+        writeln!(out, "{}", revisions_init_code(component.states.len())).unwrap();
         for (lane, _, _) in component_run_lanes(program, &component.handlers) {
             writeln!(out, "{}: 0,", run_lane_generation_field(lane.0 as usize)).unwrap();
         }
@@ -917,6 +959,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
+    writeln!(
+        out,
+        "pub(crate) {}",
+        revisions_field_code(program.app_states().len())
+    )
+    .unwrap();
     for component in program
         .components()
         .iter()
@@ -1292,6 +1340,7 @@ mod expr;
 mod probes;
 mod runtime;
 mod settings;
+mod state_write;
 mod statement;
 mod style;
 mod subscription;
@@ -1310,6 +1359,7 @@ use expr::*;
 use probes::*;
 use runtime::*;
 use settings::*;
+use state_write::*;
 use statement::*;
 use style::*;
 use subscription::*;

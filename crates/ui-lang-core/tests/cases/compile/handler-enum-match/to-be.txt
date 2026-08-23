@@ -1,7 +1,7 @@
 return match self.kind.clone()
 LiveKind::Chat =>
-self.count = 1
+let __ice_next = 1; if ::ui_lang_runtime::state_changed!(self.count, __ice_next) { self.count = __ice_next; self.__ice_rev[
 LiveKind::Tip =>
-self.count = 2
+let __ice_next = 2; if ::ui_lang_runtime::state_changed!(self.count, __ice_next) { self.count = __ice_next; self.__ice_rev[
 LiveKind::Ready =>
-self.count = 3
+let __ice_next = 3; if ::ui_lang_runtime::state_changed!(self.count, __ice_next) { self.count = __ice_next; self.__ice_rev[

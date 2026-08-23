@@ -1,0 +1,2 @@
+::ui_lang_runtime::memo_lazy((self.__ice_rev[0], self.__ice_rev[1], ("ThroughDerived").to_owned(), __ice_palette.name), move |__dependency| self.__ice_lazy_body_0(__ice_palette, __dependency)
+fn __ice_lazy_body_0(&self, __ice_palette: __IcePalette, __dependency: &(u64, u64, ::std::string::String, &'static str)) -> __IceElement<'static, __ThroughDerivedMessage> { let __lazy_scope = __dependency.2.clone(); let all: ::std::vec::Vec<crate::backend::Message> = (*self.__ice_derived_pending()).clone();

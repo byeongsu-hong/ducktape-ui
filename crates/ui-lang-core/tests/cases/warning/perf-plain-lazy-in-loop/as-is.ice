@@ -35,3 +35,6 @@ view
     lazy messages as all
       for message in all
         text message.body
+    for message in messages
+      lazy messages as all
+        text len(all)

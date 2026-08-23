@@ -1,0 +1,2 @@
+::ui_lang_runtime::memo_lazy((((!(self.__ice_secrets.text("token")).is_empty()) && self.ready), ("SecretRead").to_owned(), __ice_palette.name), move |__dependency| Self::__ice_lazy_body_0(__ice_palette, __dependency)
+fn __ice_lazy_body_0(__ice_palette: __IcePalette, __dependency: &(bool, ::std::string::String, &'static str)) -> __IceElement<'static, __SecretReadMessage> { let ok: bool = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone();

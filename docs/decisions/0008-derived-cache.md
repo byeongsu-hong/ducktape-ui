@@ -35,8 +35,10 @@ its escape analysis are deleted.
 Invalidation is direct. The compiler reads each derived expression, follows
 derived-to-derived references, and inverts the result into a map from app-state
 field to the derived values that read it. Generated code writes an app value
-through **one helper**, `codegen::derived::state_write`, which emits the write
-followed by `self.__ice_derived.<d>.take();` for each dependent. Every emitter
+through **one helper**, `codegen::state_write::state_write_code` (0009), which
+emits the write followed by `self.__ice_derived.<d>.take();` for each
+dependent, beside the field's revision tick — an equal-value assignment
+leaves both alone. Every emitter
 of an app-state write routes through it: handler assignment in all its forms
 (plain, self-moving, combo replacement and `push`, animation `go`, markdown
 `append`, `abortable` handle capture, `debug start`/`finish`, secret wipe), the
@@ -63,7 +65,7 @@ the recomputation would otherwise read the emptied field.
   any number of frames and reads. Handler-maintained mirrors of list-shaped
   derived values are unnecessary.
 - The write-helper invariant is the correctness boundary. A new emitter of an
-  app-state write that bypasses `state_write` leaves a stale cell, and
+  app-state write that bypasses `state_write_code` leaves a stale cell, and
   `every_app_state_write_clears_the_derived_cells_that_read_the_field` in
   `crates/ui-lang-core/src/codegen/tests/derived_cache.rs` fails on the
   generated output of every write form the language has. Extend that fixture

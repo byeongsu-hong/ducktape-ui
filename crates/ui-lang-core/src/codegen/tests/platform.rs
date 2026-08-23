@@ -399,7 +399,7 @@ view
     assert!(generated.contains("::iced::system::information().map(__ice_system_info)"));
     assert!(generated.contains("::iced::system::theme().map(__ice_system_theme)"));
     assert!(generated.contains("::iced::system::theme_changes().map(__ice_system_theme)"));
-    assert!(generated.contains("self.cpu = info.cpu_brand.to_owned()"));
+    assert!(generated.contains("let __ice_next = info.cpu_brand.to_owned(); if ::ui_lang_runtime::state_changed!(self.cpu, __ice_next)"));
 }
 
 #[test]

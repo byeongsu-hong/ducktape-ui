@@ -10,6 +10,23 @@ pub(crate) use from_ast::{
     view_kind,
 };
 
+/// A builtin whose result is not a function of its arguments: it reads the
+/// clock, mints an identity, or allocates a handle, so a cached evaluation
+/// goes stale without any state write. The checker keeps it out of derived
+/// values and launch-time snapshots; codegen keeps a `lazy` that calls it
+/// on the value-hashed lowering.
+pub(crate) fn recomputation_unsafe_builtin(builtin: &str, arity: usize) -> bool {
+    let implicit_animation_clock = matches!(
+        (builtin, arity),
+        ("animation.animating" | "animation.remaining", 1)
+            | ("animation.interpolate" | "animation.project", 3)
+    );
+    matches!(
+        builtin,
+        "window_id.unique" | "aborted" | "debug.time_with" | "image.upgrade" | "encoded" | "rgba"
+    ) || implicit_animation_clock
+}
+
 pub(crate) fn canonical_rust_type_name(name: &str) -> String {
     if name
         .bytes()

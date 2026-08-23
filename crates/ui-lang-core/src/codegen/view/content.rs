@@ -135,6 +135,29 @@ pub(in crate::codegen) fn render_content(
                     }
                     baked
                 };
+                // The argument's state reads travel with the prop so a
+                // `lazy` in the callee can key on their revisions — only
+                // when the baked code can move into a `'static` builder:
+                // nothing rooted in a render-site local, no enclosing scope
+                // binding it would move out of this render.
+                if !argument.uses_definition_scope()
+                    && arg_recording.scope_locals().is_empty()
+                    && let Some(reads) = revision_reads(document, argument.expression, value_env)
+                {
+                    component_env.insert(
+                        param_revisions_key(&argument.name),
+                        Binding {
+                            code: reads
+                                .into_iter()
+                                .collect::<Vec<_>>()
+                                .join(&REVISION_SEPARATOR.to_string()),
+                            ty: Type::Bool,
+                            local: true,
+                            state: None,
+                            owner: None,
+                        },
+                    );
+                }
                 recording.absorb_non_locals(&arg_recording);
                 component_env.insert(
                     argument.name.clone(),

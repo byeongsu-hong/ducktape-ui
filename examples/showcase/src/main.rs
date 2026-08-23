@@ -49,6 +49,8 @@ mod lazy_enum_keys;
 #[cfg(test)]
 mod lazy_extra_deps;
 #[cfg(test)]
+mod lazy_state_revisions;
+#[cfg(test)]
 mod length;
 #[cfg(test)]
 mod mouse_interaction;

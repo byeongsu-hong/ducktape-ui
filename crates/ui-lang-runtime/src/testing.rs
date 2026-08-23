@@ -2469,10 +2469,14 @@ where
     /// state through `dispatch`, because what the handlers do to state is
     /// part of what it is asserting.
     ///
-    /// A write here bypasses the derived cache, which only the generated
-    /// writers clear. Write before the first redraw, or reset
-    /// `__ice_derived` to its default afterwards, so a `derived` value that
-    /// reads the field does not hand the next frame its stale cell.
+    /// Not a state write either, as far as the generated program can tell:
+    /// only the generated writers tick a field's revision and clear the
+    /// derived cells that read it. A field written here keeps both, so a
+    /// `derived` value over it hands the next frame its stale cell unless
+    /// the probe resets `__ice_derived` to its default (or writes before the
+    /// first redraw), and a `lazy` keyed on the field's revision goes on
+    /// showing the subtree it cached before the write — a probe that writes
+    /// here must not read the result through a state-rooted `lazy`.
     pub fn state_mut(&mut self) -> &mut P::State {
         &mut self.state
     }

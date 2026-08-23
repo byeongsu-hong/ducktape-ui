@@ -1,3 +1,3 @@
 __BindDraft(::std::string::String)
-self.draft = value
+let __ice_next = value; if ::ui_lang_runtime::state_changed!(self.draft, __ice_next) { self.draft = __ice_next; self.__ice_rev[0] += 1; }
 ::iced::widget::text_input("", &self.draft)

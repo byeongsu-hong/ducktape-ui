@@ -1,0 +1,1 @@
+::ui_lang_runtime::memo_lazy(((self.view_mode).len() as i64, self.__ice_rev[0], self.__ice_rev[1], ("KeyedState").to_owned(), __ice_palette.name), move |__dependency| { let revision: i64 = self.revision; let __lazy_scope = __dependency.3.clone(); let all: ::std::vec::Vec<crate::backend::Message> = self.messages.clone();

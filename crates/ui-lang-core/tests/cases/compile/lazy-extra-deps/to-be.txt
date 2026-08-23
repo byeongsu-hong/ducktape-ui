@@ -1,2 +1,2 @@
-::ui_lang_runtime::memo_lazy((message.clone(), self.mode.clone(), self.unit.to_owned(), ("ExtraDeps").to_owned(), __ice_palette.name)
-let cached: crate::backend::Message = __dependency.0.clone(); let mode: Mode = __dependency.1.clone(); let unit: ::std::string::String = __dependency.2.clone(); let __lazy_scope = __dependency.3.clone();
+::ui_lang_runtime::memo_lazy((message.clone(), self.__ice_rev[1], self.__ice_rev[2], ("ExtraDeps").to_owned(), __ice_palette.name), move |__dependency| self.__ice_lazy_body_0(__ice_palette, __dependency)
+fn __ice_lazy_body_0(&self, __ice_palette: __IcePalette, __dependency: &(crate::backend::Message, u64, u64, ::std::string::String, &'static str)) -> __IceElement<'static, __ExtraDepsMessage> { let cached: crate::backend::Message = __dependency.0.clone(); let mode: Mode = self.mode.clone(); let unit: ::std::string::String = self.unit.to_owned(); let __lazy_scope = __dependency.3.clone();

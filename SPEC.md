@@ -2235,22 +2235,35 @@ state is whose. A key is `bool`, `i64`, or `f64`, so identity there is the
 key's 64-bit image rather than `PartialEq` — a row keyed `NaN` keeps its state
 instead of being a new row every pass, and `-0.0` is its own row.
 
-`lazy dependency as cached` rebuilds its one child subtree only when the
-dependency hash changes. The subtree also survives unmounting: when a `match`
-arm switch or a trimmed list tears the mount down, the built widget state is
-parked, and a later remount with an unchanged dependency rehydrates it instead
-of rebuilding and re-shaping — a screen switch pays only for content that
-actually changed. The dependency may be bool, i64, str, an extern type
-implementing Rust `Hash + Clone`, or a recursive list/optional of those. Only
-the owned `cached` alias is visible inside the subtree as a value, which
-statically enforces iced's `Element<'static>` contract. `lazy value, extra as
+`lazy dependency as cached` rebuilds its one child subtree only when its memo
+key changes. The key depends on where the dependency reads from. A dependency
+rooted in state — an app or component state field, read directly, through a
+`derived` value, or through a component prop every call feeds from state — is
+keyed by the *revisions* of the state fields it reads: the memo tuple holds
+those counters, and the value itself is built inside the memo on a miss, so an
+unchanged frame clones and hashes no state at all, a write to any other field
+rebuilds nothing, and a write that stores an equal value (see section 6)
+rebuilds nothing either. A dependency that reads a row-local binding — the
+item of an enclosing `for` or keyed column, a match payload, a table row — is
+instead evaluated every pass, cloned into the tuple, and hashed, because a
+row's identity is the row, not the list it came from; that is the form a
+`lazy` inside a `for` over the loop item takes. The subtree also survives
+unmounting: when a `match` arm switch or a trimmed list tears the mount down,
+the built widget state is parked, and a later remount with an unchanged key
+rehydrates it instead of rebuilding and re-shaping — a screen switch pays only
+for content that actually changed. The dependency may be bool, i64, str, an
+extern type implementing Rust `Hash + Clone`, or a recursive list/optional of
+those. Only the owned `cached` alias is visible inside the subtree as a value,
+which statically enforces iced's `Element<'static>` contract. `lazy value, extra as
 cached` hashes each extra right after the value and exposes it inside the
 subtree as an immutable snapshot under its own name: an extra is a bare
 identifier — a state field, a component prop, or a `for` or keyed-column row
 local other than the alias — of a cheap type (`bool`, `i64`, `str`, or a
 fieldless UI enum), and a list of rows that each name `locale` rebuilds every
-row when the locale moves and none on an unchanged redraw. Extras do not
-combine with `by`, whose keys already serve that role. The enclosing `for`
+row when the locale moves and none on an unchanged redraw. An extra that is
+exactly a state field is subsumed by that field's revision, like a bare `by`
+key, and is read afresh when the memo rebuilds. Extras do not combine with
+`by`, whose keys already serve that role. The enclosing `for`
 scope is not visible either — naming its alias inside the subtree is `E150` —
 because the subtree is built from its dependency alone, so it carries no
 iteration index and every row of a `lazy` list otherwise renders under one
@@ -2281,7 +2294,13 @@ its frame without cloning a single row, whether the rows repeat under a
 `for`, a keyed column, or a keyed virtual column. The keys are the author's contract
 that they move whenever the value's rendered content moves — `lazy message by
 message.rev, message.seq as row` — and content that changes without moving a
-key keeps showing the cached subtree. The keyed value itself is never hashed,
+key keeps showing the cached subtree, as long as the value is a row: a keyed
+value that is itself rooted in state gains that state's revisions as keys
+beside the explicit ones, so a write to the field rebuilds whether or not an
+explicit key moved. A key that is exactly a state field — `by file_text,
+file_path, dark` over component state — is subsumed by that field's revision
+rather than cloned into the tuple, so a `str` key costs no copy per frame
+either. The keyed value itself is never hashed,
 so it needs Clone rather than Hash: `f64` — and an extern type or list/optional
 carrying one — is a legal keyed value where the plain form's dependency must
 hash. Because the captured reference must
@@ -2302,8 +2321,9 @@ other rule of the plain form — the alias-only subtree scope, unmount parking,
 preserved component routing — applies unchanged.
 Bare-identifier keys are also immutable snapshot locals inside the keyed lazy
 subtree. `lazy rows by revision, selected as cached` may therefore render from
-`revision` and `selected`; those names are the exact values already stored in
-the memo dependency tuple, not fresh reads of mutable state. Computed keys and
+`revision` and `selected`; those names are the values the memo key was built
+from — stored in the dependency tuple, or for a state-field key read once when
+the memo rebuilt — not live reads of mutable state. Computed keys and
 field projections remain key-only. If a key name equals the `as` alias, the
 alias wins.
 
@@ -2926,6 +2946,19 @@ write clears the cache before the handler continues, so a read after a write in
 the same handler observes the fresh value. Evaluation cardinality is therefore
 at most once per write to a dependency, and the cache is semantics-preserving
 by construction: the restrictions above make every derived expression pure.
+
+Every app state field and every component state field also carries a
+compiler-owned revision: a counter the generated code ticks on every write to
+that field, and that nothing in Ice can read — there is no `rev()` built-in.
+An assignment compares the new value with the stored one first when the Rust
+type implements `PartialEq` (Ice's own scalars, strings, lists, optionals, and
+the enums it generates over those), so storing an equal value leaves the
+revision alone; an assignment of a type that cannot compare, an in-place
+mutation (an editor action, a combo push, a markdown append, an animation
+start), and a self-assignment that already took the old value out of the field
+all count as a change. `lazy` keys its memo off these revisions, so that is
+where the distinction shows: a write through an extern type without
+`PartialEq` always rebuilds the subtrees that read it.
 
 Empty lists need an annotation because their element type is unknowable:
 
@@ -6275,7 +6308,7 @@ Successful analysis may also emit stable semantic warnings:
 | `W014` | two subscriptions have the same source, gates, payload mapping, and destination route |
 | `W015` | a component with targetable widget IDs is mounted without the public ID scope needed to address them from its caller |
 | `W016` | an extern component rebuilds its native widget from string or list content on every view pass, outside any `lazy` boundary |
-| `W017` | a plain `lazy` inside a repetition clones and hashes a list, or a record owning one, on every view pass |
+| `W017` | a plain `lazy` inside a repetition clones and hashes a row-local list, or a record owning one, on every view pass |
 | `W018` | a `str`, `bytes`, `[T]`, `editor`, or list-owning record state field is cloned into a by-value `pure`/`sync` parameter on every view pass or subscription check |
 
 State initializers are not writers. Reads and writes are collected at the
@@ -6343,12 +6376,13 @@ argument is charged to each call site that supplies it from state outside a
 mounted only behind `lazy` stays silent. The fix is the memo boundary the
 message spells out: `lazy content as alias` or the keyed form for a list.
 `W017` reports the plain form `lazy value as alias` nested in `for`, `keyed`,
-or `table` when the value is a list or a record with a list field: the plain
-form clones its dependency into the memo tuple and hashes the clone once per
-item per frame, where `lazy value by <cheap keys> as alias` captures it by
-reference and hashes only the keys. A record of scalars and strings is the
-whole-row memo idiom and is not reported. `W018` reports a `pure` or `sync`
-extern call whose by-value parameter receives a bare app-state or
+or `table` when the value reads the row — the loop item, a match payload, a
+table row — and is a list or a record with a list field: that form clones its
+dependency into the memo tuple and hashes the clone once per item per frame,
+where `lazy value by <cheap keys> as alias` captures it by reference and
+hashes only the keys. A value rooted in state is keyed by state revisions and
+is not reported; neither is a record of scalars and strings, the whole-row
+memo idiom. `W018` reports a `pure` or `sync` extern call whose by-value parameter receives a bare app-state or
 component-state field of type `str`, `bytes`, `[T]`, `editor`, or a record
 whose Ice declaration has a list field, when the call is owned by a view
 expression (reachable component bodies, interaction, media, tooltip, float,

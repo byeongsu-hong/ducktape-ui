@@ -1347,8 +1347,9 @@ fn w016_skips_lazy_subtrees_literals_and_pure_results_of_literals() {
 fn w017_skips_keyed_lazy_and_lazy_outside_loops() {
     // Line 27: the plain `lazy message as row` inside `for`, where a message
     // owns a `tags` list. Silent: the keyed form inside `keyed`, the plain
-    // form over a record of scalars, and the plain `lazy messages` outside a
-    // loop.
+    // form over a record of scalars, the plain `lazy messages` outside a
+    // loop, and the plain `lazy messages` inside one (line 39) — rooted in
+    // state, it is revision-keyed and clones nothing per pass.
     assert_eq!(
         perf_warning_sites("perf-plain-lazy-in-loop", "W017"),
         vec![27]

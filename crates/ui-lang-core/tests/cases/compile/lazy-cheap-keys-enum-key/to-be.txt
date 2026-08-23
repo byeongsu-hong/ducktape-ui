@@ -1,2 +1,2 @@
-::ui_lang_runtime::memo_lazy((message.seq, self.mode.clone(), ("EnumKeys").to_owned(), __ice_palette.name)
-let mode: Mode = __dependency.1.clone();
+::ui_lang_runtime::memo_lazy((message.seq, self.__ice_rev[1], ("EnumKeys").to_owned(), __ice_palette.name)
+let mode: Mode = self.mode.clone(); let __lazy_scope = __dependency.2.clone();

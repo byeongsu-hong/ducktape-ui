@@ -880,27 +880,16 @@ fn recomputation_unsafe_builtin_call<'a>(expr: &'a Expr, document: &Document) ->
                 function.name == *name
                     && matches!(function.kind, ExternKind::Pure | ExternKind::Sync)
             });
-            let builtin = crate::unqualified_name(name);
-            let implicit_animation_clock = matches!(
-                (builtin, args.len()),
-                ("animation.animating" | "animation.remaining", 1)
-                    | ("animation.interpolate" | "animation.project", 3)
-            );
             (!extern_shadows_builtin
-                && (matches!(
-                    builtin,
-                    "window_id.unique"
-                        | "aborted"
-                        | "debug.time_with"
-                        | "image.upgrade"
-                        | "encoded"
-                        | "rgba"
-                ) || implicit_animation_clock))
-                .then_some(name.as_str())
-                .or_else(|| {
-                    args.iter()
-                        .find_map(|argument| recomputation_unsafe_builtin_call(argument, document))
-                })
+                && crate::hir::recomputation_unsafe_builtin(
+                    crate::unqualified_name(name),
+                    args.len(),
+                ))
+            .then_some(name.as_str())
+            .or_else(|| {
+                args.iter()
+                    .find_map(|argument| recomputation_unsafe_builtin_call(argument, document))
+            })
         }
         Expr::List(values) => values
             .iter()
