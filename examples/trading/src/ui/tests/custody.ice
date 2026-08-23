@@ -397,10 +397,12 @@ test trading_closing_the_import_step_forgets_what_was_typed
 //
 // The owner's rule is explicitness rather than granularity, so the naming *is*
 // the safety: a network missing from this list is a key registered somewhere
-// nobody agreed to. The whole sentence is asserted rather than a phrase of it,
-// because that is the only way a missing line fails — and the registry's own
-// length is asserted beside it, so a fifth network added without a word here
-// cannot pass by being absent from both.
+// nobody agreed to. The list is the rows over the registry, one per network
+// with its kind beside it, so a fifth network added in Rust is drawn here
+// without this file naming it — and the registry's own length is asserted
+// beside the rows, so a row that failed to draw cannot pass by being absent
+// from both. The sentence under them says what the one press does with the
+// list, for the address it does it for.
 test trading_enrol_all_names_every_network_it_would_sign_for
   preset held
   viewport 1660 900
@@ -408,13 +410,26 @@ test trading_enrol_all_names_every_network_it_would_sign_for
   target settings = app/settings
   target custody = settings/settings-content/settings-security/custody
   target enrol = custody/enrol
+  target rows = custody/enrolment
   target plan = custody/enrolment/enrol-plan
+  target hl = rows/enrol-row("Hyperliquid")
+  target hl_test = rows/enrol-row("Hyperliquid Testnet")
+  target lighter = rows/enrol-row("Lighter")
+  target lighter_test = rows/enrol-row("Lighter Testnet")
   dispatch navigate(Page.settings)
   scroll-to settings 0.0 700.0
   expect len(venue_list()) == 4
+  expect exists hl
+  expect exists hl_test
+  expect exists lighter
+  expect exists lighter_test
+  expect text "Hyperliquid" within hl
+  expect text "REAL MONEY" within hl
+  expect text "TESTNET" within hl_test
+  expect text "Lighter Testnet" within lighter_test
   expect a11y enrol disabled false
   expect a11y enrol name "Register a trading key on every network, with one Touch ID"
-  expect text "One Touch ID, and this app registers a key of its own on every one of these for 0x8cc94dc843e1ea7a19805e0cca43001123512b6a:\nHyperliquid — REAL MONEY\nHyperliquid Testnet — TESTNET\nLighter — REAL MONEY\nLighter Testnet — TESTNET\nThat signature is your account's. It approves trading keys and cannot withdraw." within plan
+  expect text "One Touch ID, and this app registers a key of its own on each network above for 0x8cc94dc843e1ea7a19805e0cca43001123512b6a. That signature is your account's. It approves trading keys and cannot withdraw." within plan
   capture enrol_all_plan
 
 // Four sentences on this page had stopped being true, and a page that describes

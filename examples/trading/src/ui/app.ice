@@ -4,28 +4,28 @@ daemon Trading
   tray
     icon-rgba "../../assets/tray-icon.rgba" 22 22
     icon-template true
-    label tray_status(coin, focus, live, venue)
+    label t(locale, tray_status(coin, focus, live, venue))
     tooltip "Ducktape Trading"
     menu
-      tray_status(coin, focus, live, venue)
+      t(locale, tray_status(coin, focus, live, venue))
       // The one thing here worth opening the menu for, so it is above the
       // fold rather than inside a group.
-      tray_alerts(alerts)
+      t(locale, tray_alerts(alerts))
       separator
       // The title carries the liveness the rows under it are read with: a
       // reader cannot reach the figures without passing the word that
       // qualifies them, which is what the header gets from a badge sharing
       // its strip.
-      tray_account(account, live)
-        tray_equity(account)
-        tray_pnl(account)
-        tray_positions(positions)
+      t(locale, tray_account(account, live))
+        t(locale, tray_equity(account))
+        t(locale, tray_pnl(account))
+        t(locale, tray_positions(positions))
       // Both network kinds are stated here, where there is room for both.
-      tray_venue(venue)
-        session_badge(session, clock)
-        tray_feed(latency, live)
+      t(locale, tray_venue(venue))
+        t(locale, session_badge(session, clock))
+        t(locale, tray_feed(latency, live))
       separator
-      "Quit" -> quit
+      t(locale, "Quit") -> quit
   font "../../../../assets/fonts/IBMPlexSansKR-Regular.ttf"
   font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
   font "../../../../assets/fonts/MonoplexKR-Regular.ttf"

@@ -1,12 +1,12 @@
 // A fraction on the face and the thing it is a fraction of in the name, because
 // the same face means the buying power on an opening ticket and the position on
 // a reduce-only one.
-component Share(label:str, share:f64, reduce:bool)
+component Share(label:str, share:f64, reduce:bool, locale:Locale)
   emits
     pick(f64)
   button #root -> emit(pick, share)
     with
-      label=share_act(share, reduce)
+      label=t(locale, share_act(share, reduce))
       w=fill
       p=5.0
     active bg=raised text=muted r=3.0
@@ -26,12 +26,12 @@ component Share(label:str, share:f64, reduce:bool)
 // disappears is one a reader has to work out the absence of. The reason travels
 // in the name because a header row has no width for a sentence, and a control
 // dead for a reason nobody can read is what this app refuses to ship elsewhere.
-component Sweeper(name:str, count:i64, cancel:bool, refusal:str)
+component Sweeper(name:str, count:i64, cancel:bool, refusal:str, locale:Locale)
   emits
     pick
   button #root -> emit(pick)
     with
-      label=sweep_label(count, cancel, refusal)
+      label=t(locale, sweep_label(count, cancel, refusal))
       p=5.0
       disabled=!empty(refusal)
     active bg=panel text=faint r=3.0
@@ -136,14 +136,14 @@ component NavTab(name:str, target:Page, current:Page, locale:Locale)
 // or not" before it is pressed, not after. `venue_kind` is read off the
 // registry rather than from the name, because a name is a label somebody typed
 // and the flag is what the endpoints were chosen by.
-component VenueTab(target:Venue, current:Venue)
+component VenueTab(target:Venue, current:Venue, locale:Locale)
   emits
     pick(Venue)
   col #root w=fill
     if target == current
       button #tab-on -> emit(pick, target)
         with
-          label=venue_label(target)
+          label=t(locale, venue_label(target))
           checked=true
           w=fill
           p=7.0
@@ -154,17 +154,17 @@ component VenueTab(target:Venue, current:Venue)
             w=fill
             gap=8.0
             align=center
-          text venue_name(target)
+          text t(locale, venue_name(target))
             with
               size=10.0
               tracking=1.0
               @text-fg
           space w=fill
-          NetworkKind target=target
+          NetworkKind target=target locale=locale
     if target != current
       button #tab-off -> emit(pick, target)
         with
-          label=venue_label(target)
+          label=t(locale, venue_label(target))
           checked=false
           w=fill
           p=7.0
@@ -175,19 +175,19 @@ component VenueTab(target:Venue, current:Venue)
             w=fill
             gap=8.0
             align=center
-          text venue_name(target)
+          text t(locale, venue_name(target))
             with
               size=10.0
               tracking=1.0
               @text-faint
           space w=fill
-          NetworkKind target=target
+          NetworkKind target=target locale=locale
 
 // The two words a network is chosen by, in the one shape they are ever drawn
 // in. Both kinds are a box so a row is the same height whichever it is, and
 // only the colour moves: a testnet is loud because mistaking it for the other
 // one is free, and mistaking the other one for it is not.
-component NetworkKind(target:Venue)
+component NetworkKind(target:Venue, locale:Locale)
   col #root
     if venue_testnet(target)
       box #kind-test
@@ -196,7 +196,7 @@ component NetworkKind(target:Venue)
           py=2.0
           bg=down
           r=2.0
-        text venue_kind(target)
+        text t(locale, venue_kind(target))
           with
             size=8.0
             tracking=1.1
@@ -208,20 +208,20 @@ component NetworkKind(target:Venue)
           py=2.0
           bg=edge
           r=2.0
-        text venue_kind(target)
+        text t(locale, venue_kind(target))
           with
             size=8.0
             tracking=1.1
             @text-faint
 
-component IntervalTab(name:str, current:str)
+component IntervalTab(name:str, current:str, locale:Locale)
   emits
     pick(str)
   col #root
     if name == current
       button #tab-on -> emit(pick, name)
         with
-          label=interval_label(name)
+          label=t(locale, interval_label(name))
           checked=true
           w=38.0
           p=5.0
@@ -237,7 +237,7 @@ component IntervalTab(name:str, current:str)
     if name != current
       button #tab-off -> emit(pick, name)
         with
-          label=interval_label(name)
+          label=t(locale, interval_label(name))
           checked=false
           w=38.0
           p=5.0
@@ -293,14 +293,14 @@ component ChartIndicatorInk(target:ChartIndicator)
             bg=indicator_vwma_20
           space w=fill h=fill
 
-component ChartIndicatorToggle(target:ChartIndicator, on:bool)
+component ChartIndicatorToggle(target:ChartIndicator, on:bool, locale:Locale)
   emits
     pick(ChartIndicator)
   col #root w=fill
     if on
       button #toggle-on -> emit(pick, target)
         with
-          label=chart_indicator_action(target, true)
+          label=t(locale, chart_indicator_action(target, true))
           checked=true
           w=fill
           p=5.0
@@ -308,7 +308,7 @@ component ChartIndicatorToggle(target:ChartIndicator, on:bool)
         hovered bg=raised text=fg r=3.0
         row gap=5.0 align=center
           ChartIndicatorInk target=target
-          text chart_indicator_name(target)
+          text t(locale, chart_indicator_name(target))
             with
               size=9.0
               tracking=0.4
@@ -316,7 +316,7 @@ component ChartIndicatorToggle(target:ChartIndicator, on:bool)
     if !on
       button #toggle-off -> emit(pick, target)
         with
-          label=chart_indicator_action(target, false)
+          label=t(locale, chart_indicator_action(target, false))
           checked=false
           w=fill
           p=5.0
@@ -324,7 +324,7 @@ component ChartIndicatorToggle(target:ChartIndicator, on:bool)
         hovered bg=raised text=fg r=3.0
         row gap=5.0 align=center
           ChartIndicatorInk target=target
-          text chart_indicator_name(target)
+          text t(locale, chart_indicator_name(target))
             with
               size=9.0
               tracking=0.4
@@ -361,7 +361,7 @@ component PaneToggle(name:str, open:bool, locale:Locale)
 // Where the session stands, as a chip: the one state that can send is lit,
 // and the rest are the same box in the quiet colour, so the header's four
 // words read as state rather than as a second heading beside SESSION.
-component SessionChip(session:Session, now:i64)
+component SessionChip(session:Session, now:i64, locale:Locale)
   col #root
     if session_can_trade(session, now)
       box #chip-unlocked
@@ -370,7 +370,7 @@ component SessionChip(session:Session, now:i64)
           py=2.0
           bg=up
           r=2.0
-        text session_badge(session, now)
+        text t(locale, session_badge(session, now))
           with
             size=8.0
             tracking=1.1
@@ -382,7 +382,7 @@ component SessionChip(session:Session, now:i64)
           py=2.0
           bg=edge
           r=2.0
-        text session_badge(session, now)
+        text t(locale, session_badge(session, now))
           with
             size=8.0
             tracking=1.1

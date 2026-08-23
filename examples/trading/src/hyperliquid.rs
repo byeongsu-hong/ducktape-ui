@@ -3753,14 +3753,14 @@ pub fn finer_interval(interval: String, bars: i64) -> String {
 /// pane's current state would leave a reader guessing at the verb.
 pub fn pane_label(locale: crate::Locale, pane: String, open: bool) -> String {
     let act = if open { "Hide" } else { "Show" };
-    crate::i18n::t(locale, format!("{act} the {} pane", pane.to_lowercase()))
+    crate::i18n::t(locale, &format!("{act} the {} pane", pane.to_lowercase()))
 }
 
 /// A page tab by the same rule. The tab draws its page's name in capitals
 /// because it is a heading for the surface it opens; the selected state is
 /// exposed separately on the button.
 pub fn page_label(locale: crate::Locale, page: String) -> String {
-    crate::i18n::t(locale, format!("Show the {} page", page.to_lowercase()))
+    crate::i18n::t(locale, &format!("Show the {} page", page.to_lowercase()))
 }
 
 /// A hovered candle's figures, one per cell of the crosshair readout. The demo
@@ -4701,7 +4701,9 @@ fn chart_label(venue: Venue, marked: bool, indicators: &[ChartIndicator]) -> Str
 ///
 /// It draws whichever venue is on screen, so it is told which one — see
 /// `chart_label`.
+#[allow(clippy::too_many_arguments)]
 pub fn chart(
+    locale: crate::Locale,
     venue: Venue,
     tape: &Tape,
     fills: &[Fill],
@@ -4727,8 +4729,10 @@ pub fn chart(
             .map_or(2, |candle| price_decimals(candle.close))
     };
     let marks = fill_markers(fills, coin, palette);
-    let label = chart_label(venue, !marks.is_empty(), indicators);
+    let label = crate::i18n::t(locale, &chart_label(venue, !marks.is_empty(), indicators));
     let chart = candle_chart_shared(tape.candles.clone(), &theme)
+        .empty_label(crate::i18n::t(locale, "No data"))
+        .latest_label(crate::i18n::t(locale, "Latest >"))
         .precision(scale)
         .height(Length::Fill)
         .live(BEAT)

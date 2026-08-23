@@ -181,9 +181,28 @@ the table lacks comes back as itself, so an untranslated sentence reads as
 English rather than as a hole. The Korean table is complete for the view —
 a unit test walks every `.ice` source for its keys and fails on a missing
 arm — and the language card on settings offers each language in itself.
-The figures are the same figures. Sentences the Rust side composes at
-runtime — refusals, quotes, session readouts — are still English on either
-setting; they are the next table.
+The figures are the same figures.
+
+Sentences the Rust side composes at runtime — a refusal naming a network, a
+row's spoken summary carrying its figures, a venue's own limits — go through
+the same `t`, answered by template: the English Rust wrote is taken apart
+around the values it spliced in, each value is translated on its own (a
+network's kind, a nested reason), and they are put back into the Korean with
+each where the Korean puts it. Rust never stores a translated sentence: the
+English it keeps in state stays the key a later language switch can still
+answer, and every English assertion in the suite keeps holding; the few
+externs that hand the view a finished string — the chart, a page or pane
+label, the hotkey list — are given the locale and call the same `t`
+themselves. A template whose literal text carries no letter fits almost
+anything, so it answers only when one of the values it lifted out has a
+translation of its own, and inside another template's hole only a splitter
+(`{a}, {b}`) may fit; and no template is a hole followed by one common
+word (`{name} price`), because a venue's whole sentence ending in that word
+would fit the hole — a sentence the table does not know comes back untouched
+rather than as its words rearranged. Input hints are expressions too, and the chart kit's empty
+state and its jump-to-latest chip take the app's sentences. What stays
+English is what is not prose: tickers, codes, addresses, and the text
+third-party crates put inside an error.
 
 ![Settings, in Korean](screenshots/settings_ko.png)
 

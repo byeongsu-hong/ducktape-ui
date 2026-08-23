@@ -1985,6 +1985,10 @@ pub fn sweep_note(sweep: Option<Sweep>) -> String {
     sweep.map(|act| act.note).unwrap_or_default()
 }
 
+pub fn headline(text: &str) -> String {
+    text.lines().next().unwrap_or_default().to_owned()
+}
+
 pub fn sweep_rows(sweep: Option<Sweep>) -> Vec<String> {
     sweep.map(|act| act.rows).unwrap_or_default()
 }

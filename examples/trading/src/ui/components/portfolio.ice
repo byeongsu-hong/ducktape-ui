@@ -1,13 +1,13 @@
 // Portfolio owns its visual language. None of these components wrap or mode
 // switch the terminal's rows, cells, or chart.
-component PortfolioRange(name:str, value:str, current:str)
+component PortfolioRange(name:str, value:str, current:str, locale:Locale)
   emits
     pick(str)
   col
     if value == current
       button #selected -> emit(pick, value)
         with
-          label=range_label(value)
+          label=t(locale, range_label(value))
           checked=true
           p=7.0
         active bg=fg text=fg_invert r=3.0
@@ -16,7 +16,7 @@ component PortfolioRange(name:str, value:str, current:str)
     if value != current
       button #off -> emit(pick, value)
         with
-          label=range_label(value)
+          label=t(locale, range_label(value))
           checked=false
           p=7.0
         active bg=raised text=muted r=3.0
@@ -80,7 +80,7 @@ component PortfolioAssetRow(asset:PortfolioAsset, locale:Locale)
     pick(str)
   button #root -> emit(pick, asset.coin)
     with
-      label=asset_label(asset)
+      label=t(locale, asset_label(asset))
       w=fill
       p=0.0
     active bg=panel r=0.0
@@ -111,7 +111,7 @@ component PortfolioAssetRow(asset:PortfolioAsset, locale:Locale)
                 size=9.0
                 tracking=0.7
                 @text-down
-        text fmt_leverage_mode(asset.leverage, asset.margin_mode) size=9.0 @text-faint
+        text t(locale, fmt_leverage_mode(asset.leverage, asset.margin_mode)) size=9.0 @text-faint
       text fmt_size(asset.size)
         with
           size=11.0

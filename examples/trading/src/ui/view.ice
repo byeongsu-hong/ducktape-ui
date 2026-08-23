@@ -173,7 +173,7 @@ view
                     // where to look once. The kind is a box either way and only its
                     // colour moves, because a badge that appears is a badge nobody
                     // notices is missing.
-                    button #venues label=venue_switch_label(venue) p=0.0 -> open_venues
+                    button #venues label=t(locale, venue_switch_label(venue)) p=0.0 -> open_venues
                       active bg=panel text=fg r=3.0
                       hovered bg=raised text=fg r=3.0
                       col
@@ -181,12 +181,12 @@ view
                           w=138.0
                           gap=3.0
                           align=center
-                        text venue_name(venue) #venue-name
+                        text t(locale, venue_name(venue)) #venue-name
                           with
                             size=10.0
                             tracking=1.0
                             @text-fg
-                        NetworkKind #venue-kind target=venue
+                        NetworkKind #venue-kind target=venue locale=locale
                     row #pages gap=4.0 align=center
                       NavTab #page-terminal
                         with
@@ -303,13 +303,13 @@ view
                     // A plain text rather than a `Label`, because this one is
                     // targeted: a component call is an identity scope and has no
                     // rendered box of its own to assert against.
-                    text session_badge(session, clock) #session-badge
+                    text t(locale, session_badge(session, clock)) #session-badge
                       with
                         size=10.0
                         tracking=1.1
                         @text-faint
                     rule vertical thickness=1.0 color=edge
-                    Stat #feed name=t(locale, "FEED") value=fmt_latency(latency)
+                    Stat #feed name=t(locale, "FEED") value=t(locale, fmt_latency(latency))
                 rule horizontal thickness=1.0 color=edge
                 // What broke belongs to the app, not to the page that happened to be
                 // drawn when it broke. The account poll and the universe poll run on
@@ -331,11 +331,11 @@ view
                           gap=10.0
                           align=center
                         if !empty(error)
-                          text error #alarm size=11.0 @text-fg
+                          text t(locale, headline(error)) #alarm size=11.0 @text-fg
                         if empty(error) && !empty(feed_error)
-                          text feed_error #feed-alarm size=11.0 @text-fg
+                          text t(locale, feed_error) #feed-alarm size=11.0 @text-fg
                         if empty(error) && empty(feed_error)
-                          text status size=11.0 @text-faint
+                          text t(locale, status) size=11.0 @text-faint
                         space w=fill
                     rule horizontal thickness=1.0 color=edge
                 match page
@@ -378,7 +378,7 @@ view
                                 input "" #search <-> query
                                   with
                                     label=t(locale, "Search markets")
-                                    hint="Search markets"
+                                    hint=t(locale, "Search markets")
                                     change=search
                                     text-size=12.0
                                   active bg=raised border=edge r=4.0 placeholder=faint value=fg
@@ -440,7 +440,7 @@ view
                                           wrap=word
                                           @text-faint
                                   for row in visible
-                                    lazy row as market
+                                    lazy row, locale as market
                                       col w=fill
                                         // Inside the memo boundary, not above it:
                                         // a row's heading is part of the row's own
@@ -464,7 +464,7 @@ view
                                                 size=9.0
                                                 tracking=1.1
                                                 @text-faint
-                                        MarketRow market=market #market(market.name)
+                                        MarketRow market=market locale=locale #market(market.name)
                                           events
                                             pick -> pick_symbol _
                           rule vertical thickness=1.0 color=edge
@@ -482,22 +482,22 @@ view
                                 gap=12.0
                                 align=center
                               row #intervals gap=2.0 align=center
-                                IntervalTab name="1m" current=interval #interval-1m
+                                IntervalTab name="1m" current=interval locale=locale #interval-1m
                                   events
                                     pick -> pick_interval _
-                                IntervalTab name="5m" current=interval #interval-5m
+                                IntervalTab name="5m" current=interval locale=locale #interval-5m
                                   events
                                     pick -> pick_interval _
-                                IntervalTab name="15m" current=interval #interval-15m
+                                IntervalTab name="15m" current=interval locale=locale #interval-15m
                                   events
                                     pick -> pick_interval _
-                                IntervalTab name="1h" current=interval #interval-1h
+                                IntervalTab name="1h" current=interval locale=locale #interval-1h
                                   events
                                     pick -> pick_interval _
-                                IntervalTab name="4h" current=interval #interval-4h
+                                IntervalTab name="4h" current=interval locale=locale #interval-4h
                                   events
                                     pick -> pick_interval _
-                                IntervalTab name="1d" current=interval #interval-1d
+                                IntervalTab name="1d" current=interval locale=locale #interval-1d
                                   events
                                     pick -> pick_interval _
                               rule vertical thickness=1.0 color=edge
@@ -539,7 +539,7 @@ view
                               space w=fill
                               button #indicators -> open_indicators window
                                 with
-                                  label=chart_indicator_picker_label(chart_indicators)
+                                  label=t(locale, chart_indicator_picker_label(chart_indicators))
                                   expanded=indicators_open
                                   p=5.0
                                 active bg=panel text=muted r=4.0
@@ -581,7 +581,7 @@ view
                               w=fill
                               h=fill
                               p=6.0
-                            extern chart(venue, tape, fills, positions, orders, coin, chart_indicators) #chart -> chart_signalled _
+                            extern chart(locale, venue, tape, fills, positions, orders, coin, chart_indicators) #chart -> chart_signalled _
                           resize-handle #split drag=lower_resized cursor=resize-vertical
                             box
                               with
@@ -646,7 +646,7 @@ view
                                       size=10.0
                                       tracking=1.1
                                       @text-faint
-                                  text funding_countdown(venue, focus, clock) #funding-next
+                                  text t(locale, funding_countdown(venue, focus, clock)) #funding-next
                                     with
                                       size=11.0
                                       w=30.0
@@ -658,10 +658,11 @@ view
                                   // closes are the rows underneath it.
                                   Sweeper #flatten-all
                                     with
+                                      locale=locale
                                       name=t(locale, "FLATTEN ALL")
                                       count=len(positions)
                                       cancel=false
-                                      refusal=flatten_all_refusal
+                                      refusal=t(locale, flatten_all_refusal)
                                     events
                                       pick -> flatten_all
                                 // The header carries the same widths, gap and right
@@ -765,7 +766,7 @@ view
                                           p=10.0
                                           align-x=center
                                           align-y=center
-                                        text venue_account_note(venue, watching, account_missing, account_error)
+                                        text t(locale, venue_account_note(venue, watching, account_missing, account_error))
                                           with
                                             size=11.0
                                             w=fill
@@ -882,7 +883,7 @@ view
                                             p=10.0
                                             align-x=center
                                             align-y=center
-                                          text venue_fills_note(venue, watching, fills_error)
+                                          text t(locale, venue_fills_note(venue, watching, fills_error))
                                             with
                                               size=11.0
                                               w=fill
@@ -899,8 +900,8 @@ view
                                       // rebuild all 200.
                                       keyed fill in fills by=fill.tid virtual-row=26.0
                                         stack w=fill h=26.0
-                                          lazy fill as printed
-                                            FillRow fill=printed #fill(printed.tid)
+                                          lazy fill, locale as printed
+                                            FillRow fill=printed locale=locale #fill(printed.tid)
                                               events
                                                 pick -> pick_symbol _
                                           if fill.hot
@@ -960,7 +961,11 @@ view
                                 match book
                                   some(depth)
                                     for level in depth.asks
-                                      BookRow level=level buy=false
+                                      BookRow
+                                        with
+                                          level=level
+                                          buy=false
+                                          locale=locale
                                         events
                                           pick -> seed_ticket _ _
                                     row
@@ -978,13 +983,17 @@ view
                                           @text-fg
                                       space w=fill
                                       Label value=t(locale, "SPREAD")
-                                      text fmt_bps(depth.spread_pct)
+                                      text t(locale, fmt_bps(depth.spread_pct))
                                         with
                                           size=11.0
                                           font=digits
                                           @text-muted
                                     for level in depth.bids
-                                      BookRow level=level buy=true
+                                      BookRow
+                                        with
+                                          level=level
+                                          buy=true
+                                          locale=locale
                                         events
                                           pick -> seed_ticket _ _
                                   none
@@ -1082,7 +1091,7 @@ view
                                       align-y=center
                                     text t(locale, "No levels watched.") size=11.0 @text-faint
                                 for alert in alerts
-                                  AlertRow alert=alert #alert(fmt_px(alert.price))
+                                  AlertRow alert=alert locale=locale #alert(fmt_px(alert.price))
                                     events
                                       drop -> drop_alert_at _ _
                             rule horizontal thickness=1.0 color=edge
@@ -1103,10 +1112,11 @@ view
                               // the rows underneath it.
                               Sweeper #cancel-all
                                 with
+                                  locale=locale
                                   name=t(locale, "CANCEL ALL")
                                   count=len(orders)
                                   cancel=true
-                                  refusal=cancel_all_refusal
+                                  refusal=t(locale, cancel_all_refusal)
                                 events
                                   pick -> cancel_all
                             rule horizontal thickness=1.0 color=edge
@@ -1132,7 +1142,7 @@ view
                                       p=10.0
                                       align-x=center
                                       align-y=center
-                                    text venue_orders_note(venue, watching, orders_error)
+                                    text t(locale, venue_orders_note(venue, watching, orders_error))
                                       with
                                         size=10.0
                                         w=fill
@@ -1145,7 +1155,7 @@ view
                                       order=order
                                       locale=locale
                                       now=clock
-                                      refusal=cancel_refusal
+                                      refusal=t(locale, cancel_refusal)
                                     events
                                       pick -> pick_resting _
                                       cancel -> cancel_order _ _
@@ -1359,7 +1369,7 @@ view
                                         row w=fill align=center
                                           Label value=t(locale, "OVER")
                                           space w=fill
-                                          text order_worked(ticket_minutes)
+                                          text t(locale, order_worked(ticket_minutes))
                                             with
                                               size=11.0
                                               font=digits
@@ -1377,22 +1387,22 @@ view
                                       row #ticket-tif gap=4.0 w=fill
                                         Choice #tif-gtc
                                           with
-                                            name=tif_name(venue, Tif.gtc)
-                                            act=tif_act(venue, Tif.gtc)
+                                            name=t(locale, tif_name(venue, Tif.gtc))
+                                            act=t(locale, tif_act(venue, Tif.gtc))
                                             on=(ticket_tif == Tif.gtc)
                                           events
                                             pick -> ticket_timed(Tif.gtc)
                                         Choice #tif-ioc
                                           with
-                                            name=tif_name(venue, Tif.ioc)
-                                            act=tif_act(venue, Tif.ioc)
+                                            name=t(locale, tif_name(venue, Tif.ioc))
+                                            act=t(locale, tif_act(venue, Tif.ioc))
                                             on=(ticket_tif == Tif.ioc)
                                           events
                                             pick -> ticket_timed(Tif.ioc)
                                         Choice #tif-alo
                                           with
-                                            name=tif_name(venue, Tif.alo)
-                                            act=tif_act(venue, Tif.alo)
+                                            name=t(locale, tif_name(venue, Tif.alo))
+                                            act=t(locale, tif_act(venue, Tif.alo))
                                             on=(ticket_tif == Tif.alo)
                                           events
                                             pick -> ticket_timed(Tif.alo)
@@ -1401,7 +1411,7 @@ view
                                       // cannot carry a deadline the reader is
                                       // about to sign, so the sentence does.
                                       if !empty(venue_tif_note(venue, ticket_tif))
-                                        text venue_tif_note(venue, ticket_tif)
+                                        text t(locale, venue_tif_note(venue, ticket_tif))
                                           with
                                             size=10.0
                                             w=fill
@@ -1434,7 +1444,7 @@ view
                                     // it is, in the same shape the gate refuses an
                                     // address.
                                     if !ticket_scale && !empty(watch_refusal)
-                                      text watch_refusal
+                                      text t(locale, watch_refusal)
                                         with
                                           size=10.0
                                           w=fill
@@ -1444,7 +1454,7 @@ view
                                 // not need, spent on the price it is being quoted
                                 // at rather than on saying there is none.
                                 if ticket_market
-                                  text market_note(book, ticket_coins, ticket_buy, focus)
+                                  text t(locale, market_note(book, ticket_coins, ticket_buy, focus))
                                     with
                                       size=10.0
                                       w=fill
@@ -1491,7 +1501,7 @@ view
                                   // a size at. A rate that is off screen is a
                                   // number nobody can check.
                                   if ticket_usd
-                                    text size_note(ticket_usd, ticket_market, ticket_price, book, focus)
+                                    text t(locale, size_note(ticket_usd, ticket_market, ticket_price, book, focus))
                                       with
                                         size=10.0
                                         w=fill
@@ -1500,6 +1510,7 @@ view
                                 row gap=4.0 w=fill
                                   Share #share-25
                                     with
+                                      locale=locale
                                       label="25%"
                                       share=0.25
                                       reduce=ticket_reduce
@@ -1507,6 +1518,7 @@ view
                                       pick -> size_share _
                                   Share #share-50
                                     with
+                                      locale=locale
                                       label="50%"
                                       share=0.5
                                       reduce=ticket_reduce
@@ -1514,6 +1526,7 @@ view
                                       pick -> size_share _
                                   Share #share-75
                                     with
+                                      locale=locale
                                       label="75%"
                                       share=0.75
                                       reduce=ticket_reduce
@@ -1521,6 +1534,7 @@ view
                                       pick -> size_share _
                                   Share #share-max
                                     with
+                                      locale=locale
                                       label=t(locale, "MAX")
                                       share=1.0
                                       reduce=ticket_reduce
@@ -1539,7 +1553,7 @@ view
                                 // shortcuts instead. A readout belongs after the
                                 // control it reads anyway.
                                 if !empty(ticket_effect(positions, coin, ticket_coins, ticket_buy))
-                                  text ticket_effect(positions, coin, ticket_coins, ticket_buy)
+                                  text t(locale, ticket_effect(positions, coin, ticket_coins, ticket_buy))
                                     with
                                       size=11.0
                                       w=fill
@@ -1606,7 +1620,7 @@ view
                                   // guaranteed nothing quietly would have been the
                                   // reader's only warning.
                                   if ticket_reduce && !empty(reduce_refusal)
-                                    text reduce_refusal
+                                    text t(locale, reduce_refusal)
                                       with
                                         size=10.0
                                         w=fill
@@ -1643,7 +1657,7 @@ view
                                             Label value=t(locale, "TAKE PROFIT")
                                             input "" #ticket-tp <-> ticket_tp
                                               with
-                                                label=level_label("Take profit", tp_pnl)
+                                                label=t(locale, level_label("Take profit", tp_pnl))
                                                 hint="0.00"
                                                 change=ticket_took
                                                 text-size=12.0
@@ -1659,7 +1673,7 @@ view
                                             Label value=t(locale, "STOP LOSS")
                                             input "" #ticket-sl <-> ticket_sl
                                               with
-                                                label=level_label("Stop loss", sl_pnl)
+                                                label=t(locale, level_label("Stop loss", sl_pnl))
                                                 hint="0.00"
                                                 change=ticket_stopped
                                                 text-size=12.0
@@ -1675,14 +1689,14 @@ view
                                         // is a sentence and half a column is not a
                                         // place to read one.
                                         if !empty(tp_refusal)
-                                          text tp_refusal
+                                          text t(locale, tp_refusal)
                                             with
                                               size=10.0
                                               w=fill
                                               wrap=word
                                               @text-down
                                         if !empty(sl_refusal)
-                                          text sl_refusal
+                                          text t(locale, sl_refusal)
                                             with
                                               size=10.0
                                               w=fill
@@ -1698,14 +1712,14 @@ view
                                 // and the top of a 252-pixel column is not where
                                 // three lines of small print belong.
                                 if !venue_places_twap(venue)
-                                  text venue_twap_note(venue) #twap-gap
+                                  text t(locale, venue_twap_note(venue)) #twap-gap
                                     with
                                       size=10.0
                                       w=fill
                                       wrap=word
                                       @text-faint
                                 if !venue_attaches_levels(venue)
-                                  text venue_levels_note(venue)
+                                  text t(locale, venue_levels_note(venue))
                                     with
                                       size=10.0
                                       w=fill
@@ -1724,7 +1738,7 @@ view
                                 col #ladder-preview gap=10.0 w=fill
                                   for figure in ladder_shape(ticket_ladder)
                                     row w=fill align=center
-                                      Label value=figure.label
+                                      Label value=t(locale, figure.label)
                                       space w=fill
                                       text figure.value
                                         with
@@ -1780,7 +1794,7 @@ view
                               row w=fill align=center
                                 Label value=t(locale, "RENT PER DAY")
                                 space w=fill
-                                text funding_day(focus, ticket_at, ticket_coins, ticket_buy)
+                                text t(locale, funding_day(focus, ticket_at, ticket_coins, ticket_buy))
                                   with
                                     size=12.0
                                     font=digits
@@ -1788,7 +1802,7 @@ view
                               row w=fill align=center
                                 Label value=t(locale, "AGAINST THE ENGINE")
                                 space w=fill
-                                text order_load(account, coin, ticket_coins, ticket_buy, focus)
+                                text t(locale, order_load(account, coin, ticket_coins, ticket_buy, focus))
                                   with
                                     size=12.0
                                     font=digits
@@ -1817,12 +1831,12 @@ view
                                       font=digits
                                       @text-faint
                                 if !quote.known
-                                  text liquidation_gap(focus, !empty(symbols), ticket_cross, account_read(account))
+                                  text t(locale, liquidation_gap(focus, !empty(symbols), ticket_cross, account_read(account)))
                                     with
                                       size=11.0
                                       font=digits
                                       @text-faint
-                              text margin_note(ticket_cross)
+                              text t(locale, margin_note(ticket_cross))
                                 with
                                   size=10.0
                                   w=fill
@@ -1837,14 +1851,14 @@ view
                               col gap=8.0 w=fill
                                 button #ticket-review -> ticket_review
                                   with
-                                    label=order_act(ticket_draft)
+                                    label=t(locale, order_act(ticket_draft))
                                     w=fill
                                     p=11.0
                                     disabled=!empty(send_refusal)
                                   active bg=fg text=fg_invert r=4.0
                                   hovered bg=fg text=fg_invert r=4.0
                                   disabled bg=raised text=faint r=4.0
-                                  text review_label(ticket_buy)
+                                  text t(locale, review_label(ticket_buy))
                                     with
                                       size=11.0
                                       w=fill
@@ -1855,7 +1869,7 @@ view
                                 // sentence over both halves of the question,
                                 // because a button has one disabled state.
                                 if !empty(send_refusal)
-                                  text send_refusal #send-refusal
+                                  text t(locale, send_refusal) #send-refusal
                                     with
                                       size=10.0
                                       w=fill
@@ -1895,6 +1909,7 @@ view
                           row #portfolio-ranges gap=4.0 align=center
                             PortfolioRange #range-day
                               with
+                                locale=locale
                                 name="1D"
                                 value="day"
                                 current=portfolio_range
@@ -1902,6 +1917,7 @@ view
                                 pick -> pick_portfolio_range _
                             PortfolioRange #range-week
                               with
+                                locale=locale
                                 name="1W"
                                 value="week"
                                 current=portfolio_range
@@ -1909,6 +1925,7 @@ view
                                 pick -> pick_portfolio_range _
                             PortfolioRange #range-month
                               with
+                                locale=locale
                                 name="1M"
                                 value="month"
                                 current=portfolio_range
@@ -1916,13 +1933,14 @@ view
                                 pick -> pick_portfolio_range _
                             PortfolioRange #range-all
                               with
+                                locale=locale
                                 name=t(locale, "ALL")
                                 value="all"
                                 current=portfolio_range
                               events
                                 pick -> pick_portfolio_range _
                         if !account_read(account)
-                          text venue_account_note(venue, watching, account_missing, account_error) #portfolio-account-note
+                          text t(locale, venue_account_note(venue, watching, account_missing, account_error)) #portfolio-account-note
                             with
                               size=11.0
                               w=fill
@@ -2285,7 +2303,7 @@ view
                                     r=3.0
                                     align-x=center
                                     align-y=center
-                                  text portfolio_history_note(portfolio_history) #portfolio-history-note
+                                  text t(locale, portfolio_history_note(portfolio_history)) #portfolio-history-note
                                     with
                                       size=11.0
                                       w=fill
@@ -2419,7 +2437,7 @@ view
                                     r=3.0
                                     align-x=center
                                     align-y=center
-                                  text portfolio_history_note(portfolio_history) #pnl-note
+                                  text t(locale, portfolio_history_note(portfolio_history)) #pnl-note
                                     with
                                       size=11.0
                                       w=fill
@@ -2464,7 +2482,7 @@ view
                                     h=fill
                                     align-x=center
                                     align-y=center
-                                  text venue_account_gap(venue) #fill-history-gap
+                                  text t(locale, venue_account_gap(venue)) #fill-history-gap
                                     with
                                       size=11.0
                                       w=fill
@@ -2478,7 +2496,7 @@ view
                                     h=fill
                                     align-x=center
                                     align-y=center
-                                  text venue_fills_note(venue, watching, fills_error)
+                                  text t(locale, venue_fills_note(venue, watching, fills_error))
                                     with
                                       size=11.0
                                       w=fill
@@ -2570,7 +2588,7 @@ view
                                       h=fill
                                       align-x=center
                                       align-y=center
-                                    text venue_account_note(venue, watching, account_missing, account_error)
+                                    text t(locale, venue_account_note(venue, watching, account_missing, account_error))
                                       with
                                         size=11.0
                                         w=fill
@@ -2747,10 +2765,11 @@ view
                               space w=fill
                               Sweeper #portfolio-cancel-all
                                 with
+                                  locale=locale
                                   name=t(locale, "CANCEL ALL")
                                   count=len(orders)
                                   cancel=true
-                                  refusal=cancel_all_refusal
+                                  refusal=t(locale, cancel_all_refusal)
                                 events
                                   pick -> cancel_all
                             row
@@ -2796,7 +2815,7 @@ view
                                   p=10.0
                                   align-x=center
                                   align-y=center
-                                text venue_account_gap(venue) #orders-gap
+                                text t(locale, venue_account_gap(venue)) #orders-gap
                                   with
                                     size=11.0
                                     w=fill
@@ -2811,7 +2830,7 @@ view
                                   p=10.0
                                   align-x=center
                                   align-y=center
-                                text venue_orders_note(venue, watching, orders_error)
+                                text t(locale, venue_orders_note(venue, watching, orders_error))
                                   with
                                     size=11.0
                                     w=fill
@@ -2824,7 +2843,7 @@ view
                                   order=order
                                   locale=locale
                                   now=clock
-                                  refusal=cancel_refusal
+                                  refusal=t(locale, cancel_refusal)
                                 events
                                   pick -> pick_resting _
                                   cancel -> cancel_order _ _
@@ -2910,7 +2929,7 @@ view
                                   p=10.0
                                   align-x=center
                                   align-y=center
-                                text venue_account_gap(venue) #fills-gap
+                                text t(locale, venue_account_gap(venue)) #fills-gap
                                   with
                                     size=11.0
                                     w=fill
@@ -2925,7 +2944,7 @@ view
                                   p=10.0
                                   align-x=center
                                   align-y=center
-                                text venue_fills_note(venue, watching, fills_error)
+                                text t(locale, venue_fills_note(venue, watching, fills_error))
                                   with
                                     size=11.0
                                     w=fill
@@ -2933,7 +2952,7 @@ view
                                     wrap=word
                                     @text-faint
                             for fill in fills
-                              FillRow fill=fill #portfolio-fill(fill.tid)
+                              FillRow locale=locale fill=fill #portfolio-fill(fill.tid)
                                 events
                                   pick -> pick_symbol _
                   Page.settings
@@ -3077,16 +3096,17 @@ view
                                       gap=8.0
                                       align=center
                                       w=fill
-                                    text venue_name(venue) #settings-venue
+                                    text t(locale, venue_name(venue)) #settings-venue
                                       with
                                         size=16.0
                                         @text-fg
                                         @font-bold
-                                    NetworkKind #settings-kind target=venue
+                                    NetworkKind #settings-kind target=venue locale=locale
                                   col #settings-network-picker gap=4.0 w=fill
                                     for network in venue_list()
                                       VenueTab #settings-network-row(venue_name(network))
                                         with
+                                          locale=locale
                                           target=network
                                           current=venue
                                         events
@@ -3098,14 +3118,14 @@ view
                                       wrap=word
                                       @text-faint
                                   if !empty(venue_note(venue))
-                                    text venue_note(venue) #settings-network-note
+                                    text t(locale, venue_note(venue)) #settings-network-note
                                       with
                                         size=11.0
                                         w=fill
                                         wrap=word
                                         @text-muted
                                   if !empty(venue_account_gap(venue))
-                                    text venue_account_gap(venue)
+                                    text t(locale, venue_account_gap(venue))
                                       with
                                         size=11.0
                                         w=fill
@@ -3169,7 +3189,10 @@ view
                                       gap=12.0
                                       align=center
                                       w=fill
-                                    Stat name=t(locale, "ROUND TRIP") value=fmt_latency(latency)
+                                    Stat
+                                      with
+                                        name=t(locale, "ROUND TRIP")
+                                        value=t(locale, fmt_latency(latency))
                                     space w=fill
                                     if live
                                       box #feed-live
@@ -3242,16 +3265,20 @@ view
                                         align=center
                                         w=fill
                                       Label value=t(locale, "SESSION")
-                                      SessionChip #custody-badge session=session now=clock
+                                      SessionChip #custody-badge
+                                        with
+                                          session=session
+                                          now=clock
+                                          locale=locale
                                       space w=fill
                                       if !empty(session_window(session, clock))
-                                        text session_window(session, clock) #custody-window
+                                        text t(locale, session_window(session, clock)) #custody-window
                                           with
                                             size=11.0
                                             font=digits
                                             @text-muted
                                     if !empty(session_agent(session))
-                                      text session_agent(session) #custody-agent
+                                      text t(locale, session_agent(session)) #custody-agent
                                         with
                                           size=11.0
                                           w=fill
@@ -3259,14 +3286,14 @@ view
                                           font=digits
                                           @text-muted
                                     if !empty(session_reason(session))
-                                      text session_reason(session) #custody-reason
+                                      text t(locale, session_reason(session)) #custody-reason
                                         with
                                           size=11.0
                                           w=fill
                                           wrap=word
                                           @text-down
                                     if !empty(unlock_note)
-                                      text unlock_note #custody-note
+                                      text t(locale, unlock_note) #custody-note
                                         with
                                           size=11.0
                                           w=fill
@@ -3281,7 +3308,7 @@ view
                                         input "" #vault-phrase <-> vault_phrase
                                           with
                                             label=t(locale, "Passphrase for this machine's key file")
-                                            hint="what opens the file"
+                                            hint=t(locale, "what opens the file")
                                             text-size=12.0
                                             w=fill
                                           focused bg=raised border=muted r=4.0 placeholder=faint value=fg
@@ -3320,7 +3347,7 @@ view
                                         hovered bg=raised text=fg r=4.0
                                         text t(locale, "LOCK") size=11.0 tracking=1.1
                                     if !empty(session_refusal(session))
-                                      text session_refusal(session) #unlock-refusal
+                                      text t(locale, session_refusal(session)) #unlock-refusal
                                         with
                                           size=11.0
                                           w=fill
@@ -3329,8 +3356,9 @@ view
                                     // What ENROL ALL is about to sign for,
                                     // network by network, each with what it
                                     // costs to be wrong on it — as rows a
-                                    // finger can read, and as the one sentence
-                                    // the sheet names them in.
+                                    // finger can read, and under them the one
+                                    // sentence that says what the press does
+                                    // with that list.
                                     if !empty(enrolment_plan(address))
                                       col #enrolment gap=4.0 w=fill
                                         Label value=t(locale, "ONE KEY ON EACH OF")
@@ -3340,10 +3368,13 @@ view
                                               gap=8.0
                                               align=center
                                               w=fill
-                                            text venue_name(network) size=11.0 @text-muted
+                                            text t(locale, venue_name(network))
+                                              with
+                                                size=11.0
+                                                @text-muted
                                             space w=fill
-                                            NetworkKind target=network
-                                        text enrolment_plan(address) #enrol-plan
+                                            NetworkKind target=network locale=locale
+                                        text t(locale, enrolment_plan(address)) #enrol-plan
                                           with
                                             size=10.0
                                             w=fill
@@ -3462,7 +3493,11 @@ view
                 // before it is pressed rather than after.
                 col #network-picker gap=4.0 w=fill
                   for network in venue_list()
-                    VenueTab #network(venue_name(network)) target=network current=venue
+                    VenueTab #network(venue_name(network))
+                      with
+                        target=network
+                        current=venue
+                        locale=locale
                       events
                         pick -> switch_venue _
                 // What every one of those rows costs, said once. Per row it
@@ -3507,30 +3542,35 @@ view
                 col #indicator-picker gap=4.0 w=fill
                   ChartIndicatorToggle #indicator-sma-20
                     with
+                      locale=locale
                       target=ChartIndicator.sma_20
                       on=chart_indicator_active(chart_indicators, ChartIndicator.sma_20)
                     events
                       pick -> toggle_chart_indicator _
                   ChartIndicatorToggle #indicator-sma-60
                     with
+                      locale=locale
                       target=ChartIndicator.sma_60
                       on=chart_indicator_active(chart_indicators, ChartIndicator.sma_60)
                     events
                       pick -> toggle_chart_indicator _
                   ChartIndicatorToggle #indicator-ema-20
                     with
+                      locale=locale
                       target=ChartIndicator.ema_20
                       on=chart_indicator_active(chart_indicators, ChartIndicator.ema_20)
                     events
                       pick -> toggle_chart_indicator _
                   ChartIndicatorToggle #indicator-bollinger-20
                     with
+                      locale=locale
                       target=ChartIndicator.bollinger_20
                       on=chart_indicator_active(chart_indicators, ChartIndicator.bollinger_20)
                     events
                       pick -> toggle_chart_indicator _
                   ChartIndicatorToggle #indicator-vwma-20
                     with
+                      locale=locale
                       target=ChartIndicator.vwma_20
                       on=chart_indicator_active(chart_indicators, ChartIndicator.vwma_20)
                     events
@@ -3595,7 +3635,7 @@ view
                 if !empty(create_phrase) && create_shown
                   col gap=10.0 w=fill
                     Label value=t(locale, "CHECK YOUR COPY")
-                    text backup_asks(create_positions) #backup-asks
+                    text t(locale, backup_asks(create_positions)) #backup-asks
                       with
                         size=14.0
                         w=fill
@@ -3613,28 +3653,28 @@ view
                     // like a wrong phrase.
                     row #backup-fields gap=8.0 w=fill
                       col gap=4.0 w=fill
-                        Label value=backup_label(create_positions, 0) #backup-label-one
+                        Label value=t(locale, backup_label(create_positions, 0)) #backup-label-one
                         input "" #backup-one <-> backup_one
                           with
-                            label=backup_label(create_positions, 0)
+                            label=t(locale, backup_label(create_positions, 0))
                             change=backup_one_typed
                             text-size=12.0
                             w=fill
                           focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                       col gap=4.0 w=fill
-                        Label value=backup_label(create_positions, 1) #backup-label-two
+                        Label value=t(locale, backup_label(create_positions, 1)) #backup-label-two
                         input "" #backup-two <-> backup_two
                           with
-                            label=backup_label(create_positions, 1)
+                            label=t(locale, backup_label(create_positions, 1))
                             change=backup_two_typed
                             text-size=12.0
                             w=fill
                           focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                       col gap=4.0 w=fill
-                        Label value=backup_label(create_positions, 2) #backup-label-three
+                        Label value=t(locale, backup_label(create_positions, 2)) #backup-label-three
                         input "" #backup-three <-> backup_three
                           with
-                            label=backup_label(create_positions, 2)
+                            label=t(locale, backup_label(create_positions, 2))
                             change=backup_three_typed
                             text-size=12.0
                             w=fill
@@ -3651,13 +3691,13 @@ view
                     input "" #import-phrase <-> import_phrase
                       with
                         label=t(locale, "Recovery phrase, or a private key")
-                        hint="abandon abandon abandon…"
+                        hint=t(locale, "abandon abandon abandon…")
                         text-size=12.0
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                     input "" #import-passphrase <-> import_passphrase
                       with
                         label=t(locale, "Passphrase, if the wallet has one")
-                        hint="usually empty"
+                        hint=t(locale, "usually empty")
                         text-size=12.0
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
                     text t(locale, "A passphrase makes different words into a different account. If your wallet asked for one, it belongs here.")
@@ -3703,7 +3743,7 @@ view
                     input "" #import-vault-phrase <-> vault_phrase
                       with
                         label=t(locale, "Passphrase for this machine's key file")
-                        hint="chosen once, and not recoverable"
+                        hint=t(locale, "chosen once, and not recoverable")
                         text-size=12.0
                         w=fill
                       focused bg=raised border=muted r=4.0 placeholder=faint value=fg
@@ -3714,7 +3754,7 @@ view
                         wrap=word
                         @text-down
                 if !empty(import_note)
-                  text import_note #import-note
+                  text t(locale, import_note) #import-note
                     with
                       size=11.0
                       w=fill
@@ -3791,7 +3831,7 @@ view
                       w=fill
                       gap=8.0
                       align=center
-                    Label value=venue_name(venue)
+                    Label value=t(locale, venue_name(venue))
                     space w=fill
                     // The one label a trader may never have to work out for
                     // themselves, in the same shape the header states it — so
@@ -3803,14 +3843,14 @@ view
                         r=3.0
                         border-w=1.0
                         border=edge
-                      text venue_kind(venue)
+                      text t(locale, venue_kind(venue))
                         with
                           size=9.0
                           tracking=1.0
                           @text-fg
                   match confirm
                     some(draft)
-                      text order_act(draft) #confirm-act
+                      text t(locale, order_act(draft)) #confirm-act
                         with
                           size=17.0
                           w=fill
@@ -3878,7 +3918,7 @@ view
                       row w=fill align=center
                         Label value=t(locale, "MARGIN MODE")
                         space w=fill
-                        text fmt_leverage_mode(draft.leverage, margin_mode(draft.cross))
+                        text t(locale, fmt_leverage_mode(draft.leverage, margin_mode(draft.cross)))
                           with
                             size=13.0
                             font=digits
@@ -3891,12 +3931,15 @@ view
                         row w=fill align=center
                           Label value=t(locale, "WORKED")
                           space w=fill
-                          text order_worked(fmt_size(draft.minutes)) size=13.0 @text-muted
+                          text t(locale, order_worked(fmt_size(draft.minutes)))
+                            with
+                              size=13.0
+                              @text-muted
                       if draft.minutes <= 0.0
                         row w=fill align=center
                           Label value=t(locale, "RESTS")
                           space w=fill
-                          text tif_act(venue, ticket_tif) size=13.0 @text-muted
+                          text t(locale, tif_act(venue, ticket_tif)) size=13.0 @text-muted
                       // The three promises an order can carry beyond its price
                       // and its size, drawn only when they are made: a row
                       // reading "none" three times is three rows a reader has
@@ -3929,7 +3972,7 @@ view
                 // What those two figures are and are not. The panel states the
                 // mode it priced against; this is what stops that reading as a
                 // claim that the order arranges it.
-                text margin_estimate_note() #confirm-margin-note
+                text t(locale, margin_estimate_note()) #confirm-margin-note
                   with
                     size=10.0
                     w=fill
@@ -3939,7 +3982,7 @@ view
                 // is already looking. The panel stays up: a refused order is
                 // one they may want to change and send again.
                 if !empty(error)
-                  text error #confirm-error
+                  text t(locale, error) #confirm-error
                     with
                       size=11.0
                       w=fill
@@ -3964,7 +4007,7 @@ view
                     some(draft)
                       button #confirm-send -> confirm_sent
                         with
-                          label=order_act(draft)
+                          label=t(locale, order_act(draft))
                           p=11.0
                           disabled=sending
                         active bg=fg text=fg_invert r=4.0
@@ -3994,7 +4037,7 @@ view
                       w=fill
                       gap=8.0
                       align=center
-                    Label value=venue_name(venue)
+                    Label value=t(locale, venue_name(venue))
                     space w=fill
                     box #sweep-kind
                       with
@@ -4002,17 +4045,17 @@ view
                         r=3.0
                         border-w=1.0
                         border=edge
-                      text venue_kind(venue)
+                      text t(locale, venue_kind(venue))
                         with
                           size=9.0
                           tracking=1.0
                           @text-fg
-                  text sweep_heading(sweep) #sweep-act
+                  text t(locale, sweep_heading(sweep)) #sweep-act
                     with
                       size=15.0
                       @text-fg
                       @font-bold
-                  text sweep_note(sweep) #sweep-note
+                  text t(locale, sweep_note(sweep)) #sweep-note
                     with
                       size=11.0
                       w=fill
@@ -4027,7 +4070,7 @@ view
                   col #sweep-figures gap=9.0 w=fill
                     for figure in sweep_figures(sweep)
                       row w=fill align=center
-                        Label value=figure.label
+                        Label value=t(locale, figure.label)
                         space w=fill
                         text figure.value
                           with
@@ -4036,14 +4079,14 @@ view
                             @text-fg
                 col #sweep-rows gap=4.0 w=fill
                   for row in sweep_rows(sweep)
-                    text row
+                    text t(locale, row)
                       with
                         size=11.0
                         w=fill
                         font=digits
                         @text-muted
                 if !empty(error)
-                  text error #sweep-error
+                  text t(locale, error) #sweep-error
                     with
                       size=11.0
                       w=fill
@@ -4066,7 +4109,7 @@ view
                   space w=fill
                   button #sweep-send -> sweep_sent
                     with
-                      label=sweep_heading(sweep)
+                      label=t(locale, sweep_heading(sweep))
                       p=11.0
                       disabled=sending
                     active bg=fg text=fg_invert r=4.0
@@ -4092,14 +4135,14 @@ view
                   // thing this screen asks for is a recovery phrase and nobody
                   // should have to go looking for whether that costs money.
                   row gap=8.0 align=center
-                    Label value=venue_name(venue)
+                    Label value=t(locale, venue_name(venue))
                     box
                       with
                         p=4.0
                         r=3.0
                         border-w=1.0
                         border=edge
-                      text venue_kind(venue) #gate-kind
+                      text t(locale, venue_kind(venue)) #gate-kind
                         with
                           size=9.0
                           tracking=1.0

@@ -93,6 +93,10 @@ extern crate::venue
   pure sweep_heading(sweep:Sweep?) -> str
   pure sweep_note(sweep:Sweep?) -> str
   pure sweep_rows(sweep:Sweep?) -> [str]
+  // The first line of a failure: what the alarm strip, one line tall, has
+  // room for. A sweep reports a line per refused row with the reason under
+  // it, and the panel that raised it holds the rest.
+  pure headline(text:&str) -> str
   // What the list adds up to, for the one act that has figures as well as
   // rows. Empty for a cancel, which adds up to nothing, and for a flatten,
   // whose arithmetic is already on the panel behind the confirmation.

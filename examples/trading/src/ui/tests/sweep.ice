@@ -190,8 +190,10 @@ test trading_a_confirmed_sweep_still_cannot_send_without_a_key
   // the app does not hold. That is the shape a partial failure has.
   //
   // Read off the panel rather than off the field, because the alarm line behind
-  // it draws the same string: the claim above is about where it lands.
-  expect text "0 of 2 cancelled. BTC buy 1.5 at 63,600.00: Unlock on Settings before sending an order. BTC sell 0.8 at 64,440.00: Unlock on Settings before sending an order." within failed
+  // it draws the same string: the claim above is about where it lands. A row
+  // and the venue's reason for it are two lines, because a line is the one
+  // boundary a translated sentence keeps — see `trading_a_sweep_reads_in_korean`.
+  expect text "0 of 2 cancelled.\nBTC buy 1.5 at 63,600.00\nUnlock on Settings before sending an order.\nBTC sell 0.8 at 64,440.00\nUnlock on Settings before sending an order." within failed
   expect len(orders) == 2
 
 // The same loop on the other act, over three rows rather than two, and each row
@@ -214,6 +216,37 @@ test trading_a_confirmed_flatten_sends_one_close_per_position
   // says which order the venue turned down — and it is the line the reader
   // agreed to. Read off the panel as well as off the state, which is #539's
   // rule: a modal assertion reads the modal.
-  expect error == "0 of 3 closed. Close BTC short 30 at up to 67,200.00: Unlock on Settings before sending an order. Close ETH long 40 at up to 3,363.00: Unlock on Settings before sending an order. Close SOL long 12 at up to 141.189: Unlock on Settings before sending an order."
+  expect error == "0 of 3 closed.\nClose BTC short 30 at up to 67,200.00\nUnlock on Settings before sending an order.\nClose ETH long 40 at up to 3,363.00\nUnlock on Settings before sending an order.\nClose SOL long 12 at up to 141.189\nUnlock on Settings before sending an order."
   expect text error within failed
   expect len(positions) == 3
+
+// A sweep is the panel a reader agrees to before money moves, so every line
+// of it reads in the reader's language: the rows Rust composed, the figures'
+// labels, and a refusal — which is a line per row with the venue's reason
+// under it, each translated on its own. A reason the table does not know is
+// the venue's own words, left whole rather than with one word swapped.
+test trading_a_sweep_reads_in_korean
+  preset ready_to_send
+  viewport 1660 900
+  target app = #app
+  target orders_panel = app/terminal-fit/trade/book
+  target all = orders_panel/cancel-all/root
+  target panel = #sweep
+  target rows = panel/sweep-rows
+  target send = panel/sweep-send
+  target failed = panel/sweep-error
+  target alarm = app/app-status/alarm
+  dispatch set_locale(Locale.ko)
+  click all
+  expect exists panel
+  expect no text "BTC buy 1.5 at 63,600.00"
+  expect text "BTC 63,600.00에 1.5 매수" within rows
+  expect text "BTC 64,440.00에 0.8 매도" within rows
+  click send
+  expect exists failed
+  expect error == "0 of 2 cancelled.\nBTC buy 1.5 at 63,600.00\nUnlock on Settings before sending an order.\nBTC sell 0.8 at 64,440.00\nUnlock on Settings before sending an order."
+  expect text t(Locale.ko, error) within failed
+  expect text "2건 중 0건 취소.\nBTC 63,600.00에 1.5 매수\n주문을 보내기 전에 설정에서 잠금을 해제하십시오.\nBTC 64,440.00에 0.8 매도\n주문을 보내기 전에 설정에서 잠금을 해제하십시오." within failed
+  // The alarm strip is one line tall and holds the count alone — an exact
+  // match, which a strip drawing the whole run would fail.
+  expect text "2건 중 0건 취소." within alarm

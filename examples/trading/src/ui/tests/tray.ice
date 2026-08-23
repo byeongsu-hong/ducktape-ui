@@ -93,3 +93,18 @@ test trading_the_venue_menu_states_the_kind_the_label_has_no_room_for
   // A submenu is opened, not chosen, so its title is no more pressable than a
   // stat is.
   expect no tray command "REAL MONEY"
+
+// The tray is read in the reader's language too: every row Rust composes
+// for it goes through the same `t`, and the one literal on it does as well.
+test trading_the_menu_reads_in_korean
+  preset held
+  viewport 1660 820
+  expect tray item "1 ALERT HIT"
+  expect tray item "Quit"
+  dispatch set_locale(Locale.ko)
+  expect no tray item "1 ALERT HIT"
+  expect tray item "알림 1건 HIT"
+  expect tray item "순자산"
+  expect tray item "계좌"
+  expect tray item "종료"
+  expect no tray item "Quit"

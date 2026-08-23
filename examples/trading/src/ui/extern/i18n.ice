@@ -8,7 +8,7 @@
 // against. Rust prose — a venue's note, a session badge, a refusal — takes
 // the locale as a parameter the same way and keeps its own table.
 extern crate::i18n
-  pure t(locale:Locale, key:str) -> str
+  pure t(locale:Locale, key:&str) -> str
   // What the language picker calls each language, in that language: a
   // reader who cannot read the current one has to be able to find their own.
   pure locale_name(locale:Locale) -> str
