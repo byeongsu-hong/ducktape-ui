@@ -667,3 +667,48 @@ fn end_padding_extends_the_scroll_range_but_not_the_clip() {
     );
     assert_eq!(padded_height, plain_height, "the widget keeps its size");
 }
+
+/// iced only hands cosmic-text a line-height metric for spans that set a
+/// size or line height, and cosmic-text sizes a visual line by the maximum
+/// metric it was handed. A wrapped line whose only sized span was a hidden
+/// 0.01 px marker therefore collapsed to ~0 px and the next line was drawn
+/// on top of it. Every span now carries the paragraph defaults.
+#[test]
+fn a_wrapped_line_with_only_tiny_sized_spans_keeps_the_body_line_height() {
+    let text = "one two three four five six seven [eight](https://x) nine ten";
+    let marker = Format {
+        size: Some(Pixels(0.01)),
+        ..Format::default()
+    };
+    let open = text.find('[').expect("opening marker");
+    let close = text.find("](").expect("closing marker");
+    let highlights = vec![
+        (0..text.len(), Format::default()),
+        (open..open + 1, marker),
+        (close..text.len() - " nine ten".len(), marker),
+    ];
+    let line = DocumentLine::new(
+        StyledLine {
+            text: text.to_owned(),
+            segments: compose_segments(text, &highlights),
+            empty_format: Format::default(),
+            line_highlight: None,
+            line_padding: Padding::ZERO,
+            line_rule: None,
+        },
+        test_layout_style(180.0),
+    );
+    let heights = line
+        .paragraph
+        .buffer()
+        .layout_runs()
+        .map(|run| run.line_height)
+        .collect::<Vec<_>>();
+    assert!(heights.len() >= 2, "the line wraps: {heights:?}");
+    for height in &heights {
+        assert!(
+            (height - 16.0 * 1.6).abs() < 0.01,
+            "every visual line keeps the 25.6px body line height: {heights:?}"
+        );
+    }
+}
