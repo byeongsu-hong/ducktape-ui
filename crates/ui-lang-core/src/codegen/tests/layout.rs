@@ -4,13 +4,13 @@ use super::*;
 fn expands_semantic_recipes_before_explicit_overrides() {
     let source = r#"app Recipes
 recipe page for col
-  w-full h-full gap-6 p-6 bg-bg
+  @w-full h-full gap-6 p-6 bg-bg
 recipe surface for box
-  w-full p-5 bg-surface
+  @w-full p-5 bg-surface
 recipe panel for box extends surface
-  border border-border rounded-lg overflow-hidden
+  @border border-border rounded-lg overflow-hidden
 recipe title for text
-  text-22px leading-tight font-bold text-fg
+  @text-22px leading-tight font-bold text-fg
 theme contract AppTheme
   bg
   fg
@@ -53,8 +53,8 @@ view
 
     let error = compile(
         &source.replace(
-            "recipe panel for box extends surface\n  border border-border rounded-lg overflow-hidden",
-            "recipe panel for box extends surface\n  border border-border rounded-lg overflow-hidden\nrecipe panel for box\n  p-4 bg-surface",
+            "recipe panel for box extends surface\n  @border border-border rounded-lg overflow-hidden",
+            "recipe panel for box extends surface\n  @border border-border rounded-lg overflow-hidden\nrecipe panel for box\n  @p-4 bg-surface",
         ),
         "recipes.ice",
     )
@@ -64,8 +64,8 @@ view
 
     let error = compile(
         &source.replace(
-            "recipe panel for box extends surface\n  border border-border rounded-lg overflow-hidden",
-            "recipe panel for box extends surface\n  grid-cols-3",
+            "recipe panel for box extends surface\n  @border border-border rounded-lg overflow-hidden",
+            "recipe panel for box extends surface\n  @grid-cols-3",
         ),
         "recipes.ice",
     )
@@ -78,11 +78,11 @@ view
 fn lowers_exact_pixel_recipe_utilities() {
     let source = r#"app ExactRecipes
 recipe action for button
-  px-16px py-11px rounded-9px bg-primary text-primary_fg text-12.5px leading-snug font-semibold
+  @px-16px py-11px rounded-9px bg-primary text-primary_fg text-12.5px leading-snug font-semibold
 recipe danger_action for button extends action
-  bg-danger
+  @bg-danger
 recipe caption for text
-  text-12.5px text-fg
+  @text-12.5px text-fg
 theme contract AppTheme
   bg
   fg
@@ -143,11 +143,11 @@ view
 fn lowers_monospace_and_exact_font_weight_recipe_utilities() {
     let source = r#"app FontRecipes
 recipe meta for text
-  text-11px font-mono font-medium text-fg
+  @text-11px font-mono font-medium text-fg
 recipe label for text
-  text-10px font-mono font-semibold text-fg
+  @text-10px font-mono font-semibold text-fg
 recipe strong for text
-  font-bold text-fg
+  @font-bold text-fg
 theme contract AppTheme
   bg
   fg

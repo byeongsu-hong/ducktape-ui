@@ -445,11 +445,11 @@ mod tests {
 
     #[test]
     fn formats_recipe_inheritance_and_component_defaults() {
-        let source = "app Demo\nrecipe action for button\n    p-4 bg-primary\nrecipe danger for button extends action\n    bg-danger\ncomponent Badge(label:str=\"Untitled\", selected:bool=false)\n    text label\nview\n    Badge\n";
+        let source = "app Demo\nrecipe action for button\n    @p-4 bg-primary\nrecipe danger for button extends action\n    @bg-danger\ncomponent Badge(label:str=\"Untitled\", selected:bool=false)\n    text label\nview\n    Badge\n";
         let formatted = format_source(source).unwrap();
         assert_eq!(
             formatted,
-            "app Demo\nrecipe action for button\n  p-4 bg-primary\nrecipe danger for button extends action\n  bg-danger\ncomponent Badge(label:str=\"Untitled\", selected:bool=false)\n  text label\nview\n  Badge\n"
+            "app Demo\nrecipe action for button\n  @p-4 bg-primary\nrecipe danger for button extends action\n  @bg-danger\ncomponent Badge(label:str=\"Untitled\", selected:bool=false)\n  text label\nview\n  Badge\n"
         );
         assert_eq!(format_source(&formatted).unwrap(), formatted);
     }

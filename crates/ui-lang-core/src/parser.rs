@@ -354,7 +354,9 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     let mut utilities = Vec::new();
     for child in &line.children {
         ensure_leaf(child)?;
-        let source = child.text.strip_prefix('@').unwrap_or(&child.text);
+        let Some(source) = child.text.strip_prefix('@') else {
+            return Err(error("E046", child, "recipe utility lines start with `@`"));
+        };
         utilities.extend(source.split_ascii_whitespace().map(str::to_owned));
     }
     if utilities.is_empty() {

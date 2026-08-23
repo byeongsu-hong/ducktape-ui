@@ -563,9 +563,9 @@ palette light for AppTheme
   danger #ff0000
   accent #445566
 recipe base for box
-  p-2
+  @p-2
 recipe panel for box extends base
-  bg-bg
+  @bg-bg
 enum Choice
   empty
   value(str)
@@ -627,7 +627,7 @@ extern crate::backend
   task fetch(record:Record) -> Status ! str
   stream watch(record:Record) -> Status
 recipe label for text
-  text-fg
+  @text-fg
 component Card(record:Record, status:Status=Status.idle) -> Status
   text "Card" @label
 "#,

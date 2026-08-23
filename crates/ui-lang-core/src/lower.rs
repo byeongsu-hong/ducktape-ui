@@ -20647,13 +20647,13 @@ view
     fn normalizes_recipe_inheritance_precedence_and_every_utility_variant() {
         let source = r#"app Styles
 recipe action for button
-  px-16px py-11px bg-surface/75 hover:bg-primary pressed:bg-danger disabled:bg-border disabled:text-fg disabled:opacity-25 border border-border rounded-9px text-12.5px leading-snug font-semibold focus-visible:border-danger
+  @px-16px py-11px bg-surface/75 hover:bg-primary pressed:bg-danger disabled:bg-border disabled:text-fg disabled:opacity-25 border border-border rounded-9px text-12.5px leading-snug font-semibold focus-visible:border-danger
 recipe emphasized for button extends action
-  bg-primary hover:bg-danger
+  @bg-primary hover:bg-danger
 recipe destructive for button extends emphasized
-  pressed:bg-primary disabled:bg-surface text-fg
+  @pressed:bg-primary disabled:bg-surface text-fg
 recipe field for input
-  w-full border border-border focus:border-primary rounded-md
+  @w-full border border-border focus:border-primary rounded-md
 theme contract AppTheme
   bg
   fg
@@ -20751,9 +20751,9 @@ view
         let source = format!(
             r#"app Padding
 recipe all for box
-  p-65535px
+  @p-65535px
 recipe axes for box
-  px-65535px py-65534px
+  @px-65535px py-65534px
 {THEME}view
   col
     box @all
@@ -21203,7 +21203,7 @@ view
     #[test]
     fn rejects_checked_style_and_palette_states_that_cannot_be_normalized() {
         let source = format!(
-            "app Demo\nrecipe label for text\n  text-fg\n{THEME}view\n  text \"ok\" @label\n"
+            "app Demo\nrecipe label for text\n  @text-fg\n{THEME}view\n  text \"ok\" @label\n"
         );
         let mut checked = analyze(&source).unwrap();
         checked.document.recipes[0].base = Some("missing".into());
@@ -21228,7 +21228,7 @@ view
         assert!(error.message.contains("invalid checked radius utility"));
 
         let inheritance = format!(
-            "app Demo\nrecipe base for text\n  text-fg\nrecipe child for text extends base\n  font-bold\n{THEME}view\n  text \"ok\" @child\n"
+            "app Demo\nrecipe base for text\n  @text-fg\nrecipe child for text extends base\n  @font-bold\n{THEME}view\n  text \"ok\" @child\n"
         );
         let mut checked = analyze(&inheritance).unwrap();
         checked.document.recipes[1].target = StyleRecipeTarget::Container;
@@ -21317,7 +21317,7 @@ view
         .unwrap();
         fs::write(
             &imported,
-            "extern crate::backend\n  theme native_theme(dark:bool)\nrecipe label for text\n  text-fg\nrecipe emphasis for text extends label\n  font-bold\ncomponent Decorated()\n  box @bg-primary\n    text \"decorated\"\n",
+            "extern crate::backend\n  theme native_theme(dark:bool)\nrecipe label for text\n  @text-fg\nrecipe emphasis for text extends label\n  @font-bold\ncomponent Decorated()\n  box @bg-primary\n    text \"decorated\"\n",
         )
         .unwrap();
 
@@ -22585,11 +22585,11 @@ test stable_flow
         for index in 0..TOKENS {
             writeln!(source, "  token_{index} #{:06x}", index + 1).unwrap();
         }
-        source.push_str("recipe recipe_0 for text\n  text-token_0\n");
+        source.push_str("recipe recipe_0 for text\n  @text-token_0\n");
         for index in 1..RECIPES {
             writeln!(
                 source,
-                "recipe recipe_{index} for text extends recipe_{}\n  text-token_{}",
+                "recipe recipe_{index} for text extends recipe_{}\n  @text-token_{}",
                 index - 1,
                 index % TOKENS
             )
