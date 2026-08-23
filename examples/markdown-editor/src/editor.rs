@@ -1335,9 +1335,10 @@ fn replacement_change(mut replacements: Vec<Replacement>) -> ChangeData {
 /// Renumbers every ordered item in the list block around `line`: siblings at
 /// one indent count up from the run's first number, a bullet or a shallower
 /// item ends the run, and `restart` is the item just nested, which starts at 1.
-/// The block is the contiguous list items around `line`; the edited line itself
-/// is skipped when it is no longer an item, since a blank or plain line there
-/// still renders as part of the list.
+/// The block is the list items around `line` with any blank lines between
+/// them, so a loose list is one block; the edited line itself is skipped when
+/// it is no longer an item, since a plain line there still renders as part of
+/// the list.
 fn renumber_list(
     content: &mut Content,
     line: usize,
@@ -1349,7 +1350,7 @@ fn renumber_list(
         .take_while(|&index| {
             content
                 .line(index)
-                .is_some_and(|line| list_item(&line.text).is_some())
+                .is_some_and(|line| line.text.trim().is_empty() || list_item(&line.text).is_some())
         })
         .last()
         .unwrap_or(line);
@@ -1359,7 +1360,7 @@ fn renumber_list(
             break;
         };
         let Some(item) = list_item(&text) else {
-            if index == line {
+            if index == line || text.trim().is_empty() {
                 continue;
             }
             break;
@@ -3180,6 +3181,11 @@ mod tests {
         document.move_to(caret(1, 3));
         track_action(&mut document, Action::Edit(Edit::Backspace));
         assert_eq!(document.text(), "1. a\nb\n2. c");
+
+        document = reset_document("1. a\n\n2. b\n\n3. c\n\npara\n\n7. d".into());
+        document.move_to(caret(2, 4));
+        track_action(&mut document, Action::Edit(Edit::Enter));
+        assert_eq!(document.text(), "1. a\n\n2. b\n3. \n\n4. c\n\npara\n\n7. d");
     }
 
     #[test]
