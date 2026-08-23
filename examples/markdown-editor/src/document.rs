@@ -129,6 +129,12 @@ shortcut_filters! {
     escape_shortcut => Escape,
 }
 
+/// macOS runs the content under a transparent, title-less title bar, so the
+/// sidebar reserves a strip for the native traffic lights and window drag.
+pub fn hides_native_titlebar() -> bool {
+    cfg!(target_os = "macos")
+}
+
 pub fn cursor_status(line: i64, column: i64, lines: i64) -> String {
     format!("Ln {}, Col {}  ·  {} lines", line + 1, column + 1, lines)
 }

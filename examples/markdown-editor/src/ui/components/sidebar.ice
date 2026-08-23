@@ -61,8 +61,9 @@ component NoteRow(note:Note, selected:bool)
         hovered bg=hover text=fg
         pressed bg=pressed text=fg
 
-component Sidebar(bind query:str, notes:[Note], path:str, dark:bool, blocked:bool)
+component Sidebar(bind query:str, notes:[Note], path:str, dark:bool, blocked:bool, titlebar_hidden:bool)
   emits
+    drag_window
     search(str)
     new_note
     select(str)
@@ -75,6 +76,9 @@ component Sidebar(bind query:str, notes:[Note], path:str, dark:bool, blocked:boo
       pt=14.0
       pb=12.0
       gap=10.0
+    if titlebar_hidden
+      mouse press=emit(drag_window)
+        space #titlebar-strip w=fill h=28.0
     row #top
       with
         w=fill

@@ -1,7 +1,11 @@
 on mount
+  titlebar_hidden = hides_native_titlebar()
   parallel
     task system theme -> system_theme_changed _
     run every open_library(home) -> library_opened _ | failed _
+
+on drag_window
+  task window drag
 
 on system_theme_changed(next)
   dark = next == "dark"
