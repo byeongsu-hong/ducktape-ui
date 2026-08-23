@@ -1121,6 +1121,20 @@ struct SurfaceState {
     cursor_blinking: bool,
 }
 
+/// whether an IME composition is actually in progress.
+///
+/// A TERMINAL THAT IS FOCUSED ENABLES ITS INPUT METHOD, so `InputMethod::Opened`
+/// arrives on every focus and says only that one is AVAILABLE — on X11 it then
+/// stays open, composing nothing, until focus leaves. The preedit it opens with
+/// is empty, so `ime_preedit.is_some()` is true for an ordinary typing session
+/// and gating input on it swallowed every keystroke: the pty saw the mouse and
+/// never a key.
+///
+/// The composition is the preedit TEXT. Only that may claim the keyboard.
+fn composing(preedit: Option<&input_method::Preedit>) -> bool {
+    preedit.is_some_and(|preedit| !preedit.content.is_empty())
+}
+
 impl operation::Focusable for SurfaceState {
     fn is_focused(&self) -> bool {
         self.focused
@@ -1352,7 +1366,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
 
             if let Some(cursor) = frame.cursor
                 && state.cursor_visible
-                && state.ime_preedit.is_none()
+                && !composing(state.ime_preedit.as_ref())
             {
                 let mut cursor_bounds = cell_rect(
                     bounds,
@@ -1472,7 +1486,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         }
         let blinking = terminal.frame.cursor.is_some_and(|cursor| cursor.blinking)
             && state.focused
-            && state.ime_preedit.is_none();
+            && !composing(state.ime_preedit.as_ref());
         if sync_cursor_blinking(state, blinking, Instant::now()) {
             shell.request_redraw();
         }
@@ -1647,7 +1661,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 ..
             }) if state.focused => {
                 state.modifiers = *modifiers;
-                if state.ime_preedit.is_some() {
+                if composing(state.ime_preedit.as_ref()) {
                     // IME commits are delivered separately and must be the only PTY input.
                 } else if let Some(font_size) = zoomed_font_size(key, *modifiers, state.font_size) {
                     if font_size != state.font_size {
@@ -1702,7 +1716,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
                 ..
             }) if state.focused => {
                 state.modifiers = *modifiers;
-                if state.ime_preedit.is_none()
+                if !composing(state.ime_preedit.as_ref())
                     && let Some(bytes) = encode_key_event(
                         key,
                         modified_key,
@@ -1752,7 +1766,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         }
         let blinking = terminal.frame.cursor.is_some_and(|cursor| cursor.blinking)
             && state.focused
-            && state.ime_preedit.is_none();
+            && !composing(state.ime_preedit.as_ref());
         if sync_cursor_blinking(state, blinking, Instant::now()) {
             shell.request_redraw();
         }
@@ -3143,6 +3157,21 @@ mod tests {
             named_key(Named::Space, Modifiers::NONE, TermMode::default()),
             Some(" ".into())
         );
+    }
+
+    #[test]
+    fn an_open_input_method_only_claims_the_keyboard_while_it_composes() {
+        // what `InputMethod::Opened` installs: the method is available, the
+        // user has composed nothing. A focused terminal sits here for a whole
+        // typing session, so this state must NOT hold the keyboard.
+        assert!(!super::composing(None));
+        assert!(!super::composing(Some(
+            &super::input_method::Preedit::new()
+        )));
+
+        let mut hangul = super::input_method::Preedit::new();
+        hangul.content = "한".into();
+        assert!(super::composing(Some(&hangul)));
     }
 
     #[test]
