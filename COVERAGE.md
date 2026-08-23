@@ -89,7 +89,12 @@ feedback, positional stateful component identity, retained dynamic state,
 id-less component calls that hide widget targets, and unused bindings. Constant
 no-ops/dead gates and unreachable statements include
 preset boot statements; statically disabled subscriptions are excluded from
-duplicate-delivery warnings. Component and handler reachability is combined
+duplicate-delivery warnings. Performance warnings name per-frame work a `lazy`
+boundary would avoid: extern component content rebuilt from state outside
+`lazy` (`W016`) and a plain `lazy` inside a repetition over a list-owning value
+(`W017`); evidence is the two `perf-*` warning fixtures plus the `w016`/`w017`
+checker unit tests pinning each fixture's exact site set.
+Component and handler reachability is combined
 across all workspace or open-editor roots. `cargo ice` additionally reports
 workspace `.ice` files outside every root graph as CLI-only `W010`. Cargo JSON
 diagnostics from marked generated Rust regions map back to root and imported Ice

@@ -6229,6 +6229,8 @@ Successful analysis may also emit stable semantic warnings:
 | `W013` | a statement follows an unconditional `return if true` and can never execute |
 | `W014` | two subscriptions have the same source, gates, payload mapping, and destination route |
 | `W015` | a component with targetable widget IDs is mounted without the public ID scope needed to address them from its caller |
+| `W016` | an extern component rebuilds its native widget from string or list content on every view pass, outside any `lazy` boundary |
+| `W017` | a plain `lazy` inside a repetition clones and hashes a list, or a record owning one, on every view pass |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -6283,6 +6285,24 @@ widget operations. Component-local handlers may still use their own relative
 paths; the warning covers operation paths hidden from the caller and suggests
 adding an explicit component ID.
 
+`W016` and `W017` are performance warnings: iced rebuilds the whole view on
+every message, so a view expression is paid once per frame unless a `lazy`
+boundary memoizes it. `W016` reports an `extern ... component` call whose
+`str` or `[T]` argument reads app state, a derived value, or component state
+and is not inside a `lazy` subtree; literals and pure calls over literals do
+not count, and a component that declares any `&` parameter is exempt because
+it reads state in place by design. A component parameter that feeds such an
+argument is charged to each call site that supplies it from state outside a
+`lazy`, once per extern component the parameter reaches, so a component
+mounted only behind `lazy` stays silent. The fix is the memo boundary the
+message spells out: `lazy content as alias` or the keyed form for a list.
+`W017` reports the plain form `lazy value as alias` nested in `for`, `keyed`,
+or `table` when the value is a list or a record with a list field: the plain
+form clones its dependency into the memo tuple and hashes the clone once per
+item per frame, where `lazy value by <cheap keys> as alias` captures it by
+reference and hashes only the keys. A record of scalars and strings is the
+whole-row memo idiom and is not reported.
+
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
@@ -6309,7 +6329,7 @@ The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
 output rather than actionable Ice syntax and are suppressed at the generated
 item boundary; Ice's non-CLI-only semantic warnings (`W001-W009` and
-`W011-W015`) continue to come directly from the language checker.
+`W011-W017`) continue to come directly from the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source
 revision.

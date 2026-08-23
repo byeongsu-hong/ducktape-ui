@@ -1,0 +1,3 @@
+W016 `markdown_body` rebuilds its native widget from `body` on every view pass; wrap it in `lazy body as <alias>` so it is rebuilt only when that content changes
+W016 `markdown_body` (through `Answer.body`) rebuilds its native widget from `body` on every view pass; wrap it in `lazy body as <alias>` so it is rebuilt only when that content changes
+W016 `plain_body` (through `Answer.body`) rebuilds its native widget from `body` on every view pass; wrap it in `lazy body as <alias>` so it is rebuilt only when that content changes
