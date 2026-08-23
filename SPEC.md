@@ -5813,8 +5813,11 @@ A boolean expectation uses normal checked app-state expressions, equality, and
 `expect component` below is the one read of it an Ice test has. `~=` converts both
 numeric operands to `f64` and uses absolute tolerance `0.001`; non-finite values
 fail. Text matching is exact over visible rendered text. `within` restricts the
-search to the selected target bounds. `exists` and `missing` are useful for IDs
-whose nodes are conditional at runtime.
+search to the selected target's visible bounds — its layout bounds carried
+through the scroll offsets above it and clipped to the window — so a target
+scrolled into view is searched where it now is, and a target with nothing
+visible contains no text. `exists` and `missing` are useful for IDs whose
+nodes are conditional at runtime.
 
 `expect component target.field == expression` (or `!=`) compares one declared
 `state` entry of one component instance. `target` is an alias or `#` path that

@@ -2622,8 +2622,19 @@ where
     ) {
         self.redraw(source);
         let within = within.map(|id| self.require_target(id, false, source));
-        let actual =
-            self.drawn_text_exists(value, within.as_ref().map(|target| target.bounds), source);
+        // The question is about drawn ink, so the region is the target's
+        // visible one: its layout bounds carried through the scroll offsets
+        // above it and clipped to the window. Its layout bounds alone are
+        // where it would sit unscrolled, and a card scrolled into view was
+        // searched at the position it had scrolled away from. A target with
+        // nothing visible has no region, and ink inside it is then missing —
+        // the same answer as a target off the bottom of a window.
+        let region = within.as_ref().map(|target| {
+            target
+                .visible
+                .unwrap_or(Rectangle::new(Point::ORIGIN, Size::ZERO))
+        });
+        let actual = self.drawn_text_exists(value, region, source);
         if actual == negated {
             let selector = within.as_ref().map_or_else(
                 || format!("visible text {value:?}"),
@@ -2631,7 +2642,7 @@ where
             );
             let bounds = within.as_ref().map_or_else(
                 || format!("viewport: {:?}", self.size),
-                |target| format!("bounds: {:?}", target.bounds),
+                |target| format!("bounds: {:?}\nvisible: {:?}", target.bounds, target.visible),
             );
             panic!(
                 "{source}: test `{}` text expectation failed\nstatement: {}\nselector: {selector}\nexpected: {}\nactual: {}\n{bounds}",
@@ -6455,6 +6466,17 @@ mod tests {
             .into()
     }
 
+    fn scrolled_card_view(_state: &State) -> Element<'_, Message> {
+        scrollable(column![
+            container(text("top")).height(400),
+            container(text("deep card")).id("Scrolled/card").height(40),
+            container(text("tail")).height(400),
+        ])
+        .id("Scrolled/scroll")
+        .height(120)
+        .into()
+    }
+
     fn duplicate_scroll_view(_state: &State) -> Element<'_, Message> {
         column![
             scrollable(container(text("First")).height(200))
@@ -6963,6 +6985,30 @@ mod tests {
             duplicate.scroll_by("Duplicate/scroll", 0.0, 24.0, HERE);
         });
         assert!(failure.contains("target lookup is ambiguous"), "{failure}");
+    }
+
+    /// A card scrolled into view is searched where it now is. The region for
+    /// `within` used to be the target's layout bounds, which is where it sits
+    /// unscrolled, so ink plainly on screen inside a scrolled target answered
+    /// "missing" — and `expect no text` then passed for text in plain view.
+    #[test]
+    fn text_within_a_scrolled_target_is_searched_where_the_target_now_is() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                scrolled_card_view,
+            ),
+            Config::new("scrolled_card").viewport(320.0, 240.0),
+        );
+        // Off the bottom of a 120px window: the card is laid out at y=400.
+        driver.check_text("deep card", Some("Scrolled/card"), true, HERE);
+        driver.scroll_to("Scrolled/scroll", 0.0, 400.0, HERE);
+        assert!(driver.target("Scrolled/scroll", HERE).scroll_y() > 0.0);
+        driver.check_text("deep card", Some("Scrolled/card"), false, HERE);
+        let missing =
+            panic_message(|| driver.check_text("deep card", Some("Scrolled/card"), true, HERE));
+        assert!(missing.contains("visible: Some("), "{missing}");
     }
 
     #[test]
