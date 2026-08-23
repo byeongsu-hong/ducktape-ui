@@ -180,6 +180,8 @@ mod ime_tests;
 mod keyboard_tests;
 #[path = "layout.rs"]
 mod layout_tests;
+#[path = "paint.rs"]
+mod paint_tests;
 #[path = "performance.rs"]
 mod performance_tests;
 #[path = "pointer.rs"]
