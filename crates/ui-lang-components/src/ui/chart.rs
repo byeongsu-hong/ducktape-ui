@@ -317,7 +317,7 @@ impl Default for CartesianKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy)]
 pub struct CartesianOptions {
     pub kind: CartesianKind,
     pub curve: CartesianCurve,
@@ -325,6 +325,31 @@ pub struct CartesianOptions {
     pub domain: DomainSpec,
     pub tick_count: usize,
     pub show_grid: bool,
+    /// How a y-axis tick is written, when the plain number is not the
+    /// reader's unit — a money axis reads `$3.76M`, not `3761182`. A plain
+    /// function rather than a closure so the options stay `Copy` and
+    /// comparable, which is what lets a redraw tell whether anything changed.
+    pub tick_format: Option<fn(f32) -> String>,
+}
+
+// Derived, the formatter's comparison would be flagged: two pointers to one
+// function may differ across codegen units. Here the comparison only decides
+// whether a cached drawing is stale, so a spurious mismatch costs a redraw
+// and nothing else.
+impl PartialEq for CartesianOptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.curve == other.curve
+            && self.padding == other.padding
+            && self.domain == other.domain
+            && self.tick_count == other.tick_count
+            && self.show_grid == other.show_grid
+            && match (self.tick_format, other.tick_format) {
+                (None, None) => true,
+                (Some(left), Some(right)) => std::ptr::fn_addr_eq(left, right),
+                _ => false,
+            }
+    }
 }
 
 impl Default for CartesianOptions {
@@ -336,6 +361,7 @@ impl Default for CartesianOptions {
             domain: DomainSpec::default(),
             tick_count: 5,
             show_grid: true,
+            tick_format: None,
         }
     }
 }
@@ -406,7 +432,15 @@ impl CartesianGeometry {
             }
         }
 
-        let radius_squared = radius.max(0.0).powi(2);
+        // A line answers by column: anywhere inside the plot, the point
+        // nearest along the x-axis is under the pointer, and where two series
+        // share that column the one nearer vertically wins. Asking for the
+        // pointer to land on the stroke itself made a reader chase a 2px line
+        // across a 1300px plot, and a curve 60 points wide answered nothing
+        // between them. Outside the plot, `radius` still reaches a point at
+        // the edge, so a pointer just past the last one is not a miss.
+        let inside = self.plot.contains(point);
+        let radius = radius.max(0.0);
         self.marks
             .iter()
             .filter_map(|mark| match mark {
@@ -419,16 +453,12 @@ impl CartesianGeometry {
             .flat_map(|(series_key, points)| {
                 points.iter().map(move |point_geometry| {
                     let delta = point - point_geometry.position;
-                    (
-                        delta.x * delta.x + delta.y * delta.y,
-                        series_key,
-                        point_geometry,
-                    )
+                    (delta.x.abs(), delta.y.abs(), series_key, point_geometry)
                 })
             })
-            .filter(|(distance, _, _)| *distance <= radius_squared)
-            .min_by(|left, right| left.0.total_cmp(&right.0))
-            .map(|(_, series_key, point)| ChartHit {
+            .filter(|(dx, dy, _, _)| inside || (dx.hypot(*dy) <= radius))
+            .min_by(|left, right| left.0.total_cmp(&right.0).then(left.1.total_cmp(&right.1)))
+            .map(|(_, _, series_key, point)| ChartHit {
                 datum_index: point.datum_index,
                 series_key: series_key.clone(),
             })
@@ -883,6 +913,12 @@ where
     }
 
     #[must_use]
+    pub fn tick_format(mut self, format: fn(f32) -> String) -> Self {
+        self.options.tick_format = Some(format);
+        self
+    }
+
+    #[must_use]
     pub fn grid(mut self, show: bool) -> Self {
         self.options.show_grid = show;
         self
@@ -1092,7 +1128,9 @@ fn draw_axis_labels(
         let y = geometry.plot.y + geometry.plot.height * ratio;
         let value = geometry.domain.y.max - (geometry.domain.y.max - geometry.domain.y.min) * ratio;
         frame.fill_text(canvas::Text {
-            content: format_number(value),
+            content: options
+                .tick_format
+                .map_or_else(|| format_number(value), |format| format(value)),
             position: Point::new(geometry.plot.x - 8.0, y),
             color: label,
             size: Pixels(theme.typography.meta_compact),
@@ -2483,6 +2521,15 @@ mod tests {
                 series_key: "desktop".to_owned(),
             })
         );
+        // Inside the plot the column answers, not the stroke: well below the
+        // first point, still its datum; past the plot's edge, a miss.
+        let below = Point::new(point.x + 2.0, line.plot.y + line.plot.height - 1.0);
+        assert_eq!(
+            line.hit_test(below, 1.0).map(|hit| hit.datum_index),
+            Some(0)
+        );
+        let outside = Point::new(line.plot.x - 40.0, point.y);
+        assert_eq!(line.hit_test(outside, 1.0), None);
 
         let bars = cartesian_geometry(
             &config(),

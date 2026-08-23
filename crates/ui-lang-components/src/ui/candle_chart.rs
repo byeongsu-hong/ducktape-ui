@@ -717,7 +717,7 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
 
 /// Formats a unix timestamp at a granularity matching the spacing between
 /// time-axis ticks.
-fn format_ts(ts: i64, step_secs: i64) -> String {
+pub fn format_ts(ts: i64, step_secs: i64) -> String {
     let (year, month, day) = civil_from_days(ts.div_euclid(86_400));
     if step_secs >= 28 * 86_400 {
         format!("{year}-{month:02}")
