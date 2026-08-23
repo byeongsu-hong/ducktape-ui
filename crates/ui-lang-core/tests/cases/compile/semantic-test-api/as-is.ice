@@ -33,8 +33,6 @@ test semantic_driver
   target field = surface/field
   target control = surface/control
   target scroller = surface/scroller
-  hover control
-  enter control
   leave
   move control
   move 12.0 18.0
@@ -90,7 +88,6 @@ test semantic_driver
   touch cancel 2 40.0 50.0
   window move 40.0 60.0
   window resize 1024.0 768.0
-  resize 800.0 600.0
   window rescale 1.5
   window redraw
   window opened

@@ -57,7 +57,7 @@ test svg_child_ink_keys_on_button_status
   move (icon_live.x - 8.0) icon_live.center_y
   expect live_glyph.image_color == color.rgb8(136, 136, 136)
   expect locked_glyph.image_color == color.rgb8(68, 51, 34)
-  hover icon_locked
+  move icon_locked
   expect locked_glyph.image_color == color.rgb8(68, 51, 34)
 
 // The text child carries an explicit `@text-danger` and still follows the

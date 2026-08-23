@@ -6,7 +6,6 @@ Config::new("semantic_driver")
 .reduced_motion(true)
 perform_action(::ui_lang_runtime::testing::Action::
 Action::MoveTo(
-Action::Enter(
 Action::Leave,
 Action::MoveToPoint(
 Action::Click {

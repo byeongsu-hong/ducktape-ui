@@ -431,7 +431,7 @@ fn chart_zoom_cost() {
     state.history_exhausted = true;
     *driver.state_mut() = state;
     driver.redraw(here());
-    driver.enter("trading-chart", here());
+    driver.move_to("trading-chart", here());
 
     let mut samples = Vec::with_capacity(ROUNDS);
     for round in 0..ROUNDS {

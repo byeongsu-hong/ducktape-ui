@@ -95,7 +95,7 @@ test structured_geometry_and_paint_contract
   expect machine.font.family == family.named("Geist Mono")
 
   dispatch select_case("button.default")
-  hover primary
+  move primary
   expect primary.background == background.color(color.rgb8(50, 47, 40))
 
 test semantic_action_boundary
@@ -120,7 +120,7 @@ test semantic_action_boundary
   expect a11y primary name "Send invite"
   expect a11y primary action click
   expect a11y primary action focus
-  enter primary
+  move primary
   a11y focus primary
   expect primary.focused
   key enter
@@ -159,8 +159,7 @@ test semantic_action_matrix_compiles_and_runs
   target field = surface/semantic-field
   target control = surface/semantic-control
   target scroller = surface/semantic-scroller
-  hover control
-  enter control
+  move control
   leave
   move control
   move 12.0 18.0
@@ -217,7 +216,6 @@ test semantic_action_matrix_compiles_and_runs
   touch cancel 2 40.0 50.0
   window move 40.0 60.0
   window resize 800.0 600.0
-  resize 800.0 600.0
   window rescale 1.5
   window redraw
   window opened

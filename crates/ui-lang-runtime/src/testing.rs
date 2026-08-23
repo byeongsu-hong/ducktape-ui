@@ -698,7 +698,6 @@ pub enum AccessibilityProperty {
 /// A semantic action accepted by [`Driver::perform_action`] without exposing raw Iced events.
 #[derive(Debug, Clone)]
 pub enum Action {
-    Enter(String),
     Leave,
     MoveTo(String),
     MoveToPoint(Point),
@@ -2935,7 +2934,6 @@ where
 
     fn perform_action_inner(&mut self, action: Action, source: Location) -> Option<Capture> {
         match action {
-            Action::Enter(target) => self.enter(&target, source),
             Action::Leave => self.leave(source),
             Action::MoveTo(target) => self.move_to(&target, source),
             Action::MoveToPoint(position) => {
@@ -3007,11 +3005,6 @@ where
             },
         }
         None
-    }
-
-    pub fn enter(&mut self, id: &str, source: Location) {
-        let bounds = self.interaction_bounds("enter", id, source);
-        self.set_cursor(bounds.center(), true, source);
     }
 
     pub fn leave(&mut self, source: Location) {
@@ -7038,7 +7031,6 @@ mod tests {
 
         let button = driver.target("App/root/increment", HERE);
         let button_center = Point::new(button.bounds.center_x(), button.bounds.center_y());
-        driver.perform_action(Action::Enter("App/root/increment".to_owned()), HERE);
         driver.perform_action(Action::MoveTo("App/root/input".to_owned()), HERE);
         driver.perform_action(Action::MoveToPoint(Point::new(8.0, 8.0)), HERE);
         driver.perform_action(

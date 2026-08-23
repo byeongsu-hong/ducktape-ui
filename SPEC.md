@@ -740,8 +740,6 @@ test_target    = name | widget_target
 test_step      = "click" test_target test_pointer_button?
                | "double-click" test_target test_pointer_button?
                | "click-at" expr expr test_pointer_button?
-               | "hover" test_target
-               | "enter" test_target
                | "leave"
                | "move" (test_target | expr expr)
                | "press" test_target test_pointer_button?
@@ -777,7 +775,6 @@ test_step      = "click" test_target test_pointer_button?
                | "modifiers" test_modifier*
                | "chord" test_modifier* test_key
                | "repeat" test_key expr
-               | "resize" expr expr
                | "tap" test_target positive_integer?
                | "touch" ("down" | "move" | "up" | "cancel")
                  expr expr expr
@@ -5511,8 +5508,6 @@ click target
 click target right
 double-click target
 click-at 120.0 48.0
-hover target
-enter target
 leave
 move target
 move 120.0 48.0
@@ -5644,10 +5639,12 @@ dispatch top_level_handler(argument, ...)
 A touch ID is numeric and remains active from `down` until `up` or `cancel`;
 multiple IDs permit multi-touch fixtures. `tap` allocates the lowest unused
 touch ID for its complete down/up gesture, so explicitly managed contacts may
-remain active at the same time. `window resize` updates the retained
-viewport before emitting the ordinary Iced resize event; `resize width height`
-is its concise equivalent. Move, rescale, focus, close-request, opened/closed,
-redraw, file, and system-theme steps likewise travel through the normal
+remain active at the same time. Pointer and application steps are spelled
+bare; every step that acts on the window is spelled `window <verb>`, so
+`move x y` moves the pointer while `window move x y` moves the window.
+`window resize` updates the retained viewport before emitting the ordinary
+Iced resize event. Move, rescale, focus, close-request, opened/closed, redraw,
+file, and system-theme steps likewise travel through the normal
 event/subscription path. `close-request` asks the application to close; it does
 not bypass the application's close-request handler.
 

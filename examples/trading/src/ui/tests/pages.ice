@@ -268,7 +268,7 @@ test trading_settings_centres_its_columns_at_every_width
   capture page_settings_wide
   // At the window's own minimum 1064 of 1180 leaves 58 a side, so the same two
   // measurements hold there and the columns are whole rather than squeezed.
-  resize 1180 720
+  window resize 1180 720
   expect content.width ~= 1008.0
   expect content.x - app.x ~= app.right - content.right
   // The second column is whole rather than clipped at the minimum width, which

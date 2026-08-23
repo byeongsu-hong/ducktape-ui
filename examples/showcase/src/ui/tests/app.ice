@@ -243,7 +243,7 @@ test catalog_layout
   snap-end scroller
   expect fields.x ~= buttons.x
   expect fields.y > buttons.bottom
-  resize 720 560
+  window resize 720 560
   expect app.width ~= 720.0
   expect app.height ~= 560.0
   expect scroller.height > 300.0
@@ -282,7 +282,7 @@ test retained_data_is_a_separate_screen
   expect virtual_widget.height > 300.0
   expect virtual_widget.bottom < retained_screen.bottom
   capture retained_data_wide
-  resize 720 560
+  window resize 720 560
   expect compact_virtual_panel.width > 280.0
   expect compact_virtual_widget.height > 140.0
   expect compact_virtual_widget.bottom < retained_screen.bottom
@@ -543,7 +543,7 @@ test catalog_full_scroll_visuals
   expect navigation_menu_is_open(navigation_menu)
   capture navigation_menu_and_shell
   key escape
-  resize 720 560
+  window resize 720 560
   snap-end scroller
   capture narrow_navigation_shell
 

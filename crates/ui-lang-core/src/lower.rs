@@ -313,8 +313,6 @@ pub(crate) enum ResolvedTestStepKind {
         button: ResolvedTestMouseButton,
         count: u8,
     },
-    Hover(ResolvedTestTargetRef),
-    Enter(ResolvedTestTargetRef),
     Leave,
     MoveTarget(ResolvedTestTargetRef),
     MovePoint(ResolvedExpressionId, ResolvedExpressionId),

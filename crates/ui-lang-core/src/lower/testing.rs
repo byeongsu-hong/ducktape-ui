@@ -388,8 +388,6 @@ impl Lowerer {
                     count: *count,
                 }
             }
-            TestStepKind::Hover(source) => ResolvedTestStepKind::Hover(target(source, values)?),
-            TestStepKind::Enter(source) => ResolvedTestStepKind::Enter(target(source, values)?),
             TestStepKind::Leave => ResolvedTestStepKind::Leave,
             TestStepKind::Move(TestPointerPosition::Target(source)) => {
                 ResolvedTestStepKind::MoveTarget(target(source, values)?)

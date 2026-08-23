@@ -83,7 +83,7 @@ test trading_a_virtual_list_follows_a_rapid_wheel_reversal
   expect exists first
   expect missing reached
 
-  enter list
+  move list
   wheel 0.0 -100.0
   wheel 0.0 -100.0
   wheel 0.0 -100.0

@@ -342,10 +342,6 @@ fn parse_test_step(
             button,
             count: 1,
         }
-    } else if let Some(target) = line.text.strip_prefix("hover ") {
-        TestStepKind::Hover(parse_test_target_ref(target, line, scope, targets)?)
-    } else if let Some(target) = line.text.strip_prefix("enter ") {
-        TestStepKind::Enter(parse_test_target_ref(target, line, scope, targets)?)
     } else if line.text == "leave" {
         TestStepKind::Leave
     } else if let Some(value) = line.text.strip_prefix("move ") {
@@ -515,9 +511,6 @@ fn parse_test_step(
         }
     } else if let Some(value) = line.text.strip_prefix("touch ") {
         parse_touch_step(value, line, scope, targets)?
-    } else if let Some(values) = line.text.strip_prefix("resize ") {
-        let (width, height) = parse_test_pair(values, "resize", line, scope, targets)?;
-        TestStepKind::Resize(width, height)
     } else if let Some(value) = line.text.strip_prefix("system-theme ") {
         TestStepKind::SystemTheme(parse_test_theme(value.trim(), line)?)
     } else if let Some(value) = line.text.strip_prefix("file-hover ") {

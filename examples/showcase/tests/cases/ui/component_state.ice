@@ -424,7 +424,7 @@ test interaction_contract
   click mouse
   expect text "mouse routed" within status
   press resize
-  hover open_dialog
+  move open_dialog
   release
   expect text "resize routed" within status
   click canvas
@@ -486,7 +486,7 @@ test layout_contract
   expect responsive_content.height ~= 30.0
   expect space.width ~= 300.0
   expect space.height ~= 8.0
-  resize 500 500
+  window resize 500 500
   expect root.width ~= 320.0
 
 test component_state_read

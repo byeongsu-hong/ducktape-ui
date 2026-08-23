@@ -27,7 +27,7 @@ test render_contract
   expect text "Draft" within root
   expect no text "Failed"
   click draft
-  hover draft
+  move draft
   press draft
   release
   type "local"
@@ -35,7 +35,7 @@ test render_contract
   key escape
   key tab
   key backspace
-  resize 480 720
+  window resize 480 720
   dispatch increment
 
 view
@@ -203,7 +203,6 @@ test interactions
   reduced-motion true
   target root = #root
   target field = root/field
-  enter field
   leave
   move field
   move 12 24
@@ -314,6 +313,18 @@ test interactions
         step.kind,
         TestStepKind::Expect(TestExpectation::Accessibility { .. })
     )));
+}
+
+#[test]
+fn rejects_pointer_and_window_step_spellings_that_duplicate_move_and_window_resize() {
+    for step in ["hover field", "enter field", "resize 480 720"] {
+        let source = format!(
+            "app Demo\nview\n  text \"ok\" #field\ntest invalid\n  target field = #field\n  {step}\n"
+        );
+        let failure = parse(&source).unwrap_err();
+        assert_eq!(failure.code, "E194");
+        assert_eq!(failure.message, format!("unknown test step `{step}`"));
+    }
 }
 
 #[test]
