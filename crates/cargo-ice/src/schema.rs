@@ -1072,7 +1072,7 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "lazy" => details(
             &["view"],
-            "lazy <dependency-expression> as <name> [#<id>]",
+            "lazy <dependency-expression>[, <extra>...] as <name> [#<id>] | lazy <value> by <key>[, <key>...] as <name> [#<id>]",
             child_shape(1, Some(1), "view-root"),
             json!({ "required": true, "name": "name", "source": "dependency-expression" }),
             no_route(),

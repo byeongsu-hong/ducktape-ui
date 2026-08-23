@@ -456,30 +456,45 @@ pub(in crate::parser) fn parse_lazy(
     if !styles.is_empty() {
         return Err(error("E096", line, "lazy does not accept `@` utilities"));
     }
-    let usage = "lazy uses `lazy dependency as name` or `lazy value by key, key as name`";
-    let as_index = match parts.get(2).copied() {
-        Some("as") => 2,
-        Some("by") => {
-            let index = parts
-                .iter()
-                .rposition(|part| *part == "as")
-                .ok_or_else(|| error("E096", line, usage))?;
-            if index < 4 {
-                return Err(error("E096", line, usage));
-            }
-            index
-        }
-        _ => return Err(error("E096", line, usage)),
+    let usage = "lazy uses `lazy dependency as name`, `lazy dependency, extra as name`, or `lazy value by key, key as name`";
+    let as_index = parts
+        .iter()
+        .rposition(|part| *part == "as")
+        .ok_or_else(|| error("E096", line, usage))?;
+    let by_index = parts[..as_index].iter().position(|part| *part == "by");
+    let parse_list = |range: &[&str]| -> Result<Vec<Expr>, Error> {
+        split_top(&range.join(" "), ',')
+            .into_iter()
+            .map(|part| {
+                if part.is_empty() {
+                    return Err(error("E096", line, usage));
+                }
+                parse_expr(strip_wrapping_parens(part), line)
+            })
+            .collect()
     };
-    let mut keys = Vec::new();
-    if as_index > 2 {
-        for key in split_top(&parts[3..as_index].join(" "), ',') {
-            if key.is_empty() {
+    let mut head = parse_list(&parts[1..by_index.unwrap_or(as_index)])?;
+    if head.is_empty() {
+        return Err(error("E096", line, usage));
+    }
+    let dependency = head.remove(0);
+    let keys = match by_index {
+        Some(by_index) => {
+            if !head.is_empty() {
+                return Err(error(
+                    "E096",
+                    line,
+                    "lazy extras and `by` keys do not combine; list every cheap dependency after `by`",
+                ));
+            }
+            let keys = parse_list(&parts[by_index + 1..as_index])?;
+            if keys.is_empty() {
                 return Err(error("E096", line, usage));
             }
-            keys.push(parse_expr(strip_wrapping_parens(key), line)?);
+            keys
         }
-    }
+        None => head,
+    };
     if parts.len() < as_index + 2 || parts.len() > as_index + 3 {
         return Err(error("E096", line, usage));
     }
@@ -495,8 +510,9 @@ pub(in crate::parser) fn parse_lazy(
         parse_unique_id(part, &mut id, line, "E096", "lazy")?;
     }
     Ok(ViewNode::Lazy {
-        dependency: parse_expr(strip_wrapping_parens(parts[1]), line)?,
+        dependency,
         keys,
+        keyed: by_index.is_some(),
         binding: identifier(parts[as_index + 1], line)?,
         id,
         child: Box::new(parse_view(&line.children[0])?),

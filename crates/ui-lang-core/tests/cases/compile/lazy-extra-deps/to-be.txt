@@ -1,0 +1,2 @@
+::ui_lang_runtime::memo_lazy((message.clone(), self.mode.clone(), self.unit.to_owned(), ("ExtraDeps").to_owned(), __ice_palette.name)
+let cached: crate::backend::Message = __dependency.0.clone(); let mode: Mode = __dependency.1.clone(); let unit: ::std::string::String = __dependency.2.clone(); let __lazy_scope = __dependency.3.clone();

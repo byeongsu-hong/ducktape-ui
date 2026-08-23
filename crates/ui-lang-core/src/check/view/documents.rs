@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::ast::expr_source;
+
 pub(in crate::check) fn infer_documents_group(
     node: &ViewNode,
     env: &dyn ExprTypeEnv,
@@ -154,6 +156,7 @@ pub(in crate::check) fn infer_documents_group(
         ViewNode::Lazy {
             dependency,
             keys,
+            keyed,
             binding,
             id,
             child,
@@ -170,7 +173,7 @@ pub(in crate::check) fn infer_documents_group(
             // The plain form hashes the value, so it must be hashable; the
             // keyed form hashes only the keys and merely clones the value on
             // a miss, so its value needs Clone, not Hash — floats included.
-            if keys.is_empty()
+            if !keyed
                 && (!lazy_hashable(&dependency_type)
                     || contains_ui_enum(&dependency_type, document))
             {
@@ -184,7 +187,7 @@ pub(in crate::check) fn infer_documents_group(
                 )
                 .hint("use bool, i64, str, an extern type with Hash + Clone, or a list/optional of those"));
             }
-            if !keys.is_empty()
+            if *keyed
                 && (!keyed_lazy_value_cloneable(&dependency_type)
                     || contains_ui_enum(&dependency_type, document))
             {
@@ -198,6 +201,7 @@ pub(in crate::check) fn infer_documents_group(
                 )
                 .hint("use bool, i64, f64, str, an extern type with Clone, or a list/optional of those"));
             }
+            let noun = if *keyed { "key" } else { "extra" };
             let mut key_bindings = Vec::new();
             for (index, key) in keys.iter().enumerate() {
                 let key_type = retained_view_expr_type(
@@ -219,16 +223,33 @@ pub(in crate::check) fn infer_documents_group(
                         "E139",
                         span,
                         format!(
-                            "lazy key type `{}` is not a cheap projection",
+                            "lazy {noun} type `{}` is not a cheap projection",
                             key_type.display()
                         ),
                     )
                     .hint("use bool, i64, str, or a fieldless enum"));
                 }
-                if let Expr::Path(segments) = key
-                    && let [name] = segments.as_slice()
-                    && name != binding
-                {
+                let bare = match key {
+                    Expr::Path(segments) => match segments.as_slice() {
+                        [name] if name != binding => Some(name),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                // A plain-form extra is a snapshot local first and a hash
+                // input second, so it must name something to snapshot.
+                if !keyed && bare.is_none() {
+                    return Err(Error::new(
+                        "E139",
+                        span,
+                        format!(
+                            "lazy extra `{}` is not a bare identifier",
+                            expr_source(key)
+                        ),
+                    )
+                    .hint("name a state field, prop, or row local distinct from the alias; the keyed form takes computed projections"));
+                }
+                if let Some(name) = bare {
                     key_bindings.push((name.clone(), key_type));
                 }
             }

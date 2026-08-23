@@ -937,7 +937,7 @@ keyed_property = ("w=" | "h=") length | "gap=" expr
                  | "pl=") expr
                | "max-w=" expr | "virtual-row=" expr
                | "align=" ("start" | "center" | "end")
-lazy_node      = "lazy" expr ("by" expr ("," expr)*)? "as" name id?
+lazy_node      = "lazy" expr ("," name)* ("by" expr ("," expr)*)? "as" name id?
                  INDENT node
 markdown_view  = "markdown" name id? markdown_property* "->" route
                  (INDENT markdown_style)?
@@ -2240,7 +2240,14 @@ of rebuilding and re-shaping — a screen switch pays only for content that
 actually changed. The dependency may be bool, i64, str, an extern type
 implementing Rust `Hash + Clone`, or a recursive list/optional of those. Only
 the owned `cached` alias is visible inside the subtree as a value, which
-statically enforces iced's `Element<'static>` contract. The enclosing `for`
+statically enforces iced's `Element<'static>` contract. `lazy value, extra as
+cached` hashes each extra right after the value and exposes it inside the
+subtree as an immutable snapshot under its own name: an extra is a bare
+identifier — a state field, a component prop, or a `for` or keyed-column row
+local other than the alias — of a cheap type (`bool`, `i64`, `str`, or a
+fieldless UI enum), and a list of rows that each name `locale` rebuilds every
+row when the locale moves and none on an unchanged redraw. Extras do not
+combine with `by`, whose keys already serve that role. The enclosing `for`
 scope is not visible either — naming its alias inside the subtree is `E150` —
 because the subtree is built from its dependency alone, so it carries no
 iteration index and every row of a `lazy` list otherwise renders under one

@@ -325,6 +325,7 @@ fn collect_widget_ids(
                 id,
                 child,
                 span,
+                ..
             } => {
                 if inspect_all {
                     record(scope, id, env, document, span, output)?;
