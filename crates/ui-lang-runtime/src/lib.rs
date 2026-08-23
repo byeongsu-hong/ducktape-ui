@@ -260,7 +260,12 @@ struct SemanticSnapshot {
 #[derive(Clone)]
 struct Semantics<Message> {
     snapshot: SemanticSnapshot,
-    focus_id: widget::Id,
+    /// The id `operate` hands to its `custom` reader, when the caller named
+    /// one. Left unset otherwise: the id derived from `snapshot.id` is a
+    /// formatted `String` that only `operate` ever reads, so deriving it there
+    /// costs one allocation per pass rather than one per node per build plus
+    /// another for every `diff` that clones the node.
+    focus_id: Option<widget::Id>,
     activate: Option<Message>,
 }
 
@@ -319,7 +324,7 @@ impl<Message> Semantics<Message> {
                 focused: false,
                 supports_activate: false,
             },
-            focus_id: id.widget_id(),
+            focus_id: None,
             activate: None,
         }
     }
@@ -577,7 +582,7 @@ where
     }
 
     pub fn focus_id(mut self, id: impl Into<widget::Id>) -> Self {
-        self.semantics.focus_id = id.into();
+        self.semantics.focus_id = Some(id.into());
         self
     }
 
@@ -669,7 +674,11 @@ where
         operation: &mut dyn Operation,
     ) {
         let state = tree.state.downcast_mut::<SemanticState<Message>>();
-        let focus_id = state.semantics.focus_id.clone();
+        let focus_id = state
+            .semantics
+            .focus_id
+            .clone()
+            .unwrap_or_else(|| state.semantics.id.widget_id());
         if state.semantics.disabled {
             state.semantics.focused = false;
             state.focus_visible = false;
@@ -678,11 +687,7 @@ where
         operation.custom(Some(&focus_id), layout.bounds(), state);
 
         if !state.semantics.disabled && state.semantics.focus == FocusBehavior::Wrapper {
-            operation.focusable(
-                Some(&state.semantics.focus_id.clone()),
-                layout.bounds(),
-                state,
-            );
+            operation.focusable(Some(&focus_id), layout.bounds(), state);
         }
 
         if state.semantics.focus == FocusBehavior::Wrapper

@@ -37,8 +37,8 @@ type Renderer = iced_test::renderer::Renderer;
 #[test]
 fn tree_callbacks_share_one_allocation() {
     const FRAMES: usize = 256;
-    const ALLOCATIONS: usize = 5_376;
-    const ALLOCATED_BYTES: usize = 366_336;
+    const ALLOCATIONS: usize = 5_120;
+    const ALLOCATED_BYTES: usize = 356_096;
 
     let config = TreeViewConfig::new(20.0).unwrap();
     let items = [1_u64];
