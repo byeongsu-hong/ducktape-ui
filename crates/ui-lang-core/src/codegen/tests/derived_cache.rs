@@ -227,10 +227,12 @@ view
     // needs ownership.
     assert!(generated.contains("crate::backend::display((*self.__ice_derived_visible()).clone())"));
     assert!(generated.contains("((*self.__ice_derived_visible())).len() as i64"));
+    // The clears ride with the revision tick, inside the compare: an
+    // equal-value write leaves the cells as valid as they were.
     assert!(generated.contains(
-        "self.count = ((*self.__ice_derived_doubled()) + 1); self.__ice_derived.doubled.take();"
+        "{ let __ice_next = ((*self.__ice_derived_doubled()) + 1); if ::ui_lang_runtime::state_changed!(self.count, __ice_next) { self.count = __ice_next; self.__ice_rev[1] += 1; self.__ice_derived.doubled.take(); } }"
     ));
-    assert!(generated.contains("self.rows = (*self.__ice_derived_visible()).clone(); self.__ice_derived.visible.take(); self.__ice_derived.shown.take();"));
+    assert!(generated.contains("{ let __ice_next = (*self.__ice_derived_visible()).clone(); if ::ui_lang_runtime::state_changed!(self.rows, __ice_next) { self.rows = __ice_next; self.__ice_rev[0] += 1; self.__ice_derived.visible.take(); self.__ice_derived.shown.take(); } }"));
 }
 
 #[test]
@@ -260,12 +262,14 @@ view
     let generated = compile(&source, "chain.ice").unwrap();
 
     assert!(generated.contains(
-        "self.left = 1; self.__ice_derived.left_twice.take(); self.__ice_derived.sum.take();\n"
+        "self.left = __ice_next; self.__ice_rev[0] += 1; self.__ice_derived.left_twice.take(); self.__ice_derived.sum.take(); } }\n"
     ));
-    assert!(generated.contains("self.right = 1; self.__ice_derived.sum.take();\n"));
-    assert!(
-        generated.contains("self.other = \"x\".to_owned(); self.__ice_derived.shout.take();\n")
-    );
+    assert!(generated.contains(
+        "self.right = __ice_next; self.__ice_rev[1] += 1; self.__ice_derived.sum.take(); } }\n"
+    ));
+    assert!(generated.contains(
+        "self.other = __ice_next; self.__ice_rev[2] += 1; self.__ice_derived.shout.take(); } }\n"
+    ));
 }
 
 #[test]
@@ -290,8 +294,8 @@ view
     );
     let generated = compile(&source, "local.ice").unwrap();
 
-    assert!(generated.contains("__local.clicks = (__local.clicks + 1);\n"));
-    assert!(!generated.contains("__local.clicks = (__local.clicks + 1); "));
+    assert!(generated.contains("__local.clicks = __ice_next; __local.__ice_rev[0] += 1; } }\n"));
+    assert!(!generated.contains("__local.__ice_rev[0] += 1; __local.__ice_derived"));
 }
 
 #[test]
@@ -331,7 +335,7 @@ view
     // (the handler just wrote `rows`), and taking the field first would let
     // the recomputation read the emptied field.
     assert!(generated.contains(
-        "self.rows = crate::backend::appended(self.rows.clone(), (*self.__ice_derived_visible()).clone());"
+        "let __ice_next = crate::backend::appended(self.rows.clone(), (*self.__ice_derived_visible()).clone());"
     ));
     assert!(!generated.contains("appended(::std::mem::take(&mut self.rows), (*self."));
 }

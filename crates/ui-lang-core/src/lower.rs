@@ -3459,7 +3459,7 @@ impl LoweredProgram {
 
     pub(crate) fn controlled_input_bindings(&self) -> Result<Vec<&AppStateContract>, Error> {
         let mut seen = HashSet::with_capacity(self.controlled_inputs.len());
-        let mut names = Vec::with_capacity(self.controlled_inputs.len());
+        let mut states = Vec::with_capacity(self.controlled_inputs.len());
         for binding in &self.controlled_inputs {
             let state = self
                 .app_states
@@ -3479,9 +3479,9 @@ impl LoweredProgram {
                     "controlled input binding is duplicated in normalized HIR",
                 ));
             }
-            names.push(state);
+            states.push(state);
         }
-        Ok(names)
+        Ok(states)
     }
 
     pub(crate) fn controlled_editor_bindings(

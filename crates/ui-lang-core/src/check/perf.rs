@@ -193,8 +193,17 @@ fn content_walk(
             span,
             ..
         } => {
+            // A value rooted in state keys the memo off state revisions and
+            // is cloned only on a miss; the per-pass clone is the row-local
+            // value — the loop item, a match payload, a table row.
+            let mut names = Vec::new();
+            path_roots(dependency, &mut names);
+            let reads_row_local = names
+                .iter()
+                .any(|name| scope.bindings.iter().any(|(bound, _)| bound == name));
             if !keyed
                 && scope.in_loop
+                && reads_row_local
                 && lazy_dependency_type(span).is_some_and(|ty| owns_collection(&ty, document))
             {
                 let dependency = expr_source(dependency);

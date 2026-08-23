@@ -846,10 +846,12 @@ view
       text len(cached)
 "#;
     let generated = compile(source, "lazy.ice").unwrap();
+    // The value reads state, so the memo tuple carries that field's
+    // revision and the value is cloned inside the builder, on a miss only.
     assert!(generated.contains(
-        "::ui_lang_runtime::memo_lazy((self.title.to_owned(), (\"LazyDemo\").to_owned(), __ice_palette.name)"
+        "::ui_lang_runtime::memo_lazy((self.__ice_rev[0], (\"LazyDemo\").to_owned(), __ice_palette.name)"
     ));
-    assert!(generated.contains("let cached: ::std::string::String = __dependency.0.clone()"));
+    assert!(generated.contains("let cached: ::std::string::String = self.title.to_owned();"));
     assert!(generated.contains("let __lazy_content: __IceElement<'static,"));
     assert!(generated.contains("let __lazy_scope = __dependency.1.clone()"));
 }
@@ -950,7 +952,7 @@ view
     assert!(generated.contains("docs: ::iced::widget::markdown::Content::parse(\"# Hello\")"));
     assert!(
         generated.contains(
-            "self.docs = ::iced::widget::markdown::Content::parse(&\"# Reset\".to_owned())"
+            "let __ice_next = ::iced::widget::markdown::Content::parse(&\"# Reset\".to_owned()); if ::ui_lang_runtime::state_changed!(self.docs, __ice_next) { self.docs = __ice_next; self.__ice_rev["
         )
     );
     for field in [
@@ -1149,8 +1151,10 @@ view
     assert!(generated.contains("fn __ui_lang_check_editor_highlighter_editor_highlight"));
     assert!(generated.contains("fn __ui_lang_check_editor_style_editor_surface"));
     assert!(generated.contains("crate::backend::editor_surface(__theme, __status, self.locked)"));
-    assert!(generated.contains("self.title = value"));
-    assert!(generated.contains("self.body.perform(action)"));
+    assert!(generated.contains(
+        "state_changed!(self.title, __ice_next) { self.title = __ice_next; self.__ice_rev["
+    ));
+    assert!(generated.contains("self.body.perform(action); self.__ice_rev["));
 }
 
 #[test]
@@ -1221,7 +1225,7 @@ view
     assert!(generated.contains("__CounterHandleIncrement(::std::string::String)"));
     assert!(generated.contains("__CounterBindDraft(::std::string::String, ::std::string::String)"));
     assert!(generated.contains("self.__ice_component_counter.entry(__scope.clone()).or_default()"));
-    assert!(generated.contains("__local.count = (__local.count + 1)"));
+    assert!(generated.contains("let __ice_next = (__local.count + 1); if ::ui_lang_runtime::state_changed!(__local.count, __ice_next) { __local.count = __ice_next; __local.__ice_rev[0] += 1; }"));
     // Inside an outlined method the scope binding is the normalized
     // `__ice_use_scope` parameter.
     assert!(generated.contains("self.__ice_component_counter.get(&__ice_use_scope)"));

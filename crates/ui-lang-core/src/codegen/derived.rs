@@ -7,9 +7,10 @@
 //! `sync` externs and recomputation-unsafe built-ins there.
 //!
 //! The invariant that makes the cache correct is that every emitter of an
-//! app-state write goes through [`state_write`], which follows the write with
-//! the cells it can have stale. `codegen/tests/derived_cache.rs` pins that
-//! invariant against the generated output of every write form.
+//! app-state write goes through `state_write::state_write_code`, which follows
+//! the write with the cells it can have stale ([`derived_clears_code`]).
+//! `codegen/tests/derived_cache.rs` pins that invariant against the generated
+//! output of every write form.
 
 use super::*;
 
@@ -54,29 +55,20 @@ pub(in crate::codegen) fn generate_derived(
     Ok(())
 }
 
-/// The one way generated code writes an app value. Emits `write` followed by
-/// the cache clears for every derived value whose expression transitively
-/// reads `target`, so the next read recomputes. A target no derived reads —
-/// component-local state, a secret, a field nothing derives from — emits the
-/// write alone.
-pub(in crate::codegen) fn state_write(
+/// The cache clears a write to `target` must be followed by: one `take()`
+/// per derived value whose expression transitively reads the field, so the
+/// next read recomputes. Empty for a target no derived reads — component
+/// state, a secret, a field nothing derives from. Emitted only by
+/// `state_write::state_write_code`, the one write path.
+pub(in crate::codegen) fn derived_clears_code(
     program: &LoweredProgram,
     receiver: &str,
     target: ResolvedValueRef,
-    write: impl std::fmt::Display,
 ) -> String {
-    let mut code = write.to_string();
-    for derived in program
+    program
         .derived()
         .iter()
         .filter(|derived| derived.reads.contains(&target))
-    {
-        write!(
-            code,
-            " {receiver}.{DERIVED_CACHE_FIELD}.{}.take();",
-            derived.name
-        )
-        .unwrap();
-    }
-    code
+        .map(|derived| format!(" {receiver}.{DERIVED_CACHE_FIELD}.{}.take();", derived.name))
+        .collect()
 }

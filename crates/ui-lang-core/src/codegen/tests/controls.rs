@@ -34,7 +34,10 @@ view
     // The read lowers to `Content::text()`.
     assert!(generated.contains(".text()"));
     // Clearing lowers to a fresh `Content` assigned onto the editor state.
-    assert!(generated.contains(".notes = ::iced::widget::text_editor::Content::with_text"));
+    assert!(generated.contains("let __ice_next = ::iced::widget::text_editor::Content::with_text"));
+    assert!(generated.contains(
+        "state_changed!(self.notes, __ice_next) { self.notes = __ice_next; self.__ice_rev["
+    ));
 
     // Reading a non-editor state is a type error.
     let error = compile(
@@ -104,7 +107,9 @@ view
     // The widget's action route carries the rendering instance's scope.
     assert!(generated.contains("move |__ice_action|"));
     // A local handler replaces the instance's content like any state write.
-    assert!(generated.contains(".body = ::iced::widget::text_editor::Content::with_text"));
+    assert!(generated.contains(
+        "state_changed!(__local.body, __ice_next) { __local.body = __ice_next; __local.__ice_rev["
+    ));
     // The component test seam exposes the draft as its text.
     assert!(generated.contains("body: __state.body.text(),"));
     // …and can name an instance that has only RENDERED. Retained storage
@@ -302,16 +307,16 @@ view
     let generated = compile(source, "feed.ice").unwrap();
 
     assert!(generated.contains(
-        "self.rows = crate::backend::keep_rows(::std::convert::AsRef::as_ref(&(self.rows)), crate::backend::make_row(::std::convert::AsRef::as_ref(&(self.name))));"
+        "let __ice_next = crate::backend::keep_rows(::std::convert::AsRef::as_ref(&(self.rows)), crate::backend::make_row(::std::convert::AsRef::as_ref(&(self.name)))); if ::ui_lang_runtime::state_changed!(self.rows, __ice_next)"
     ));
     assert!(generated.contains(
-        "self.total = crate::backend::count_rows(::std::convert::AsRef::as_ref(&(self.rows)));"
+        "let __ice_next = crate::backend::count_rows(::std::convert::AsRef::as_ref(&(self.rows))); if ::ui_lang_runtime::state_changed!(self.total, __ice_next)"
     ));
     assert!(generated.contains(
-        "self.name = crate::backend::stamp(::std::convert::AsRef::as_ref(&(self.name)));"
+        "let __ice_next = crate::backend::stamp(::std::convert::AsRef::as_ref(&(self.name))); if ::ui_lang_runtime::state_changed!(self.name, __ice_next)"
     ));
     assert!(generated.contains(
-        "self.name = crate::backend::page_text(::std::borrow::Borrow::borrow(&(self.doc)));"
+        "let __ice_next = crate::backend::page_text(::std::borrow::Borrow::borrow(&(self.doc))); if ::ui_lang_runtime::state_changed!(self.name, __ice_next)"
     ));
     assert!(!generated.contains("::std::mem::take(&mut self.rows)"));
     assert!(!generated.contains("::std::mem::take(&mut self.doc)"));
@@ -353,8 +358,14 @@ view
 "#;
     let generated = compile(source, "feed.ice").unwrap();
 
-    assert!(generated.contains("let revision: i64 = __dependency.0.clone();"));
-    assert!(generated.contains("let selected: i64 = __dependency.1.clone();"));
+    // Bare state keys are subsumed by their revisions: the tuple carries
+    // the revisions of `items`, `revision`, and `selected`, and the key
+    // snapshots are read inside the builder, which runs only when one of
+    // those moved.
+    assert!(generated.contains(
+        "::ui_lang_runtime::memo_lazy((self.__ice_rev[0], self.__ice_rev[1], self.__ice_rev[2], (\"Feed\").to_owned(), __ice_palette.name)"
+    ));
+    assert!(generated.contains("let revision: i64 = self.revision; let selected: i64 = self.selected; let __lazy_scope = __dependency.3.clone(); let cached: ::std::vec::Vec<::std::string::String> = self.items.clone();"));
     assert!(generated.contains("revision == selected"), "{generated}");
 }
 

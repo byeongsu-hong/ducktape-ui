@@ -15,6 +15,7 @@ mod memo_lazy;
 mod press_area;
 mod qr;
 mod resize_handle;
+pub mod rev;
 #[cfg(feature = "full-runtime")]
 pub mod rich_text_editor;
 mod scroll_anchor;

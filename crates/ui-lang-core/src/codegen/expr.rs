@@ -141,6 +141,7 @@ impl RecordingSink {
             || is_self_backed_param_key(name)
             || is_callback_sig_key(name)
             || is_value_param_key(name)
+            || is_param_revisions_key(name)
         {
             return;
         }

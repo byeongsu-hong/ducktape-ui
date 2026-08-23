@@ -396,7 +396,8 @@ fn lowers_every_native_font_operation() {
         "(self.custom_font).style",
         "::iced::font::Family::Name(_) => \"named\"",
         "::iced::font::Family::Name(__value) => ::std::option::Option::Some(__value.to_owned())",
-        "::ui_lang_runtime::memo_lazy((self.returned_font,",
+        "::ui_lang_runtime::memo_lazy((self.__ice_rev[",
+        "= self.returned_font; let __lazy_content",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -455,10 +456,11 @@ fn lowers_every_native_text_value_operation() {
         "crate::backend::text_shaping_round_trip",
         "crate::backend::text_wrapping_round_trip",
         "crate::backend::text_line_height_round_trip",
-        "::ui_lang_runtime::memo_lazy((self.returned_alignment",
-        "::ui_lang_runtime::memo_lazy((self.returned_shaping",
-        "::ui_lang_runtime::memo_lazy((self.returned_wrapping",
-        "::ui_lang_runtime::memo_lazy((self.returned_line_height",
+        "::ui_lang_runtime::memo_lazy((self.__ice_rev[",
+        "= self.returned_alignment; let __lazy_content",
+        "= self.returned_shaping; let __lazy_content",
+        "= self.returned_wrapping; let __lazy_content",
+        "= self.returned_line_height; let __lazy_content",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -618,7 +620,8 @@ fn lowers_every_native_window_id_operation() {
         "::iced::window::Id::unique()",
         "crate::backend::window_id_round_trip(self.first)",
         "(self.first).to_string()",
-        "::ui_lang_runtime::memo_lazy((self.first,",
+        "::ui_lang_runtime::memo_lazy((self.__ice_rev[",
+        "= self.first; let __lazy_content",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -1252,7 +1255,7 @@ view
         ".executor::<iced::executor::Default>()",
         ".presets([::iced::Preset::new(\"ready\", Self::__preset_0)])",
         "fn __preset_0()",
-        "self.ready = true",
+        "state_changed!(self.ready, __ice_next) { self.ready = __ice_next; self.__ice_rev[",
         "crate::backend::seed().map(|value| __ConfiguredMessage::Seeded(value))",
         "id: ::std::option::Option::Some(\"dev.example.configured\".to_owned())",
         ".font(include_bytes!(\"fonts/Brand.ttf\").as_slice())",
@@ -1640,11 +1643,13 @@ view
     // A parameter is a Rust binding: the first owned use would MOVE it, so
     // both reads create owned values. Without this the generated Rust fails borrowck at the
     // `include_app!` line, where no span points back at the `.ice` source.
-    assert!(generated.contains("self.latch = value.to_owned();"));
-    assert!(generated.contains("self.echo = value.to_owned();"));
+    assert!(generated.contains("let __ice_next = value.to_owned(); if ::ui_lang_runtime::state_changed!(self.latch, __ice_next) { self.latch = __ice_next; self.__ice_rev["));
+    assert!(generated.contains("let __ice_next = value.to_owned(); if ::ui_lang_runtime::state_changed!(self.echo, __ice_next) { self.echo = __ice_next; self.__ice_rev["));
     // Copy parameters keep the bare read — cloning those is pure noise.
-    assert!(generated.contains("self.count = times;"));
-    assert!(generated.contains("self.cursor = times;"));
+    assert!(generated.contains("let __ice_next = times; if ::ui_lang_runtime::state_changed!(self.count, __ice_next) { self.count = __ice_next; self.__ice_rev["));
+    assert!(generated.contains(
+        "let __ice_next = times; if ::ui_lang_runtime::state_changed!(self.cursor, __ice_next)"
+    ));
 }
 
 /// The theme boilerplate every tray fixture needs, so the assertions below

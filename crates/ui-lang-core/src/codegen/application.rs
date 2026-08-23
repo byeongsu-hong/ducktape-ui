@@ -341,6 +341,7 @@ pub(in crate::codegen) fn generate_boot(
         )
         .unwrap();
     }
+    writeln!(out, "{}", revisions_init_code(program.app_states().len())).unwrap();
     if !program.secrets().is_empty() {
         writeln!(
             out,
@@ -901,10 +902,15 @@ pub(in crate::codegen) fn generate_update(
         {
             let variant = component_binding_variant(&component.name, &state.name);
             let entry = entry("__scope");
+            let write = state_write_code(
+                program,
+                "__local",
+                ResolvedValueRef::ComponentState(state.id),
+                StateWrite::Assign("value".into()),
+            );
             writeln!(
                 out,
-                "{message}::{variant}(__scope, value) => {{ {entry} __local.{} = value; ::iced::Task::none() }},",
-                state.name
+                "{message}::{variant}(__scope, value) => {{ {entry} {write} ::iced::Task::none() }},"
             )
             .unwrap();
         }
@@ -918,12 +924,18 @@ pub(in crate::codegen) fn generate_update(
             let perform =
                 match program.component_controlled_editor_action(&component.name, &state.name) {
                     Some(action) => format!(
-                        "{}(&mut __local.{}, __action);",
+                        "{}(&mut __local.{}, __action)",
                         program.extern_function(action).rust_path,
                         state.name
                     ),
-                    None => format!("__local.{}.perform(__action);", state.name),
+                    None => format!("__local.{}.perform(__action)", state.name),
                 };
+            let perform = state_write_code(
+                program,
+                "__local",
+                ResolvedValueRef::ComponentState(state.id),
+                StateWrite::Mutate(perform),
+            );
             writeln!(
                 out,
                 "{message}::{variant}(__scope, __action) => {{ {entry} {perform} ::iced::Task::none() }},"
@@ -973,13 +985,13 @@ pub(in crate::codegen) fn generate_update(
         )
         .unwrap();
     }
-    for state in program.controlled_input_bindings()? {
-        let variant = binding_variant(&state.name);
-        let write = state_write(
+    for binding in program.controlled_input_bindings()? {
+        let variant = binding_variant(&binding.name);
+        let write = state_write_code(
             program,
             "self",
-            ResolvedValueRef::AppState(state.id),
-            format_args!("self.{} = value;", state.name),
+            ResolvedValueRef::AppState(binding.id),
+            StateWrite::Assign("value".into()),
         );
         writeln!(
             out,
@@ -991,17 +1003,17 @@ pub(in crate::codegen) fn generate_update(
         let variant = editor_variant(&binding.name);
         let perform = match binding.action {
             Some(action) => format!(
-                "{}(&mut self.{}, action);",
+                "{}(&mut self.{}, action)",
                 program.extern_function(action).rust_path,
                 binding.name
             ),
-            None => format!("self.{}.perform(action);", binding.name),
+            None => format!("self.{}.perform(action)", binding.name),
         };
-        let write = state_write(
+        let write = state_write_code(
             program,
             "self",
             ResolvedValueRef::AppState(binding.state),
-            perform,
+            StateWrite::Mutate(perform),
         );
         writeln!(
             out,

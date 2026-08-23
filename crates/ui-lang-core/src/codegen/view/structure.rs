@@ -185,129 +185,158 @@ pub(in crate::codegen) fn render_structure(
             // revisions replace one another without collapsing sibling rows.
             let site = node.0;
             let parking_scope = borrowed_scope(reconciliation_scope(&child_scope, env));
-            if lazy.keyed {
-                // `lazy value by key, key as name`: the keys stand in for the
-                // value in the dependency tuple, and the value never crosses
-                // a frame — the builder captures it by reference (or by Copy)
-                // and clones it into the binding only when a key changes, so
-                // an unchanged frame performs no deep clone of the value.
-                let keys = lazy
-                    .keys
-                    .iter()
-                    .map(|key| resolved_expr_use_code(program, *key, env, ValueMode::Owned))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .join(", ");
-                // Unlike the plain form's, this value expression lands INSIDE
-                // the `move` builder — a component-state read must not name
-                // the call-site scope binding there, or the closure captures
-                // the String by move and any later read of the component's
-                // state in the same render is a use-after-move. Emit the read
-                // against the closure-owned context local the hoist declares
-                // instead; its value IS the component scope, so the state
-                // lookup key is unchanged.
-                let component_context_hoisted = !hoisted.is_empty();
-                let dependency = if component_context_hoisted {
+            // An expression that lands INSIDE the `move` builder: a
+            // component-state read there must not name the call-site scope
+            // binding, or the closure captures the String by move and any
+            // later read of the component's state in the same render is a
+            // use-after-move. Emit the read against the closure-owned context
+            // local the hoist declares instead; its value IS the component
+            // scope, so the state lookup key is unchanged.
+            let context_local = lazy_context_local(node);
+            let inside_builder = |expression| -> Result<String, Error> {
+                if hoisted.is_empty() {
+                    resolved_expr_use_code(program, expression, env, ValueMode::Owned)
+                } else {
                     resolved_expr_use_code_with_state_scope(
                         program,
-                        lazy.dependency,
+                        expression,
                         env,
                         ValueMode::Owned,
-                        &lazy_context_local(node),
-                    )?
-                } else {
-                    resolved_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?
-                };
-                let scope_index = lazy.keys.len();
-                let key_bindings = lazy
-                    .key_bindings
-                    .iter()
-                    .map(|binding| {
-                        let name = &binding.binding.name;
-                        let ty = rust_type_code(program, &binding.binding.ty);
-                        let index = binding.index;
-                        format!("let {name}: {ty} = __dependency.{index}.clone(); ")
-                    })
-                    .collect::<String>();
-                let lazy_body = format!(
-                    "{key_bindings}let __lazy_scope = __dependency.{scope_index}.clone(); let {binding_name}: {dependency_rust} = {dependency}; let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
-                );
-                let builder = format!("move |__dependency| {{ {lazy_body} }}");
-                let lazy_code = format!(
-                    "::ui_lang_runtime::memo_lazy(({keys}, ({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()"
-                );
-                return Ok(Some(identify_rendered(
-                    if hoisted.is_empty() {
-                        lazy_code
-                    } else {
-                        format!("{{ {hoisted}{lazy_code} }}")
-                    },
-                    identity,
-                    message,
+                        &context_local,
+                    )
+                }
+            };
+            // The memo tuple: the values it hashes, then the state REVISIONS
+            // it is keyed on, then the reconciliation scope and palette.
+            //
+            // The value stands in the tuple only when nothing else can: a
+            // `by` key list replaces it, and so does the revision set of the
+            // state it reads — directly, through derived values, through
+            // component params — because the builder then materializes the
+            // value on a miss only, and an unchanged frame clones and hashes
+            // no state at all. A value rooted in a render-site local (a
+            // `for` row, a match payload) or in no state is evaluated eagerly
+            // into the tuple, outside the builder, where borrowing the
+            // call-site scope binding is fine. Either way an explicit key or
+            // extra that is itself a bare state field is subsumed by that
+            // field's revision and read afresh inside the builder.
+            let expressions = program.expressions();
+            let value_revisions = revision_reads(program, lazy.dependency, env);
+            let keyed = lazy.keyed
+                || value_revisions
+                    .as_ref()
+                    .is_some_and(|revisions| !revisions.is_empty());
+            let mut revisions = value_revisions.unwrap_or_default();
+            let mut tuple = Vec::new();
+            let mut tuple_types = Vec::new();
+            if !keyed {
+                tuple.push(resolved_expr_use_code(
+                    program,
+                    lazy.dependency,
                     env,
-                    document,
-                    scope,
-                )?));
+                    ValueMode::Owned,
+                )?);
+                tuple_types.push(dependency_rust.clone());
             }
-            // The plain form's dependency is evaluated eagerly into the memo
-            // tuple, outside the builder, where borrowing the call-site scope
-            // binding is fine. `lazy value, extra as name` hashes each extra
-            // right after the value and snapshots it into its own local.
-            let dependency =
-                resolved_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?;
-            let extras = lazy
-                .keys
+            // Per key its tuple position, `None` once a revision subsumed it.
+            let mut key_positions = Vec::with_capacity(lazy.keys.len());
+            for key in &lazy.keys {
+                if let Some(revision) = bare_state_revision(program, *key, env) {
+                    revisions.insert(revision);
+                    key_positions.push(None);
+                } else {
+                    key_positions.push(Some(tuple.len()));
+                    tuple.push(resolved_expr_use_code(
+                        program,
+                        *key,
+                        env,
+                        ValueMode::Owned,
+                    )?);
+                    let root = expressions.expression_use(*key).root;
+                    tuple_types.push(rust_type_code(program, &expressions.expression(root).ty));
+                }
+            }
+            let scope_index = tuple.len() + revisions.len();
+            let entries = tuple
                 .iter()
-                .map(|key| {
-                    resolved_expr_use_code(program, *key, env, ValueMode::Owned)
-                        .map(|code| format!("{code}, "))
-                })
-                .collect::<Result<String, _>>()?;
-            let extra_types = lazy
-                .key_bindings
-                .iter()
-                .map(|binding| format!("{}, ", rust_type_code(program, &binding.binding.ty)))
+                .chain(&revisions)
+                .map(|entry| format!("{entry}, "))
                 .collect::<String>();
-            let extra_bindings = lazy
-                .key_bindings
-                .iter()
-                .map(|binding| {
-                    let name = &binding.binding.name;
-                    let ty = rust_type_code(program, &binding.binding.ty);
-                    let index = binding.index + 1;
-                    format!("let {name}: {ty} = __dependency.{index}.clone(); ")
-                })
-                .collect::<String>();
-            let scope_index = lazy.keys.len() + 1;
+            let reads_self = keyed || key_positions.contains(&None);
+            let mut bindings = String::new();
+            if !keyed {
+                write!(
+                    bindings,
+                    "let {binding_name}: {dependency_rust} = __dependency.0.clone(); "
+                )
+                .unwrap();
+            }
+            for binding in &lazy.key_bindings {
+                let name = &binding.binding.name;
+                let ty = rust_type_code(program, &binding.binding.ty);
+                // A subsumed key is read afresh inside the builder: the
+                // builder only runs when its revision moved, so the read is
+                // the exact value that revision names.
+                let value = match key_positions[binding.index] {
+                    Some(position) => format!("__dependency.{position}.clone()"),
+                    None => inside_builder(lazy.keys[binding.index])?,
+                };
+                write!(bindings, "let {name}: {ty} = {value}; ").unwrap();
+            }
+            write!(
+                bindings,
+                "let __lazy_scope = __dependency.{scope_index}.clone(); "
+            )
+            .unwrap();
+            if keyed {
+                let dependency = inside_builder(lazy.dependency)?;
+                write!(
+                    bindings,
+                    "let {binding_name}: {dependency_rust} = {dependency}; "
+                )
+                .unwrap();
+            }
             let lazy_body = format!(
-                "let {binding_name}: {dependency_rust} = __dependency.0.clone(); {extra_bindings}let __lazy_scope = __dependency.{scope_index}.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
+                "{bindings}let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
             );
             // The lazy body is `'static` by contract, so it can live as an
             // associated fn over the dependency tuple plus the hoisted
             // routing context — moving the row subtree out of the enclosing
-            // render function. Falls back to the inline closure when a
-            // hoisted callback has no signature marker.
-            let builder = if outline::outlining_active()
+            // render function; a body that materializes state reads `self`.
+            // A `by` form captures its value by reference and stays inline.
+            // Falls back to the inline closure when a hoisted callback has
+            // no signature marker.
+            let builder = if !lazy.keyed
+                && outline::outlining_active()
                 && let Some(params) = hoist_params
             {
                 let tuple = format!(
-                    "({dependency_rust}, {extra_types}::std::string::String, &'static str)"
+                    "({}{}::std::string::String, &'static str)",
+                    tuple_types
+                        .iter()
+                        .map(|ty| format!("{ty}, "))
+                        .collect::<String>(),
+                    "u64, ".repeat(revisions.len())
                 );
                 // Group by the fragment holding the `lazy` block — the body
                 // is written there, so its file changes only with it.
                 let group = origin_fragment_slug(program, view.origin);
-                let body_fn = outline::push_lazy_body(message, &group, &tuple, &params, &lazy_body);
+                let body_fn = outline::push_lazy_body(
+                    message, &group, &tuple, &params, reads_self, &lazy_body,
+                );
                 let arguments = params
                     .iter()
                     .map(|(local, _)| format!(", ({local}).clone()"))
                     .collect::<String>();
+                let receiver = if reads_self { "self." } else { "Self::" };
                 format!(
-                    "move |__dependency| Self::{body_fn}(__ice_palette, __dependency{arguments})"
+                    "move |__dependency| {receiver}{body_fn}(__ice_palette, __dependency{arguments})"
                 )
             } else {
                 format!("move |__dependency| {{ {lazy_body} }}")
             };
             let lazy_code = format!(
-                "::ui_lang_runtime::memo_lazy(({dependency}, {extras}({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()"
+                "::ui_lang_runtime::memo_lazy(({entries}({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()"
             );
             Ok(if hoisted.is_empty() {
                 lazy_code
