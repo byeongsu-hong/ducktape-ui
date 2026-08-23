@@ -187,7 +187,7 @@ pub(in crate::codegen) fn render_structure(
             // revisions replace one another without collapsing sibling rows.
             let site = node.0;
             let parking_scope = borrowed_scope(reconciliation_scope(&child_scope, env));
-            if !lazy.keys.is_empty() {
+            if lazy.keyed {
                 // `lazy value by key, key as name`: the keys stand in for the
                 // value in the dependency tuple, and the value never crosses
                 // a frame — the builder captures it by reference (or by Copy)
@@ -252,11 +252,36 @@ pub(in crate::codegen) fn render_structure(
             }
             // The plain form's dependency is evaluated eagerly into the memo
             // tuple, outside the builder, where borrowing the call-site scope
-            // binding is fine.
+            // binding is fine. `lazy value, extra as name` hashes each extra
+            // right after the value and snapshots it into its own local.
             let dependency =
                 resolved_expr_use_code(program, lazy.dependency, env, ValueMode::Owned)?;
+            let extras = lazy
+                .keys
+                .iter()
+                .map(|key| {
+                    resolved_expr_use_code(program, *key, env, ValueMode::Owned)
+                        .map(|code| format!("{code}, "))
+                })
+                .collect::<Result<String, _>>()?;
+            let extra_types = lazy
+                .key_bindings
+                .iter()
+                .map(|binding| format!("{}, ", rust_type_code(program, &binding.binding.ty)))
+                .collect::<String>();
+            let extra_bindings = lazy
+                .key_bindings
+                .iter()
+                .map(|binding| {
+                    let name = &binding.binding.name;
+                    let ty = rust_type_code(program, &binding.binding.ty);
+                    let index = binding.index + 1;
+                    format!("let {name}: {ty} = __dependency.{index}.clone(); ")
+                })
+                .collect::<String>();
+            let scope_index = lazy.keys.len() + 1;
             let lazy_body = format!(
-                "let {binding_name}: {dependency_rust} = __dependency.0.clone(); let __lazy_scope = __dependency.1.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
+                "let {binding_name}: {dependency_rust} = __dependency.0.clone(); {extra_bindings}let __lazy_scope = __dependency.{scope_index}.clone(); let __lazy_content: __IceElement<'static, {message}> = {child}; __lazy_content"
             );
             // The lazy body is `'static` by contract, so it can live as an
             // associated fn over the dependency tuple plus the hoisted
@@ -266,7 +291,9 @@ pub(in crate::codegen) fn render_structure(
             let builder = if outline::outlining_active()
                 && let Some(params) = hoist_params
             {
-                let tuple = format!("({dependency_rust}, ::std::string::String, &'static str)");
+                let tuple = format!(
+                    "({dependency_rust}, {extra_types}::std::string::String, &'static str)"
+                );
                 // Group by the fragment holding the `lazy` block — the body
                 // is written there, so its file changes only with it.
                 let group = origin_fragment_slug(program, view.origin);
@@ -282,7 +309,7 @@ pub(in crate::codegen) fn render_structure(
                 format!("move |__dependency| {{ {lazy_body} }}")
             };
             let lazy_code = format!(
-                "::ui_lang_runtime::memo_lazy(({dependency}, ({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()"
+                "::ui_lang_runtime::memo_lazy(({dependency}, {extras}({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()"
             );
             Ok(if hoisted.is_empty() {
                 lazy_code

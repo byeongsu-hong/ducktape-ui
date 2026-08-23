@@ -937,7 +937,9 @@ keyed_property = ("w=" | "h=") length | "gap=" expr
                  | "pl=") expr
                | "max-w=" expr | "virtual-row=" expr
                | "align=" ("start" | "center" | "end")
-lazy_node      = "lazy" expr ("by" expr ("," expr)*)? "as" name id?
+lazy_node      = "lazy" expr ("," name)* "as" name id?
+                 INDENT node
+               | "lazy" expr "by" expr ("," expr)* "as" name id?
                  INDENT node
 markdown_view  = "markdown" name id? markdown_property* "->" route
                  (INDENT markdown_style)?
@@ -2241,7 +2243,14 @@ of rebuilding and re-shaping — a screen switch pays only for content that
 actually changed. The dependency may be bool, i64, str, an extern type
 implementing Rust `Hash + Clone`, or a recursive list/optional of those. Only
 the owned `cached` alias is visible inside the subtree as a value, which
-statically enforces iced's `Element<'static>` contract. The enclosing `for`
+statically enforces iced's `Element<'static>` contract. `lazy value, extra as
+cached` hashes each extra right after the value and exposes it inside the
+subtree as an immutable snapshot under its own name: an extra is a bare
+identifier — a state field, a component prop, or a `for` or keyed-column row
+local other than the alias — of a cheap type (`bool`, `i64`, `str`, or a
+fieldless UI enum), and a list of rows that each name `locale` rebuilds every
+row when the locale moves and none on an unchanged redraw. Extras do not
+combine with `by`, whose keys already serve that role. The enclosing `for`
 scope is not visible either — naming its alias inside the subtree is `E150` —
 because the subtree is built from its dependency alone, so it carries no
 iteration index and every row of a `lazy` list otherwise renders under one
@@ -2261,9 +2270,10 @@ owned callback, so every call-site route for it — through any `forward` or
 stale value or borrow view state.
 
 `lazy value by key, key as cached` keys the memo off cheap projections instead
-of the value: the keys — each `bool`, `i64`, or `str` — replace the value in
-the dependency tuple, and the value is captured by reference and cloned into
-the owned `cached` alias only when a key changes. An unchanged frame therefore
+of the value: the keys — each `bool`, `i64`, `str`, or a fieldless UI enum —
+replace the value in the dependency tuple, and the value is captured by
+reference and cloned into the owned `cached` alias only when a key changes. An
+unchanged frame therefore
 deep-clones nothing, which is the point: a `for` — and a keyed column — over
 non-Copy rows already
 iterates by reference, so a row list whose every row is a keyed `lazy` builds
@@ -2533,7 +2543,7 @@ button "Add" disabled=(loading || empty(trim(draft))) -> submit
 | `[T]` | `Vec<T>` |
 | `T?` | `Option<T>` |
 | `result[T,E]` | `Result<T, E>` |
-| declared UI enum `Name` | generated Rust enum `Name`; fieldless enums are `Copy + Eq`, payload enums are `Clone` |
+| declared UI enum `Name` | generated Rust enum `Name`; fieldless enums are `Copy + Eq + Hash`, payload enums are `Clone` |
 | `combo[T]` | `iced::widget::combo_box::State<T>` |
 | `animation[bool]` | `iced::Animation<bool>` |
 | `animation[f64]` | `iced::Animation<f32>`; expressions convert at the Ice numeric boundary |

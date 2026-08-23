@@ -17,9 +17,11 @@ pub(crate) struct ResolvedLazyKeyBinding {
 pub(crate) struct ResolvedLazy {
     pub(crate) id: ViewId,
     pub(crate) dependency: CheckedExprUseId,
-    /// `lazy value by key, key as name`: the cheap projections that stand in
-    /// for the value in the memo dependency tuple. Empty for the plain form.
+    /// The cheap dependencies beside the value: `by` projections that stand
+    /// in for it in the memo dependency tuple when `keyed`, extras hashed
+    /// alongside it otherwise.
     pub(crate) keys: Vec<CheckedExprUseId>,
+    pub(crate) keyed: bool,
     /// Bare-identifier keys are immutable snapshots inside the lazy body.
     /// They already live in the memo dependency tuple, so exposing them costs
     /// no capture and lets the cached subtree render from the exact revision
@@ -45,6 +47,7 @@ impl Lowerer {
         let CheckedViewFlow::Lazy {
             dependency,
             keys,
+            keyed,
             key_bindings: checked_key_bindings,
             binding: local,
         } = checked_view.flow
@@ -192,6 +195,7 @@ impl Lowerer {
             id,
             dependency,
             keys,
+            keyed,
             key_bindings,
             binding: ResolvedLazyBinding {
                 local,

@@ -289,10 +289,11 @@ pub(crate) enum CheckedViewFlow {
     },
     Lazy {
         dependency: CheckedExprUseId,
-        /// `lazy value by key, key as name`: the projections that stand in
-        /// for the value in the memo dependency tuple. Empty for the plain
-        /// form.
+        /// The cheap dependencies beside the value: `by` projections that
+        /// stand in for it in the memo dependency tuple when `keyed`, extras
+        /// hashed alongside it otherwise.
         keys: Vec<CheckedExprUseId>,
+        keyed: bool,
         /// One retained local for each bare-identifier key, aligned with
         /// `keys`. Computed keys and the dependency alias carry `None`.
         key_bindings: Vec<CheckedLazyKeyBinding>,
@@ -9738,6 +9739,7 @@ impl<'a> FactsBuilder<'a> {
             ViewNode::Lazy {
                 dependency,
                 keys,
+                keyed,
                 binding,
                 child,
                 span,
@@ -9802,7 +9804,7 @@ impl<'a> FactsBuilder<'a> {
                         name: Some(name.clone()),
                     });
                 }
-                if !key_uses.is_empty()
+                if *keyed
                     && let Some(param) =
                         self.require_borrow_stable_lazy_value(dependency_use, span)?
                 {
@@ -9831,6 +9833,7 @@ impl<'a> FactsBuilder<'a> {
                 CheckedViewFlow::Lazy {
                     dependency: dependency_use,
                     keys: key_uses,
+                    keyed: *keyed,
                     key_bindings,
                     binding: local,
                 }
@@ -13649,12 +13652,14 @@ view
         let CheckedViewFlow::Lazy {
             dependency,
             keys,
+            keyed,
             key_bindings,
             binding,
         } = &program.checked_facts().view(ViewId(0)).flow
         else {
             panic!("root must retain lazy facts");
         };
+        assert!(!keyed, "plain lazy is not keyed");
         assert!(keys.is_empty(), "plain lazy records no keys");
         assert!(key_bindings.is_empty(), "plain lazy records no key locals");
         assert_eq!(

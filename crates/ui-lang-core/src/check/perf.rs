@@ -174,12 +174,12 @@ fn content_walk(
     match node {
         ViewNode::Lazy {
             dependency,
-            keys,
+            keyed,
             binding,
             span,
             ..
         } => {
-            if keys.is_empty()
+            if !keyed
                 && scope.in_loop
                 && lazy_dependency_type(span).is_some_and(|ty| owns_collection(&ty, document))
             {

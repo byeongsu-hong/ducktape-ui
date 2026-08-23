@@ -1,0 +1,2 @@
+E096
+lazy extras and `by` keys do not combine

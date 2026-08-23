@@ -3,3 +3,4 @@ extern crate::backend
   pure seeded_tasks() -> [Task]
   pure retitled(tasks:[Task], id:i64, title:str) -> [Task]
   pure toggled(tasks:[Task], id:i64) -> [Task]
+  pure counted_title(task:Task) -> str

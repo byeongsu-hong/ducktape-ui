@@ -387,6 +387,19 @@ pub fn toggled(mut tasks: Vec<Task>, id: i64) -> Vec<Task> {
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Lazy rows built: `counted_title` is called once per cached row that
+    /// is actually rebuilt and nowhere else.
+    pub static COUNTED_TITLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub fn counted_title(task: Task) -> String {
+    COUNTED_TITLES.with(|rows| rows.set(rows.get() + 1));
+    task.title
+}
+
+#[cfg(test)]
 static HANDLER_MATCH_EVALUATIONS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 

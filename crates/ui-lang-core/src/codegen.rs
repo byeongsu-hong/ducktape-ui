@@ -698,7 +698,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .iter()
             .all(|variant| variant.payload.is_none())
         {
-            "Debug, Clone, Copy, PartialEq, Eq"
+            "Debug, Clone, Copy, PartialEq, Eq, Hash"
         } else {
             "Clone"
         };

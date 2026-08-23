@@ -48,7 +48,8 @@ view
     let generated = compile(source, "sum_types.ice").unwrap();
     assert!(generated.contains("pub(crate) enum RequestState"));
     assert!(
-        generated.contains("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub(crate) enum Tab")
+        generated
+            .contains("#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub(crate) enum Tab")
     );
     assert!(generated.contains("Idle,"));
     assert!(generated.contains("Ready(::std::vec::Vec<::std::string::String>)"));
