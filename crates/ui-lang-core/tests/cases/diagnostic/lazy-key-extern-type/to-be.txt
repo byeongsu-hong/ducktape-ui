@@ -1,0 +1,2 @@
+E139
+lazy key type `Stamp` is not a cheap projection

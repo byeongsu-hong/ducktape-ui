@@ -207,7 +207,14 @@ pub(in crate::check) fn infer_documents_group(
                     span,
                     CheckedViewExprRole::LazyKey(index as u32),
                 )?;
-                if !matches!(key_type, Type::Bool | Type::I64 | Type::Str) {
+                // A fieldless UI enum is a Copy + Hash unit, as cheap as a
+                // bool; a payload enum or an extern type is not.
+                let fieldless_enum = matches!(&key_type, Type::Named(name)
+                if document.enums.iter().any(|item| {
+                    item.name == *name
+                        && item.variants.iter().all(|variant| variant.payload.is_none())
+                }));
+                if !matches!(key_type, Type::Bool | Type::I64 | Type::Str) && !fieldless_enum {
                     return Err(Error::new(
                         "E139",
                         span,
@@ -216,7 +223,7 @@ pub(in crate::check) fn infer_documents_group(
                             key_type.display()
                         ),
                     )
-                    .hint("use bool, i64, or str"));
+                    .hint("use bool, i64, str, or a fieldless enum"));
                 }
                 if let Expr::Path(segments) = key
                     && let [name] = segments.as_slice()

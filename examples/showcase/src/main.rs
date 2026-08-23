@@ -43,6 +43,8 @@ mod lazy_component_state;
 #[cfg(test)]
 mod lazy_context;
 #[cfg(test)]
+mod lazy_enum_keys;
+#[cfg(test)]
 mod length;
 #[cfg(test)]
 mod mouse_interaction;

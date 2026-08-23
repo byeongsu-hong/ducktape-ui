@@ -2260,9 +2260,10 @@ owned callback, so every call-site route for it — through any `forward` or
 stale value or borrow view state.
 
 `lazy value by key, key as cached` keys the memo off cheap projections instead
-of the value: the keys — each `bool`, `i64`, or `str` — replace the value in
-the dependency tuple, and the value is captured by reference and cloned into
-the owned `cached` alias only when a key changes. An unchanged frame therefore
+of the value: the keys — each `bool`, `i64`, `str`, or a fieldless UI enum —
+replace the value in the dependency tuple, and the value is captured by
+reference and cloned into the owned `cached` alias only when a key changes. An
+unchanged frame therefore
 deep-clones nothing, which is the point: a `for` — and a keyed column — over
 non-Copy rows already
 iterates by reference, so a row list whose every row is a keyed `lazy` builds
@@ -2531,7 +2532,7 @@ button "Add" disabled=(loading || empty(trim(draft))) -> submit
 | `[T]` | `Vec<T>` |
 | `T?` | `Option<T>` |
 | `result[T,E]` | `Result<T, E>` |
-| declared UI enum `Name` | generated Rust enum `Name`; fieldless enums are `Copy + Eq`, payload enums are `Clone` |
+| declared UI enum `Name` | generated Rust enum `Name`; fieldless enums are `Copy + Eq + Hash`, payload enums are `Clone` |
 | `combo[T]` | `iced::widget::combo_box::State<T>` |
 | `animation[bool]` | `iced::Animation<bool>` |
 | `animation[f64]` | `iced::Animation<f32>`; expressions convert at the Ice numeric boundary |
