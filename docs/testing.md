@@ -924,7 +924,9 @@ is the one a human actually reads, sits below its 200 cap for a whole session.
 
 The `edit` number is not a fixed price. It tracks the size of the generated
 module the edit dirties, because rustc's incremental cache is per **item** and
-a component's whole view is one function:
+a component's whole view is one function. Every figure in this section was
+measured on 2026-08-08, before outlining reached component uses with slot
+content:
 
 | edited | dirtied module | generated lines | rebuild |
 |---|---|---|---|
@@ -940,36 +942,38 @@ it the cost follows the dirtied module. showcase's `catalog` module is **one
 smaller unit for the cache to reuse.
 
 `codegen/view/outline.rs` already exists to split those functions up, and its
-own notes measure typecheck as superlinear in function size (`~M^1.7`). It does
-not fire here: a component use whose slot content is present renders inline
-(`call.slots.is_empty()` in `view/content.rs`).
+own notes measure typecheck as superlinear in function size (`~M^1.7`, still
+its note today). It did not fire here: a component use whose slot content was
+present rendered inline, on a `call.slots.is_empty()` clause in
+`view/content.rs` that no longer exists.
 
-Removing that condition outright takes showcase's worst edit from **6.5s to
-3.3s** and leaves total generated lines flat (15,506 -> 15,632), but it is
-**unsound** — the native `render_surface` fixture stops compiling with `cannot find
-value 'item'`, because slot content snapshots the call-site environment and can
-interpolate a loop variable that an outlined method has no binding for.
+Removing that condition outright took showcase's worst edit from **6.5s to
+3.3s** and left total generated lines flat (15,506 -> 15,632), but it was
+**unsound** — the native `render_surface` fixture stopped compiling with
+`cannot find value 'item'`, because slot content snapshots the call-site
+environment and can interpolate a loop variable that an outlined method has no
+binding for.
 
 Narrowing it to "outline unless the slot content actually reached a render-site
-local" is sound and recovers nothing, because the slots stop short for a
-different reason: they read the enclosing component's parameters, and
-`RecordingEnv::record` hard-captures a `ComponentParam` whose self-backed
-marker is absent from the snapshotted slot environment
-(`expr.rs`, the `None => self.hard_capture.set(true)` arm). Locals are empty in
-every case measured; the flag is the marker's absence, not a real capture.
+local" measured as sound and recovering nothing, and that measurement was
+wrong: it was taken on a build that had already lifted the slot gate, so the
+`ComponentParam` hard-capture it blamed (`expr.rs`, the
+`None => self.hard_capture.set(true)` arm — still there today, now with a
+`Some(marker)` arm beside it) was a consequence of the experiment rather than
+the state of the tree. Counting the gate directly finds no showcase use that
+hard-captures at all.
 
-So the ~2x on the worst edit is real and reachable, and the work is to carry
-those markers into the slot snapshot (or resolve them through to the parent
-environment) so slot content parameterizes the way arguments already do. It is
-a change to capture analysis, where a mistake miscompiles rather than fails, so
-it wants its own pass with the workspace suite as the oracle — that suite is
-what caught the unsound version.
+That ~2x was real and it was taken. #421 handed the slot snapshot the recorder
+that stood at its call site and replayed its reads through it; all 164 showcase
+uses now outline, and showcase's edit fell from 5.91s to 3.49s. What follows
+supersedes this section — `Chasing the outlining 2x to its last blocker` keeps
+the wrong turn on the record because it is easy to repeat.
 
 ### The floor, and what is under it
 
 Once the dirtied module is small the front end is no longer the cost. Splitting
 a 3.0s rebuild (`showcase`, editing `components/navigation.ice`) with
-`-Ztime-passes`:
+`-Ztime-passes`, measured 2026-08-08:
 
 | pass | time |
 |---|---|
