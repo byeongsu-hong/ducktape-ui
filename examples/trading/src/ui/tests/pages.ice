@@ -237,13 +237,15 @@ test trading_settings_stays_separate
   // the page assertion that they are on this page at all.
   expect text "CUSTODY"
   expect text "Two keys, and only one of them can trade."
+  // The account card, first on the page: whose settings these are, and the
+  // door to someone else's.
+  expect text "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
+  expect text "Connect a different address"
   // The column grew a plan and a door to the import step, so what used to sit
   // above the fold is now under it — the same scroll a reader makes.
   scroll-to settings_page 0.0 700.0
   expect text "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else."
-  expect text "Connect a different address"
   expect text "ROUND TRIP"
-  expect text "0x8cc94dc843e1ea7a19805e0cca43001123512b6a"
   expect no text "ORDER BOOK"
   expect no text "EXPOSURE ALLOCATION"
   capture page_settings

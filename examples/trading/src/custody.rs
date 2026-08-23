@@ -2165,6 +2165,20 @@ pub fn session_refusal(session: Session) -> String {
     }
 }
 
+/// What pressing UNLOCK does. A build the Enclave refused keeps its keys in
+/// a passphrase file, and the button's name says which prompt is coming.
+pub fn unlock_label(locale: crate::Locale, vault: bool) -> String {
+    crate::i18n::t(
+        locale,
+        if vault {
+            "Unlock with this machine's passphrase"
+        } else {
+            "Unlock with Touch ID"
+        }
+        .to_owned(),
+    )
+}
+
 /// A session that has never been asked for anything, which is where the app
 /// boots and where locking returns it to.
 pub fn session_start() -> Session {

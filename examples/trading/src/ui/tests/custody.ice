@@ -50,7 +50,7 @@ test trading_locking_drops_the_key_and_the_badge_says_so
   target app = #app
   target badge = app/header/session-badge
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   target lock = custody/lock
   dispatch navigate(Page.settings)
   expect session_can_trade(session, clock)
@@ -71,7 +71,7 @@ test trading_a_build_with_no_keychain_says_so_instead_of_offering_a_prompt
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   target unlock = custody/unlock
   dispatch navigate(Page.settings)
   // Dead, and saying which refusal it is rather than answering a press with
@@ -91,7 +91,7 @@ test trading_every_network_offers_its_own_key
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   target unlock = custody/unlock
   target enrol = custody/enrol
   dispatch navigate(Page.settings)
@@ -112,7 +112,7 @@ test trading_a_build_with_no_keychain_still_refuses_the_unlock
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   target unlock = custody/unlock
   dispatch navigate(Page.settings)
   expect a11y unlock disabled true
@@ -217,7 +217,7 @@ test trading_an_unlocked_session_with_no_approval_still_may_not_trade
   target app = #app
   target badge = app/header/session-badge
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   dispatch navigate(Page.settings)
   expect !session_can_trade(session, clock)
   expect text "READ ONLY" within badge
@@ -236,7 +236,7 @@ test trading_a_live_key_shows_how_much_of_its_window_is_left
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   target countdown = custody/custody-window
   dispatch navigate(Page.settings)
   expect session_can_trade(session, clock)
@@ -281,7 +281,7 @@ test trading_settings_opens_the_same_import_step_the_gate_does
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   target door = custody/open-import
   target step = #import
   target check = step/import-check
@@ -406,9 +406,9 @@ test trading_enrol_all_names_every_network_it_would_sign_for
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   target enrol = custody/enrol
-  target plan = custody/enrol-plan
+  target plan = custody/enrolment/enrol-plan
   dispatch navigate(Page.settings)
   scroll-to settings 0.0 700.0
   expect len(venue_list()) == 4
@@ -427,18 +427,20 @@ test trading_settings_says_what_this_app_now_does_with_a_key
   target app = #app
   target settings = app/settings
   dispatch navigate(Page.settings)
-  scroll-to settings 0.0 700.0
   // The heading, which is the claim a reader takes away at a glance. The wallet
   // key *can* be here now, so the glance has to be about what each key may do.
   expect no text "The wallet key is never here."
   expect text "Two keys, and only one of them can trade."
+  // The sentences that back the heading sit under the custody controls, which
+  // at this height is under the fold.
+  scroll-to settings 0.0 700.0
   expect no text "What this app can hold is an agent key: a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance."
   expect text "The trading key is a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance, and it is the only key an order is ever signed with."
   // A switch stopped forgetting the key when one unlock started reaching every
   // network — the claim `trading_changing_network_keeps_the_session` holds from
   // the other side, and this is the page that was still saying the opposite.
   expect no text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it; so does changing network or address, because a key is approved for one account on one deployment."
-  expect text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it, and so does connecting a different address. Switching network does not: one unlock releases every network this address has enrolled, and each of them still holds a key of its own."
+  expect text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session above says rather than something this paragraph decides. Locking forgets it, and so does connecting a different address. Switching network does not: one unlock releases every network this address has enrolled, and each of them still holds a key of its own."
   // It sends orders, and has since the ticket was wired.
   expect no text "It still sends nothing. Unlocking decides what may be signed; the ticket has nothing wired to it yet, and until it does this app reads the network beside this and prices orders against that margin engine's own arithmetic."
   expect text "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else."
@@ -751,11 +753,10 @@ test trading_the_custody_panel_carries_the_passphrase_both_its_buttons_spend
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target custody = settings/settings-content/custody
+  target custody = settings/settings-content/settings-security/custody
   target asked = custody/vault
   target field = asked/vault-phrase
   dispatch navigate(Page.settings)
-  scroll-to settings 0.0 700.0
   expect missing asked
   dispatch custody_answered(demo_vault_asks())
   expect vault_wanted
@@ -779,9 +780,8 @@ test trading_a_passphrase_that_did_its_work_does_not_stay_in_the_process
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target field = settings/settings-content/custody/vault/vault-phrase
+  target field = settings/settings-content/settings-security/custody/vault/vault-phrase
   dispatch navigate(Page.settings)
-  scroll-to settings 0.0 700.0
   dispatch custody_answered(demo_vault_asks())
   focus field
   replace "correct horse"

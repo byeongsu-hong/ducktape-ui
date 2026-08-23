@@ -8,6 +8,16 @@ enum Page
   portfolio
   settings
 
+// The language every sentence on screen is read in. State rather than a
+// build-time choice because it is picked on the settings page and nothing
+// else about the app changes with it: the figures are the same figures. The
+// English of every string stays in the `.ice` source as the key the other
+// languages are looked up by, so a key no table carries reads as English
+// rather than as a hole — see `i18n.rs`.
+enum Locale
+  en
+  ko
+
 // Which network the terminal is reading. Not a build-time choice and not a
 // filter over one exchange's data: every panel on screen was read from a
 // network, and they disagree about which markets exist, what they are called,
@@ -71,6 +81,7 @@ enum ChartIndicator
 
 state
   page:Page = Page.terminal
+  locale:Locale = Locale.en
   venue:Venue = Venue.hyperliquid
   gate = true
   // Whether the network picker is dropped over the terminal. A display flag

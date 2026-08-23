@@ -2932,291 +2932,474 @@ view
                       hovered
                         y-rail bg=bg
                         y-scroller bg=faint r=3.0
-                      // Two fixed columns in a window that is not fixed. 480 + 48 +
-                      // 480 is 1008 of content and 28 of padding on each side, so
-                      // this page has wanted exactly 1064 since it was written —
-                      // under the window's own 1180 minimum, and under every width
-                      // above it. What was missing was the other half of that
-                      // arithmetic: the leftover was all being spent on the right,
-                      // so at 1660 the columns sat against the left edge with 596px
-                      // of nothing beside them. Centred rather than widened,
-                      // because these are paragraphs: 480 is the measure they were
-                      // written to, and a line run the width of a 1660 window is
-                      // one the eye loses on the way back to the next.
+                      // Two columns of cards in a window that is not fixed.
+                      // 480 + 48 + 480 is 1008 of content, under the window's
+                      // own 1180 minimum and under every width above it, and
+                      // the leftover is spent evenly on both sides: 480 is
+                      // the measure the sentences here were written to, and a
+                      // line run the width of a 1660 window is one the eye
+                      // loses on the way back to the next.
+                      //
+                      // Cards rather than headings over prose, the way the
+                      // portfolio page is built: a setting is a control with
+                      // its state beside it and one sentence under it, and a
+                      // reader scans for the control. What each card used to
+                      // explain at paragraph length is now one line, with the
+                      // sentences that say what this app may sign with kept
+                      // whole at the foot of the card they are about.
                       box
                         with
                           w=fill
                           p=28.0
                           align-x=center
-                        row #settings-content gap=48.0
-                          col gap=26.0 w=480.0
-                            col gap=10.0 w=fill
-                              Label value="ADDRESS"
-                              if empty(address)
-                                text "No account is being read. Everything this app knows about an account — its positions, its resting orders, its fills on the chart — belongs to one address, and there is none."
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              if !empty(address)
-                                text address
-                                  with
-                                    size=13.0
-                                    w=fill
-                                    wrap=word
-                                    font=digits
-                                    @text-fg
-                              button #change-address -> reopen
-                                with
-                                  label="Connect a different address"
-                                  p=10.0
-                                active bg=raised text=muted r=4.0
-                                hovered bg=edge text=fg r=4.0
-                                text "Connect a different address" size=12.0
-                            rule horizontal thickness=1.0 color=edge
-                            // What this exchange will and will not answer, stated
-                            // where the app's own facts are stated. A gap named
-                            // only in the panel it empties is a gap the reader
-                            // finds by going looking for rows that are not coming.
-                            col gap=10.0 w=fill
-                              Label value="NETWORK"
-                              text venue_name(venue) #settings-venue
-                                with
-                                  size=16.0
-                                  w=fill
-                                  wrap=word
-                                  @text-fg
-                                  @font-bold
-                              // Facts about the network being read, and no way
-                              // to leave it: there is one picker and it is the
-                              // header's, where the name that prompts the switch
-                              // is already drawn. A second copy here would be a
-                              // second place for a row to go stale, and the
-                              // sentences below are what this page is for.
-                              text "A network is an exchange and one of its deployments: they list different markets, hold a position to different margin, and know nothing of each other's orders. Switch with the network named in the header, which points every panel at the one picked and throws away what this one filled them with."
-                                with
-                                  size=12.0
-                                  w=fill
-                                  wrap=word
-                                  @text-muted
-                              if !empty(venue_note(venue))
-                                text venue_note(venue) #settings-network-note
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              if !empty(venue_account_gap(venue))
-                                text venue_account_gap(venue)
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                            rule horizontal thickness=1.0 color=edge
-                            // The keyboard, written where the app's own facts
-                            // are written rather than behind a `?` overlay. An
-                            // overlay is a fourth thing that can stand on the
-                            // one modal surface, and this page is already the
-                            // place a reader comes to find out what the app
-                            // will and will not do.
-                            //
-                            // The rows are the scheme itself rather than a copy
-                            // of it: one list in Rust answers the keys and
-                            // prints them here, so a binding that changes
-                            // cannot leave its documentation behind.
-                            col #shortcuts gap=10.0 w=fill
-                              Label value="KEYBOARD"
-                              for bound in hotkey_list()
-                                row #shortcut(bound.keys)
-                                  with
-                                    gap=12.0
-                                    w=fill
-                                    align=center
-                                  text bound.keys
-                                    with
-                                      size=12.0
-                                      w=96.0
-                                      font=digits
-                                      @text-fg
-                                  text bound.act
-                                    with
-                                      size=12.0
-                                      w=fill
-                                      wrap=word
-                                      @text-muted
-                              text hotkey_note() #shortcuts-note
-                                with
-                                  size=12.0
-                                  w=fill
-                                  wrap=word
-                                  @text-muted
-                            rule horizontal thickness=1.0 color=edge
-                            col gap=10.0 w=fill
-                              Label value="FEED"
-                              Stat name="ROUND TRIP" value=fmt_latency(latency)
-                              if live
-                                text "One socket carries the mark, the book, the tape and the chart, and the round trip above is its own ping rather than a clock compared with the exchange's."
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              if !live
-                                text "Nothing is arriving. Every price on screen is the last one that did."
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                          col gap=12.0 w=480.0
-                            Label value="CUSTODY"
-                            text "Two keys, and only one of them can trade."
+                        col gap=16.0 w=1008.0
+                          col gap=4.0
+                            text t(locale, "Settings")
                               with
-                                size=16.0
-                                w=fill
-                                wrap=word
+                                size=22.0
                                 @text-fg
                                 @font-bold
-                            text "The trading key is a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance, and it is the only key an order is ever signed with."
+                            text t(locale, "The address being read, the network it is read on, what this app may sign with, and how it is read.")
                               with
-                                size=12.0
-                                w=fill
-                                wrap=word
+                                size=11.0
                                 @text-muted
-                            text "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session below says rather than something this paragraph decides. Locking forgets it, and so does connecting a different address. Switching network does not: one unlock releases every network this address has enrolled, and each of them still holds a key of its own."
-                              with
-                                size=12.0
-                                w=fill
-                                wrap=word
-                                @text-muted
-                            col #custody gap=8.0 w=fill
-                              row gap=8.0 align=center
-                                Label value="SESSION"
-                                Label value=session_badge(session, clock) #custody-badge
-                              if !empty(session_agent(session))
-                                text session_agent(session) #custody-agent
-                                  with
-                                    size=12.0
-                                    w=fill
-                                    wrap=word
-                                    font=digits
-                                    @text-fg
-                              if !empty(session_window(session, clock))
-                                text session_window(session, clock) #custody-window
-                                  with
-                                    size=11.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              if !empty(session_reason(session))
-                                text session_reason(session) #custody-reason
-                                  with
-                                    size=11.0
-                                    w=fill
-                                    wrap=word
-                                    @text-down
-                              if !empty(unlock_note)
-                                text unlock_note #custody-note
-                                  with
-                                    size=11.0
-                                    w=fill
-                                    wrap=word
-                                    @text-muted
-                              // What this build has instead of a sheet. Above
-                              // the buttons rather than beside them, because it
-                              // is what both of them are about to use.
-                              if vault_wanted
-                                col #vault gap=6.0 w=fill
-                                  Label value="THIS MACHINE'S PASSPHRASE" #vault-label
-                                  input "" #vault-phrase <-> vault_phrase
-                                    with
-                                      label="Passphrase for this machine's key file"
-                                      hint="what opens the file"
-                                      text-size=12.0
-                                      w=fill
-                                    focused bg=raised border=muted r=4.0 placeholder=faint value=fg
-                                  text "The Secure Enclave will not make a key for an unsigned build, so this app keeps its keys in a file it encrypts itself. This passphrase is the whole of what opens that file — weaker than Touch ID, which is the trade this machine is making, and nothing here can recover it if it is forgotten." #vault-note
+                          row #settings-content gap=48.0
+                            col gap=16.0 w=480.0
+                              // The address every panel is read for, and the
+                              // way to a different one. The button's name is
+                              // the act; its consequence is stated under it
+                              // rather than discovered: `reopen` throws the
+                              // account away and locks the key.
+                              box #settings-account
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "ACCOUNT")
+                                    text t(locale, "The address every panel on this screen is read for.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  if empty(address)
+                                    text t(locale, "No address is connected.") #settings-no-address
+                                      with
+                                        size=12.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                  if !empty(address)
+                                    row gap=10.0 align=center w=fill
+                                      text address #settings-address
+                                        with
+                                          size=12.0
+                                          w=fill
+                                          wrap=word
+                                          font=digits
+                                          @text-fg
+                                      box #watching-badge
+                                        with
+                                          px=5.0
+                                          py=2.0
+                                          bg=edge
+                                          r=2.0
+                                        text t(locale, "WATCHING")
+                                          with
+                                            size=8.0
+                                            tracking=1.1
+                                            @text-faint
+                                  col gap=6.0 w=fill
+                                    row w=fill
+                                      button #change-address -> reopen
+                                        with
+                                          label=t(locale, "Connect a different address")
+                                          p=9.0
+                                        active bg=raised text=muted r=4.0
+                                        hovered bg=edge text=fg r=4.0
+                                        text t(locale, "Connect a different address") size=12.0
+                                    text t(locale, "Disconnects this address, clears its positions, orders and fills, and locks the key.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-faint
+                              // The network being read, and the others, on the
+                              // page a reader comes to for the app's facts.
+                              // The header keeps its own picker; both point at
+                              // `switch_venue`. Every row states its kind
+                              // beside its name, because a picker is where the
+                              // mistake this app must never allow is made.
+                              box #settings-network
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "NETWORK")
+                                    text t(locale, "An exchange and one of its deployments. They list different markets and know nothing of each other's orders.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  row gap=8.0 align=center w=fill
+                                    text venue_name(venue) #settings-venue
+                                      with
+                                        size=16.0
+                                        @text-fg
+                                        @font-bold
+                                    NetworkKind #settings-kind target=venue
+                                  col #settings-network-picker gap=4.0 w=fill
+                                    for network in venue_list()
+                                      VenueTab #settings-network-row(venue_name(network)) target=network current=venue
+                                        events
+                                          pick -> switch_venue _
+                                  text t(locale, "Picking one points every panel at that network and throws away what this one filled them with.")
                                     with
                                       size=11.0
                                       w=fill
                                       wrap=word
-                                      @text-down
-                              row gap=8.0 w=fill
-                                button #unlock -> unlock
-                                  with
-                                    label="Unlock with Touch ID"
-                                    p=9.0
-                                    disabled=!empty(session_refusal(session))
-                                  active bg=fg text=fg_invert r=4.0
-                                  hovered bg=fg text=fg_invert r=4.0
-                                  disabled bg=raised text=faint r=4.0
-                                  text "UNLOCK" size=11.0 tracking=1.1
-                                // One press, one sheet, every network. What it
-                                // authorises is named above the button rather
-                                // than discovered afterwards.
-                                button #enrol -> enrol_networks
-                                  with
-                                    label="Register a trading key on every network, with one Touch ID"
-                                    p=9.0
-                                    disabled=empty(address)
-                                  active bg=raised text=muted r=4.0
-                                  hovered bg=edge text=fg r=4.0
-                                  disabled bg=raised text=faint r=4.0
-                                  text "ENROL ALL" size=11.0 tracking=1.1
-                                space w=fill
-                                button #lock label="Lock and forget the key" p=9.0 -> lock
-                                  active bg=panel text=muted r=4.0
-                                  hovered bg=raised text=fg r=4.0
-                                  text "LOCK" size=11.0 tracking=1.1
-                              if !empty(session_refusal(session))
-                                text session_refusal(session) #unlock-refusal
-                                  with
-                                    size=11.0
-                                    w=fill
-                                    wrap=word
-                                    @text-faint
-                              // What ENROL ALL is about to sign for, network by
-                              // network, each with what it costs to be wrong on
-                              // it. The naming is the rule rather than the
-                              // sheet count: one prompt that says which four is
-                              // more explicit than four that each say "a key".
-                              if !empty(enrolment_plan(address))
-                                text enrolment_plan(address) #enrol-plan
-                                  with
-                                    size=10.0
-                                    w=fill
-                                    wrap=word
-                                    @text-faint
-                              // The door to the other act of custody, which
-                              // lives behind its own step rather than in this
-                              // panel: a phrase wants a screen with nothing
-                              // else on it.
-                              row
+                                      @text-faint
+                                  if !empty(venue_note(venue))
+                                    text venue_note(venue) #settings-network-note
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                  if !empty(venue_account_gap(venue))
+                                    text venue_account_gap(venue)
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                              // The language every sentence is read in. The
+                              // only preference here that is one: the palette
+                              // is the terminal's own and the figures are the
+                              // same figures in either language.
+                              box #settings-display
                                 with
-                                  gap=8.0
                                   w=fill
-                                  align=center
-                                button #open-import -> open_import
-                                  with
-                                    label="Import a wallet from a recovery phrase"
-                                    p=9.0
-                                  active bg=panel text=muted r=4.0
-                                  hovered bg=raised text=fg r=4.0
-                                  text "IMPORT A WALLET" size=11.0 tracking=1.1
-                            text "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else."
-                              with
-                                size=12.0
-                                w=fill
-                                wrap=word
-                                @text-muted
-                            text "Importing a wallet does put the account's own key on this Mac, behind Touch ID. It signs enrolments and nothing else — the app cannot spend it on an order even by mistake, because an order is a different type of thing and this key has no method that takes one. It never moves collateral and never withdraws."
-                              with
-                                size=12.0
-                                w=fill
-                                wrap=word
-                                @text-muted
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "LANGUAGE")
+                                    text t(locale, "Every sentence on screen. The figures are the same figures.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  row #languages gap=6.0 w=fill
+                                    Choice #lang-en
+                                      with
+                                        name=locale_name(Locale.en)
+                                        act=locale_label(Locale.en)
+                                        on=(locale == Locale.en)
+                                      events
+                                        pick -> set_locale(Locale.en)
+                                    Choice #lang-ko
+                                      with
+                                        name=locale_name(Locale.ko)
+                                        act=locale_label(Locale.ko)
+                                        on=(locale == Locale.ko)
+                                      events
+                                        pick -> set_locale(Locale.ko)
+                              // The feed: what state it is in, said with the
+                              // header's own badge, and its round trip.
+                              box #settings-feed
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "FEED")
+                                    text t(locale, "One socket carries the mark, the book, the tape and the chart.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  row gap=12.0 align=center w=fill
+                                    Stat name=t(locale, "ROUND TRIP") value=fmt_latency(latency)
+                                    space w=fill
+                                    if live
+                                      box #feed-live
+                                        with
+                                          px=5.0
+                                          py=2.0
+                                          bg=edge
+                                          r=2.0
+                                        text t(locale, "LIVE")
+                                          with
+                                            size=8.0
+                                            tracking=1.1
+                                            @text-faint
+                                    if !live
+                                      box #feed-stale
+                                        with
+                                          px=5.0
+                                          py=2.0
+                                          bg=down
+                                          r=2.0
+                                        text t(locale, "NOT LIVE")
+                                          with
+                                            size=8.0
+                                            tracking=1.1
+                                            @text-fg
+                                  if live
+                                    text t(locale, "The round trip is the socket's own ping, not a clock compared with the exchange's.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-faint
+                                  if !live
+                                    text t(locale, "Nothing is arriving. Every price on screen is the last one that did.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-down
+                            col gap=16.0 w=480.0
+                              // What this app may sign with. The state first,
+                              // as a chip; the three acts in one row; the
+                              // networks a key would be registered on as a
+                              // list; and the sentences that say what a key
+                              // can and cannot do kept whole at the foot,
+                              // under the controls they are about.
+                              box #settings-security
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col gap=12.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "CUSTODY")
+                                    text t(locale, "Two keys, and only one of them can trade.")
+                                      with
+                                        size=14.0
+                                        w=fill
+                                        wrap=word
+                                        @text-fg
+                                        @font-bold
+                                  rule horizontal thickness=1.0 color=edge
+                                  col #custody gap=10.0 w=fill
+                                    row gap=8.0 align=center w=fill
+                                      Label value=t(locale, "SESSION")
+                                      SessionChip #custody-badge session=session now=clock
+                                      space w=fill
+                                      if !empty(session_window(session, clock))
+                                        text session_window(session, clock) #custody-window
+                                          with
+                                            size=11.0
+                                            font=digits
+                                            @text-muted
+                                    if !empty(session_agent(session))
+                                      text session_agent(session) #custody-agent
+                                        with
+                                          size=11.0
+                                          w=fill
+                                          wrap=word
+                                          font=digits
+                                          @text-muted
+                                    if !empty(session_reason(session))
+                                      text session_reason(session) #custody-reason
+                                        with
+                                          size=11.0
+                                          w=fill
+                                          wrap=word
+                                          @text-down
+                                    if !empty(unlock_note)
+                                      text unlock_note #custody-note
+                                        with
+                                          size=11.0
+                                          w=fill
+                                          wrap=word
+                                          @text-muted
+                                    // What this build has instead of a sheet.
+                                    // Above the buttons, because it is what
+                                    // both of them are about to use.
+                                    if vault_wanted
+                                      col #vault gap=6.0 w=fill
+                                        Label value=t(locale, "THIS MACHINE'S PASSPHRASE") #vault-label
+                                        input "" #vault-phrase <-> vault_phrase
+                                          with
+                                            label=t(locale, "Passphrase for this machine's key file")
+                                            hint="what opens the file"
+                                            text-size=12.0
+                                            w=fill
+                                          focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                        text t(locale, "The Secure Enclave will not make a key for an unsigned build, so this app keeps its keys in a file it encrypts itself. This passphrase is the whole of what opens that file — weaker than Touch ID, which is the trade this machine is making, and nothing here can recover it if it is forgotten.") #vault-note
+                                          with
+                                            size=11.0
+                                            w=fill
+                                            wrap=word
+                                            @text-down
+                                    // The three acts in one row, in the order
+                                    // they are taken: unlock, register, lock.
+                                    row gap=8.0 w=fill
+                                      button #unlock -> unlock
+                                        with
+                                          label=unlock_label(locale, vault_wanted)
+                                          p=9.0
+                                          disabled=!empty(session_refusal(session))
+                                        active bg=fg text=fg_invert r=4.0
+                                        hovered bg=fg text=fg_invert r=4.0
+                                        disabled bg=raised text=faint r=4.0
+                                        text t(locale, "UNLOCK") size=11.0 tracking=1.1
+                                      button #enrol -> enrol_networks
+                                        with
+                                          label=t(locale, "Register a trading key on every network, with one Touch ID")
+                                          p=9.0
+                                          disabled=empty(address)
+                                        active bg=raised text=muted r=4.0
+                                        hovered bg=edge text=fg r=4.0
+                                        disabled bg=raised text=faint r=4.0
+                                        text t(locale, "ENROL ALL") size=11.0 tracking=1.1
+                                      button #lock -> lock
+                                        with
+                                          label=t(locale, "Lock and forget the key")
+                                          p=9.0
+                                        active bg=panel text=muted r=4.0
+                                        hovered bg=raised text=fg r=4.0
+                                        text t(locale, "LOCK") size=11.0 tracking=1.1
+                                    if !empty(session_refusal(session))
+                                      text session_refusal(session) #unlock-refusal
+                                        with
+                                          size=11.0
+                                          w=fill
+                                          wrap=word
+                                          @text-faint
+                                    // What ENROL ALL is about to sign for,
+                                    // network by network, each with what it
+                                    // costs to be wrong on it — as rows a
+                                    // finger can read, and as the one sentence
+                                    // the sheet names them in.
+                                    if !empty(enrolment_plan(address))
+                                      col #enrolment gap=4.0 w=fill
+                                        Label value=t(locale, "ONE KEY ON EACH OF")
+                                        for network in venue_list()
+                                          row #enrol-row(venue_name(network)) gap=8.0 align=center w=fill
+                                            text venue_name(network)
+                                              with
+                                                size=11.0
+                                                @text-muted
+                                            space w=fill
+                                            NetworkKind target=network
+                                        text enrolment_plan(address) #enrol-plan
+                                          with
+                                            size=10.0
+                                            w=fill
+                                            wrap=word
+                                            @text-faint
+                                    // The door to the other act of custody,
+                                    // which lives behind its own step: a phrase
+                                    // wants a screen with nothing else on it.
+                                    row gap=8.0 align=center w=fill
+                                      button #open-import -> open_import
+                                        with
+                                          label=t(locale, "Import a wallet from a recovery phrase")
+                                          p=9.0
+                                        active bg=panel text=muted r=4.0
+                                        hovered bg=raised text=fg r=4.0
+                                        text t(locale, "IMPORT A WALLET") size=11.0 tracking=1.1
+                                  rule horizontal thickness=1.0 color=edge
+                                  // The four sentences that say what each key
+                                  // can and cannot do. Kept whole: they are
+                                  // what a reader agrees to before a key is
+                                  // used, and a shorter version would be this
+                                  // page deciding what they do not need to know.
+                                  col gap=8.0 w=fill
+                                    Label value=t(locale, "WHAT EACH KEY CAN DO")
+                                    text t(locale, "The trading key is a separate keypair the account's own wallet approved at the exchange. It places and cancels orders, it cannot withdraw, and the exchange stops honouring it on a date the exchange chose. Losing it costs an approval, not a balance, and it is the only key an order is ever signed with.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                    text t(locale, "On macOS its secret is held by the platform keychain behind Touch ID, not by this process and not in a file, and unlocking is that prompt. On a build without a keychain there is nowhere to keep it and nothing to unlock, which is what the session above says rather than something this paragraph decides. Locking forgets it, and so does connecting a different address. Switching network does not: one unlock releases every network this address has enrolled, and each of them still holds a key of its own.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                    text t(locale, "Unlocking is what lets the ticket send. Every order still passes a confirmation that restates it and names the network it is going to, and the trading key it signs with can place and cancel orders and nothing else.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                                    text t(locale, "Importing a wallet does put the account's own key on this Mac, behind Touch ID. It signs enrolments and nothing else — the app cannot spend it on an order even by mistake, because an order is a different type of thing and this key has no method that takes one. It never moves collateral and never withdraws.")
+                                      with
+                                        size=11.0
+                                        w=fill
+                                        wrap=word
+                                        @text-muted
+                              // The keyboard, written where the app's own
+                              // facts are written rather than behind a `?`
+                              // overlay. The rows are the scheme itself: one
+                              // list in Rust answers the keys and prints them
+                              // here, so a binding that changes cannot leave
+                              // its documentation behind.
+                              box #settings-keyboard
+                                with
+                                  w=fill
+                                  p=16.0
+                                  bg=panel
+                                  r=4.0
+                                  border-w=1.0
+                                  border=edge
+                                col #shortcuts gap=10.0 w=fill
+                                  col gap=4.0
+                                    Label value=t(locale, "KEYBOARD")
+                                    text t(locale, "No key sends an order.")
+                                      with
+                                        size=11.0
+                                        @text-muted
+                                  rule horizontal thickness=1.0 color=edge
+                                  for bound in hotkey_list(locale)
+                                    row #shortcut(bound.keys)
+                                      with
+                                        gap=12.0
+                                        w=fill
+                                        align=center
+                                      text bound.keys
+                                        with
+                                          size=12.0
+                                          w=96.0
+                                          font=digits
+                                          @text-fg
+                                      text bound.act
+                                        with
+                                          size=12.0
+                                          w=fill
+                                          wrap=word
+                                          @text-muted
+                                  text hotkey_note(locale) #shortcuts-note
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      wrap=word
+                                      @text-faint
           layer
             box #venue-panel
               with

@@ -357,3 +357,33 @@ component PaneToggle(name:str, open:bool)
             size=10.0
             tracking=1.0
             @text-muted
+
+// Where the session stands, as a chip: the one state that can send is lit,
+// and the rest are the same box in the quiet colour, so the header's four
+// words read as state rather than as a second heading beside SESSION.
+component SessionChip(session:Session, now:i64)
+  col #root
+    if session_can_trade(session, now)
+      box #chip-unlocked
+        with
+          px=5.0
+          py=2.0
+          bg=up
+          r=2.0
+        text session_badge(session, now)
+          with
+            size=8.0
+            tracking=1.1
+            @text-fg
+    if !session_can_trade(session, now)
+      box #chip-locked
+        with
+          px=5.0
+          py=2.0
+          bg=edge
+          r=2.0
+        text session_badge(session, now)
+          with
+            size=8.0
+            tracking=1.1
+            @text-faint

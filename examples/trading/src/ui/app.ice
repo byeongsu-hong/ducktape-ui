@@ -40,6 +40,7 @@ daemon Trading
       fullsize-content-view true
 
 use "theme.ice"
+use "extern/i18n.ice"
 use "extern/hyperliquid.ice"
 use "extern/lighter.ice"
 use "extern/portfolio.ice"

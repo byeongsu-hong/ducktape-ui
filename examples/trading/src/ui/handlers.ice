@@ -17,6 +17,9 @@ on quit
 on navigate(next)
   page = next
 
+on set_locale(next)
+  locale = next
+
 // The two panes the narrow terminal folds away. Both flags stay set once a
 // reader opens the pane, and the wide layout ignores them entirely, so a window
 // dragged wide and narrow again does not keep re-hiding what was asked for.

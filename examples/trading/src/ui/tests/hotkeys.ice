@@ -193,9 +193,12 @@ test trading_settings_says_what_the_keyboard_does
   viewport 1660 900
   target app = #app
   target settings = app/settings
-  target rows = settings/settings-content/shortcuts
+  target rows = settings/settings-content/settings-keyboard/shortcuts
   target side = rows/shortcut("B")
   dispatch navigate(Page.settings)
+  // The keyboard card is the last one on the page, under the fold at this
+  // height — the same scroll a reader makes to find it.
+  scroll-to settings 0.0 700.0
   expect exists rows
   expect exists side
   expect text "Buy / long" within rows
