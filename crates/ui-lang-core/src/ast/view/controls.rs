@@ -639,9 +639,10 @@ pub(crate) fn pick_list_routes<'a>(
 
 pub(crate) fn combo_box_expression_roots<'a>(
     selected: &'a Expr,
+    placeholder: &'a Expr,
     options: &'a ComboBoxOptions,
 ) -> Vec<&'a Expr> {
-    let mut roots = vec![selected];
+    let mut roots = vec![selected, placeholder];
     push_selection_length_root(&mut roots, &options.width);
     push_selection_length_root(&mut roots, &options.menu_height);
     roots.extend(
@@ -849,7 +850,6 @@ pub(crate) fn pick_list_semantic_key(config: &PickListOptions, route: &Route) ->
 
 pub(crate) fn combo_box_semantic_key(
     state: &str,
-    placeholder: &str,
     options: &ComboBoxOptions,
     route: &Route,
 ) -> String {
@@ -900,7 +900,7 @@ pub(crate) fn combo_box_semantic_key(
     .collect::<Vec<_>>()
     .join(";");
     format!(
-        "combo|state={state}|placeholder={placeholder:?}|width={}|menu-height={}|metrics={:?}|shaping={:?}|font={:?}|icon={icon}|routes={:?}|custom={}:{}|statuses={statuses}|menu={}",
+        "combo|state={state}|width={}|menu-height={}|metrics={:?}|shaping={:?}|font={:?}|icon={icon}|routes={:?}|custom={}:{}|statuses={statuses}|menu={}",
         selection_length_key(&options.width),
         selection_length_key(&options.menu_height),
         [

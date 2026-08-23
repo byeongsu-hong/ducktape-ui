@@ -34,7 +34,7 @@ pub(crate) struct ResolvedEditorKeyBinding {
 pub(crate) struct ResolvedTextEditor {
     pub(crate) id: ViewId,
     pub(crate) binding: WritableStateRef,
-    pub(crate) placeholder: Option<String>,
+    pub(crate) placeholder: Option<CheckedExprUseId>,
     pub(crate) disabled: Option<CheckedExprUseId>,
     pub(crate) width: Option<CheckedExprUseId>,
     pub(crate) height: Option<ResolvedContainerLength>,
@@ -160,6 +160,8 @@ impl Lowerer {
             span,
         };
         let disabled = values.optional(disabled.as_ref(), &Type::Bool, "disabled")?;
+        let placeholder =
+            values.optional(options.placeholder.as_ref(), &Type::Str, "placeholder")?;
         let width = values.optional(options.width.as_ref(), &Type::F64, "width")?;
         let height = Self::resolve_editor_length(&mut values, &options.height)?;
         let min_height = values.optional(options.min_height.as_ref(), &Type::F64, "min height")?;
@@ -241,7 +243,7 @@ impl Lowerer {
         let resolved = ResolvedTextEditor {
             id,
             binding,
-            placeholder: options.placeholder.clone(),
+            placeholder,
             disabled,
             width,
             height,

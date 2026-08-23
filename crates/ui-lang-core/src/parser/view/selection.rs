@@ -77,7 +77,7 @@ pub(in crate::parser) fn parse_combo_box(
         state: identifier(parts[1], line)?,
         id,
         selected: parse_expr(parts[2], line)?,
-        placeholder: string_literal(parts[3], line)?,
+        placeholder: parse_expr(strip_wrapping_parens(parts[3]), line)?,
         options,
         route: parse_route(route.trim(), line)?,
         span: Span::line(line.number),

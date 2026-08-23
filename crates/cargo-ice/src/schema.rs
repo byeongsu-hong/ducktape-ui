@@ -1237,7 +1237,7 @@ fn construct_schema(item: &Completion) -> Value {
             properties(&[
                 ("label", "str-expression", false),
                 ("description", "str-expression", false),
-                ("hint", "string", false),
+                ("hint", "str-expression", false),
                 ("disabled", "bool-expression", false),
                 ("secure", "bool-expression", false),
                 ("change", "payload-route(text)", false),
@@ -1389,7 +1389,7 @@ fn construct_schema(item: &Completion) -> Value {
         }
         "pick" => {
             let mut pick = selection_properties();
-            pick.push(property("hint", "expression", false));
+            pick.push(property("hint", "str-expression", false));
             details(
                 &["view"],
                 "pick <options-expression> <selected-expression> [#<id>] [<property>=<value> ...] -> <handler> _",
@@ -1407,7 +1407,7 @@ fn construct_schema(item: &Completion) -> Value {
             ]));
             details(
                 &["view"],
-                "combo <state> <selected-expression> <placeholder-string> [#<id>] [<property>=<value> ...] -> <handler> _",
+                "combo <state> <selected-expression> <placeholder-expression> [#<id>] [<property>=<value> ...] -> <handler> _",
                 child_shape(0, None, "input-status|menu|icon"),
                 json!({ "required": true, "name": "state", "source": "combo state" }),
                 json!({ "required": true, "operator": "->", "payload": "selected value", "placeholder": "_" }),
@@ -1484,7 +1484,7 @@ fn construct_schema(item: &Completion) -> Value {
                 "payload": "custom key binding message",
             }),
             properties(&[
-                ("hint", "string", false),
+                ("hint", "str-expression", false),
                 ("w", "number", false),
                 ("h", "length", false),
                 ("min-h", "number", false),

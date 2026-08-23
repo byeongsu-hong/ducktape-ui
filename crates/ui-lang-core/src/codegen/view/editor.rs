@@ -60,10 +60,12 @@ pub(in crate::codegen) fn render_text_editor(
     }
     let accessibility_key =
         resolved_accessibility_key_code(identity, "editor", editor.origin, scope, env, document)?;
-    let accessibility_label = editor
+    let placeholder = editor
         .placeholder
-        .as_deref()
-        .map(rust_string)
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+        .transpose()?;
+    let accessibility_label = placeholder
+        .clone()
         .unwrap_or_else(|| "\"Editor\"".to_owned());
     let disabled = editor
         .disabled
@@ -78,8 +80,8 @@ pub(in crate::codegen) fn render_text_editor(
         )
         .unwrap();
     }
-    if let Some(placeholder) = &editor.placeholder {
-        write!(code, ".placeholder({})", rust_string(placeholder)).unwrap();
+    if let Some(placeholder) = &placeholder {
+        write!(code, ".placeholder({placeholder})").unwrap();
     }
     if let Some(width) = editor.width {
         write!(

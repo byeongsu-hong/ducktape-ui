@@ -264,7 +264,7 @@ pub(crate) fn markdown_semantic_key(options: &MarkdownOptions) -> String {
 
 #[derive(Clone, Debug, Default)]
 pub struct TextEditorOptions {
-    pub placeholder: Option<String>,
+    pub placeholder: Option<Expr>,
     pub width: Option<Expr>,
     pub height: Option<LengthValue>,
     pub min_height: Option<Expr>,
@@ -299,7 +299,7 @@ pub(crate) fn text_editor_expression_roots<'a>(
 ) -> Vec<&'a Expr> {
     let mut roots = Vec::new();
     roots.extend(disabled);
-    roots.extend(options.width.as_ref());
+    roots.extend([&options.placeholder, &options.width].into_iter().flatten());
     push_input_length_root(&mut roots, &options.height);
     roots.extend(
         [&options.min_height, &options.max_height, &options.size]
@@ -389,9 +389,9 @@ pub(crate) fn text_editor_semantic_key(
     .collect::<Vec<_>>()
     .join(";");
     format!(
-        "editor|binding={binding}|disabled={}|placeholder={:?}|width={}|height={}|metrics={:?}|line-height={line_height}|wrapping={:?}|font={:?}|highlight={:?}:{:?}|highlighter={}|key-binding={}|route={}|action={}|style={}|statuses={statuses}",
+        "editor|binding={binding}|disabled={}|placeholder={}|width={}|height={}|metrics={:?}|line-height={line_height}|wrapping={:?}|font={:?}|highlight={:?}:{:?}|highlighter={}|key-binding={}|route={}|action={}|style={}|statuses={statuses}",
         disabled.is_some(),
-        options.placeholder,
+        options.placeholder.is_some(),
         options.width.is_some(),
         length_semantic_key(&options.height),
         [
@@ -531,11 +531,12 @@ fn push_input_surface_roots<'a>(roots: &mut Vec<&'a Expr>, surface: &'a Containe
 }
 
 pub(crate) fn input_expression_roots<'a>(
+    hint: &'a Option<Expr>,
     disabled: &'a Option<Expr>,
     options: &'a InputOptions,
 ) -> Vec<&'a Expr> {
     let mut roots = Vec::new();
-    roots.extend(disabled);
+    roots.extend([hint, disabled].into_iter().flatten());
     roots.extend(
         [
             &options.accessibility.label,
@@ -614,7 +615,7 @@ fn input_surface_semantic_key(style: &TextInputStatusStyle) -> String {
 pub(crate) fn input_semantic_key(
     label: &str,
     binding: &str,
-    hint: &str,
+    hint: &Option<Expr>,
     disabled: &Option<Expr>,
     options: &InputOptions,
 ) -> String {
@@ -672,7 +673,8 @@ pub(crate) fn input_semantic_key(
         .collect::<Vec<_>>()
         .join(":");
     format!(
-        "input|label={label:?}|binding={binding}|hint={hint:?}|disabled={}|a11y={}:{}|secure={}|routes={routes}|width={}|metrics={:?}|align={:?}|font={:?}|icon={icon}|custom={custom}|statuses={statuses}",
+        "input|label={label:?}|binding={binding}|hint={}|disabled={}|a11y={}:{}|secure={}|routes={routes}|width={}|metrics={:?}|align={:?}|font={:?}|icon={icon}|custom={custom}|statuses={statuses}",
+        hint.is_some(),
         disabled.is_some(),
         options.accessibility.label.is_some(),
         options.accessibility.description.is_some(),

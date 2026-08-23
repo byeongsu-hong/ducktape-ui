@@ -78,7 +78,7 @@ impl ResolvedInputBinding {
 pub(crate) struct ResolvedInput {
     pub(crate) id: ViewId,
     pub(crate) label: String,
-    pub(crate) hint: String,
+    pub(crate) hint: Option<CheckedExprUseId>,
     pub(crate) binding: ResolvedInputBinding,
     pub(crate) disabled: Option<CheckedExprUseId>,
     pub(crate) accessibility_label: Option<CheckedExprUseId>,
@@ -175,14 +175,14 @@ impl Lowerer {
         &mut self,
         label: &str,
         binding: &str,
-        hint: &str,
+        hint: &Option<Expr>,
         disabled: &Option<Expr>,
         options: &InputOptions,
         span: &Span,
         outer_component: Option<ComponentId>,
     ) -> Result<(), Error> {
         let semantic_key = crate::ast::input_semantic_key(label, binding, hint, disabled, options);
-        let roots = crate::ast::input_expression_roots(disabled, options);
+        let roots = crate::ast::input_expression_roots(hint, disabled, options);
         let (id, checked, scope, origin) = self.interaction_contract(
             CheckedInteractionKind::Input,
             semantic_key,
@@ -206,6 +206,7 @@ impl Lowerer {
             span,
         };
 
+        let hint = values.optional(hint.as_ref(), &Type::Str, "hint")?;
         let disabled_expression = values.optional(disabled.as_ref(), &Type::Bool, "disabled")?;
         let accessibility_label = values.optional(
             options.accessibility.label.as_ref(),
@@ -298,7 +299,7 @@ impl Lowerer {
         let resolved = ResolvedInput {
             id,
             label: label.to_owned(),
-            hint: hint.to_owned(),
+            hint,
             binding: self.resolve_input_binding(
                 checked_input.binding,
                 binding,

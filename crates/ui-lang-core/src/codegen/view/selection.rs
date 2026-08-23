@@ -131,7 +131,7 @@ pub(in crate::codegen) fn render_combo_box(
     let mut widget = format!(
         "::iced::widget::combo_box(&{}, {}, __combo_selection.as_ref(), {callback})",
         state.code,
-        rust_string(&combo.placeholder),
+        resolved_str_argument_code(program, combo.placeholder, env)?,
     );
     append_selection_length(&mut widget, "width", combo.width.as_ref(), program, env)?;
     append_selection_length(
@@ -229,7 +229,7 @@ pub(in crate::codegen) fn render_combo_box(
     Ok(format!(
         "{{ let __a11y_key = {accessibility_key}; let __combo_selection = {selected}; let __combo_option_count = {}.options().len(); let __combo = {widget}; ::ui_lang_runtime::accessible(__combo, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ComboBox).logical_id(__a11y_key).label({}).value_maybe(__combo_selection).into() }}",
         state.code,
-        rust_string(&combo.placeholder),
+        resolved_expr_use_code(program, combo.placeholder, env, ValueMode::Owned)?,
     ))
 }
 

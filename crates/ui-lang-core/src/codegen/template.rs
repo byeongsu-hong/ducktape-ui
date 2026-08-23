@@ -539,7 +539,7 @@ impl Builder<'_> {
             || input.custom_style.is_some()
             || !input_styles_are_empty(&input.styles)
             || !style_is_empty(&input.utility_style)
-            || !input.hint.is_empty()
+            || input.hint.is_some()
         {
             return Ok(None);
         }

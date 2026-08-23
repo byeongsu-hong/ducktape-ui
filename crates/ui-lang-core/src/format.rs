@@ -466,6 +466,12 @@ mod tests {
     }
 
     #[test]
+    fn round_trips_expression_hints() {
+        let source = "app Demo\nextern crate::backend\n  pure t(locale:&str, key:&str) -> str\nstate\n  locale = \"en\"\n  query = \"\"\n  notes:editor = \"\"\nview\n  col\n    input \"\" <-> query hint=t(locale, \"Find\")\n    editor <-> notes hint=t(locale, \"Write\")\n";
+        assert_eq!(format_source(source).unwrap(), source);
+    }
+
+    #[test]
     fn keeps_two_short_metadata_entries_inline() {
         let source = "app Demo\non saved\nview\n    button \"Save\" -> saved\n        with\n            disabled=false\n            @px-4\n";
         assert_eq!(

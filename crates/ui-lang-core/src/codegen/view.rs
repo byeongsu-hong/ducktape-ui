@@ -47,6 +47,28 @@ fn resolved_view_identity_code(
     }
 }
 
+/// A `&str` widget argument. A literal is already one; anything else is
+/// borrowed for the call the way a `&str` extern parameter is.
+pub(super) fn resolved_str_argument_code(
+    program: &LoweredProgram,
+    expression: CheckedExprUseId,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::TransientBorrowed)?;
+    let expressions = program.expressions();
+    let resolved = expressions.expression_use(expression);
+    let literal = matches!(resolved.coercion, ResolvedInitializerCoercion::None)
+        && matches!(
+            expressions.expression(resolved.root).kind,
+            ResolvedExpressionKind::Str(_)
+        );
+    Ok(if literal {
+        code
+    } else {
+        borrowed_argument_code(&Type::Str, &code)
+    })
+}
+
 pub(super) fn resolved_accessibility_key_code(
     identity: Option<&ResolvedViewIdentity>,
     kind: &str,

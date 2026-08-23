@@ -298,6 +298,13 @@ pub(in crate::check) fn infer_documents_group(
                 Error::new("E139", span, format!("unknown editor state `{binding}`"))
             })?;
             require_type(binding_type, &Type::Editor, span)?;
+            if let Some(placeholder) = &options.placeholder {
+                require_type(
+                    &expr_type(placeholder, env, document, span)?,
+                    &Type::Str,
+                    span,
+                )?;
+            }
             if let Some(disabled) = disabled {
                 require_type(
                     &expr_type(disabled, env, document, span)?,

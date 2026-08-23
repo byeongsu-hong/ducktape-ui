@@ -103,6 +103,7 @@ pub(in crate::check) fn infer_content_group(
         ViewNode::Input {
             id,
             binding,
+            hint,
             disabled,
             options,
             styles,
@@ -152,6 +153,9 @@ pub(in crate::check) fn infer_content_group(
                         "drop `secure=`; it belongs on an ordinary `<-> state` input, where masking is the application's choice",
                     ));
                 }
+            }
+            if let Some(hint) = hint {
+                require_type(&expr_type(hint, env, document, span)?, &Type::Str, span)?;
             }
             if let Some(disabled) = disabled {
                 let ty = expr_type(disabled, env, document, span)?;

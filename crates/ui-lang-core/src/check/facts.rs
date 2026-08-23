@@ -4358,7 +4358,7 @@ impl<'a> FactsBuilder<'a> {
         input: ViewId,
         label: &str,
         binding: &str,
-        hint: &str,
+        hint: &Option<Expr>,
         disabled: &Option<Expr>,
         options: &InputOptions,
         env: &dyn FactEnvironment,
@@ -4368,7 +4368,7 @@ impl<'a> FactsBuilder<'a> {
             input,
             CheckedInteractionKind::Input,
             crate::ast::input_semantic_key(label, binding, hint, disabled, options),
-            crate::ast::input_expression_roots(disabled, options)
+            crate::ast::input_expression_roots(hint, disabled, options)
                 .into_iter()
                 .map(|expression| (expression, None))
                 .collect(),
@@ -4605,7 +4605,7 @@ impl<'a> FactsBuilder<'a> {
         combo: ViewId,
         state: &str,
         selected: &Expr,
-        placeholder: &str,
+        placeholder: &Expr,
         options: &ComboBoxOptions,
         route: &Route,
         env: &dyn FactEnvironment,
@@ -4614,8 +4614,8 @@ impl<'a> FactsBuilder<'a> {
         self.lower_interaction_facts(
             combo,
             CheckedInteractionKind::ComboBox,
-            crate::ast::combo_box_semantic_key(state, placeholder, options, route),
-            crate::ast::combo_box_expression_roots(selected, options)
+            crate::ast::combo_box_semantic_key(state, options, route),
+            crate::ast::combo_box_expression_roots(selected, placeholder, options)
                 .into_iter()
                 .map(|expression| (expression, None))
                 .collect(),
