@@ -141,10 +141,11 @@ use crate::lighter_sign::{PrivateKey, Resting};
 /// the rules are and stays out of the app's vocabulary.
 pub use crate::session::Session;
 use crate::session::{
-    AgentKey, Event, Guard, Held, Keystore, PlatformKeystore, PlatformWrap, Secret, Unlock,
-    account, agent, can_trade, load_sealed, step, store_sealed,
+    AgentKey, Cause, Event, Guard, Held, Keystore, KeystoreError, PlatformKeystore, PlatformWrap,
+    Secret, Unlock, account, agent, can_trade, load_sealed, step, store_sealed,
 };
 use crate::signing::{self, MasterKey, Wallet};
+use crate::vault;
 use crate::venue::{Act, Draft, Network, Signing, Sweep, venue_kind, venue_list, venue_name};
 use crate::{OrderKind, Tif, Venue};
 
@@ -157,10 +158,16 @@ use crate::{OrderKind, Tif, Venue};
 /// decline back to `Session::Locked`, which is also where the app sits before
 /// anybody has asked for anything. Without a sentence beside it, cancelling
 /// Touch ID and never pressing the button look identical on screen.
+/// `wants_passphrase` is the one thing here that is a *question* rather than an
+/// outcome. A build the Secure Enclave will not serve keeps its keys in a file
+/// this app encrypts, and the screen has to put a box on it — see `vault`. The
+/// flag rather than the sentence, because a screen deciding what to draw off
+/// the wording of a note is a screen one rephrasing away from drawing nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub session: Session,
     pub note: String,
+    pub wants_passphrase: bool,
 }
 
 impl Entry {
@@ -168,6 +175,7 @@ impl Entry {
         Self {
             session: agreeing(session),
             note: String::new(),
+            wants_passphrase: false,
         }
     }
 
@@ -175,8 +183,94 @@ impl Entry {
         Self {
             session: agreeing(session),
             note: note.to_owned(),
+            wants_passphrase: false,
         }
     }
+
+    /// The act could not happen because this build has no passphrase yet, and
+    /// nothing was spent finding that out. The session is untouched: wanting a
+    /// passphrase is not a refusal to unlock, it is a question about how this
+    /// machine keeps things.
+    fn asking(session: Session, note: &str) -> Self {
+        Self {
+            session: agreeing(session),
+            note: note.to_owned(),
+            wants_passphrase: true,
+        }
+    }
+}
+
+/// The one place the platform's refusal becomes the file vault's turn.
+///
+/// `-34018` is a fact about the binary rather than a failure of the call — see
+/// `session::UNSIGNED` — so it is the one status with somewhere else to go.
+/// Every keystore act in this file goes through here, because a site that
+/// branched for itself would be a key this app can write and never read back.
+fn or_vault<T>(
+    platform: Result<T, KeystoreError>,
+    otherwise: impl FnOnce() -> Result<T, KeystoreError>,
+) -> Result<T, KeystoreError> {
+    match platform {
+        Err(failure) if failure.cause == Cause::Unsigned => otherwise(),
+        other => other,
+    }
+}
+
+/// Whether a keystore failure is a question for the reader rather than an
+/// answer about the machine. Both of the file's own refusals are: one wants a
+/// passphrase and the other wants a different one, and every act routes them to
+/// the same box.
+fn asking(failure: &KeystoreError) -> bool {
+    matches!(failure.cause, Cause::WantsPassphrase | Cause::Refused)
+}
+
+/// Whether the file should answer a read instead of the platform.
+///
+/// The whole judgement, with no keychain and no filesystem in it, because both
+/// of its arms have to be decidable on a machine that has neither. Two roads,
+/// and only two:
+///
+/// - the platform refusing `-34018`, which is the ordinary one; and
+/// - a keychain answering `Missing` over a file that is not — a machine signed
+///   *after* it wrote one, reading back what it stored before it was. "Nothing
+///   here", said by the place that was not looking, is not an answer about the
+///   key.
+///
+/// Everything else is the platform's answer and stays it, a decline included: a
+/// cancelled sheet is not a reason to go looking somewhere else.
+fn file_reads(platform: &Result<Held, KeystoreError>, in_file: bool) -> bool {
+    match platform {
+        Err(failure) => failure.cause == Cause::Unsigned,
+        Ok(Held::Missing) => in_file,
+        Ok(_) => false,
+    }
+}
+
+/// Read an item from wherever this machine actually keeps it.
+fn read_item(name: &str, phrase: &str) -> Result<Held, KeystoreError> {
+    let answered = PlatformKeystore.load(name);
+    if file_reads(&answered, vault::holds(name)) {
+        return vault::take(name, phrase);
+    }
+    answered
+}
+
+/// The account's own key, which takes the envelope road on the platform and the
+/// same file road off it. Separate from `read_item` because only this one is
+/// sealed twice on macOS — see `load_sealed` for the migration it also carries.
+fn read_wallet_item(address: &str, phrase: &str) -> Result<Held, KeystoreError> {
+    let name = wallet_item(address);
+    let answered = load_sealed(&PlatformWrap, &PlatformKeystore, &name);
+    if file_reads(&answered, vault::holds(&name)) {
+        return vault::take(&name, phrase);
+    }
+    answered
+}
+
+/// Whether this machine has a key file at all, which is what a boot asks so the
+/// passphrase box is already on the panel for a reader who set one last time.
+pub fn vault_occupied() -> bool {
+    vault::occupied()
 }
 
 /// The store, brought into agreement with the session about to be drawn.
@@ -732,52 +826,88 @@ pub fn forget_wallet() -> Session {
 /// The one sheet an import costs. Past here the phrase is not needed again on
 /// this machine: what is kept is the 32 bytes it derives, which is all an
 /// enrolment signature needs and rather less than the phrase can do.
-pub async fn keep_wallet() -> Result<Entry, CustodyFault> {
-    let Some(master) = lock(pending()).take() else {
+pub async fn keep_wallet(passphrase: ui_lang_runtime::Secret) -> Result<Entry, CustodyFault> {
+    // Peeked rather than taken. A store that cannot happen *yet*, because this
+    // build has no passphrase for its file, must leave the key exactly where it
+    // was: the owner is about to type one and press again, and a key spent on
+    // being asked a question is an import they have to start over.
+    let waiting = {
+        let held = lock(pending());
+        held.as_ref()
+            .map(|master| (master.address().to_string(), master.secret()))
+    };
+    let Some((address, bytes)) = waiting else {
         return Ok(Entry::saying(
             Session::Locked,
             "There is no wallet waiting to be stored.",
         ));
     };
-    let address = master.address().to_string();
-    smol::unblock(move || {
-        // Sealed on the way in. What lands in the keychain is ciphertext only
-        // this machine's Secure Enclave can open, and the item's own guard sits
-        // over that — see `Wrap` in `session.rs` for why both.
-        match store_sealed(
-            &PlatformWrap,
-            &PlatformKeystore,
-            &wallet_item(&address),
-            &Secret::new(master.secret()),
-        ) {
-            // Said on the step as well as held in the session, because the step
-            // is the only thing the owner is looking at: the address leaves the
-            // panel either way, and without a sentence a build with nowhere to
-            // put a key answers THIS IS MINE by emptying the screen. The rule
-            // `session_refusal` already states — the platform's own words rather
-            // than a press that answers with nothing — applies to this press too.
-            Err(failure) => Ok(Entry::saying(
-                Session::Unavailable {
-                    reason: failure.message.clone(),
-                },
-                &failure.message,
-            )),
-            Ok(()) => Ok(wallet_stored(&address)),
-        }
+    let phrase = passphrase.expose().to_owned();
+    let filed = {
+        let address = address.clone();
+        smol::unblock(move || {
+            // Sealed on the way in. What lands in the keychain is ciphertext
+            // only this machine's Secure Enclave can open, and the item's own
+            // guard sits over that — see `Wrap` in `session.rs` for why both.
+            // Where there is no Enclave to reach, the same secret is sealed
+            // under the passphrase and lands in a file instead. Never in the
+            // clear, on either road.
+            let name = wallet_item(&address);
+            let secret = Secret::new(bytes);
+            or_vault(
+                store_sealed(&PlatformWrap, &PlatformKeystore, &name, &secret),
+                || vault::keep(&name, &secret, &phrase),
+            )
+        })
+        .await
+    };
+    // Spent now, and only on an answer that settles something. A question
+    // leaves the key waiting; everything else spends it, because the road that
+    // answered had already been handed the bytes.
+    if !matches!(&filed, Err(failure) if asking(failure)) {
+        drop(lock(pending()).take());
+    }
+    Ok(match filed {
+        // The file has no passphrase yet, or the one it was given does not open
+        // it. Both are questions rather than refusals: the session is
+        // untouched, the key is still waiting, and what the screen owes is the
+        // box with a sentence beside it.
+        Err(failure) if asking(&failure) => Entry::asking(Session::Locked, &failure.message),
+        // Said on the step as well as held in the session, because the step
+        // is the only thing the owner is looking at: the address leaves the
+        // panel either way, and without a sentence a build with nowhere to
+        // put a key answers THIS IS MINE by emptying the screen. The rule
+        // `session_refusal` already states — the platform's own words rather
+        // than a press that answers with nothing — applies to this press too.
+        Err(failure) => Entry::saying(
+            Session::Unavailable {
+                reason: failure.message.clone(),
+            },
+            &failure.message,
+        ),
+        Ok(()) => wallet_stored(&address),
     })
-    .await
 }
 
-/// What a kept wallet answers with: the address, and the act it unblocks.
+/// What a kept wallet answers with: the address, where it went, and the act it
+/// unblocks.
 ///
 /// Split out of `keep_wallet` so `demo_wallet_kept` is this sentence rather
-/// than a copy of it that can drift away from it.
+/// than a copy of it that can drift away from it. Where it went is read off the
+/// file rather than passed in, because the road was chosen by a platform status
+/// several frames down and a caller repeating that judgement is a caller that
+/// can get it wrong.
 fn wallet_stored(address: &str) -> Entry {
+    let kept_by = if vault::holds(&wallet_item(address)) {
+        "in a file only that passphrase opens"
+    } else {
+        "behind Touch ID"
+    };
     Entry::saying(
         Session::Locked,
         &format!(
-            "{address} is on this Mac now, behind Touch ID. Enrol the networks you want to trade \
-             and this app can sign for itself.",
+            "{address} is on this Mac now, {kept_by}. Enrol the networks you want to trade and \
+             this app can sign for itself.",
         ),
     )
 }
@@ -885,7 +1015,10 @@ pub fn enrolment_plan(address: String) -> String {
 /// A network that fails is reported and the rest continue: an exchange being
 /// unreachable is not a reason to leave the other three unenrolled, and the
 /// sentence says which of them landed.
-pub async fn enrol_all(address: String) -> Result<Entry, CustodyFault> {
+pub async fn enrol_all(
+    address: String,
+    passphrase: ui_lang_runtime::Secret,
+) -> Result<Entry, CustodyFault> {
     let address = address.trim().to_owned();
     if address.is_empty() {
         return Ok(Entry::saying(
@@ -895,13 +1028,16 @@ pub async fn enrol_all(address: String) -> Result<Entry, CustodyFault> {
     }
 
     // The one sheet. Everything after it is arithmetic and requests.
+    let phrase = passphrase.expose().to_owned();
     let opened = {
         let address = address.clone();
+        let phrase = phrase.clone();
         // The one sheet, and the assertion that opens the envelope behind it.
         // An item written before the envelope existed is re-sealed here rather
-        // than refused, once, on the read that finds it.
-        smol::unblock(move || load_sealed(&PlatformWrap, &PlatformKeystore, &wallet_item(&address)))
-            .await
+        // than refused, once, on the read that finds it. On a build with no
+        // Enclave the same read is the passphrase opening the file, and it is
+        // the same one prompt: typed once, and every network below shares it.
+        smol::unblock(move || read_wallet_item(&address, &phrase)).await
     };
     let master = match opened {
         Ok(Held::Missing) => {
@@ -915,6 +1051,9 @@ pub async fn enrol_all(address: String) -> Result<Entry, CustodyFault> {
                 Session::Locked,
                 "Touch ID was cancelled, so nothing was signed and nothing was registered.",
             ));
+        }
+        Err(failure) if asking(&failure) => {
+            return Ok(Entry::asking(Session::Locked, &failure.message));
         }
         Err(failure) => {
             return Ok(Entry::plain(Session::Unavailable {
@@ -942,7 +1081,7 @@ pub async fn enrol_all(address: String) -> Result<Entry, CustodyFault> {
     let mut landed: Vec<String> = Vec::new();
     let mut refused: Vec<String> = Vec::new();
     for venue in venue_list() {
-        match enrol_one(venue, &address, &master).await {
+        match enrol_one(venue, &address, &master, &phrase).await {
             Ok(()) => landed.push(venue_name(venue)),
             Err(reason) => refused.push(format!("{}: {reason}", venue_name(venue))),
         }
@@ -985,7 +1124,12 @@ fn enrolment_outcome(landed: &[String], refused: &[String]) -> String {
 /// sentence. Neither can be signed by the key being registered, which is the
 /// property the whole design exists for and the reason `MasterKey` is a
 /// separate type.
-async fn enrol_one(venue: Venue, address: &str, master: &MasterKey) -> Result<(), String> {
+async fn enrol_one(
+    venue: Venue,
+    address: &str,
+    master: &MasterKey,
+    phrase: &str,
+) -> Result<(), String> {
     let scheme = Network::of(venue).signing;
     let (bytes, public) = generate(scheme)?;
     // Registered first and filed second, which is the order that survives a
@@ -1008,9 +1152,15 @@ async fn enrol_one(venue: Venue, address: &str, master: &MasterKey) -> Result<()
     // A trading key is the secret, so the item's own guard is the whole of what
     // protects it — unlike the sealed wallet blob, which is guarded by the key
     // that opens it.
-    smol::unblock(move || PlatformKeystore.store(&name, &secret, Guard::UserPresence))
-        .await
-        .map_err(|failure| failure.message)
+    let phrase = phrase.to_owned();
+    smol::unblock(move || {
+        or_vault(
+            PlatformKeystore.store(&name, &secret, Guard::UserPresence),
+            || vault::keep(&name, &secret, &phrase),
+        )
+    })
+    .await
+    .map_err(|failure| failure.message)
 }
 
 /// The half of an enrolment the venue performs, which is the half that can be
@@ -1091,7 +1241,11 @@ const LIGHTER_SLOT: u8 = 2;
 /// in that listing is what `Ready` is made of, either way — and on Lighter the
 /// listing also answers *which slot*, so the reader is never asked for an index
 /// the venue already knows.
-pub async fn unlock_agent(venue: Venue, address: String) -> Result<Entry, CustodyFault> {
+pub async fn unlock_agent(
+    venue: Venue,
+    address: String,
+    passphrase: ui_lang_runtime::Secret,
+) -> Result<Entry, CustodyFault> {
     let address = address.trim().to_owned();
     if address.is_empty() {
         return Ok(Entry::saying(
@@ -1100,11 +1254,15 @@ pub async fn unlock_agent(venue: Venue, address: String) -> Result<Entry, Custod
         ));
     }
 
+    let phrase = passphrase.expose().to_owned();
     let opened = {
         let address = address.clone();
+        let phrase = phrase.clone();
         // Reading is what raises the sheet, and the sheet blocks — so it is off
-        // the executor's thread rather than on it.
-        smol::unblock(move || read_key(venue, &address)).await
+        // the executor's thread rather than on it. On a build with no keychain
+        // to raise one, the passphrase already typed is what opens the file,
+        // and the same rule holds: one answer releases every network below.
+        smol::unblock(move || read_key(venue, &address, &phrase)).await
     };
     let (held, loaded) = match opened {
         Opened::Refused(entry) => return Ok(entry),
@@ -1133,7 +1291,8 @@ pub async fn unlock_agent(venue: Venue, address: String) -> Result<Entry, Custod
         }
         let secret = {
             let address = address.clone();
-            smol::unblock(move || secret_for(other, &address)).await
+            let phrase = phrase.clone();
+            smol::unblock(move || secret_for(other, &address, &phrase)).await
         };
         let Some(secret) = secret else {
             continue;
@@ -1307,7 +1466,7 @@ enum Opened {
     Refused(Entry),
 }
 
-fn read_key(venue: Venue, address: &str) -> Opened {
+fn read_key(venue: Venue, address: &str, phrase: &str) -> Opened {
     let asked = advance(Session::Locked, Event::Prompt);
     let answered = |outcome: Unlock| {
         advance(
@@ -1319,7 +1478,7 @@ fn read_key(venue: Venue, address: &str) -> Opened {
         )
     };
 
-    match PlatformKeystore.load(&item(venue, address)) {
+    match read_item(&item(venue, address), phrase) {
         // Not a fault and not a decline: nothing has ever been stored for this
         // account here, and a second sheet would fetch the same answer forever.
         // Enrolling is what changes it.
@@ -1335,6 +1494,12 @@ fn read_key(venue: Venue, address: &str) -> Opened {
             answered(Unlock::Locked),
             "Touch ID was cancelled, so nothing was released. Unlock again when you are ready.",
         )),
+        // A file with no passphrase yet, or one that does not open it. Asking
+        // is not the session moving: `Locked` with a box on the panel, rather
+        // than an `Unavailable` saying this machine cannot do it at all.
+        Err(failure) if asking(&failure) => {
+            Opened::Refused(Entry::asking(Session::Locked, &failure.message))
+        }
         Err(failure) => {
             Opened::Refused(Entry::plain(answered(Unlock::Unavailable(failure.message))))
         }
@@ -1355,8 +1520,8 @@ fn read_key(venue: Venue, address: &str) -> Opened {
 /// network at all is not a question the unlock is answering, so a missing item,
 /// a declined sheet and an unusable secret are all the same answer here — this
 /// network is not one the vault will hold.
-fn secret_for(venue: Venue, address: &str) -> Option<Loaded> {
-    match PlatformKeystore.load(&item(venue, address)) {
+fn secret_for(venue: Venue, address: &str, phrase: &str) -> Option<Loaded> {
+    match read_item(&item(venue, address), phrase) {
         Ok(Held::Secret(secret)) => load_key(Network::of(venue).signing, secret.expose()).ok(),
         _ => None,
     }
@@ -2041,6 +2206,25 @@ pub fn demo_wallet_kept(address: String) -> Entry {
     wallet_stored(&address)
 }
 
+/// What a build the Secure Enclave will not serve answers with: a question
+/// rather than an outcome, and nothing spent asking it.
+///
+/// Here for the reason the sessions below are, and for one more: `-34018` is
+/// raised by a Mac deciding a binary is unsigned, and no runner in this
+/// repository is one. A build with no keychain at all takes a different road —
+/// `Unavailable`, which is what the panel already says — so the asking arm has
+/// no other way to be driven.
+pub fn demo_vault_asks() -> Entry {
+    Entry::asking(Session::Locked, crate::vault::NO_PASSPHRASE)
+}
+
+/// The same seam answering rather than asking, which is every act that got
+/// somewhere. Paired with the one above so a test can hold the difference
+/// between them, which is the whole of what decides the box's life.
+pub fn demo_vault_answers() -> Entry {
+    Entry::plain(Session::Locked)
+}
+
 pub fn demo_session_unenrolled() -> Session {
     step(
         step(Session::Locked, Event::Prompt),
@@ -2097,6 +2281,91 @@ fn demo_approved(now_s: i64, left_s: i64) -> Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::session::UNSIGNED;
+
+    /// The rule the whole fallback hangs off, in the one place it is written.
+    ///
+    /// `-34018` is the only status with somewhere else to go. A build with no
+    /// keychain at all — which is every runner in this repository — must NOT
+    /// reach the file: it has a different answer already, `Unavailable`, and
+    /// the panel says so. Widening this predicate would quietly turn every
+    /// Linux CI job into one keeping account keys in a file.
+    #[test]
+    fn only_an_unsigned_binary_is_the_files_turn() {
+        let vaulted = || Ok::<&str, KeystoreError>("the file");
+        let refuse = || -> Result<&str, KeystoreError> { panic!("not the file's turn") };
+
+        assert_eq!(
+            or_vault(Err(KeystoreError::new(UNSIGNED.to_owned())), vaulted),
+            Ok("the file"),
+        );
+        assert!(
+            or_vault(
+                Err(KeystoreError::plain(
+                    "no platform keychain on this build".to_owned()
+                )),
+                refuse
+            )
+            .is_err()
+        );
+        assert!(
+            or_vault(
+                Err(KeystoreError::plain("the keychain is unhappy".to_owned())),
+                refuse
+            )
+            .is_err()
+        );
+        // And a platform that worked is never second-guessed.
+        assert_eq!(or_vault(Ok("the keychain"), refuse), Ok("the keychain"));
+    }
+
+    /// The read side of the same rule, and the arm no end-to-end test here can
+    /// reach: a keychain answering `Missing` over a file that holds the key.
+    /// That is a machine signed *after* it wrote one, and reading it as "no key
+    /// on this Mac, enrol again" would leave the keys sitting in the file while
+    /// the panel says there are none.
+    #[test]
+    fn the_file_answers_a_read_the_keychain_was_not_looking_for() {
+        let unsigned = || Err(KeystoreError::new(UNSIGNED.to_owned()));
+        let broken = || {
+            Err(KeystoreError::plain(
+                "no platform keychain on this build".to_owned(),
+            ))
+        };
+
+        // Unsigned goes to the file whatever the file holds — including
+        // nothing, where the file answers `Missing` on its own.
+        assert!(file_reads(&unsigned(), true));
+        assert!(file_reads(&unsigned(), false));
+        // The signed-later arm, and its own negative: an empty keychain over an
+        // empty file is still an empty answer, not a trip to the filesystem.
+        assert!(file_reads(&Ok(Held::Missing), true));
+        assert!(!file_reads(&Ok(Held::Missing), false));
+        // Everything else is the platform's answer and stays it. A cancelled
+        // sheet especially: going looking in a file because the owner said no
+        // would be this app routing around its own guard.
+        assert!(!file_reads(&Ok(Held::Declined), true));
+        assert!(!file_reads(
+            &Ok(Held::Secret(Secret::new(vec![1; 32]))),
+            true
+        ));
+        assert!(!file_reads(&broken(), true));
+    }
+
+    /// An entry that asks is not an entry that refused. The screen branches on
+    /// the flag, and the session must stay somewhere the buttons are alive —
+    /// being asked for a passphrase is the opposite of being told this machine
+    /// cannot do it.
+    #[test]
+    fn asking_for_a_passphrase_leaves_the_session_where_the_buttons_work() {
+        let asked = demo_vault_asks();
+        assert!(asked.wants_passphrase);
+        assert!(!asked.note.is_empty());
+        assert!(session_unlockable(asked.session));
+        assert!(!demo_vault_answers().wants_passphrase);
+    }
+
     use crate::signing::Chain;
 
     const ACCOUNT: &str = "0x1025d5c2057058ffd8acf57109c5f649c11bdc11";
@@ -3116,7 +3385,8 @@ mod tests {
         seed_keys(&[Venue::Hyperliquid, Venue::Lighter]);
         assert!(holding_a_key(), "the fixture put keys in the store");
 
-        let entry = smol::block_on(enrol_all(String::new())).expect("an answer, not a fault");
+        let entry = smol::block_on(enrol_all(String::new(), ui_lang_runtime::Secret::new("")))
+            .expect("an answer, not a fault");
         assert!(
             matches!(entry.session, Session::Locked),
             "{:?}",

@@ -62,6 +62,14 @@ impl Secret {
     pub fn expose(&self) -> &[u8] {
         &self.0
     }
+
+    /// The same, for a buffer something is about to decrypt *into*. Held as a
+    /// `Secret` from the moment it is allocated rather than after it holds
+    /// anything, so there is no path between a buffer becoming plaintext and
+    /// the drop that wipes it.
+    pub fn expose_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
 }
 
 impl fmt::Debug for Secret {
@@ -314,14 +322,70 @@ pub fn account(state: &Session) -> Option<&str> {
     }
 }
 
+/// Why a keystore call failed, past the sentence it carries.
+///
+/// The message is what a reader is shown and is the platform's own words
+/// wherever they are the true ones. This is what the *app* branches on, and
+/// there are only two branches worth having: one status has somewhere else to
+/// go, and the file vault has two answers of its own that are questions rather
+/// than faults.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cause {
+    /// The platform said no for its own reasons. Nothing to do but say so.
+    Platform,
+    /// `-34018`, which is about the binary rather than the call: unsigned code
+    /// gets no Enclave key. The one status with an alternative — see `vault`.
+    Unsigned,
+    /// The file vault has nothing to open itself with yet. A question, and the
+    /// screen answers it with a box rather than a refusal.
+    WantsPassphrase,
+    /// The passphrase given does not open the file. Retryable in exactly the
+    /// way a cancelled sheet is, and drawn the same.
+    Refused,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeystoreError {
     pub message: String,
+    pub cause: Cause,
 }
 
 impl KeystoreError {
-    fn new(message: String) -> Self {
-        Self { message }
+    /// The platform's own failures. `UNSIGNED` is recognised here rather than
+    /// at each call site because `described` is the single place that sentence
+    /// is produced, and every keychain and Enclave call composes its message
+    /// through it — so one comparison covers all of them and a new call site
+    /// cannot forget the arm.
+    pub(crate) fn new(message: String) -> Self {
+        let cause = if message == UNSIGNED {
+            Cause::Unsigned
+        } else {
+            Cause::Platform
+        };
+        Self { message, cause }
+    }
+
+    /// A failure that is nobody's alternative: a file that would not open, a
+    /// directory that could not be made.
+    pub fn plain(message: String) -> Self {
+        Self {
+            message,
+            cause: Cause::Platform,
+        }
+    }
+
+    pub fn wanting(message: String) -> Self {
+        Self {
+            message,
+            cause: Cause::WantsPassphrase,
+        }
+    }
+
+    pub fn refused(message: String) -> Self {
+        Self {
+            message,
+            cause: Cause::Refused,
+        }
     }
 }
 
@@ -585,7 +649,7 @@ fn held(refusal: Refusal, failure: String) -> Result<Held, KeystoreError> {
 /// So this status alone gets a sentence about the *binary* rather than about
 /// the call. Everything else keeps the platform's own wording, because for
 /// everything else the platform's wording is the true one.
-const UNSIGNED: &str = "This build is not code-signed, and the Secure Enclave will not make a key \
+pub(crate) const UNSIGNED: &str = "This build is not code-signed, and the Secure Enclave will not make a key \
                         for an unsigned binary. Nothing has been stored. Build, sign and run in \
                         one step with `scripts/sign-dev.sh -p trading-example`.";
 
@@ -1017,6 +1081,25 @@ impl Keystore for PlatformKeystore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The one status with somewhere else to go, and the classification that
+    /// sends it there.
+    ///
+    /// `described` is the single place `UNSIGNED` is produced and every
+    /// keychain and Enclave call composes its message through it, so this pair
+    /// of assertions is what `custody`'s fallback stands on. A Mac is not
+    /// needed for either: the system's own words arrive as a parameter.
+    #[test]
+    fn the_unsigned_status_is_the_one_the_app_can_do_something_about() {
+        let unsigned = described(MISSING_ENTITLEMENT, "making the wrapping key", "whatever");
+        assert_eq!(unsigned, UNSIGNED);
+        assert_eq!(KeystoreError::new(unsigned).cause, Cause::Unsigned);
+        // Every other status keeps the platform's own words and stays the
+        // platform's problem.
+        let other = described(AUTH_FAILED, "reading the item", "authentication failed");
+        assert!(other.contains("authentication failed"));
+        assert_eq!(KeystoreError::new(other).cause, Cause::Platform);
+    }
 
     use std::cell::RefCell;
     use std::collections::HashMap;

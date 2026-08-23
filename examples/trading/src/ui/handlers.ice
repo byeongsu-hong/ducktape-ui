@@ -1,4 +1,9 @@
 on mount
+  // A machine that has been down this road keeps a key file, and a reader who
+  // set a passphrase last time should find the box already there rather than
+  // after a press that could not have worked. The other way in is the platform
+  // refusing, which every custody answer below carries.
+  vault_wanted = vault_occupied()
   task window open main -> main_opened _
 
 // Opening a window is a query, so its id has to land somewhere. This daemon
@@ -832,6 +837,7 @@ on close_import
   import_open = false
   import_phrase = ""
   import_passphrase = ""
+  vault_phrase = ""
   import_address = ""
   import_note = ""
   create_phrase = ""
@@ -872,17 +878,29 @@ on phrase_read(entry)
 on store_wallet
   return if empty(import_address)
   import_note = ""
-  run every keep_wallet() -> wallet_kept _ | custody_failed _
+  run every keep_wallet(vault_phrase) -> wallet_kept _ | custody_failed _
 
 on wallet_kept(entry)
-  let kept = import_address
   session = entry.session
   import_note = entry.note
-  // The address leaves the panel on both arms, because the key does:
-  // `keep_wallet` takes the waiting key before it tries, so a store that failed
-  // has spent it too and there is nothing left for a second press to keep.
+  // Sticky: once this build has said it keeps keys in a file, it keeps saying
+  // so. Clearing it on the next answer would take the box away between the
+  // press that asked for a passphrase and the press that uses one.
+  vault_wanted = vault_wanted || entry.wants_passphrase
+  // A press that only asked a question spent nothing. The key is still waiting
+  // and the address is still the one it derived, so the step stays exactly as
+  // it was with a box on it — clearing either here is what would make typing a
+  // passphrase mean starting the import again.
+  return if entry.wants_passphrase
+  let kept = import_address
+  // The address leaves the panel on both arms below, because the key does:
+  // `keep_wallet` spends the waiting key on any answer that settles something,
+  // so a store that failed has spent it too and there is nothing left for a
+  // second press to keep. The passphrase goes with it — the next act takes an
+  // answer of its own.
   create_made = false
   import_address = ""
+  vault_phrase = ""
   // A store that could not happen leaves the step standing with the platform's
   // own words in it. That surface is the typed door, and on this arm that is
   // the honest one: nothing was written, and typing a phrase is the way on.
@@ -920,12 +938,12 @@ on wallet_kept(entry)
 // before it is pressed.
 on enrol_networks
   unlock_note = ""
-  run every enrol_all(address) -> custody_answered _ | custody_failed _
+  run every enrol_all(address, vault_phrase) -> custody_answered _ | custody_failed _
 
 on unlock
   return if !session_unlockable(session)
   unlock_note = ""
-  run every unlock_agent(venue, address) -> custody_answered _ | custody_failed _
+  run every unlock_agent(venue, address, vault_phrase) -> custody_answered _ | custody_failed _
 
 // Both acts land here because both answer the same question. A declined sheet,
 // a first run, a build with no keychain and an approval nobody has made are
@@ -933,6 +951,13 @@ on unlock
 on custody_answered(entry)
   session = entry.session
   unlock_note = entry.note
+  vault_wanted = vault_wanted || entry.wants_passphrase
+  // Kept only while it is being asked for. An act that got somewhere is an act
+  // whose passphrase has done its work, and the box empties — the next one
+  // takes an answer of its own, which is this file's version of a sheet raised
+  // per act rather than a session that stays open.
+  return if entry.wants_passphrase
+  vault_phrase = ""
 
 // The one outcome that is a read that failed rather than an answer: the venue
 // would not say which of this account's keys are live. The session is left
@@ -943,6 +968,8 @@ on custody_failed(reason)
 on lock
   session = lock_agent()
   unlock_note = ""
+  // Locking forgets the keys, so it forgets what opens them too.
+  vault_phrase = ""
 
 subscribe
   // Escape clears the search box, and the search box is in the market rail on

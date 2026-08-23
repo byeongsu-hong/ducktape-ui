@@ -2745,6 +2745,25 @@ view
                                     w=fill
                                     wrap=word
                                     @text-muted
+                              // What this build has instead of a sheet. Above
+                              // the buttons rather than beside them, because it
+                              // is what both of them are about to use.
+                              if vault_wanted
+                                col #vault gap=6.0 w=fill
+                                  Label value="THIS MACHINE'S PASSPHRASE" #vault-label
+                                  input "" #vault-phrase <-> vault_phrase
+                                    with
+                                      label="Passphrase for this machine's key file"
+                                      hint="what opens the file"
+                                      text-size=12.0
+                                      w=fill
+                                    focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                                  text "The Secure Enclave will not make a key for an unsigned build, so this app keeps its keys in a file it encrypts itself. This passphrase is the whole of what opens that file — weaker than Touch ID, which is the trade this machine is making, and nothing here can recover it if it is forgotten." #vault-note
+                                    with
+                                      size=11.0
+                                      w=fill
+                                      wrap=word
+                                      @text-down
                               row gap=8.0 w=fill
                                 button #unlock -> unlock
                                   with
@@ -3068,6 +3087,25 @@ view
                           w=fill
                           wrap=word
                           @text-muted
+                // The box this build has instead of a sheet, on the step as
+                // well as on the custody panel: THIS IS MINE is the first press
+                // that needs one, and it is the press this door is for.
+                if vault_wanted
+                  col #import-vault gap=6.0 w=fill
+                    Label value="THIS MACHINE'S PASSPHRASE" #import-vault-label
+                    input "" #import-vault-phrase <-> vault_phrase
+                      with
+                        label="Passphrase for this machine's key file"
+                        hint="chosen once, and not recoverable"
+                        text-size=12.0
+                        w=fill
+                      focused bg=raised border=muted r=4.0 placeholder=faint value=fg
+                    text "This build cannot reach the Secure Enclave, so the key is sealed into a file with this passphrase instead. It is weaker than Touch ID and nothing here can recover it — write it down with the words." #import-vault-note
+                      with
+                        size=10.0
+                        w=fill
+                        wrap=word
+                        @text-down
                 if !empty(import_note)
                   text import_note #import-note
                     with
