@@ -1376,7 +1376,13 @@ fn renumber_list(
                 *last
             }
             _ => {
-                let number = if restart == Some(index) { 1 } else { number };
+                // Only the outermost run keeps the number it started with;
+                // a run nested under another ordered run counts from 1.
+                let number = if restart == Some(index) || !runs.is_empty() {
+                    1
+                } else {
+                    number
+                };
                 runs.push((item.indent, number));
                 number
             }
@@ -3186,6 +3192,13 @@ mod tests {
         document.move_to(caret(2, 4));
         track_action(&mut document, Action::Edit(Edit::Enter));
         assert_eq!(document.text(), "1. a\n\n2. b\n3. \n\n4. c\n\npara\n\n7. d");
+
+        // Lifting the first nested item leaves an orphaned nested run, which
+        // restarts at 1 like any other nested run.
+        document = reset_document("1. a\n   1. x\n   2. y\n2. b".into());
+        document.move_to(caret(1, 6));
+        track_action(&mut document, Action::Edit(Edit::Unindent));
+        assert_eq!(document.text(), "1. a\n2. x\n   1. y\n3. b");
     }
 
     #[test]
