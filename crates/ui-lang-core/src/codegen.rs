@@ -536,39 +536,6 @@ pub(in crate::codegen) fn event_filter_type(name: &str) -> String {
     }
 }
 
-fn generate_derived(
-    out: &mut String,
-    program: &LoweredProgram,
-    cached: &HashSet<crate::hir::DerivedId>,
-) -> Result<(), Error> {
-    let env = checked_state_env(program, "self");
-    for derived in program.derived() {
-        let value = resolved_expr_use_code(program, derived.initializer, &env, ValueMode::Owned)?;
-        writeln!(out, "{}", source_marker(&derived.span)).unwrap();
-        writeln!(
-            out,
-            "fn {}(&self) -> {} {{ {value} }}",
-            derived_method(&derived.name),
-            rust_type_code(program, &derived.ty),
-        )
-        .unwrap();
-        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
-        if cached.contains(&derived.id) {
-            writeln!(out, "{}", source_marker(&derived.span)).unwrap();
-            writeln!(
-                out,
-                "fn {}<'a>(&self, __ice_derived: &'a __IceDerivedSnapshot) -> &'a {} {{ __ice_derived.{}.get_or_init(|| {value}) }}",
-                derived_snapshot_method(&derived.name),
-                rust_type_code(program, &derived.ty),
-                derived.name,
-            )
-            .unwrap();
-            writeln!(out, "{SOURCE_MARKER_END}").unwrap();
-        }
-    }
-    Ok(())
-}
-
 /// A view published as data, with the fingerprint that decides whether a
 /// running process can accept it.
 #[derive(Clone, Debug)]
@@ -590,8 +557,7 @@ pub fn view_template(
 ) -> Result<Option<ViewTemplate>, Error> {
     let app_name = program.app_name();
     let message = format!("__{app_name}Message");
-    let cached = view_derived_snapshots(program, &message, source_path)?;
-    let env = checked_view_state_env(program, "self", "__ice_derived", &cached);
+    let env = checked_state_env(program, "self");
     let root_scope = rust_string(program.app_name());
     Ok(
         template::emit(program, &message, &env, source_path, &root_scope)?.map(|emission| {
@@ -622,7 +588,6 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         .collect::<HashSet<_>>();
     let app_name = program.app_name();
     let message = format!("__{app_name}Message");
-    let derived_snapshots = view_derived_snapshots(program, &message, source_path)?;
     let lint_macro = format!("__ice_generated_items_{}", encode_source_path(source_path));
     let mut out = String::new();
     // Attributes on `include!` do not reach the included items, while a module
@@ -674,23 +639,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         "#[derive(Clone, Copy)]\nstruct __IcePalette {{ name: &'static str, colors: [::iced::Color; {token_count}] }}"
     )
     .unwrap();
-    if !derived_snapshots.is_empty() {
-        writeln!(out, "#[derive(Default)]\nstruct __IceDerivedSnapshot {{").unwrap();
-        for derived in program
-            .derived()
-            .iter()
-            .filter(|derived| derived_snapshots.contains(&derived.id))
-        {
-            writeln!(
-                out,
-                "{}: ::std::cell::OnceCell<{}>,",
-                derived.name,
-                rust_type_code(program, &derived.ty)
-            )
-            .unwrap();
-        }
-        writeln!(out, "}}").unwrap();
-    }
+    generate_derived_cache_type(&mut out, program);
 
     for item in program.enum_declarations() {
         let derives = if item
@@ -961,6 +910,13 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         .unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
+    if !program.derived().is_empty() {
+        writeln!(
+            out,
+            "pub(crate) {DERIVED_CACHE_FIELD}: {DERIVED_CACHE_TYPE},"
+        )
+        .unwrap();
+    }
     for component in program
         .components()
         .iter()
@@ -1105,8 +1061,13 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
-    for binding in program.controlled_input_bindings()? {
-        writeln!(out, "{}(::std::string::String),", binding_variant(binding)).unwrap();
+    for state in program.controlled_input_bindings()? {
+        writeln!(
+            out,
+            "{}(::std::string::String),",
+            binding_variant(&state.name)
+        )
+        .unwrap();
     }
     for binding in program.controlled_editor_bindings()? {
         writeln!(
@@ -1182,7 +1143,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
-    generate_derived(&mut out, program, &derived_snapshots)?;
+    generate_derived(&mut out, program)?;
     generate_named_windows(&mut out, program, app_settings, source_path);
     let subscription = ".subscription(Self::__subscription)";
     let default_font = if app_settings.default_font.is_some() {
@@ -1282,13 +1243,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     writeln!(out, "{phase}").unwrap();
     let outline_guard = outline::enable_for_view();
     let mut view = String::new();
-    generate_view(
-        &mut view,
-        program,
-        &message,
-        source_path,
-        &derived_snapshots,
-    )?;
+    generate_view(&mut view, program, &message, source_path)?;
     let mut outlined = outline::drain_outlined_methods();
     outlined.push((APP_UPDATE_GROUP.to_owned(), update));
     outlined.push((APP_VIEW_GROUP.to_owned(), view));
@@ -1332,6 +1287,7 @@ fn generate_outlined_groups(out: &mut String, app_name: &str, outlined: Vec<(Str
 
 mod application;
 mod canvas;
+mod derived;
 mod expr;
 mod probes;
 mod runtime;
@@ -1349,6 +1305,7 @@ use type_code::rust_type_code;
 
 use application::*;
 use canvas::*;
+use derived::*;
 use expr::*;
 use probes::*;
 use runtime::*;

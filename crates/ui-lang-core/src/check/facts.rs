@@ -2622,6 +2622,15 @@ impl CheckedFacts {
                         }
                         occurrences += 1;
                     }
+                    // A derived value over the target reads it too, through a
+                    // cache that may be empty at this point of the handler:
+                    // taking the field first would hand that read the empty
+                    // field.
+                    if let CheckedPathRoot::Value(derived @ CheckedValueRef::Derived(_)) = root
+                        && self.value_reads(*derived, target)
+                    {
+                        return Ok(false);
+                    }
                 }
                 CheckedExprKind::List(values) => {
                     stack.extend(values.iter().map(|value| (*value, false)));
@@ -2659,6 +2668,59 @@ impl CheckedFacts {
             }
         }
         Ok(occurrences == 1)
+    }
+
+    /// Whether `value`'s initializer reads `target`, directly or through
+    /// other derived values. The checker has already rejected derived cycles.
+    /// Lowering records each derived value's app-state reads from this same
+    /// walk, so the self-move rule above and the cache clear set cannot
+    /// disagree.
+    pub(crate) fn value_reads(&self, value: CheckedValueRef, target: CheckedValueRef) -> bool {
+        let Some(root) = self
+            .try_value_by_ref(value)
+            .and_then(|value| value.initializer)
+            .and_then(|initializer| self.try_expression_use(initializer))
+            .map(|initializer| initializer.root)
+        else {
+            return false;
+        };
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            let Some(expression) = self.try_expression(id) else {
+                continue;
+            };
+            match &expression.kind {
+                CheckedExprKind::Path {
+                    root: CheckedPathRoot::Value(value),
+                    ..
+                } => {
+                    if *value == target
+                        || (matches!(value, CheckedValueRef::Derived(_))
+                            && self.value_reads(*value, target))
+                    {
+                        return true;
+                    }
+                }
+                CheckedExprKind::Path { .. } => {}
+                CheckedExprKind::List(values) => stack.extend(values),
+                CheckedExprKind::Call { arguments, .. } => {
+                    stack.extend(arguments.iter().filter_map(|argument| match argument {
+                        CheckedCallArgument::Value(value) => Some(*value),
+                        CheckedCallArgument::Binding(_) => None,
+                    }));
+                }
+                CheckedExprKind::Unary { value, .. } => stack.push(*value),
+                CheckedExprKind::Binary { left, right, .. } => stack.extend([*left, *right]),
+                CheckedExprKind::Bool(_)
+                | CheckedExprKind::I64(_)
+                | CheckedExprKind::F64(_)
+                | CheckedExprKind::Str(_)
+                | CheckedExprKind::Bytes(_)
+                | CheckedExprKind::None
+                | CheckedExprKind::SlotProvided(_) => {}
+            }
+        }
+        false
     }
 
     pub(crate) fn builtin(&self, id: CheckedBuiltinId) -> &str {

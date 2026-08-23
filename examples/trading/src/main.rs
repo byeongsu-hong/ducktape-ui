@@ -44,9 +44,9 @@ mod tests {
 
     fn marked(app: &Trading) -> Vec<String> {
         app.__ice_derived_visible()
-            .into_iter()
+            .iter()
             .filter(|row| row.selected)
-            .map(|row| row.name)
+            .map(|row| row.name.clone())
             .collect()
     }
 

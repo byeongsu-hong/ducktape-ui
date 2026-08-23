@@ -32,12 +32,8 @@ pub(in crate::codegen) fn render_children(
                 let program = document;
                 let iteration = program.resolved_iteration(*child)?;
                 let item_name = &iteration.item.name;
-                let items = resolved_expr_use_code(
-                    program,
-                    iteration.items,
-                    env,
-                    ValueMode::TransientBorrowed,
-                )?;
+                let items =
+                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
                 // Copy rows are free to copy; anything else iterates by
                 // reference, like a match payload — every use site already
                 // clones at the point that needs ownership, so the up-front

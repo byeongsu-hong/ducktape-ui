@@ -135,7 +135,6 @@ pub(in crate::codegen) fn push_outlined_method(
     group: &str,
     scope_binding: &str,
     scope_locals: &std::collections::BTreeSet<String>,
-    derived_snapshot: bool,
     callback_params: &[(String, String, String)],
     value_params: &[(String, String, String)],
     body: &str,
@@ -164,13 +163,8 @@ pub(in crate::codegen) fn push_outlined_method(
         .iter()
         .map(|(ident, ty, _)| format!(", {ident}: {ty}"))
         .collect::<String>();
-    let snapshot = if derived_snapshot {
-        ", __ice_derived: &__IceDerivedSnapshot"
-    } else {
-        ""
-    };
     let key = format!(
-        "(&self, __ice_palette: __IcePalette, __ice_use_scope: ::std::string::String{snapshot}{locals}{callbacks}{values}) -> __IceElement<'_, {message}> {{ {normalized} }}"
+        "(&self, __ice_palette: __IcePalette, __ice_use_scope: ::std::string::String{locals}{callbacks}{values}) -> __IceElement<'_, {message}> {{ {normalized} }}"
     );
     OUTLINE.with_borrow_mut(|state| {
         if let Some(existing) = state.dedup.get(&key) {

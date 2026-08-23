@@ -178,6 +178,7 @@ jobs:
           cargo test --release --locked -p ui-lang-runtime --test frame_probe -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p trading-example --no-run
           cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
+          cargo test --locked -p showcase --test derived_cache -- --ignored --nocapture --test-threads=1
           # Every ignored test in this crate is a contract, and naming two
           # filters here meant the five `allocation_contract_*` ones matched
           # neither and had never run in CI at all.

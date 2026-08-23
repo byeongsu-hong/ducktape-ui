@@ -584,22 +584,18 @@ pub(in crate::codegen) fn generate_statements(
                 } else {
                     resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
                 };
-                if target.ty == Type::Secret {
+                let write = if target.ty == Type::Secret {
                     // The checker allows exactly one right-hand side here, the
                     // empty literal, so this is a wipe rather than a write.
-                    writeln!(
-                        out,
+                    format!(
                         "{state}.{SECRET_STORE_FIELD}.clear({});",
                         rust_string(&target.name)
                     )
-                    .unwrap();
                 } else if matches!(target.ty, Type::Combo(_)) {
-                    writeln!(
-                        out,
+                    format!(
                         "{state}.{} = ::iced::widget::combo_box::State::new({code});",
                         target.name
                     )
-                    .unwrap();
                 } else if let Type::Animation(inner) = &target.ty {
                     let code = if **inner == Type::F64 {
                         format!("({code}) as f32")
@@ -611,18 +607,21 @@ pub(in crate::codegen) fn generate_statements(
                         .map(|at| resolved_expr_use_code(program, *at, env, ValueMode::Owned))
                         .transpose()?
                         .unwrap_or_else(|| "::iced::time::Instant::now()".into());
-                    writeln!(out, "{state}.{}.go_mut({code}, {at});", target.name).unwrap();
+                    format!("{state}.{}.go_mut({code}, {at});", target.name)
                 } else {
-                    writeln!(out, "{state}.{} = {code};", target.name).unwrap();
-                }
+                    format!("{state}.{} = {code};", target.name)
+                };
+                writeln!(out, "{}", state_write(program, state, target.value, write)).unwrap();
             }
             ResolvedStatementKind::MarkdownAppend { target, value } => {
                 let code = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
-                writeln!(out, "{state}.{}.push_str(&{code});", target.name).unwrap();
+                let write = format!("{state}.{}.push_str(&{code});", target.name);
+                writeln!(out, "{}", state_write(program, state, target.value, write)).unwrap();
             }
             ResolvedStatementKind::ComboPush { target, value } => {
                 let code = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
-                writeln!(out, "{state}.{}.push({code});", target.name).unwrap();
+                let write = format!("{state}.{}.push({code});", target.name);
+                writeln!(out, "{}", state_write(program, state, target.value, write)).unwrap();
             }
             ResolvedStatementKind::ReturnIf { condition } => {
                 let code = resolved_expr_use_code(program, *condition, env, ValueMode::Owned)?;
@@ -856,16 +855,19 @@ pub(in crate::codegen) fn generate_statements(
                     TaskMode::Bare,
                 )?;
                 writeln!(out, "}}).abortable();").unwrap();
-                writeln!(
-                    out,
-                    "{state}.{} = ::std::option::Option::Some(__handle{}); __task }}{}",
+                let write = format!(
+                    "{state}.{} = ::std::option::Option::Some(__handle{});",
                     handle.name,
                     if *abort_on_drop {
                         ".abort_on_drop()"
                     } else {
                         ""
-                    },
-                    task_suffix
+                    }
+                );
+                writeln!(
+                    out,
+                    "{} __task }}{task_suffix}",
+                    state_write(program, state, handle.value, write)
                 )
                 .unwrap();
             }
@@ -874,16 +876,18 @@ pub(in crate::codegen) fn generate_statements(
             }
             ResolvedStatementKind::DebugStart { name, target } => {
                 let name = resolved_expr_use_code(program, *name, env, ValueMode::Owned)?;
-                writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{}.take() {{ __span.finish(); }}", target.name).unwrap();
-                writeln!(
-                    out,
-                    "{state}.{} = ::std::option::Option::Some(::iced::debug::time({name}));",
-                    target.name
-                )
-                .unwrap();
+                let write = format!(
+                    "if let ::std::option::Option::Some(__span) = {state}.{}.take() {{ __span.finish(); }} {state}.{} = ::std::option::Option::Some(::iced::debug::time({name}));",
+                    target.name, target.name
+                );
+                writeln!(out, "{}", state_write(program, state, target.value, write)).unwrap();
             }
             ResolvedStatementKind::DebugFinish { target } => {
-                writeln!(out, "if let ::std::option::Option::Some(__span) = {state}.{}.take() {{ __span.finish(); }}", target.name).unwrap();
+                let write = format!(
+                    "if let ::std::option::Option::Some(__span) = {state}.{}.take() {{ __span.finish(); }}",
+                    target.name
+                );
+                writeln!(out, "{}", state_write(program, state, target.value, write)).unwrap();
             }
             ResolvedStatementKind::ClipboardWrite { primary, value } => {
                 let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;

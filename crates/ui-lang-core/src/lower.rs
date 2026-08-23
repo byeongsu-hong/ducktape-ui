@@ -501,6 +501,11 @@ pub(crate) struct DerivedContract {
     pub(crate) name: String,
     pub(crate) ty: Type,
     pub(crate) initializer: CheckedExprUseId,
+    /// The app-state fields the expression reads, directly or through other
+    /// derived values: a write to any of them clears this value's cache cell.
+    /// Decided by the checker's `value_reads`, the walk that also rules on
+    /// self-moving assignments, so the two cannot disagree.
+    pub(crate) reads: Vec<ResolvedValueRef>,
     pub(crate) span: Span,
     #[cfg(test)]
     pub(crate) origin: OriginId,
@@ -3452,7 +3457,7 @@ impl LoweredProgram {
         &self.secrets
     }
 
-    pub(crate) fn controlled_input_bindings(&self) -> Result<Vec<&str>, Error> {
+    pub(crate) fn controlled_input_bindings(&self) -> Result<Vec<&AppStateContract>, Error> {
         let mut seen = HashSet::with_capacity(self.controlled_inputs.len());
         let mut names = Vec::with_capacity(self.controlled_inputs.len());
         for binding in &self.controlled_inputs {
@@ -3474,7 +3479,7 @@ impl LoweredProgram {
                     "controlled input binding is duplicated in normalized HIR",
                 ));
             }
-            names.push(state.name.as_str());
+            names.push(state);
         }
         Ok(names)
     }
@@ -7087,6 +7092,12 @@ impl Lowerer {
                     initializer: checked.initializer.ok_or_else(|| {
                         self.invariant(&value.span, "derived value has no checked initializer")
                     })?,
+                    reads: (0..self.document.states.len())
+                        .map(|index| {
+                            CheckedValueRef::AppState(self.declarations.app_state(index).id)
+                        })
+                        .filter(|state| self.facts.value_reads(checked.id, *state))
+                        .collect(),
                     span: value.span.clone(),
                     #[cfg(test)]
                     origin: declaration.origin,
@@ -19857,7 +19868,7 @@ view
         assert!(generated.contains(
             "::iced::Animation::new((0.0) as f32).easing(::iced::animation::Easing::Custom(|__value: f32| crate::backend::elastic(__value as f64) as f32)).duration(::std::time::Duration::from_millis(120)).delay(::std::time::Duration::from_millis(5)).repeat(2).auto_reverse()"
         ));
-        assert!(generated.contains("fn __ice_derived_total(&self) -> f64 { (1.0 + 2.0) }"));
+        assert!(generated.contains("fn __ice_derived_total(&self) -> &f64 { self.__ice_derived.total.get_or_init(|| (1.0 + 2.0)) }"));
         assert!(generated.contains("(\"ready\").to_string()"));
         assert!(generated.contains("open: false"));
     }

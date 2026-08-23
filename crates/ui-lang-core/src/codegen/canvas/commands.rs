@@ -5,7 +5,6 @@ pub(in crate::codegen) fn canvas_commands_code(
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let mut code = String::new();
     for command in commands {
         match command {

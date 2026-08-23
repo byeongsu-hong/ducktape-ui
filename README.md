@@ -96,11 +96,10 @@ on live_updated(next)
 ```
 
 `derived` names a read-only computation over state. It may use deterministic
-Ice built-ins or a declared `pure` extern. It is not a signal, persistent cache,
-runtime dependency graph, or state mirror that handlers must synchronize.
-Observable evaluation count is not guaranteed: the compiler may coalesce
-equivalent safe reads within one eager view build, but retains nothing across
-frames. `pure` is
+Ice built-ins or a declared `pure` extern. It is cached across frames and
+recomputed only after a write to a state field it reads, a dependency the
+compiler derives from the expression; it is not a signal, runtime dependency
+graph, or state mirror that handlers must synchronize. `pure` is
 a trusted Rust contract: the same arguments must produce the same value without
 observable effects. Immediate `sync` externs may observe the environment,
 perform an effect, or create retained identity, so Ice confines them to

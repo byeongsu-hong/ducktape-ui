@@ -877,16 +877,18 @@ republishes the whole universe — and nothing leaks into the panel beside it.
 That is the invalidation rule working, and it is why the note above holds: only
 mounting fewer rows moves the beat frame, not a narrower dependency.
 
-**And the derived reads inside `responsive` are noise.** `responsive
-#terminal-fit` wraps the whole terminal page, and every derived read inside a
-responsive closure is tagged `ESCAPING_DERIVED_READ`, which vetoes the
-`__IceDerivedSnapshot` cache for the whole view — trading's generated view
-contains no snapshot struct at all and calls `__ice_derived_quote()` 8 times per
-build, each recomputing a chain that walks the book. Priced with `bench`, that
-whole waste is **34.7us against 10.2us** if each were computed once: **~25us of
-a 3300us frame**. Reading this table before writing the codegen fix is what
-stopped it being written. It belongs beside the 984 redundant scope clones worth
-19us.
+**And the derived reads inside `responsive` were noise.** At the time,
+`responsive #terminal-fit` wrapped the whole terminal page, every derived read
+inside a responsive closure was tagged as escaping, and that vetoed the
+per-view derived snapshot for the whole view — trading's generated view called
+`__ice_derived_quote()` 8 times per build, each recomputing a chain that walks
+the book. Priced with `bench`, that whole waste was **34.7us against 10.2us**
+if each were computed once: **~25us of a 3300us frame**. Reading this table
+before writing a codegen fix is what stopped one being written then. The
+snapshot has since been replaced by a cache on the app struct that survives
+frames and is cleared by the writes that can change it
+(`docs/decisions/0008-derived-cache.md`), so a derived read now costs a
+reference and the 8 reads compute once per feed beat, not once per read.
 
 **The scrolling report was a different kind of bug, and it reproduced.**
 `push_fills` and `push_trades` both put a beat's rows in front of the ones

@@ -9,12 +9,9 @@ use super::*;
 /// and the per-call overhead of many tiny methods.
 const SLOTS_PER_METHOD: usize = 32;
 
-fn app_view_env(
-    program: &LoweredProgram,
-    cached: &HashSet<crate::hir::DerivedId>,
-) -> HashMap<String, Binding> {
+fn app_view_env(program: &LoweredProgram) -> HashMap<String, Binding> {
     let daemon = program.settings().kind == ProgramKind::Daemon;
-    let mut env = checked_view_state_env(program, "self", "__ice_derived", cached);
+    let mut env = checked_state_env(program, "self");
     if daemon {
         env.insert(
             "window".into(),
@@ -33,48 +30,6 @@ fn app_view_env(
     env
 }
 
-pub(in crate::codegen) fn view_derived_snapshots(
-    program: &LoweredProgram,
-    message: &str,
-    source_path: &str,
-) -> Result<HashSet<crate::hir::DerivedId>, Error> {
-    if program.derived().is_empty() {
-        return Ok(HashSet::new());
-    }
-    let empty = HashSet::new();
-    let env = app_view_env(program, &empty);
-    let root_scope = if retains_mounted_components(program) {
-        "__ice_root_scope_ref".to_owned()
-    } else {
-        rust_string(program.app_name())
-    };
-    let (_, reads) = collect_derived_reads(|| {
-        if crate::codegen::template::emit(program, message, &env, source_path, &root_scope)?
-            .is_none()
-        {
-            let _ = render_node_if_present(
-                program.app_view(),
-                program,
-                message,
-                &env,
-                &root_scope,
-                None,
-            )?;
-        }
-        Ok(())
-    })?;
-    Ok(reads
-        .into_iter()
-        .filter_map(|(id, profile)| {
-            (profile / DERIVED_READ_COUNT >= 2
-                && profile & TRANSIENT_DERIVED_READ != 0
-                && profile & NON_TRANSIENT_DERIVED_READ == 0
-                && profile & ESCAPING_DERIVED_READ == 0)
-                .then_some(id)
-        })
-        .collect())
-}
-
 /// Renders a published template: the process resolves its current template —
 /// the embedded one, or the file `ICE_TEMPLATE_PATH` names — then fills this
 /// frame's slot table and hands both to the runtime renderer.
@@ -86,18 +41,12 @@ fn template_render_code(
     message: &str,
     root_scope: &str,
     daemon: bool,
-    snapshots: bool,
     methods: &mut String,
 ) -> String {
     // A daemon's view is per-window, and its slot expressions may read the
     // window it is rendering for, so the parameter travels with them.
     let (window_param, window_arg) = if daemon {
         (", window: ::iced::window::Id", ", window")
-    } else {
-        ("", "")
-    };
-    let (snapshot_param, snapshot_arg) = if snapshots {
-        (", __ice_derived: &__IceDerivedSnapshot", ", __ice_derived")
     } else {
         ("", "")
     };
@@ -111,12 +60,12 @@ fn template_render_code(
         let pushes = chunk.concat();
         writeln!(
             methods,
-            "pub(super) fn __ice_slots_{index}<'a>(&'a self, __ice_palette: __IcePalette, __ice_app_theme: &::iced::Theme{window_param}{snapshot_param}, __ice_slots: &mut ::ui_lang_runtime::template::Slots<'a, {message}>) {{ let __ice_app_theme = __ice_app_theme.clone(); let _ = &__ice_app_theme; {pushes} }}",
+            "pub(super) fn __ice_slots_{index}<'a>(&'a self, __ice_palette: __IcePalette, __ice_app_theme: &::iced::Theme{window_param}, __ice_slots: &mut ::ui_lang_runtime::template::Slots<'a, {message}>) {{ let __ice_app_theme = __ice_app_theme.clone(); let _ = &__ice_app_theme; {pushes} }}",
         )
         .unwrap();
         writeln!(
             calls,
-            "self.__ice_slots_{index}(__ice_palette, &__ice_app_theme{window_arg}{snapshot_arg}, &mut __ice_slots);"
+            "self.__ice_slots_{index}(__ice_palette, &__ice_app_theme{window_arg}, &mut __ice_slots);"
         )
         .unwrap();
     }
@@ -156,11 +105,10 @@ pub(in crate::codegen) fn generate_view(
     program: &LoweredProgram,
     message: &str,
     source_path: &str,
-    cached: &HashSet<crate::hir::DerivedId>,
 ) -> Result<(), Error> {
     let daemon = program.settings().kind == ProgramKind::Daemon;
     let mounted = mounted_component_fields(program);
-    let env = app_view_env(program, cached);
+    let env = app_view_env(program);
     let root_scope = if mounted.is_empty() {
         rust_string(program.app_name())
     } else {
@@ -171,14 +119,9 @@ pub(in crate::codegen) fn generate_view(
     let mut slot_methods = String::new();
     let rendered_root =
         match crate::codegen::template::emit(program, message, &env, source_path, &root_scope)? {
-            Some(emission) => template_render_code(
-                &emission,
-                message,
-                &root_scope,
-                daemon,
-                !cached.is_empty(),
-                &mut slot_methods,
-            ),
+            Some(emission) => {
+                template_render_code(&emission, message, &root_scope, daemon, &mut slot_methods)
+            }
             None => render_node_if_present(
                 program.app_view(),
                 program,
@@ -198,21 +141,16 @@ pub(in crate::codegen) fn generate_view(
     let palette = format!(
         "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
     );
-    let snapshot = if cached.is_empty() {
-        ""
-    } else {
-        "let __ice_derived_storage = __IceDerivedSnapshot::default(); let __ice_derived = &__ice_derived_storage;"
-    };
     if mounted.is_empty() && daemon {
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {snapshot} {palette} let __ice_root: __IceElement<'_, {message}> = {rendered_root}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root: __IceElement<'_, {message}> = {rendered_root}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     } else if mounted.is_empty() {
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {snapshot} {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into(); ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into(); ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     } else {
@@ -235,7 +173,7 @@ pub(in crate::codegen) fn generate_view(
         let (boot_drain, boot_wrap) = boot_dispatch_code(program, message);
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {snapshot} {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {boot_drain} let __ice_root: __IceElement<'_, {message}> = {result}; {boot_wrap} ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {boot_drain} let __ice_root: __IceElement<'_, {message}> = {result}; {boot_wrap} ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     }

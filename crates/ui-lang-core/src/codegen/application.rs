@@ -334,6 +334,13 @@ pub(in crate::codegen) fn generate_boot(
         .unwrap();
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
+    if !program.derived().is_empty() {
+        writeln!(
+            out,
+            "{DERIVED_CACHE_FIELD}: ::std::default::Default::default(),"
+        )
+        .unwrap();
+    }
     if !program.secrets().is_empty() {
         writeln!(
             out,
@@ -966,32 +973,41 @@ pub(in crate::codegen) fn generate_update(
         )
         .unwrap();
     }
-    for binding in program.controlled_input_bindings()? {
-        let variant = binding_variant(binding);
+    for state in program.controlled_input_bindings()? {
+        let variant = binding_variant(&state.name);
+        let write = state_write(
+            program,
+            "self",
+            ResolvedValueRef::AppState(state.id),
+            format_args!("self.{} = value;", state.name),
+        );
         writeln!(
             out,
-            "{message}::{variant}(value) => {{ self.{binding} = value; ::iced::Task::none() }}"
+            "{message}::{variant}(value) => {{ {write} ::iced::Task::none() }}"
         )
         .unwrap();
     }
     for binding in program.controlled_editor_bindings()? {
         let variant = editor_variant(&binding.name);
-        if let Some(action) = binding.action {
-            let function = program.extern_function(action);
-            writeln!(
-                out,
-                "{message}::{variant}(action) => {{ {}(&mut self.{}, action); ::iced::Task::none() }}",
-                function.rust_path, binding.name
-            )
-            .unwrap();
-        } else {
-            writeln!(
-                out,
-                "{message}::{variant}(action) => {{ self.{}.perform(action); ::iced::Task::none() }}",
+        let perform = match binding.action {
+            Some(action) => format!(
+                "{}(&mut self.{}, action);",
+                program.extern_function(action).rust_path,
                 binding.name
-            )
-            .unwrap();
-        }
+            ),
+            None => format!("self.{}.perform(action);", binding.name),
+        };
+        let write = state_write(
+            program,
+            "self",
+            ResolvedValueRef::AppState(binding.state),
+            perform,
+        );
+        writeln!(
+            out,
+            "{message}::{variant}(action) => {{ {write} ::iced::Task::none() }}"
+        )
+        .unwrap();
     }
     if needs_extern_noop(program) {
         writeln!(out, "{message}::__ExternNoop => ::iced::Task::none(),").unwrap();

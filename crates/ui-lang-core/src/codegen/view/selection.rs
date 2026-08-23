@@ -357,7 +357,6 @@ fn resolved_pick_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let custom = resolved_status_custom_call(pick.custom_style.as_ref(), program, env)?;
     let has_overrides = [
         &pick.styles.active,
@@ -424,7 +423,6 @@ fn resolved_combo_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let custom = resolved_status_custom_call(combo.custom_style.as_ref(), program, env)?;
     let has_overrides = [
         &combo.styles.active,
@@ -539,7 +537,6 @@ fn resolved_menu_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let custom = menu
         .custom
         .as_ref()

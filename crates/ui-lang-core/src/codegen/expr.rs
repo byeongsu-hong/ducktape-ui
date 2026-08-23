@@ -5,63 +5,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-thread_local! {
-    static DERIVED_READS: RefCell<Option<HashMap<crate::hir::DerivedId, usize>>> =
-        const { RefCell::new(None) };
-}
-
-pub(in crate::codegen) const TRANSIENT_DERIVED_READ: usize = 1;
-pub(in crate::codegen) const NON_TRANSIENT_DERIVED_READ: usize = 2;
-pub(in crate::codegen) const ESCAPING_DERIVED_READ: usize = 4;
-pub(in crate::codegen) const DERIVED_READ_COUNT: usize = 8;
-
-thread_local! {
-    static ESCAPING_DERIVED_DEPTH: Cell<usize> = const { Cell::new(0) };
-}
-
-pub(in crate::codegen) struct EscapingDerivedGuard;
-
-pub(in crate::codegen) fn enter_escaping_derived_reads() -> EscapingDerivedGuard {
-    ESCAPING_DERIVED_DEPTH.set(ESCAPING_DERIVED_DEPTH.get() + 1);
-    EscapingDerivedGuard
-}
-
-impl Drop for EscapingDerivedGuard {
-    fn drop(&mut self) {
-        ESCAPING_DERIVED_DEPTH.set(ESCAPING_DERIVED_DEPTH.get().saturating_sub(1));
-    }
-}
-
-pub(in crate::codegen) fn collect_derived_reads<T>(
-    emit: impl FnOnce() -> Result<T, Error>,
-) -> Result<(T, HashMap<crate::hir::DerivedId, usize>), Error> {
-    DERIVED_READS.with_borrow_mut(|reads| *reads = Some(HashMap::new()));
-    let emitted = emit();
-    let reads = DERIVED_READS
-        .with_borrow_mut(Option::take)
-        .unwrap_or_default();
-    emitted.map(|emitted| (emitted, reads))
-}
-
-fn record_derived_read(id: crate::hir::DerivedId, mode: ValueMode) {
-    DERIVED_READS.with_borrow_mut(|reads| {
-        if let Some(reads) = reads {
-            let kind = if mode == ValueMode::TransientBorrowed {
-                TRANSIENT_DERIVED_READ
-            } else {
-                NON_TRANSIENT_DERIVED_READ
-            };
-            let escaping = if ESCAPING_DERIVED_DEPTH.get() > 0 {
-                ESCAPING_DERIVED_READ
-            } else {
-                0
-            };
-            let profile = reads.entry(id).or_default();
-            *profile = profile.saturating_add(DERIVED_READ_COUNT) | kind | escaping;
-        }
-    });
-}
-
 pub(in crate::codegen) trait BindingEnvironment {
     fn get(&self, name: &str) -> Option<&Binding>;
 
@@ -112,7 +55,6 @@ pub(in crate::codegen) struct RecordingEnv<'a> {
 #[derive(Default)]
 pub(in crate::codegen) struct RecordingSink {
     hard_capture: Cell<bool>,
-    derived_snapshot: Cell<bool>,
     scope_locals: RefCell<BTreeSet<String>>,
     callback_uses: RefCell<BTreeSet<String>>,
     local_values: RefCell<BTreeSet<String>>,
@@ -157,10 +99,6 @@ impl<'a> RecordingEnv<'a> {
         !self.sink.local_values.borrow().is_empty()
     }
 
-    pub(in crate::codegen) fn uses_derived_snapshot(&self) -> bool {
-        self.sink.derived_snapshot.get()
-    }
-
     pub(in crate::codegen) fn absorb_locals(&self, other: &RecordingEnv<'_>) {
         self.sink
             .local_values
@@ -174,9 +112,6 @@ impl<'a> RecordingEnv<'a> {
     pub(in crate::codegen) fn absorb_non_locals(&self, other: &RecordingEnv<'_>) {
         if other.sink.hard_capture.get() {
             self.sink.hard_capture.set(true);
-        }
-        if other.sink.derived_snapshot.get() {
-            self.sink.derived_snapshot.set(true);
         }
         self.sink
             .scope_locals
@@ -230,12 +165,9 @@ impl RecordingSink {
             return;
         }
         match &binding.owner {
-            Some(BindingOwner::Value(ResolvedValueRef::AppState(_))) => {}
-            Some(BindingOwner::Value(ResolvedValueRef::Derived(_))) => {
-                if is_derived_transient_key(name) && base.contains_key(DERIVED_SNAPSHOT_BINDING) {
-                    self.derived_snapshot.set(true);
-                }
-            }
+            Some(BindingOwner::Value(
+                ResolvedValueRef::AppState(_) | ResolvedValueRef::Derived(_),
+            )) => {}
             Some(BindingOwner::Local(_)) => {
                 // A render-site local VALUE (loop item, window id): an
                 // argument built from it can become a by-value parameter of
@@ -695,7 +627,7 @@ fn expr_node_code(
         ResolvedExpressionKind::F64(value) => rust_f64(*value),
         ResolvedExpressionKind::Str(value) => match mode {
             ValueMode::Owned => format!("{}.to_owned()", rust_string(value)),
-            ValueMode::Borrowed | ValueMode::TransientBorrowed => rust_string(value),
+            ValueMode::Borrowed => rust_string(value),
         },
         ResolvedExpressionKind::Bytes(values) => format!(
             "::std::vec![{}]",
@@ -747,12 +679,8 @@ fn expr_node_code(
                         .zip(&function.borrowed)
                         .map(|((value, (_, ty)), borrowed)| {
                             if *borrowed {
-                                let code = expr_node_code(
-                                    *value,
-                                    env,
-                                    context,
-                                    ValueMode::TransientBorrowed,
-                                )?;
+                                let code =
+                                    expr_node_code(*value, env, context, ValueMode::Borrowed)?;
                                 Ok(borrowed_argument_code(ty, &code))
                             } else {
                                 expr_node_code(*value, env, context, ValueMode::Owned)
@@ -2158,7 +2086,7 @@ fn expr_builtin_group_5(
                     args.value(0)?,
                     env,
                     context,
-                    ValueMode::TransientBorrowed
+                    ValueMode::Borrowed
                 )?
             ),
             "empty" => format!(
@@ -2167,7 +2095,7 @@ fn expr_builtin_group_5(
                     args.value(0)?,
                     env,
                     context,
-                    ValueMode::TransientBorrowed
+                    ValueMode::Borrowed
                 )?
             ),
             _ => return Ok(None),
@@ -2333,24 +2261,13 @@ fn resolved_path_code(
     let program = context.program;
     let (mut code, mut ty, root_local) = match root {
         ResolvedPathRoot::Value(value_ref) => {
-            if let ResolvedValueRef::Derived(id) = value_ref {
-                record_derived_read(*id, mode);
-            }
             let value = program.expressions().value(*value_ref);
             let origin = program.origin(value.origin);
             let span = Span {
                 line: origin.line,
                 column: origin.column,
             };
-            let binding_name = if matches!(value_ref, ResolvedValueRef::Derived(_))
-                && mode == ValueMode::TransientBorrowed
-                && env.contains_key(&derived_transient_key(&value.name))
-            {
-                derived_transient_key(&value.name)
-            } else {
-                value.name.clone()
-            };
-            let binding = env.get(&binding_name).ok_or_else(|| {
+            let binding = env.get(&value.name).ok_or_else(|| {
                 Error::new(
                     "E196",
                     &span,

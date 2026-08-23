@@ -309,7 +309,6 @@ fn resolved_input_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let custom = input
         .custom_style
         .as_ref()
