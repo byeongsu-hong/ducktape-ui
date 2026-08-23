@@ -25,24 +25,30 @@ const HEADING_LINE_HEIGHT: f32 = 1.4;
 const CODE_BLOCK_SCALE: f32 = 0.9;
 const INLINE_CODE_SCALE: f32 = 1.0;
 const CODE_BLOCK_PADDING: f32 = BODY_SIZE;
+// Room below the last line so the end of a note can scroll up from the edge.
+const END_PADDING: f32 = 160.0;
 const INLINE_CODE_PADDING_X: f32 = BODY_SIZE * 0.4;
 // Advance of the bundled Monoplex KR backtick, verified by the shaping test.
 const MONOPLEX_MARKER_EM: f32 = 0.528;
 const CODE_BACKGROUND_ALPHA: f32 = 0.08;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Caret {
     line: usize,
     column: usize,
     dark: bool,
+    /// Every occurrence of this text is washed with the match colour; the
+    /// current match is the editor selection on top of it.
+    find: Arc<str>,
 }
 
 impl Caret {
-    fn new(line: i64, column: i64, dark: bool) -> Self {
+    fn new(line: i64, column: i64, dark: bool, find: &str) -> Self {
         Self {
             line: usize::try_from(line).unwrap_or_default(),
             column: usize::try_from(column).unwrap_or_default(),
             dark,
+            find: Arc::from(find),
         }
     }
 }
@@ -78,6 +84,7 @@ pub enum MarkdownHighlight {
         font: Option<Font>,
     },
     ListMarker,
+    Match,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,9 +116,10 @@ pub fn markdown_editor<'a>(
     dark: bool,
     disabled: bool,
     focused: bool,
+    find: String,
 ) -> Element<'a, RichEditorAction> {
     let cursor = document.cursor().position;
-    let format_theme = if dark { Theme::Dark } else { Theme::Light };
+    let format_theme = editor_theme(dark);
     let (content_version, change_hint) = current_editor_state();
     let editor = RichTextEditor::new(document, content_version);
     let editor = if let Some(change) = change_hint {
@@ -126,6 +134,7 @@ pub fn markdown_editor<'a>(
         .height(iced::Length::Fill)
         .focus_enabled(focused && !disabled)
         .min_height(320.0)
+        .end_padding(END_PADDING)
         .font(body_font(Weight::Normal, FontStyle::Normal))
         .size(BODY_SIZE)
         .line_height(BODY_LINE_HEIGHT)
@@ -137,7 +146,7 @@ pub fn markdown_editor<'a>(
             left: CODE_BLOCK_PADDING,
         })
         .highlight_with::<MarkdownHighlighter>(
-            Caret::new(cursor.line as i64, cursor.column as i64, dark),
+            Caret::new(cursor.line as i64, cursor.column as i64, dark, &find),
             u64::from(dark),
             move |highlight| markdown_format(highlight, &format_theme),
         )
@@ -149,27 +158,25 @@ pub fn markdown_editor<'a>(
             }
         })
         .style(move |_theme, status| {
-            let (value, muted, selection) = if dark {
-                (
-                    Color::from_rgb8(0xd7, 0xda, 0xe0),
-                    Color::from_rgb8(0x9d, 0xa5, 0xb4),
-                    Color::from_rgb8(0x46, 0x54, 0x74),
-                )
+            let palette = editor_palette(dark);
+            // An inactive selection (the find bar owns focus) stays visible
+            // but quieter than the live one.
+            let selection = if matches!(status, iced::widget::text_editor::Status::Focused { .. }) {
+                palette.selection
             } else {
-                (
-                    Color::from_rgb8(0x29, 0x28, 0x24),
-                    Color::from_rgb8(0x81, 0x7f, 0x77),
-                    Color::from_rgb8(0xb9, 0xcd, 0xf4),
-                )
+                Color {
+                    a: palette.selection.a * 0.6,
+                    ..palette.selection
+                }
             };
             iced::widget::text_editor::Style {
                 background: Color::TRANSPARENT.into(),
                 border: Border::default(),
-                placeholder: muted,
+                placeholder: palette.muted,
                 value: if matches!(status, iced::widget::text_editor::Status::Disabled) {
-                    muted
+                    palette.muted
                 } else {
-                    value
+                    palette.text
                 },
                 selection,
             }
@@ -180,6 +187,55 @@ pub fn markdown_editor<'a>(
     } else {
         editor.on_action(|action| action).into()
     }
+}
+
+/// The editor's share of the Ice palette in `ui/theme.ice`; keep the two in
+/// step.
+#[derive(Clone, Copy)]
+struct EditorPalette {
+    text: Color,
+    muted: Color,
+    link: Color,
+    selection: Color,
+    matched: Color,
+    surface: Color,
+}
+
+fn editor_palette(dark: bool) -> EditorPalette {
+    if dark {
+        EditorPalette {
+            text: Color::from_rgb8(0xec, 0xec, 0xf0),
+            muted: Color::from_rgb8(0x8e, 0x8e, 0x99),
+            link: Color::from_rgb8(0xa9, 0xa6, 0xff),
+            selection: Color::from_rgba8(0x7c, 0x7c, 0xf0, 0.38),
+            matched: Color::from_rgba8(0xf5, 0xb8, 0x2e, 0.32),
+            surface: Color::from_rgb8(0x1c, 0x1c, 0x21),
+        }
+    } else {
+        EditorPalette {
+            text: Color::from_rgb8(0x18, 0x18, 0x1b),
+            muted: Color::from_rgb8(0x71, 0x71, 0x7a),
+            link: Color::from_rgb8(0x4f, 0x4f, 0xd1),
+            selection: Color::from_rgba8(0x5b, 0x5b, 0xd6, 0.24),
+            matched: Color::from_rgba8(0xf5, 0xb8, 0x2e, 0.45),
+            surface: Color::from_rgb8(0xff, 0xff, 0xff),
+        }
+    }
+}
+
+fn editor_theme(dark: bool) -> Theme {
+    let palette = editor_palette(dark);
+    Theme::custom(
+        String::from("markdown"),
+        iced::theme::Palette {
+            background: palette.surface,
+            text: palette.text,
+            primary: palette.link,
+            success: palette.link,
+            warning: palette.matched,
+            danger: Color::from_rgb8(0xe5, 0x48, 0x4d),
+        },
+    )
 }
 
 fn body_font(weight: Weight, style: FontStyle) -> Font {
@@ -297,6 +353,13 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
             font: Some(body_font(Weight::Normal, FontStyle::Normal)),
             ..Format::default()
         },
+        MarkdownHighlight::Match => Format {
+            highlight: Some(TextHighlight {
+                background: palette.warning.into(),
+                border: Border::default().rounded(3.0),
+            }),
+            ..Format::default()
+        },
     }
 }
 
@@ -372,20 +435,20 @@ impl Highlighter for MarkdownHighlighter {
             current_line: 0,
             fences: vec![None],
             code: HashMap::new(),
-            caret: *caret,
+            caret: caret.clone(),
         }
     }
 
     fn update(&mut self, caret: &Self::Settings) {
-        if self.caret.dark != caret.dark {
-            self.caret = *caret;
+        if self.caret.dark != caret.dark || self.caret.find != caret.find {
+            self.caret = caret.clone();
             self.fences.truncate(1);
             self.code.clear();
             self.current_line = 0;
             return;
         }
         let changed_line = self.caret.line.min(caret.line);
-        self.caret = *caret;
+        self.caret = caret.clone();
         self.change_line(changed_line);
     }
 
@@ -416,7 +479,7 @@ impl Highlighter for MarkdownHighlighter {
     fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
         let line_index = self.current_line;
         let fence = self.fences[line_index];
-        let (highlights, next_fence) = highlight_line(
+        let (mut highlights, next_fence) = highlight_line(
             line,
             line_index,
             fence,
@@ -424,6 +487,12 @@ impl Highlighter for MarkdownHighlighter {
             self.caret.dark,
             &mut self.code,
         );
+        if !self.caret.find.is_empty() {
+            highlights.extend(
+                line.match_indices(&*self.caret.find)
+                    .map(|(start, found)| (start..start + found.len(), MarkdownHighlight::Match)),
+            );
+        }
 
         self.current_line += 1;
         if self.fences.len() == self.current_line {
@@ -2172,20 +2241,28 @@ fn formatted_range(content: &Content, command: &str) -> Option<(Range<usize>, Ra
         .min_by_key(|(raw, _)| raw.len())
 }
 
-pub fn find_document(mut content: Content, query: String, reverse: bool) -> Content {
+/// Selects the next (or previous) occurrence of `query`. A search starts at
+/// the current selection's start, so retyping a query keeps the same match;
+/// `step` moves on to the following one instead.
+pub fn find_document(mut content: Content, query: String, reverse: bool, step: bool) -> Content {
     if query.is_empty() {
         return content;
     }
     let text = content.text();
-    let cursor = global_offset(&content, content.cursor().position);
+    let cursor = content.cursor();
+    let from = cursor.selection.map_or(cursor.position, |anchor| {
+        min_position(cursor.position, anchor)
+    });
+    let mut from = global_offset(&content, from).min(text.len());
+    if step && !reverse {
+        from += text[from..].chars().next().map_or(0, char::len_utf8);
+    }
     let found = if reverse {
-        text[..cursor.min(text.len())]
-            .rfind(&query)
-            .or_else(|| text.rfind(&query))
+        text[..from].rfind(&query).or_else(|| text.rfind(&query))
     } else {
-        text[cursor.min(text.len())..]
+        text[from..]
             .find(&query)
-            .map(|offset| cursor.min(text.len()) + offset)
+            .map(|offset| from + offset)
             .or_else(|| text.find(&query))
     };
     if let Some(start) = found {
@@ -2195,6 +2272,30 @@ pub fn find_document(mut content: Content, query: String, reverse: bool) -> Cont
         });
     }
     content
+}
+
+/// `"k of n"` for the find bar: `n` occurrences of `query`, with the caret
+/// sitting at the end of the `k`th one after a find step.
+pub fn find_summary(text: String, query: String, line: i64, column: i64) -> String {
+    if query.is_empty() {
+        return String::new();
+    }
+    let line = usize::try_from(line).unwrap_or_default();
+    let column = usize::try_from(column).unwrap_or_default();
+    let offset = text
+        .split_inclusive('\n')
+        .take(line)
+        .map(str::len)
+        .sum::<usize>()
+        + column;
+    let starts = text.match_indices(&query).map(|(start, _)| start);
+    let (total, before) = starts.fold((0, 0), |(total, before), start| {
+        (total + 1, before + usize::from(start < offset))
+    });
+    match total {
+        0 => "No matches".to_owned(),
+        _ => format!("{} of {total}", before.max(1).min(total)),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2409,11 +2510,11 @@ mod tests {
     #[test]
     fn hides_markers_until_the_caret_enters_the_span() {
         let line = "as**df**";
-        let mut outside = MarkdownHighlighter::new(&super::Caret::new(0, 1, false));
+        let mut outside = MarkdownHighlighter::new(&super::Caret::new(0, 1, false, ""));
         let outside = outside.highlight_line(line).collect::<Vec<_>>();
-        let mut inside = MarkdownHighlighter::new(&super::Caret::new(0, 5, false));
+        let mut inside = MarkdownHighlighter::new(&super::Caret::new(0, 5, false, ""));
         let inside = inside.highlight_line(line).collect::<Vec<_>>();
-        let mut marker = MarkdownHighlighter::new(&super::Caret::new(0, 2, false));
+        let mut marker = MarkdownHighlighter::new(&super::Caret::new(0, 2, false, ""));
         let marker = marker.highlight_line(line).collect::<Vec<_>>();
 
         assert!(outside.iter().any(|(range, style)| {
@@ -2438,9 +2539,9 @@ mod tests {
         }));
 
         let code = "x `code` y";
-        let mut outside = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let mut outside = MarkdownHighlighter::new(&super::Caret::new(0, 0, false, ""));
         let outside = outside.highlight_line(code).collect::<Vec<_>>();
-        let mut marker = MarkdownHighlighter::new(&super::Caret::new(0, 2, false));
+        let mut marker = MarkdownHighlighter::new(&super::Caret::new(0, 2, false, ""));
         let marker = marker.highlight_line(code).collect::<Vec<_>>();
 
         assert!(outside.iter().any(|(range, style)| {
@@ -2453,7 +2554,7 @@ mod tests {
 
     #[test]
     fn resumes_fenced_code_at_the_changed_line() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false, ""));
         for line in ["before", "```rust", "fn main() {}", "```", "after"] {
             let _ = highlighter.highlight_line(line).count();
         }
@@ -2476,7 +2577,7 @@ mod tests {
 
     #[test]
     fn gives_headings_distinct_metrics_and_code_blocks_a_surface() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false, ""));
         let headings = (1..=6)
             .map(|level| {
                 let line = format!("{} heading", "#".repeat(level));
@@ -2615,8 +2716,59 @@ mod tests {
     }
 
     #[test]
+    fn find_washes_every_occurrence_and_counts_the_caret_position() {
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false, "na"));
+        let matches = highlighter
+            .highlight_line("banana **nap**")
+            .filter(|(_, highlight)| matches!(highlight, MarkdownHighlight::Match))
+            .map(|(range, _)| range)
+            .collect::<Vec<_>>();
+        assert_eq!(matches, vec![2..4, 4..6, 9..11]);
+
+        highlighter.update(&super::Caret::new(0, 0, false, ""));
+        assert!(
+            !highlighter
+                .highlight_line("banana")
+                .any(|(_, highlight)| matches!(highlight, MarkdownHighlight::Match))
+        );
+
+        let mut document = reset_document("na\nbanana\n".into());
+        document = super::find_document(document, "n".into(), false, false);
+        document = super::find_document(document, "na".into(), false, false);
+        assert_eq!(
+            document.selection().as_deref(),
+            Some("na"),
+            "retyping keeps the first match"
+        );
+        assert_eq!(document.cursor().position.line, 0);
+        document = super::find_document(document, "na".into(), false, true);
+        assert_eq!(document.cursor().position, Position { line: 1, column: 4 });
+        document = super::find_document(document, "na".into(), false, true);
+        assert_eq!(document.cursor().position, Position { line: 1, column: 6 });
+        document = super::find_document(document, "na".into(), false, true);
+        assert_eq!(document.cursor().position.line, 0, "wraps around");
+        document = super::find_document(document, "na".into(), true, true);
+        assert_eq!(document.cursor().position, Position { line: 1, column: 6 });
+
+        let text = "na\nbanana\n".to_owned();
+        assert_eq!(
+            super::find_summary(text.clone(), "na".into(), 0, 2),
+            "1 of 3"
+        );
+        assert_eq!(
+            super::find_summary(text.clone(), "na".into(), 1, 4),
+            "2 of 3"
+        );
+        assert_eq!(
+            super::find_summary(text.clone(), "zz".into(), 0, 0),
+            "No matches"
+        );
+        assert_eq!(super::find_summary(text, "".into(), 0, 0), "");
+    }
+
+    #[test]
     fn highlights_fenced_code_with_the_declared_language() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false, ""));
         let _ = highlighter.highlight_line("```rust").count();
         let code = highlighter
             .highlight_line("fn main() { let answer = 42; }")
@@ -2629,12 +2781,12 @@ mod tests {
 
     #[test]
     fn theme_change_restarts_fenced_code_highlighting() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false, ""));
         let _ = highlighter.highlight_line("```rust").count();
         let _ = highlighter.highlight_line("fn main() {}").count();
         assert!(!highlighter.code.is_empty());
 
-        highlighter.update(&super::Caret::new(0, 0, true));
+        highlighter.update(&super::Caret::new(0, 0, true, ""));
 
         assert_eq!(highlighter.current_line(), 0);
         assert!(highlighter.code.is_empty());
@@ -2643,7 +2795,7 @@ mod tests {
 
     #[test]
     fn resumes_near_the_end_of_a_large_document() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false, ""));
         for _ in 0..10_000 {
             let _ = highlighter.highlight_line("plain text").count();
         }
@@ -2656,7 +2808,7 @@ mod tests {
 
     #[test]
     fn resumes_from_a_syntax_checkpoint_in_a_large_code_block() {
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false));
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 0, false, ""));
         let _ = highlighter.highlight_line("```rust").count();
         for _ in 0..10_000 {
             let _ = highlighter.highlight_line("let value = 42;").count();
@@ -2676,7 +2828,7 @@ mod tests {
     #[test]
     fn produces_valid_ranges_for_unicode_and_incomplete_markup() {
         let line = "한글 **강조** and [unfinished";
-        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 7, false));
+        let mut highlighter = MarkdownHighlighter::new(&super::Caret::new(0, 7, false, ""));
 
         for (range, _) in highlighter.highlight_line(line) {
             assert!(line.is_char_boundary(range.start));

@@ -1,59 +1,65 @@
-component StatusBar(cursor_label:str, busy:bool, has_error:bool, error:str)
+component StatusBar(cursor_label:str, saving:bool, dirty:bool, has_error:bool, error:str)
   emits
     dismiss_error
   box #root
     with
       w=fill
-      h=30.0
-      px=16.0
-      bg=toolbar
-      border=border
-      border-w=1.0
+      h=34.0
+      px=20.0
     row
       with
         w=fill
         h=fill
-        gap=8.0
+        gap=12.0
         align=center
+      text cursor_label #cursor
+        with
+          wrap=none
+          size=11.0
+          font=code
+          @text-muted
       box #message
         with
           w=fill
           h=fill
           clip=true
+          align-x=end
           align-y=center
         row
           with
             w=fill
             gap=8.0
             align=center
-          if busy
-            text "Working…"
-              with
-                size=11.0
-                @font-semibold
-                @text-primary
-          if !busy && !has_error
-            text "Markdown" size=11.0 @text-muted
+          space w=fill h=1.0
           if has_error
-            text "!"
-              with
-                size=11.0
-                @font-bold
-                @text-danger
             box #error-slot
               with
                 w=fill
-                h=fill
+                h=18.0
                 clip=true
+                align-x=end
                 align-y=center
               text error #error-message
                 with
                   wrap=none
                   size=11.0
                   @text-danger
-            button "Dismiss" #dismiss @toolbar_action -> emit(dismiss_error)
-      text cursor_label #cursor
-        with
-          size=11.0
-          font=code
-          @text-muted
+            button "Dismiss" #dismiss @ghost_action -> emit(dismiss_error)
+          if !has_error && saving
+            text "Saving…" #saving
+              with
+                size=11.0
+                font=body
+                @text-muted
+          if !has_error && !saving && dirty
+            text "Edited" #edited
+              with
+                size=11.0
+                font=body
+                @text-muted
+          if !has_error && !saving && !dirty
+            text "Saved" #saved
+              with
+                size=11.0
+                font=body
+                @text-muted

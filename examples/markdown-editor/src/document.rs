@@ -1,17 +1,7 @@
 use iced::keyboard::{Key, Modifiers, key};
 use pulldown_cmark::{Event, Options, Parser, Tag};
-use rfd::AsyncFileDialog;
 use std::fmt;
-use std::path::{Path, PathBuf};
 use std::process::Command;
-
-#[derive(Clone, Debug)]
-pub struct DocumentFile {
-    pub path: String,
-    pub name: String,
-    pub source: String,
-    pub saved_revision: i64,
-}
 
 #[derive(Clone, Debug)]
 pub struct EditorError {
@@ -25,72 +15,6 @@ impl fmt::Display for EditorError {
 }
 
 impl std::error::Error for EditorError {}
-
-pub async fn open_document() -> Result<DocumentFile, EditorError> {
-    let Some(file) = AsyncFileDialog::new()
-        .set_title("Open Markdown")
-        .add_filter("Markdown", &["md", "markdown", "mdown", "mkd"])
-        .add_filter("Text", &["txt"])
-        .pick_file()
-        .await
-    else {
-        return Ok(cancelled_file());
-    };
-    let source = String::from_utf8(file.read().await).map_err(|error| EditorError {
-        message: format!("The selected file is not valid UTF-8: {error}"),
-    })?;
-    Ok(document_file(file.path(), source, -1))
-}
-
-async fn save_document(
-    path: String,
-    source: String,
-    revision: i64,
-) -> Result<DocumentFile, EditorError> {
-    std::fs::write(&path, &source).map_err(|error| EditorError {
-        message: format!("Could not save {path}: {error}"),
-    })?;
-    Ok(document_file(Path::new(&path), source, revision))
-}
-
-pub async fn save_document_as(
-    suggested_name: String,
-    source: String,
-    revision: i64,
-) -> Result<DocumentFile, EditorError> {
-    let Some(file) = AsyncFileDialog::new()
-        .set_title("Save Markdown")
-        .set_file_name(if suggested_name.is_empty() {
-            "Untitled.md"
-        } else {
-            &suggested_name
-        })
-        .add_filter("Markdown", &["md"])
-        .save_file()
-        .await
-    else {
-        return Ok(cancelled_file());
-    };
-    file.write(source.as_bytes())
-        .await
-        .map_err(|error| EditorError {
-            message: format!("Could not save {}: {error}", file.path().display()),
-        })?;
-    Ok(document_file(file.path(), source, revision))
-}
-
-pub async fn save_current(
-    path: String,
-    suggested_name: String,
-    source: String,
-    revision: i64,
-) -> Result<DocumentFile, EditorError> {
-    if path.is_empty() {
-        save_document_as(suggested_name, source, revision).await
-    } else {
-        save_document(path, source, revision).await
-    }
-}
 
 pub async fn open_url(url: String) -> Result<(), EditorError> {
     if !safe_web_url(&url) {
@@ -150,9 +74,7 @@ pub fn link_at(line: &str, column: usize) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Shortcut {
     New,
-    Open,
     Save,
-    SaveAs,
     Undo,
     Redo,
     Find,
@@ -173,9 +95,7 @@ fn shortcut(key: Key, physical: key::Physical, modifiers: Modifiers) -> Option<S
     let key = key.to_latin(physical)?.to_ascii_lowercase();
     Some(match (key, modifiers.shift()) {
         ('n', _) => Shortcut::New,
-        ('o', _) => Shortcut::Open,
-        ('s', true) => Shortcut::SaveAs,
-        ('s', false) => Shortcut::Save,
+        ('s', _) => Shortcut::Save,
         ('z', true) | ('y', _) => Shortcut::Redo,
         ('z', false) => Shortcut::Undo,
         ('f', _) => Shortcut::Find,
@@ -198,9 +118,7 @@ macro_rules! shortcut_filters {
 
 shortcut_filters! {
     new_shortcut => New,
-    open_shortcut => Open,
     save_shortcut => Save,
-    save_as_shortcut => SaveAs,
     undo_shortcut => Undo,
     redo_shortcut => Redo,
     find_shortcut => Find,
@@ -215,51 +133,6 @@ pub fn cursor_status(line: i64, column: i64, lines: i64) -> String {
     format!("Ln {}, Col {}  ·  {} lines", line + 1, column + 1, lines)
 }
 
-pub fn compact_file_name(name: String) -> String {
-    const MAX_DISPLAY_CHARS: usize = 48;
-
-    if name.chars().count() <= MAX_DISPLAY_CHARS {
-        return name;
-    }
-
-    let prefix = name
-        .chars()
-        .take(MAX_DISPLAY_CHARS.saturating_sub(1))
-        .collect::<String>();
-    format!("{prefix}…")
-}
-
-fn document_file(path: &Path, source: String, saved_revision: i64) -> DocumentFile {
-    let path = normalize_path(path);
-    let name = Path::new(&path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("Untitled.md")
-        .to_owned();
-    DocumentFile {
-        path,
-        name,
-        source,
-        saved_revision,
-    }
-}
-
-fn cancelled_file() -> DocumentFile {
-    DocumentFile {
-        path: String::new(),
-        name: String::new(),
-        source: String::new(),
-        saved_revision: -1,
-    }
-}
-
-fn normalize_path(path: &Path) -> String {
-    path.canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(path))
-        .to_string_lossy()
-        .into_owned()
-}
-
 fn safe_web_url(url: &str) -> bool {
     (url.starts_with("https://") || url.starts_with("http://"))
         && !url.chars().any(char::is_control)
@@ -268,7 +141,7 @@ fn safe_web_url(url: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{Shortcut, compact_file_name, link_at_cursor, safe_web_url, shortcut};
+    use super::{Shortcut, link_at_cursor, safe_web_url, shortcut};
 
     #[test]
     fn resolves_only_the_link_under_the_cursor() {
@@ -300,14 +173,5 @@ mod tests {
             shortcut(key, physical, command | Modifiers::SHIFT),
             Some(Shortcut::Redo)
         );
-    }
-
-    #[test]
-    fn compacts_long_file_names_without_splitting_unicode() {
-        assert_eq!(compact_file_name("notes.md".into()), "notes.md");
-
-        let compacted = compact_file_name("문서-이름-".repeat(20));
-        assert_eq!(compacted.chars().count(), 48);
-        assert!(compacted.ends_with('…'));
     }
 }

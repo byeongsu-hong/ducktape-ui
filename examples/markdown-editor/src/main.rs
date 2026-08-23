@@ -2,6 +2,7 @@ ui_lang::include_app!("src/ui/app.ice");
 
 mod document;
 mod editor;
+mod library;
 
 fn main() -> iced::Result {
     MarkdownEditor::run()
@@ -71,11 +72,10 @@ mod tests {
             )))
         };
         let saved = |revision| {
-            __MarkdownEditorMessage::Saved(crate::document::DocumentFile {
+            __MarkdownEditorMessage::Saved(crate::library::Saved {
                 path: "/tmp/notes.md".into(),
-                name: "notes.md".into(),
-                source: "saved".into(),
                 saved_revision: revision,
+                notes: Vec::new(),
             })
         };
 
@@ -97,6 +97,7 @@ mod tests {
     #[test]
     fn clicking_a_shell_action_clears_editor_selection() {
         let (mut app, _) = MarkdownEditor::__boot();
+        app.loading = false;
         app.document = crate::editor::reset_document("hello".into());
         app.document.move_to(Cursor {
             position: Position { line: 0, column: 5 },

@@ -1,5 +1,7 @@
 on mount
-  task system theme -> system_theme_changed _
+  parallel
+    task system theme -> system_theme_changed _
+    run every open_library(home) -> library_opened _ | failed _
 
 on system_theme_changed(next)
   dark = next == "dark"
@@ -8,7 +10,7 @@ on system_theme_changed(next)
   active_palette = AppTheme.dark
 
 on toggle_theme
-  return if busy || confirming
+  return if interaction_blocked
   editor_focused = false
   document = clear_editor_selection(document)
   dark = !dark
@@ -16,172 +18,99 @@ on toggle_theme
   return if !dark
   active_palette = AppTheme.dark
 
-on request_new
-  return if busy || confirming
-  editor_focused = false
-  document = clear_editor_selection(document)
+on library_opened(library)
+  invalidate lane=save
+  loading = false
+  confirming_delete = false
+  saving = false
+  home = library.home
   find_open = false
   find_query = ""
-  error = ""
-  pending = PendingAction.new_document
-  return if history.dirty
-  document = reset_document("")
+  find_summary = ""
+  document = reset_document(library.source)
   history = editor_status()
-  path = ""
-  name = "Untitled.md"
-  pending = PendingAction.idle
+  settled_revision = history.revision
+  path = library.path
+  notes = library.notes
+  visible = filter_notes(notes, query)
+  current_title = selected_title(notes, path)
+  error = ""
+  editor_focused = true
 
-on request_open
-  return if busy || confirming
+on query_changed(next)
+  query = next
+  visible = filter_notes(notes, query)
+
+on new_note
+  return if interaction_blocked || saving
   editor_focused = false
-  document = clear_editor_selection(document)
-  find_open = false
-  find_query = ""
+  query = ""
+  visible = filter_notes(notes, query)
   error = ""
-  pending = PendingAction.open_document
-  return if history.dirty
-  pending = PendingAction.idle
-  busy = true
-  run every open_document() -> opened _ | failed _
+  loading = true
+  run every switch_note(home, path, editor_text(document), history.revision, history.dirty, "") -> library_opened _ | failed _
 
-on request_save
-  return if busy || confirming
+on select_note(next)
+  return if interaction_blocked || saving || next == path
   editor_focused = false
-  document = clear_editor_selection(document)
   error = ""
-  busy = true
-  run every save_current(path, name, editor_text(document), history.revision) -> saved _ | failed _
+  loading = true
+  run every switch_note(home, path, editor_text(document), history.revision, history.dirty, next) -> library_opened _ | failed _
 
-on request_save_as
-  return if busy || confirming
-  editor_focused = false
-  document = clear_editor_selection(document)
-  error = ""
-  busy = true
-  run every save_document_as(name, editor_text(document), history.revision) -> saved _ | failed _
+on autosave_tick
+  return if interaction_blocked || saving || !history.dirty || empty(path)
+  let settled = settled_revision == history.revision
+  settled_revision = history.revision
+  return if !settled
+  saving = true
+  run replace lane=save save_note(home, path, editor_text(document), history.revision) -> saved _ | save_failed _
 
-on opened(file)
-  busy = false
-  return if empty(file.path)
-  find_open = false
-  find_query = ""
-  document = reset_document(file.source)
-  history = editor_status()
-  path = file.path
-  name = file.name
+on save_now
+  return if interaction_blocked || saving || !history.dirty || empty(path)
+  settled_revision = history.revision
+  saving = true
   error = ""
+  run replace lane=save save_note(home, path, editor_text(document), history.revision) -> saved _ | save_failed _
 
 on saved(file)
-  busy = false
-  return if empty(file.path)
+  saving = false
+  error = ""
   history = mark_saved(file.saved_revision)
   path = file.path
-  name = file.name
-  error = ""
+  notes = file.notes
+  visible = filter_notes(notes, query)
+  current_title = selected_title(notes, path)
+
+on save_failed(cause)
+  saving = false
+  error = cause.message
+
+on request_delete
+  return if interaction_blocked || saving || empty(path)
+  editor_focused = false
+  document = clear_editor_selection(document)
+  confirming_delete = true
+
+on cancel_delete
+  return if loading
+  confirming_delete = false
+  editor_focused = true
+
+on confirm_delete
+  return if loading || saving || !confirming_delete
+  invalidate lane=save
+  saving = false
+  loading = true
+  run every delete_note(home, path) -> library_opened _ | failed _
 
 on request_close
-  return if busy || confirming
-  editor_focused = false
-  document = clear_editor_selection(document)
-  find_open = false
-  find_query = ""
-  error = ""
-  pending = PendingAction.close_window
-  return if history.dirty
-  pending = PendingAction.idle
-  task window close
+  return if loading
+  invalidate lane=save
+  loading = true
+  run every flush_note(home, path, editor_text(document), history.revision, history.dirty) -> flushed | failed _
 
-on cancel_pending
-  return if busy
-  editor_focused = false
-  document = clear_editor_selection(document)
-  pending = PendingAction.idle
-
-on discard_new
-  return if busy
-  editor_focused = false
-  document = clear_editor_selection(document)
-  pending = PendingAction.idle
-  find_open = false
-  find_query = ""
-  document = reset_document("")
-  history = editor_status()
-  path = ""
-  name = "Untitled.md"
-  error = ""
-
-on discard_open
-  return if busy
-  editor_focused = false
-  document = clear_editor_selection(document)
-  pending = PendingAction.idle
-  error = ""
-  busy = true
-  run every open_document() -> opened _ | failed _
-
-on discard_close
-  return if busy
-  editor_focused = false
-  document = clear_editor_selection(document)
-  pending = PendingAction.idle
-  task window close
-
-on save_then_new
-  return if busy || pending != PendingAction.new_document
-  editor_focused = false
-  document = clear_editor_selection(document)
-  error = ""
-  busy = true
-  run every save_current(path, name, editor_text(document), history.revision) -> saved_then_new _ | failed_save_new _
-
-on saved_then_new(file)
-  busy = false
-  return if pending != PendingAction.new_document
-  return if empty(file.path)
-  history = mark_saved(file.saved_revision)
-  pending = PendingAction.idle
-  find_open = false
-  find_query = ""
-  document = reset_document("")
-  history = editor_status()
-  path = ""
-  name = "Untitled.md"
-  error = ""
-
-on save_then_open
-  return if busy || pending != PendingAction.open_document
-  editor_focused = false
-  document = clear_editor_selection(document)
-  error = ""
-  busy = true
-  run every save_current(path, name, editor_text(document), history.revision) -> saved_then_open _ | failed_save_open _
-
-on saved_then_open(file)
-  busy = false
-  return if pending != PendingAction.open_document
-  return if empty(file.path)
-  history = mark_saved(file.saved_revision)
-  pending = PendingAction.idle
-  find_open = false
-  find_query = ""
-  path = file.path
-  name = file.name
-  run every open_document() -> opened _ | failed _
-
-on save_then_close
-  return if busy || pending != PendingAction.close_window
-  editor_focused = false
-  document = clear_editor_selection(document)
-  error = ""
-  busy = true
-  run every save_current(path, name, editor_text(document), history.revision) -> saved_then_close _ | failed_save_close _
-
-on saved_then_close(file)
-  busy = false
-  return if pending != PendingAction.close_window
-  return if empty(file.path)
-  history = mark_saved(file.saved_revision)
-  pending = PendingAction.idle
+on flushed
+  loading = false
   task window close
 
 on undo
@@ -214,29 +143,41 @@ on link
   history = editor_status()
 
 on toggle_find
-  return if busy || confirming
+  return if interaction_blocked
   editor_focused = false
   document = clear_editor_selection(document)
   find_open = !find_open
+  find_query = ""
+  find_summary = ""
   return if !find_open
-  task widget focus #app/find_bar/root/find_query
+  task widget focus #app/sheet-frame/sheet/find_bar/root/card/find_query
+
+on find_changed(next)
+  find_query = next
+  find_summary = ""
+  return if empty(find_query)
+  document = find_document(document, find_query, false, false)
+  find_summary = find_summary(editor_text(document), find_query, caret_line, caret_column)
 
 on find_next
-  return if busy || confirming || empty(find_query)
+  return if interaction_blocked || empty(find_query)
   editor_focused = false
-  document = find_document(document, find_query, false)
+  document = find_document(document, find_query, false, true)
+  find_summary = find_summary(editor_text(document), find_query, caret_line, caret_column)
 
 on find_previous
-  return if busy || confirming || empty(find_query)
+  return if interaction_blocked || empty(find_query)
   editor_focused = false
-  document = find_document(document, find_query, true)
+  document = find_document(document, find_query, true, true)
+  find_summary = find_summary(editor_text(document), find_query, caret_line, caret_column)
 
 on escape
-  return if busy
-  editor_focused = false
-  document = clear_editor_selection(document)
-  pending = PendingAction.idle
+  return if loading
+  confirming_delete = false
   find_open = false
+  find_query = ""
+  find_summary = ""
+  editor_focused = true
 
 on follow_link
   return if editor_has_selection(document)
@@ -247,39 +188,25 @@ on follow_link
 on link_opened
 
 on dismiss_error
-  editor_focused = false
-  document = clear_editor_selection(document)
   error = ""
 
 on failed(cause)
-  busy = false
-  pending = PendingAction.idle
-  error = cause.message
-
-on failed_save_new(cause)
-  busy = false
-  error = cause.message
-
-on failed_save_open(cause)
-  busy = false
-  error = cause.message
-
-on failed_save_close(cause)
-  busy = false
+  loading = false
+  saving = false
+  confirming_delete = false
   error = cause.message
 
 subscribe
   system theme -> system_theme_changed _
+  every 1s when history.dirty && !saving && !loading -> autosave_tick
   window close-request status=any -> request_close
-  keyboard press filter=new_shortcut status=ignored when !busy && pending == PendingAction.idle -> request_new
-  keyboard press filter=open_shortcut status=ignored when !busy && pending == PendingAction.idle -> request_open
-  keyboard press filter=save_shortcut status=ignored when !busy && pending == PendingAction.idle -> request_save
-  keyboard press filter=save_as_shortcut status=ignored when !busy && pending == PendingAction.idle -> request_save_as
-  keyboard press filter=undo_shortcut status=ignored when !busy && pending == PendingAction.idle -> undo
-  keyboard press filter=redo_shortcut status=ignored when !busy && pending == PendingAction.idle -> redo
-  keyboard press filter=find_shortcut status=ignored when pending == PendingAction.idle -> toggle_find
-  keyboard press filter=bold_shortcut status=ignored when !busy && pending == PendingAction.idle && !find_open -> bold
-  keyboard press filter=italic_shortcut status=ignored when !busy && pending == PendingAction.idle && !find_open -> italic
-  keyboard press filter=code_shortcut status=ignored when !busy && pending == PendingAction.idle && !find_open -> inline_code
-  keyboard press filter=link_shortcut status=ignored when !busy && pending == PendingAction.idle && !find_open -> link
+  keyboard press filter=new_shortcut status=ignored when !loading && !confirming_delete -> new_note
+  keyboard press filter=save_shortcut status=ignored when !loading && !confirming_delete -> save_now
+  keyboard press filter=undo_shortcut status=ignored when !loading && !confirming_delete -> undo
+  keyboard press filter=redo_shortcut status=ignored when !loading && !confirming_delete -> redo
+  keyboard press filter=find_shortcut status=ignored when !loading && !confirming_delete -> toggle_find
+  keyboard press filter=bold_shortcut status=ignored when !loading && !confirming_delete && !find_open -> bold
+  keyboard press filter=italic_shortcut status=ignored when !loading && !confirming_delete && !find_open -> italic
+  keyboard press filter=code_shortcut status=ignored when !loading && !confirming_delete && !find_open -> inline_code
+  keyboard press filter=link_shortcut status=ignored when !loading && !confirming_delete && !find_open -> link
   keyboard press filter=escape_shortcut status=any -> escape
