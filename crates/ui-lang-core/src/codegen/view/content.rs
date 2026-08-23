@@ -501,7 +501,6 @@ pub(in crate::codegen) fn render_content(
                         &group,
                         &scope_binding,
                         &scope_locals,
-                        recording.uses_derived_snapshot(),
                         &callback_params,
                         &value_params,
                         &body,
@@ -521,16 +520,11 @@ pub(in crate::codegen) fn render_content(
                         .iter()
                         .map(|(_, _, owned)| format!(", {owned}"))
                         .collect::<String>();
-                    let derived_argument = if recording.uses_derived_snapshot() {
-                        ", __ice_derived"
-                    } else {
-                        ""
-                    };
                     // grow_stack keeps deep outlined chains from exhausting
                     // small thread stacks at debug opt levels — see
                     // ui_lang_runtime::stack_relief.
                     format!(
-                        "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {component_scope}{derived_argument}{arguments}{callback_arguments}{value_arguments}))"
+                        "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {component_scope}{arguments}{callback_arguments}{value_arguments}))"
                     )
                 } else {
                     let callback_lets = used_callbacks

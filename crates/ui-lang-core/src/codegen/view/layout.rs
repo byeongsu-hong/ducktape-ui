@@ -868,12 +868,8 @@ fn render_flex_children(
                 let program = document;
                 let iteration = program.resolved_iteration(*child)?;
                 let item_name = &iteration.item.name;
-                let items = resolved_expr_use_code(
-                    program,
-                    iteration.items,
-                    env,
-                    ValueMode::TransientBorrowed,
-                )?;
+                let items =
+                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
                 // Copy rows are free to copy; anything else iterates by
                 // reference, exactly as a `for` outside a flex layout does.
                 let element_ty = &program.expressions().local(iteration.item.local).ty;
@@ -1205,7 +1201,6 @@ fn resolved_scroll_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let custom = scroll
         .custom_style
         .as_ref()

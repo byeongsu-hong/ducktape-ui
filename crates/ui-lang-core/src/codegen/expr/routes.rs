@@ -212,7 +212,6 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_with_code(
     program: &LoweredProgram,
     render: impl FnOnce(&dyn BindingEnvironment) -> Result<String, Error>,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let invariant = |message| program.invariant_at_origin(route.origin, message);
     let (component, captures_context) = match &route.target {
         ResolvedInteractionRouteTarget::TargetHandler(handler) => {

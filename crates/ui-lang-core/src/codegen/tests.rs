@@ -172,8 +172,8 @@ mod application;
 mod components;
 #[path = "tests/controls.rs"]
 mod controls;
-#[path = "tests/derived_snapshot_escape.rs"]
-mod derived_snapshot_escape;
+#[path = "tests/derived_cache.rs"]
+mod derived_cache;
 #[path = "tests/flows.rs"]
 mod flows;
 #[path = "tests/graphics.rs"]

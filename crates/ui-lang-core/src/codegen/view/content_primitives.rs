@@ -92,7 +92,6 @@ fn resolved_rule_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let radius = resolved_text_radius_code(&rule.radius, program, env)?;
     if rule.preset == ResolvedRulePreset::Default
         && rule.fill.is_none()

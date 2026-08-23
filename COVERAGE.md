@@ -304,13 +304,20 @@ retaining the namespace prefix at each call site.
 
 Top-level derived values are checked, cycle-free pure expressions over app
 state and other derived values, including declared typed `pure` extern calls;
-generated computations remain read-only without a runtime reactive graph,
-persistent cache, handler-maintained mirror, or cross-frame retention. Their
-observable evaluation count is not guaranteed; codegen may coalesce equivalent
-safe reads within one eager view build. Focused regression contracts cover eager
-structural coalescing across template slots, outlined components, and multiple
-slot chunks, plus exclusion of opaque owned, mixed structural/owned, and
-deferred reads.
+generated computations remain read-only and are cached on the application
+struct across frames, recomputed only after a write to an app-state field the
+expression transitively reads. The compiler derives that dependency set; there
+is no runtime reactive graph or handler-maintained mirror. Evaluation happens at
+most once per dependency write, and a write followed by a read in one handler
+observes the fresh value. Focused regression contracts cover the cache cells and
+accessors, dependency-precise invalidation through derived chains, every
+app-state write form routing through one generated write helper (assignment,
+self-moving assignment, combo replacement and push, animation, markdown append,
+abortable handles, debug spans, controlled inputs including component `bind`
+props, controlled editors with and without an action adapter, and secret
+wipes), component-local writes clearing nothing, and a self-moving assignment
+declining the move when its right-hand side reads the target through a derived
+value.
 Derived expressions reject immediate `sync` externs and recomputation-unsafe
 built-ins (`window_id.unique`, `aborted`, `debug.time_with`, `image.upgrade`, the
 unqualified `encoded`/`rgba` image constructors, and animation queries with an

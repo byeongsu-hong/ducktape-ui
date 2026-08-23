@@ -2915,11 +2915,17 @@ initializers, handlers, and views. Capture the needed value or identity in app
 state from an initializer or handler when it must remain stable, then derive
 from that state.
 
-Derived values lower to pure read-only Rust computations. Ice does not create a
-signal, persistent cache, runtime dependency graph, or handler-maintained state
-mirror. Observable evaluation cardinality is not guaranteed: the compiler may
-coalesce equivalent safe reads within one eager view build. Such coalescing is
-semantics-preserving and never retains a derived value across frames.
+Derived values lower to pure read-only Rust computations cached on the
+application. A derived value is computed on its first read and kept across
+frames until a handler, a controlled widget, or a test step writes an app-state
+field its expression reads — directly or through another derived value. The
+compiler derives that dependency set from the expression itself; no runtime
+dependency graph, signal, or handler-maintained state mirror exists, and a
+handler never needs to keep a list-shaped derived value in sync by hand. The
+write clears the cache before the handler continues, so a read after a write in
+the same handler observes the fresh value. Evaluation cardinality is therefore
+at most once per write to a dependency, and the cache is semantics-preserving
+by construction: the restrictions above make every derived expression pure.
 
 Empty lists need an annotation because their element type is unknowable:
 

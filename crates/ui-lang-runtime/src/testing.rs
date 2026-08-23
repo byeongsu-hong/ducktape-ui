@@ -2468,6 +2468,11 @@ where
     /// Not an interaction. A test that asserts about behaviour reaches its
     /// state through `dispatch`, because what the handlers do to state is
     /// part of what it is asserting.
+    ///
+    /// A write here bypasses the derived cache, which only the generated
+    /// writers clear. Write before the first redraw, or reset
+    /// `__ice_derived` to its default afterwards, so a `derived` value that
+    /// reads the field does not hand the next frame its stale cell.
     pub fn state_mut(&mut self) -> &mut P::State {
         &mut self.state
     }

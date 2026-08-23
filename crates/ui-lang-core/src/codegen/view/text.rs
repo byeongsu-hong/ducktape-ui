@@ -232,12 +232,8 @@ fn render_resolved_rich_text(
             }
             ResolvedRichChild::For(iteration) => {
                 let item_name = &iteration.item.name;
-                let items = resolved_expr_use_code(
-                    program,
-                    iteration.items,
-                    env,
-                    ValueMode::TransientBorrowed,
-                )?;
+                let items =
+                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
                 let mut child_env = ScopedBindingEnv::new(env);
                 child_env.insert(
                     item_name.clone(),
@@ -463,7 +459,6 @@ fn append_resolved_text_options(
         write!(code, ".font({font})").unwrap();
     }
     if let Some(custom) = &options.custom_style {
-        let _derived_guard = enter_escaping_derived_reads();
         let arguments = custom
             .arguments
             .iter()

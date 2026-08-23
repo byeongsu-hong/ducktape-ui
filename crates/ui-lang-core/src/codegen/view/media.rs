@@ -254,7 +254,6 @@ fn append_resolved_tooltip_style(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<(), Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let radius = resolved_tooltip_radius(&tooltip.radius, program, env)?;
     if tooltip.base_style.is_none()
         && tooltip.background.is_none()
@@ -696,7 +695,6 @@ fn resolved_media_svg_style(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let function = program.extern_function(style.function);
     let arguments = style
         .arguments

@@ -302,7 +302,6 @@ fn resolved_container_surface_style_value(
     env: &dyn BindingEnvironment,
     setup: &mut String,
 ) -> Result<Option<String>, Error> {
-    let _derived_guard = enter_escaping_derived_reads();
     let has_typed = surface.background.is_some()
         || surface.text_color.is_some()
         || surface.border_color.is_some()

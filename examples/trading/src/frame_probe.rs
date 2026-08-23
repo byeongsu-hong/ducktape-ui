@@ -1164,8 +1164,12 @@ fn markets_stay_memoized_performance_contract() {
     // rebuild neither, and the rail would go on highlighting the market that
     // was left. It runs before the loop below because that loop's first move
     // renames row 0, which is the row currently holding the selection.
+    // A direct write bypasses the generated writers that clear the derived
+    // cache, so the probe clears it by hand: `visible` must re-derive from the
+    // moved field, or the rail redraws the cached rows and rebuilds none.
     let taking = driver.state_mut().symbols[1].name.clone();
     driver.state_mut().coin = taking.clone();
+    driver.state_mut().__ice_derived = Default::default();
     driver.redraw(here());
     assert_eq!(
         MARKET_ROWS.with(Cell::take),
@@ -1196,6 +1200,7 @@ fn markets_stay_memoized_performance_contract() {
     ];
     for (field, move_it) in moves {
         move_it(&mut driver.state_mut().symbols[0]);
+        driver.state_mut().__ice_derived = Default::default();
         driver.redraw(here());
         assert_eq!(
             MARKET_ROWS.with(Cell::take),

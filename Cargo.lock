@@ -5328,6 +5328,7 @@ dependencies = [
  "iced_runtime",
  "iced_test",
  "image",
+ "stats_alloc",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-components",

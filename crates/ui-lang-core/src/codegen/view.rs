@@ -54,7 +54,7 @@ pub(super) fn resolved_str_argument_code(
     expression: CheckedExprUseId,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let code = resolved_expr_use_code(program, expression, env, ValueMode::TransientBorrowed)?;
+    let code = resolved_expr_use_code(program, expression, env, ValueMode::Borrowed)?;
     let expressions = program.expressions();
     let resolved = expressions.expression_use(expression);
     let literal = matches!(resolved.coercion, ResolvedInitializerCoercion::None)
