@@ -604,6 +604,14 @@ fn parse_document(
                 {
                     let source = &item.text[keyword.len() + 1..];
                     let function = if unit {
+                        let close = matching_paren(source, item)?;
+                        if !source[close + 1..].trim().is_empty() {
+                            return Err(error(
+                                "E022",
+                                item,
+                                format!("a `{keyword}` declaration takes no return type"),
+                            ));
+                        }
                         parse_extern_fn(&format!("{source} -> unit"), item, &path, kind)?
                     } else {
                         parse_extern_fn(source, item, &path, kind)?
