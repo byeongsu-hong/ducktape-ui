@@ -352,6 +352,40 @@ view
 }
 
 #[test]
+fn lowers_the_non_left_mouse_buttons_to_their_native_handlers() {
+    // The right and middle buttons are spelled kebab-case like every other Ice
+    // attribute, and each reaches its own `mouse_area` handler.
+    let source = r#"app Buttons
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+on context_opened
+on context_closed
+on paste_started
+on paste_finished
+view
+  mouse right-press=context_opened right-release=context_closed middle-press=paste_started middle-release=paste_finished
+    text "Buttons"
+"#;
+    let generated = compile(source, "buttons.ice").unwrap();
+    for expected in [
+        ".on_right_press(__ButtonsMessage::ContextOpened)",
+        ".on_right_release(__ButtonsMessage::ContextClosed)",
+        ".on_middle_press(__ButtonsMessage::PasteStarted)",
+        ".on_middle_release(__ButtonsMessage::PasteFinished)",
+    ] {
+        assert!(generated.contains(expected), "{expected} missing");
+    }
+}
+
+#[test]
 fn lowers_mouse_press_at_to_a_press_observer() {
     // `press-at=` reports the local press position once per left press — even
     // when a child captured it — so a menu can anchor at the cursor without

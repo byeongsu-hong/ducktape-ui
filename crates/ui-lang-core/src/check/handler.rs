@@ -852,11 +852,11 @@ fn check_task_finality(statement: &Statement, is_final: bool) -> Result<(), Erro
     if is_final {
         return Ok(());
     }
-    let Some((code, name)) = statement.immediate_task() else {
+    let Some(name) = statement.immediate_task() else {
         return Ok(());
     };
     Err(Error::new(
-        code,
+        "E141",
         statement.span(),
         format!(
             "{name} must be the final statement in a handler; use `parallel` or `sequential` to compose tasks"

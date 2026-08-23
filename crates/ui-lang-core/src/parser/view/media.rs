@@ -336,13 +336,13 @@ pub(in crate::parser) fn parse_mouse_area(
             options.release = Some(route(value)?);
         } else if let Some(value) = part.strip_prefix("double=") {
             options.double_click = Some(route(value)?);
-        } else if let Some(value) = part.strip_prefix("right_press=") {
+        } else if let Some(value) = part.strip_prefix("right-press=") {
             options.right_press = Some(route(value)?);
-        } else if let Some(value) = part.strip_prefix("right_release=") {
+        } else if let Some(value) = part.strip_prefix("right-release=") {
             options.right_release = Some(route(value)?);
-        } else if let Some(value) = part.strip_prefix("middle_press=") {
+        } else if let Some(value) = part.strip_prefix("middle-press=") {
             options.middle_press = Some(route(value)?);
-        } else if let Some(value) = part.strip_prefix("middle_release=") {
+        } else if let Some(value) = part.strip_prefix("middle-release=") {
             options.middle_release = Some(route(value)?);
         } else if let Some(value) = part.strip_prefix("enter=") {
             options.enter = Some(route(value)?);
