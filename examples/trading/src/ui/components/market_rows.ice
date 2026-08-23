@@ -2,12 +2,12 @@
 // figures a rail has room for and the market list stops competing with the
 // chart for width. The six-column version this replaced belonged to a page of
 // its own; there is no page of its own any more.
-component MarketRow(market:SymbolRow)
+component MarketRow(market:SymbolRow, locale:Locale)
   emits
     pick(str)
   button #row -> emit(pick, market.name)
     with
-      label=market_label(market)
+      label=t(locale, market_label(market))
       checked=market.selected
       w=fill
       p=0.0
@@ -55,12 +55,12 @@ component MarketRow(market:SymbolRow)
             size=10.0
             width=54.0
 
-component BookRow(level:Level, buy:bool)
+component BookRow(level:Level, buy:bool, locale:Locale)
   emits
     pick(f64, bool)
   button #root -> emit(pick, level.price, !buy)
     with
-      label=book_label(level.price, !buy)
+      label=t(locale, book_label(level.price, !buy))
       w=fill
       p=0.0
     active bg=panel r=0.0
@@ -148,12 +148,12 @@ component TradeRow(print:Trade)
         font=digits
         @text-muted
 
-component AlertRow(alert:Alert)
+component AlertRow(alert:Alert, locale:Locale)
   emits
     drop(str, f64)
   button #root -> emit(drop, alert.coin, alert.price)
     with
-      label=alert_label(alert)
+      label=t(locale, alert_label(alert))
       w=fill
       p=0.0
     active bg=panel r=0.0

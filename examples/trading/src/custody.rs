@@ -146,7 +146,7 @@ use crate::session::{
 };
 use crate::signing::{self, MasterKey, Wallet};
 use crate::vault;
-use crate::venue::{Act, Draft, Network, Signing, Sweep, venue_kind, venue_list, venue_name};
+use crate::venue::{Act, Draft, Network, Signing, Sweep, venue_list, venue_name};
 use crate::{OrderKind, Tif, Venue};
 
 /// What one act of custody produced: where the session now stands, and the
@@ -972,14 +972,15 @@ fn generate(scheme: Signing) -> Result<(Vec<u8>, String), String> {
     Err("could not generate a usable key".to_owned())
 }
 
-/// What one enrolment sheet is about to authorise, named network by network.
+/// What one enrolment sheet is about to authorise, under the `#enrol-row`
+/// rows that name each network it is for with its kind beside it.
 ///
 /// **The owner's rule, 2026-08-10: a master signature never happens without a
 /// sheet the user just answered, and the sheet — or the confirmation in front
 /// of it — names everything that signature authorises.** The application of it,
 /// mine: explicitness is about *naming*, not about counting sheets, so one
-/// prompt may authorise four enrolments as long as the confirmation lists all
-/// four. Four sheets that each said "approve a key" would be less explicit than
+/// prompt may authorise four enrolments as long as the panel lists all four
+/// above the sentence. Four sheets that each said "approve a key" would be less explicit than
 /// one that says which four networks, and on which of them being wrong costs
 /// money.
 ///
@@ -992,15 +993,10 @@ pub fn enrolment_plan(address: &str) -> String {
     if address.is_empty() {
         return String::new();
     }
-    let lines: Vec<String> = venue_list()
-        .into_iter()
-        .map(|venue| format!("{} — {}", venue_name(venue), venue_kind(venue)))
-        .collect();
     format!(
-        "One Touch ID, and this app registers a key of its own on every one of these for \
-         {address}:\n{}\nThat signature is your account's. It approves trading keys and cannot \
-         withdraw.",
-        lines.join("\n"),
+        "One Touch ID, and this app registers a key of its own on each network above for \
+         {address}. That signature is your account's. It approves trading keys and cannot \
+         withdraw."
     )
 }
 
@@ -1010,7 +1006,8 @@ pub fn enrolment_plan(address: &str) -> String {
 /// a fresh trading key generated and filed under that network's own item, and
 /// the enrolment that registers it signed by the account. The alternative — a
 /// sheet per network — is not more explicit, it is the same act asked about
-/// four times, and `enrolment_plan` is what makes the one act explicit.
+/// four times, and the rows over `enrolment_plan` are what make the one act
+/// explicit.
 ///
 /// A network that fails is reported and the rest continue: an exchange being
 /// unreachable is not a reason to leave the other three unenrolled, and the
@@ -1834,7 +1831,7 @@ pub async fn submit_sweep(
             {
                 Ok(_) => sent += 1,
                 Err(error) => {
-                    refusals.push(format!("{}: {}", order_label(order.clone()), error.message))
+                    refusals.push(format!("{}\n{}", order_label(order.clone()), error.message))
                 }
             }
         }
@@ -1849,7 +1846,7 @@ pub async fn submit_sweep(
                 // down. The frozen line is what the reader agreed to, so it is
                 // what the refusal is reported against.
                 Err(error) => refusals.push(format!(
-                    "{}: {}",
+                    "{}\n{}",
                     sweep
                         .rows
                         .get(at)
@@ -1871,10 +1868,12 @@ pub async fn submit_sweep(
     }
     // Partly done is a failure and says so, because the half that went is
     // already money. The panel stays up over the list it froze and the account
-    // poll behind it is what says which rows are still there.
+    // poll behind it is what says which rows are still there. Each refused
+    // row is a line of its own with the venue's reason under it: a line is
+    // the one boundary a translated sentence keeps.
     Err(HlError::new(format!(
-        "{sent} of {asked} {what}. {}",
-        refusals.join(" ")
+        "{sent} of {asked} {what}.\n{}",
+        refusals.join("\n")
     )))
 }
 
@@ -2174,8 +2173,7 @@ pub fn unlock_label(locale: crate::Locale, vault: bool) -> String {
             "Unlock with this machine's passphrase"
         } else {
             "Unlock with Touch ID"
-        }
-        .to_owned(),
+        },
     )
 }
 

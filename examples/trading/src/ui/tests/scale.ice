@@ -178,7 +178,7 @@ test trading_a_confirmed_ladder_sends_one_order_per_rung
   click send
   expect exists panel
   expect exists failed
-  expect error == "0 of 5 placed. BTC sell 0.6 at 63,600.00: Unlock on Settings before sending an order. BTC sell 0.6 at 63,800.00: Unlock on Settings before sending an order. BTC sell 0.6 at 64,000.00: Unlock on Settings before sending an order. BTC sell 0.6 at 64,200.00: Unlock on Settings before sending an order. BTC sell 0.6 at 64,400.00: Unlock on Settings before sending an order."
+  expect error == "0 of 5 placed.\nBTC sell 0.6 at 63,600.00\nUnlock on Settings before sending an order.\nBTC sell 0.6 at 63,800.00\nUnlock on Settings before sending an order.\nBTC sell 0.6 at 64,000.00\nUnlock on Settings before sending an order.\nBTC sell 0.6 at 64,200.00\nUnlock on Settings before sending an order.\nBTC sell 0.6 at 64,400.00\nUnlock on Settings before sending an order."
 
 // Every gate one order passes reaches all five rungs. The session's is the
 // precondition and outranks the ladder's own reasons, exactly as it does for a
@@ -231,3 +231,24 @@ test trading_a_scale_ticket_still_answers_what_the_ladder_costs
   expect text "MARGIN REQUIRED"
   expect text fmt_usd(38400.0)
   expect text "LIQUIDATION"
+
+// The ladder's shape is labelled in the reader's language on the ticket and
+// again on the confirmation: a figure's label is a sentence, its value is not.
+test trading_a_ladder_is_labelled_in_korean
+  preset laddering
+  viewport 1660 900
+  target app = #app
+  target ticket = app/terminal-fit/trade/ticket-panel
+  target preview = ticket/ladder-preview
+  target review = ticket/ticket-review
+  target panel = #sweep
+  target figures = panel/sweep-figures
+  expect text "ORDERS" within preview
+  dispatch set_locale(Locale.ko)
+  expect no text "ORDERS" within preview
+  expect text "주문" within preview
+  expect text "63,600.00 — 64,400.00" within preview
+  click review
+  expect exists panel
+  expect no text "MARGIN REQUIRED" within figures
+  expect text "필요 증거금" within figures

@@ -11,6 +11,7 @@
 //! [`CandleChart::price_lines`] are the built-in ones, so a caller adds a
 //! band, a bracket, or a trend line the same way the chart adds its own.
 
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
@@ -1217,6 +1218,8 @@ pub struct CandleChart<'a, Message> {
     moving_averages: Vec<usize>,
     overlays: Vec<Box<dyn ChartOverlay + 'a>>,
     live: Option<Duration>,
+    empty_label: Cow<'static, str>,
+    latest_label: Cow<'static, str>,
 }
 
 pub fn candle_chart<'a, Message>(
@@ -1250,10 +1253,29 @@ fn with_data<'a, Message>(data: Data<'a>, theme: &UiTheme) -> CandleChart<'a, Me
         moving_averages: Vec::new(),
         overlays: Vec::new(),
         live: None,
+        empty_label: Cow::Borrowed("No data"),
+        latest_label: Cow::Borrowed("Latest >"),
     }
 }
 
 impl<'a, Message> CandleChart<'a, Message> {
+    /// What the chart says across its plot while it has no candles to draw,
+    /// in place of the English "No data": the app knows the reader's
+    /// language and the chart does not.
+    #[must_use]
+    pub fn empty_label(mut self, label: impl Into<Cow<'static, str>>) -> Self {
+        self.empty_label = label.into();
+        self
+    }
+
+    /// What the chip that jumps back to the newest candle says, in place of
+    /// the English "Latest >".
+    #[must_use]
+    pub fn latest_label(mut self, label: impl Into<Cow<'static, str>>) -> Self {
+        self.latest_label = label.into();
+        self
+    }
+
     #[must_use]
     pub fn on_hover(mut self, on_hover: impl Fn(Option<CandleHit>) -> Message + 'a) -> Self {
         self.on_hover = Some(Rc::new(on_hover));
@@ -1374,6 +1396,8 @@ where
                 moving_averages: chart.moving_averages,
                 overlays: chart.overlays,
                 live: chart.live,
+                empty_label: chart.empty_label,
+                latest_label: chart.latest_label,
             })
             .width(width)
             .height(height),
@@ -1443,6 +1467,8 @@ struct CandleProgram<'a, Message> {
     moving_averages: Vec<usize>,
     overlays: Vec<Box<dyn ChartOverlay + 'a>>,
     live: Option<Duration>,
+    empty_label: Cow<'static, str>,
+    latest_label: Cow<'static, str>,
 }
 
 impl<Message> CandleProgram<'_, Message> {
@@ -1680,7 +1706,7 @@ impl<Message> CandleProgram<'_, Message> {
             let mut frame = canvas::Frame::new(renderer, size);
             self.label(
                 &mut frame,
-                "No data",
+                &self.empty_label,
                 Point::new(size.width / 2.0, size.height / 2.0),
                 TextAlignment::Center,
                 Vertical::Center,
@@ -1774,7 +1800,7 @@ impl<Message> CandleProgram<'_, Message> {
             );
             self.label(
                 &mut overlay,
-                "Latest >",
+                &self.latest_label,
                 Point::new(chip.center_x(), chip.center_y()),
                 TextAlignment::Center,
                 Vertical::Center,
@@ -2853,6 +2879,8 @@ mod tests {
             moving_averages: Vec::new(),
             overlays: Vec::new(),
             live: None,
+            empty_label: Cow::Borrowed("No data"),
+            latest_label: Cow::Borrowed("Latest >"),
         }
     }
 
@@ -3508,6 +3536,8 @@ mod tests {
                 moving_averages: Vec::new(),
                 overlays: Vec::new(),
                 live: None,
+                empty_label: Cow::Borrowed("No data"),
+                latest_label: Cow::Borrowed("Latest >"),
             };
             let views = [
                 ("last-120", None),

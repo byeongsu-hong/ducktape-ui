@@ -363,8 +363,7 @@ pub fn range_heading(locale: crate::Locale, range: &str) -> String {
             "week" => "LAST WEEK",
             "month" => "LAST MONTH",
             _ => "ALL TIME",
-        }
-        .to_owned(),
+        },
     )
 }
 

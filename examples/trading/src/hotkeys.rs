@@ -43,7 +43,7 @@ pub struct Hotkey {
 fn hotkey(locale: Locale, keys: &str, act: &str) -> Hotkey {
     Hotkey {
         keys: keys.to_owned(),
-        act: t(locale, act.to_owned()),
+        act: t(locale, act),
     }
 }
 
@@ -67,8 +67,7 @@ pub fn hotkey_note(locale: Locale) -> String {
         "No key sends an order. The keys above reach the confirmation and stop \
          there, and they are off entirely while one is open — SEND IT is pressed by \
          hand. A field you are typing in keeps its own keystrokes, so these do \
-         nothing while the search box or a ticket field has the cursor."
-            .to_owned(),
+         nothing while the search box or a ticket field has the cursor.",
     )
 }
 

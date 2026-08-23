@@ -3,7 +3,7 @@ component PositionRow(held:Position, locale:Locale)
     pick(str)
   button #root -> emit(pick, held.coin)
     with
-      label=position_label(held)
+      label=t(locale, position_label(held))
       w=fill
       p=0.0
     active bg=panel r=0.0
@@ -34,7 +34,7 @@ component PositionRow(held:Position, locale:Locale)
               size=10.0
               tracking=0.8
               @text-down
-        text fmt_leverage_mode(held.leverage, held.margin_mode) size=9.0 @text-faint
+        text t(locale, fmt_leverage_mode(held.leverage, held.margin_mode)) size=9.0 @text-faint
       // The ticker and the side name the row; everything after this is a
       // figure, and the seven of them are read against each other. The slack
       // goes here so they stay one right-anchored block, which is how the
@@ -136,12 +136,12 @@ component FillFlash(up:bool)
           bg=down_flash/(animation.project(fade, value, value))
         space w=fill h=fill
 
-component FillRow(fill:Fill)
+component FillRow(fill:Fill, locale:Locale)
   emits
     pick(str)
   button #root -> emit(pick, fill.coin)
     with
-      label=fill_label(fill)
+      label=t(locale, fill_label(fill))
       w=fill
       p=0.0
     active bg=panel r=0.0
@@ -238,7 +238,7 @@ component OrderRow(order:Order, now:i64, refusal:str, locale:Locale)
       align=center
     button #row -> emit(pick, order)
       with
-        label=order_pick_label(order)
+        label=t(locale, order_pick_label(order))
         w=fill
         p=0.0
       active bg=panel r=0.0
@@ -251,7 +251,7 @@ component OrderRow(order:Order, now:i64, refusal:str, locale:Locale)
           pr=4.0
           gap=8.0
           align=center
-        text fmt_age(order.ts, now)
+        text t(locale, fmt_age(order.ts, now))
           with
             size=10.0
             w=44.0
@@ -295,7 +295,7 @@ component OrderRow(order:Order, now:i64, refusal:str, locale:Locale)
     // has a reason worth reading beside it.
     button #cancel -> emit(cancel, order.coin, order.oid)
       with
-        label=order_cancel_label(order)
+        label=t(locale, order_cancel_label(order))
         p=6.0
         disabled=!empty(refusal)
       active bg=panel text=faint r=3.0
