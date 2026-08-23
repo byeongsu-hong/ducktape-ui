@@ -40,7 +40,7 @@ fn performance_contract_tabs_reuse_trigger_storage() {
     let state = TabsState::new(0);
 
     render(&ids, &state);
-    let stats = clean_window((150_272, 47_652_864), || {
+    let stats = clean_window((150_272, 12_133_376), || {
         for _ in 0..RENDERS {
             render(&ids, &state);
         }
@@ -52,5 +52,5 @@ fn performance_contract_tabs_reuse_trigger_storage() {
     );
     assert!(stats.allocations <= 150_276, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert!(stats.bytes_allocated <= 47_653_764, "{stats:?}");
+    assert!(stats.bytes_allocated <= 12_134_276, "{stats:?}");
 }

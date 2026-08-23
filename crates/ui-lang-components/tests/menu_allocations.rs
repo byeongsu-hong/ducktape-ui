@@ -25,7 +25,7 @@ fn performance_contract_menu_reuses_child_storage() {
     let state = MenuState::initial(&entries);
 
     render(&entries, &state);
-    let stats = clean_window((1_279_104, 70_363_008), || {
+    let stats = clean_window((1_279_104, 52_307_840), || {
         for _ in 0..RENDERS {
             render(&entries, &state);
         }
@@ -38,6 +38,6 @@ fn performance_contract_menu_reuses_child_storage() {
     );
     assert_eq!(stats.allocations, 1_279_104, "{stats:?}");
     assert_eq!(stats.reallocations, 74_752, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, 70_363_008, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 52_307_840, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 20_307_968, "{stats:?}");
 }

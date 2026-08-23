@@ -390,11 +390,10 @@ where
             sections = sections.push(footer);
         }
 
-        let panel_theme = self.theme;
         let panel = container(sections)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(move |_iced_theme| panel_style(&panel_theme, self.variant));
+            .class(panel_style(&self.theme, self.variant));
         let panel: Element<'a, Message> = match self.variant {
             SidebarVariant::Sidebar => panel.into(),
             SidebarVariant::Floating | SidebarVariant::Inset => container(panel)
@@ -474,12 +473,11 @@ where
             row.into()
         }
         SidebarViewport::Mobile if state.mobile_open => {
-            let backdrop_theme = *theme;
             let backdrop = mouse_area(
                 container(Space::new())
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .style(move |_iced_theme| backdrop_style(&backdrop_theme)),
+                    .class(backdrop_style(theme)),
             )
             .on_press(on_close_mobile);
             let aligned_panel = container(panel)
@@ -762,7 +760,7 @@ where
 
     pub fn into_widget(self) -> Element<'a, Message> {
         let height = SIDEBAR_METRICS.menu_height(self.size);
-        let theme = self.theme;
+        let tokens = RowTokens::from(&self.theme);
         let active = self.active;
         let content = container(self.content)
             .padding([0.0, SIDEBAR_METRICS.section_padding])
@@ -777,7 +775,7 @@ where
         let control: Element<'a, Message> =
             focus_control(self.id.control(), content, self.on_press, &self.theme)
                 .disabled(self.disabled)
-                .style(move |_iced_theme, status| menu_button_style(&theme, active, status))
+                .style(move |_iced_theme, status| menu_button_style(tokens, active, status))
                 .into();
 
         if tooltip_enabled(self.collapsed, self.disabled, self.tooltip.is_some()) {
@@ -866,12 +864,11 @@ pub fn sidebar_menu_badge<'a, Message>(
 where
     Message: 'a,
 {
-    let style_theme = *theme;
     container(content)
         .padding([0, 6])
         .height(SIDEBAR_METRICS.compact_control_size)
         .align_y(Vertical::Center)
-        .style(move |_iced_theme| badge_style(&style_theme, active))
+        .class(badge_style(theme, active))
 }
 
 pub fn sidebar_menu_skeleton<'a, Message>(
@@ -967,10 +964,10 @@ where
         .height(SIDEBAR_METRICS.compact_control_size)
         .align_x(Horizontal::Center)
         .align_y(Vertical::Center);
-    let style_theme = *theme;
+    let tokens = RowTokens::from(theme);
     focus_control(id, content, on_press, theme)
         .disabled(disabled)
-        .style(move |_iced_theme, status| compact_control_style(&style_theme, status))
+        .style(move |_iced_theme, status| compact_control_style(tokens, status))
         .into()
 }
 
@@ -997,9 +994,9 @@ where
         .width(metrics.rail_hit_size)
         .height(Length::Fill)
         .align_x(Horizontal::Center);
-    let style_theme = *theme;
+    let tokens = RowTokens::from(theme);
     focus_control(id, content, on_toggle, theme)
-        .style(move |_iced_theme, status| rail_style(&style_theme, side, status))
+        .style(move |_iced_theme, status| rail_style(tokens, side, status))
         .into()
 }
 
@@ -1063,8 +1060,34 @@ fn backdrop_style(theme: &Theme) -> iced::widget::container::Style {
     }
 }
 
+/// The theme tokens a sidebar row's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per row per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct RowTokens {
+    accent: Color,
+    accent_foreground: Color,
+    foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for RowTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            accent_foreground: theme.palette.accent_foreground,
+            foreground: theme.palette.foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.row,
+        }
+    }
+}
+
 pub fn menu_button_style(
-    theme: &Theme,
+    tokens: RowTokens,
     active: bool,
     status: focus_control::Status,
 ) -> focus_control::Style {
@@ -1076,18 +1099,18 @@ pub fn menu_button_style(
     let background = if active || hovered {
         Some(Background::Color(
             if status == focus_control::Status::Pressed {
-                mix(theme.palette.accent, theme.palette.foreground, 0.08)
+                mix(tokens.accent, tokens.foreground, 0.08)
             } else {
-                theme.palette.accent
+                tokens.accent
             },
         ))
     } else {
         None
     };
     let foreground = if active || hovered {
-        theme.palette.accent_foreground
+        tokens.accent_foreground
     } else {
-        theme.palette.foreground
+        tokens.foreground
     };
 
     focus_control::Style {
@@ -1098,50 +1121,50 @@ pub fn menu_button_style(
             foreground
         }),
         border: Border {
-            radius: theme.radius.row.into(),
+            radius: tokens.radius.into(),
             ..Default::default()
         },
         shadow: Shadow::default(),
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: tokens.ring,
             width: if disabled { 0.0 } else { 2.0 },
-            radius: (theme.radius.row + 2.0).into(),
+            radius: (tokens.radius + 2.0).into(),
         },
         focus_offset: 0.0,
     }
 }
 
-fn compact_control_style(theme: &Theme, status: focus_control::Status) -> focus_control::Style {
+fn compact_control_style(tokens: RowTokens, status: focus_control::Status) -> focus_control::Style {
     let disabled = status == focus_control::Status::Disabled;
     let hovered = matches!(
         status,
         focus_control::Status::Hovered | focus_control::Status::Pressed
     );
     focus_control::Style {
-        background: hovered.then_some(Background::Color(theme.palette.accent)),
+        background: hovered.then_some(Background::Color(tokens.accent)),
         text_color: Some(if disabled {
-            alpha(theme.palette.foreground, 0.5)
+            alpha(tokens.foreground, 0.5)
         } else if hovered {
-            theme.palette.accent_foreground
+            tokens.accent_foreground
         } else {
-            theme.palette.foreground
+            tokens.foreground
         }),
         border: Border {
-            radius: theme.radius.row.into(),
+            radius: tokens.radius.into(),
             ..Default::default()
         },
         shadow: Shadow::default(),
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: tokens.ring,
             width: if disabled { 0.0 } else { 2.0 },
-            radius: theme.radius.row.into(),
+            radius: tokens.radius.into(),
         },
         focus_offset: 0.0,
     }
 }
 
 fn rail_style(
-    theme: &Theme,
+    tokens: RowTokens,
     _side: SidebarSide,
     status: focus_control::Status,
 ) -> focus_control::Style {
@@ -1150,12 +1173,12 @@ fn rail_style(
         focus_control::Status::Hovered | focus_control::Status::Pressed
     );
     focus_control::Style {
-        background: hovered.then_some(Background::Color(alpha(theme.palette.accent, 0.55))),
+        background: hovered.then_some(Background::Color(alpha(tokens.accent, 0.55))),
         text_color: None,
         border: Border::default(),
         shadow: Shadow::default(),
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: tokens.ring,
             width: 2.0,
             radius: 0.0.into(),
         },
@@ -1357,10 +1380,23 @@ mod tests {
     #[test]
     fn menu_states_follow_semantic_light_and_dark_colors() {
         for theme in [LIGHT, DARK] {
-            let active = menu_button_style(&theme, true, focus_control::Status::Active);
-            let hovered = menu_button_style(&theme, false, focus_control::Status::Hovered);
-            let focused = menu_button_style(&theme, false, focus_control::Status::Focused);
-            let disabled = menu_button_style(&theme, false, focus_control::Status::Disabled);
+            let active =
+                menu_button_style(RowTokens::from(&theme), true, focus_control::Status::Active);
+            let hovered = menu_button_style(
+                RowTokens::from(&theme),
+                false,
+                focus_control::Status::Hovered,
+            );
+            let focused = menu_button_style(
+                RowTokens::from(&theme),
+                false,
+                focus_control::Status::Focused,
+            );
+            let disabled = menu_button_style(
+                RowTokens::from(&theme),
+                false,
+                focus_control::Status::Disabled,
+            );
             assert_eq!(
                 active.background,
                 Some(Background::Color(theme.palette.accent))

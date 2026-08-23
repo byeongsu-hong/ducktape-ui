@@ -224,13 +224,11 @@ where
         content = content.push(body);
     }
     let content = content.push(footer);
-    let theme = *theme;
-
     container(content)
         .width(Length::Fill)
         .max_width(DIALOG_MAX_WIDTH)
         .padding(theme.spacing.xl)
-        .style(move |_iced_theme| panel_style(&theme))
+        .class(panel_style(theme))
 }
 
 /// Computes the next controlled visibility after a dialog event.

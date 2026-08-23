@@ -737,10 +737,10 @@ where
             .height(28)
             .padding([6, 10])
             .align_y(Vertical::Center);
-        let style_theme = self.theme;
+        let tokens = ControlTokens::from(&self.theme);
 
         focus_control(self.id, content, self.message, &self.theme)
-            .style(move |_iced_theme, status| control_style(&style_theme, self.outlined, status))
+            .style(move |_iced_theme, status| control_style(tokens, self.outlined, status))
             .into()
     }
 }
@@ -904,7 +904,6 @@ where
     );
 
     let variant = entry.data.toast_variant();
-    let theme = *theme;
     container(
         Row::new()
             .push(copy)
@@ -914,7 +913,7 @@ where
     )
     .width(TOAST_WIDTH)
     .padding([10, 14])
-    .style(move |_iced_theme| toast_style(&theme, variant))
+    .class(toast_style(theme, variant))
     .into()
 }
 
@@ -1060,8 +1059,36 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for FocusReporter<'_,
     }
 }
 
+/// The theme tokens a Sonner control's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per control per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+struct ControlTokens {
+    accent: Color,
+    accent_foreground: Color,
+    foreground: Color,
+    input: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for ControlTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            accent_foreground: theme.palette.accent_foreground,
+            foreground: theme.palette.foreground,
+            input: theme.palette.input,
+            ring: theme.palette.ring,
+            radius: theme.radius.row,
+        }
+    }
+}
+
 fn control_style(
-    theme: &Theme,
+    tokens: ControlTokens,
     outlined: bool,
     status: focus_control::Status,
 ) -> focus_control::Style {
@@ -1071,32 +1098,32 @@ fn control_style(
     );
     let pressed = status == focus_control::Status::Pressed;
     let background = hovered.then_some(Background::Color(if pressed {
-        mix(theme.palette.accent, theme.palette.foreground, 0.08)
+        mix(tokens.accent, tokens.foreground, 0.08)
     } else {
-        theme.palette.accent
+        tokens.accent
     }));
 
     focus_control::Style {
         background,
         text_color: Some(if hovered {
-            theme.palette.accent_foreground
+            tokens.accent_foreground
         } else {
-            theme.palette.foreground
+            tokens.foreground
         }),
         border: Border {
             color: if outlined {
-                theme.palette.input
+                tokens.input
             } else {
                 Color::TRANSPARENT
             },
             width: if outlined { 1.0 } else { 0.0 },
-            radius: theme.radius.row.into(),
+            radius: tokens.radius.into(),
         },
         shadow: Shadow::default(),
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: tokens.ring,
             width: 2.0,
-            radius: (theme.radius.row + 2.0).into(),
+            radius: (tokens.radius + 2.0).into(),
         },
         focus_offset: 1.0,
     }

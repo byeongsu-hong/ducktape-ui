@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::clean_window_allocations as clean_window;
+use common::clean_window;
 
 use std::hint::black_box;
 
@@ -31,7 +31,7 @@ fn view(
 
 fn render_stats(state: &NavigationMenuState, direction: Direction) -> Stats {
     const RENDERS: usize = 128;
-    clean_window(100_096, || {
+    clean_window((100_096, 6_416_000), || {
         for _ in 0..RENDERS {
             drop(black_box(view(black_box(state), direction)));
         }
@@ -60,4 +60,5 @@ fn performance_contract_navigation_menu_reuses_rtl_trigger_storage() {
     assert_eq!(rtl, ltr, "LTR={ltr:?}, RTL={rtl:?}");
     assert!(ltr.allocations <= 100_096, "{ltr:?}");
     assert_eq!(ltr.reallocations, 0, "{ltr:?}");
+    assert!(ltr.bytes_allocated <= 6_416_000, "{ltr:?}");
 }

@@ -43,11 +43,10 @@ where
         content = content.push(trailing);
     }
 
-    let theme = *theme;
     container(content)
         .padding([theme.spacing.sm, theme.spacing.md])
         .width(Length::Fill)
-        .style(move |_iced_theme| style(&theme))
+        .class(style(theme))
 }
 
 pub fn style(theme: &Theme) -> iced::widget::container::Style {

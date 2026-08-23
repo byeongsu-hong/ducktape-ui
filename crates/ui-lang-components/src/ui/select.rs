@@ -286,15 +286,16 @@ where
             .align_y(IcedAlignment::Center)
             .spacing(self.theme.spacing.sm)
             .width(Length::Fill);
-            let trigger_theme = self.theme;
-            let invalid = self.invalid;
-            let disabled = self.disabled;
             container(trigger_row)
                 .width(self.width)
                 .height(SELECT_HEIGHT)
                 .padding([0.0, 12.0])
                 .align_y(Vertical::Center)
-                .style(move |_iced_theme| select_trigger_style(&trigger_theme, invalid, disabled))
+                .class(select_trigger_style(
+                    &self.theme,
+                    self.invalid,
+                    self.disabled,
+                ))
                 .into()
         };
 

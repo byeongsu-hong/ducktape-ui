@@ -28,7 +28,7 @@ fn performance_contract_radio_group_preallocates_child_storage() {
     const OPTIONS: usize = 64;
 
     render(OPTIONS);
-    let stats = clean_window((231_168, 71_026_688), || {
+    let stats = clean_window((231_168, 20_695_040), || {
         for _ in 0..RENDERS {
             render(OPTIONS);
         }
@@ -40,6 +40,6 @@ fn performance_contract_radio_group_preallocates_child_storage() {
     );
     assert!(stats.allocations <= 231_168, "{stats:?}");
     assert!(stats.reallocations <= 16_384, "{stats:?}");
-    assert!(stats.bytes_allocated <= 71_026_688, "{stats:?}");
+    assert!(stats.bytes_allocated <= 20_695_040, "{stats:?}");
     assert!(stats.bytes_reallocated <= 524_288, "{stats:?}");
 }

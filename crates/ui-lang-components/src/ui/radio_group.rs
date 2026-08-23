@@ -5,7 +5,7 @@ use super::theme::{Theme, alpha, mix};
 use iced::keyboard::{self, key::Named};
 use iced::widget::text::IntoFragment;
 use iced::widget::{Column, Container, Row, Space, container, text};
-use iced::{Alignment, Background, Border, Element, Length, Task};
+use iced::{Alignment, Background, Border, Color, Element, Length, Task};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum RadioOrientation {
@@ -150,6 +150,7 @@ where
             .collect();
         let id = self.id;
         let theme = self.theme;
+        let tokens = ItemTokens::from(&theme);
         let orientation = self.orientation;
         let invalid = self.invalid;
         let on_select = self.on_select;
@@ -180,7 +181,7 @@ where
                     let target = reduce_selection(Some(index), &key_enabled, command)?;
                     Some(key_on_select(key_values[target].clone()))
                 })
-                .style(move |_iced_theme, status| item_style(&theme, status, invalid));
+                .style(move |_iced_theme, status| item_style(tokens, status, invalid));
 
             Element::from(control)
         });
@@ -273,28 +274,54 @@ pub fn reduce_selection(
     }
 }
 
-pub fn item_style(theme: &Theme, status: Status, invalid: bool) -> focus_control::Style {
+/// The theme tokens a radio item's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per option per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct ItemTokens {
+    accent: Color,
+    destructive: Color,
+    foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for ItemTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            destructive: theme.palette.destructive,
+            foreground: theme.palette.foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
+pub fn item_style(tokens: ItemTokens, status: Status, invalid: bool) -> focus_control::Style {
     let disabled = status == Status::Disabled;
-    let mut style = focus_control::style(theme, status);
+    let mut style = focus_control::ring_style(tokens.ring, tokens.radius);
     style.background = match status {
-        Status::Hovered => Some(Background::Color(theme.palette.accent)),
+        Status::Hovered => Some(Background::Color(tokens.accent)),
         Status::Pressed => Some(Background::Color(mix(
-            theme.palette.accent,
-            theme.palette.foreground,
+            tokens.accent,
+            tokens.foreground,
             0.08,
         ))),
         _ => None,
     };
     style.text_color = Some(if disabled {
-        alpha(theme.palette.foreground, 0.5)
+        alpha(tokens.foreground, 0.5)
     } else {
-        theme.palette.foreground
+        tokens.foreground
     });
-    style.border.radius = theme.radius.button.into();
+    style.border.radius = tokens.radius.into();
     style.focus_ring.color = if invalid {
-        theme.palette.destructive
+        tokens.destructive
     } else {
-        theme.palette.ring
+        tokens.ring
     };
     style
 }
@@ -356,11 +383,9 @@ where
             ..Default::default()
         }
     });
-    let theme = *theme;
-
     container(dot)
         .center(16)
-        .style(move |_iced_theme| indicator_style(&theme, selected, disabled, invalid))
+        .class(indicator_style(theme, selected, disabled, invalid))
 }
 
 #[cfg(test)]
@@ -436,7 +461,7 @@ mod tests {
             assert!(disabled.border.color.a < selected.border.color.a);
             assert_eq!(invalid.border.color, theme.palette.destructive);
 
-            let focused = item_style(&theme, Status::Focused, true);
+            let focused = item_style(ItemTokens::from(&theme), Status::Focused, true);
             assert_eq!(focused.focus_ring.color, theme.palette.destructive);
         }
     }

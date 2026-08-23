@@ -24,8 +24,8 @@ use iced::time::{Duration, Instant};
 use iced::widget::text::LineHeight;
 use iced::widget::{Column, Row, Space, container, text};
 use iced::{
-    Alignment as IcedAlignment, Background, Border, Element, Event, Length, Padding, Pixels,
-    Rectangle, Size, Task, Vector, touch,
+    Alignment as IcedAlignment, Background, Border, Color, Element, Event, Length, Padding, Pixels,
+    Rectangle, Shadow, Size, Task, Vector, touch,
 };
 
 pub const NAVIGATION_MENU_TRIGGER_HEIGHT: f32 = 36.0;
@@ -572,7 +572,7 @@ where
             let key_state = self.state.clone();
             let key_infos = Rc::clone(&infos);
             let direction = self.direction;
-            let trigger_theme = self.theme;
+            let tokens = NavigationMenuTriggerTokens::from(&self.theme);
             let trigger = trigger_content(
                 label,
                 infos[index].disclosure,
@@ -602,7 +602,7 @@ where
                     )))
                 })
                 .style(move |_iced_theme, status| {
-                    navigation_menu_trigger_style(&trigger_theme, opened, active, status)
+                    navigation_menu_trigger_style(tokens, opened, active, status)
                 }),
             ));
         }
@@ -882,33 +882,64 @@ pub fn navigation_menu_viewport_style(theme: &Theme) -> iced::widget::container:
     panel_style(theme, PanelKind::Popover)
 }
 
+/// The theme tokens a navigation-menu trigger's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per trigger per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct NavigationMenuTriggerTokens {
+    accent: Color,
+    foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for NavigationMenuTriggerTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            foreground: theme.palette.foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
 pub fn navigation_menu_trigger_style(
-    theme: &Theme,
+    tokens: NavigationMenuTriggerTokens,
     opened: bool,
     active: bool,
     status: Status,
 ) -> focus_control::Style {
-    let mut style = focus_control::style(theme, status);
-    style.background = match status {
-        Status::Hovered | Status::Focused => Some(Background::Color(theme.palette.accent)),
-        Status::Pressed => Some(Background::Color(mix(
-            theme.palette.accent,
-            theme.palette.foreground,
-            0.08,
-        ))),
-        _ if opened || active => Some(Background::Color(theme.palette.accent)),
-        _ => None,
-    };
-    style.text_color = Some(if status == Status::Disabled {
-        alpha(theme.palette.foreground, 0.5)
-    } else {
-        theme.palette.foreground
-    });
-    style.border.radius = theme.radius.button.into();
-    style.focus_ring.width = 1.0;
-    style.focus_ring.radius = theme.radius.button.into();
-    style.focus_offset = 1.0;
-    style
+    focus_control::Style {
+        background: match status {
+            Status::Hovered | Status::Focused => Some(Background::Color(tokens.accent)),
+            Status::Pressed => Some(Background::Color(mix(
+                tokens.accent,
+                tokens.foreground,
+                0.08,
+            ))),
+            _ if opened || active => Some(Background::Color(tokens.accent)),
+            _ => None,
+        },
+        text_color: Some(if status == Status::Disabled {
+            alpha(tokens.foreground, 0.5)
+        } else {
+            tokens.foreground
+        }),
+        border: Border {
+            radius: tokens.radius.into(),
+            ..Border::default()
+        },
+        shadow: Shadow::default(),
+        focus_ring: Border {
+            color: tokens.ring,
+            width: 1.0,
+            radius: tokens.radius.into(),
+        },
+        focus_offset: 1.0,
+    }
 }
 
 /// A compact, leading-aligned content-list composition for disclosure panels.
@@ -934,7 +965,7 @@ pub fn navigation_menu_list_link<'a, Message>(
 where
     Message: Clone + 'a,
 {
-    let theme_value = *theme;
+    let tokens = NavigationMenuLinkTokens::from(theme);
     let content = container(
         Column::new()
             .push(
@@ -961,31 +992,65 @@ where
     .padding([10.0, 12.0])
     .align_x(direction.start());
     FocusControl::new(focus_id, content, on_activate, theme)
-        .style(move |_iced_theme, status| navigation_menu_list_link_style(&theme_value, status))
+        .style(move |_iced_theme, status| navigation_menu_list_link_style(tokens, status))
         .into()
 }
 
-pub fn navigation_menu_list_link_style(theme: &Theme, status: Status) -> focus_control::Style {
-    let mut style = focus_control::style(theme, status);
-    style.background = match status {
-        Status::Hovered | Status::Focused => Some(Background::Color(theme.palette.accent)),
-        Status::Pressed => Some(Background::Color(mix(
-            theme.palette.accent,
-            theme.palette.foreground,
-            0.08,
-        ))),
-        _ => None,
-    };
-    style.text_color = Some(if status == Status::Disabled {
-        alpha(theme.palette.foreground, 0.5)
-    } else {
-        theme.palette.foreground
-    });
-    style.border.radius = theme.radius.row.into();
-    style.focus_ring.width = 1.0;
-    style.focus_ring.radius = theme.radius.row.into();
-    style.focus_offset = 1.0;
-    style
+/// The theme tokens a navigation-menu list link's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per link per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct NavigationMenuLinkTokens {
+    accent: Color,
+    foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for NavigationMenuLinkTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            foreground: theme.palette.foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.row,
+        }
+    }
+}
+
+pub fn navigation_menu_list_link_style(
+    tokens: NavigationMenuLinkTokens,
+    status: Status,
+) -> focus_control::Style {
+    focus_control::Style {
+        background: match status {
+            Status::Hovered | Status::Focused => Some(Background::Color(tokens.accent)),
+            Status::Pressed => Some(Background::Color(mix(
+                tokens.accent,
+                tokens.foreground,
+                0.08,
+            ))),
+            _ => None,
+        },
+        text_color: Some(if status == Status::Disabled {
+            alpha(tokens.foreground, 0.5)
+        } else {
+            tokens.foreground
+        }),
+        border: Border {
+            radius: tokens.radius.into(),
+            ..Border::default()
+        },
+        shadow: Shadow::default(),
+        focus_ring: Border {
+            color: tokens.ring,
+            width: 1.0,
+            radius: tokens.radius.into(),
+        },
+        focus_offset: 1.0,
+    }
 }
 
 struct NavigationMenuWidget<'a, Message> {
@@ -1744,8 +1809,18 @@ mod tests {
     fn light_and_dark_styles_keep_border_shadow_focus_and_disabled_feedback() {
         for theme in [LIGHT, DARK] {
             let viewport = navigation_menu_viewport_style(&theme);
-            let focused = navigation_menu_trigger_style(&theme, false, false, Status::Focused);
-            let disabled = navigation_menu_trigger_style(&theme, false, false, Status::Disabled);
+            let focused = navigation_menu_trigger_style(
+                NavigationMenuTriggerTokens::from(&theme),
+                false,
+                false,
+                Status::Focused,
+            );
+            let disabled = navigation_menu_trigger_style(
+                NavigationMenuTriggerTokens::from(&theme),
+                false,
+                false,
+                Status::Disabled,
+            );
             assert_eq!(viewport.border.width, 1.0);
             assert!(viewport.shadow.blur_radius > 0.0);
             assert_eq!(focused.focus_ring.color, theme.palette.ring);

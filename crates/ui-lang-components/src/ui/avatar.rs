@@ -24,12 +24,10 @@ where
     Message: 'a,
 {
     let diameter = metrics(size, theme).diameter;
-    let theme = *theme;
-
     container(content)
         .center(diameter)
         .clip(true)
-        .style(move |_iced_theme| style(&theme))
+        .class(style(theme))
 }
 
 /// Text fallback for an avatar. Use a short visible name or initials.

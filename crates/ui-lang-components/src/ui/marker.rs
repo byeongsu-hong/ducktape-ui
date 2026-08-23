@@ -46,11 +46,10 @@ where
         row.push(label).into()
     };
 
-    let theme = *theme;
     container(content)
         .padding([theme.spacing.sm, theme.spacing.md])
         .width(Length::Fill)
-        .style(move |_iced_theme| style(&theme, variant))
+        .class(style(theme, variant))
 }
 
 pub fn style(theme: &Theme, variant: MarkerVariant) -> iced::widget::container::Style {

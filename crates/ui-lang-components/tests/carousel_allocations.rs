@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::clean_window_allocations;
+use common::clean_window;
 
 use std::hint::black_box;
 
@@ -34,7 +34,7 @@ fn performance_contract_carousel_preallocates_indicator_storage() {
     let state = CarouselState::new(0, SLIDES, CarouselBoundary::Bounded);
 
     render(&ids, state);
-    let stats = clean_window_allocations(99_072, || {
+    let stats = clean_window((99_072, 7_845_632), || {
         for _ in 0..RENDERS {
             render(&ids, state);
         }
@@ -45,4 +45,5 @@ fn performance_contract_carousel_preallocates_indicator_storage() {
         stats.allocations, stats.reallocations, stats.bytes_allocated, stats.bytes_reallocated
     );
     assert_eq!(stats.reallocations, 0, "{stats:?}");
+    assert!(stats.bytes_allocated <= 7_845_632, "{stats:?}");
 }

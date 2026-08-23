@@ -20,11 +20,10 @@ pub fn alert<'a, Message>(
 where
     Message: 'a,
 {
-    let theme = *theme;
     container(content)
         .padding(theme.spacing.lg)
         .width(Length::Fill)
-        .style(move |_iced_theme| style(&theme, variant))
+        .class(style(theme, variant))
 }
 
 pub fn style(theme: &Theme, variant: AlertVariant) -> iced::widget::container::Style {

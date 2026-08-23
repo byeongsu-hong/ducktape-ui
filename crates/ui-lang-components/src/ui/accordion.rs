@@ -165,6 +165,7 @@ where
     let on_event = Rc::new(on_event);
     let mut result = Column::with_capacity(items.len() * 2).width(Length::Fill);
 
+    let tokens = TriggerTokens::from(theme);
     for (index, item) in items.into_iter().enumerate() {
         let open = state.is_open(&item.id);
         let header = Row::new()
@@ -190,7 +191,6 @@ where
         let key_enabled = Rc::clone(&enabled);
         let key_targets = Rc::clone(&targets);
         let key_event = Rc::clone(&on_event);
-        let trigger_theme = *theme;
         let trigger: Element<'a, Message> = FocusControl::new(
             item.focus_id,
             header,
@@ -206,7 +206,7 @@ where
                 focus_id: target.focus_id.clone(),
             }))
         })
-        .style(move |_iced_theme, status| trigger_style(&trigger_theme, status))
+        .style(move |_iced_theme, status| trigger_style(tokens, status))
         .into();
         let mut section = Column::new().width(Length::Fill).push(trigger);
         if open {
@@ -241,13 +241,37 @@ where
         .into()
 }
 
-pub fn trigger_style(theme: &Theme, status: Status) -> FocusStyle {
+/// The theme tokens an accordion trigger's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per trigger per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+pub struct TriggerTokens {
+    accent: Color,
+    foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for TriggerTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            foreground: theme.palette.foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
+pub fn trigger_style(tokens: TriggerTokens, status: Status) -> FocusStyle {
     let disabled = status == Status::Disabled;
     let background = match status {
-        Status::Hovered => Some(Background::Color(alpha(theme.palette.accent, 0.55))),
+        Status::Hovered => Some(Background::Color(alpha(tokens.accent, 0.55))),
         Status::Pressed => Some(Background::Color(mix(
-            theme.palette.accent,
-            theme.palette.foreground,
+            tokens.accent,
+            tokens.foreground,
             0.08,
         ))),
         Status::Active | Status::Focused | Status::Disabled => None,
@@ -256,20 +280,20 @@ pub fn trigger_style(theme: &Theme, status: Status) -> FocusStyle {
     FocusStyle {
         background,
         text_color: Some(if disabled {
-            alpha(theme.palette.foreground, 0.5)
+            alpha(tokens.foreground, 0.5)
         } else {
-            theme.palette.foreground
+            tokens.foreground
         }),
         border: Border {
             color: Color::TRANSPARENT,
             width: 0.0,
-            radius: theme.radius.button.into(),
+            radius: tokens.radius.into(),
         },
         shadow: Shadow::default(),
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: tokens.ring,
             width: 2.0,
-            radius: (theme.radius.button + 2.0).into(),
+            radius: (tokens.radius + 2.0).into(),
         },
         focus_offset: 1.0,
     }
@@ -374,8 +398,8 @@ mod tests {
     #[test]
     fn focus_and_disabled_styles_remain_semantic_in_both_themes() {
         for theme in [LIGHT, DARK] {
-            let focused = trigger_style(&theme, Status::Focused);
-            let disabled = trigger_style(&theme, Status::Disabled);
+            let focused = trigger_style(TriggerTokens::from(&theme), Status::Focused);
+            let disabled = trigger_style(TriggerTokens::from(&theme), Status::Disabled);
             assert_eq!(focused.focus_ring.color, theme.palette.ring);
             assert_eq!(focused.focus_ring.width, 2.0);
             assert!(disabled.text_color.unwrap().a < 1.0);

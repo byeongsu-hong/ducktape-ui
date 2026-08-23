@@ -10,7 +10,7 @@ use super::theme::{Theme, alpha, mix};
 use iced::keyboard::{self, key::Named};
 use iced::widget::rule::{FillMode, Style as RuleStyle};
 use iced::widget::{Column, Row, Space, container, rule};
-use iced::{Background, Border, Element, Length, Shadow, Task};
+use iced::{Background, Border, Color, Element, Length, Shadow, Task};
 use std::rc::Rc;
 
 /// The axis used by the tab list and its arrow-key navigation.
@@ -243,6 +243,7 @@ where
         .or_else(|| enabled.iter().position(|enabled| *enabled));
     let mut selected_panel = None;
     let mut trigger_elements = Vec::with_capacity(items.len());
+    let tokens = TriggerTokens::new(theme);
 
     for (index, item) in items.into_iter().enumerate() {
         let selected = selected_id == Some(&item.id);
@@ -253,7 +254,6 @@ where
         let on_navigation = Rc::clone(&on_event);
         let enabled = Rc::clone(&enabled);
         let targets = Rc::clone(&targets);
-        let trigger_theme = *theme;
         let label = container(item.trigger).padding([0, 12]).width(
             if orientation == TabsOrientation::Vertical {
                 Length::Fill
@@ -291,7 +291,7 @@ where
                 select: activation == TabsActivation::Automatic,
             }))
         })
-        .style(move |_iced_theme, status| trigger_style(&trigger_theme, selected, variant, status))
+        .style(move |_iced_theme, status| trigger_style(tokens, selected, variant, status))
         .into();
 
         trigger_elements.push(control);
@@ -306,10 +306,9 @@ where
             .width(Length::Fill)
             .into(),
     };
-    let theme = *theme;
     let list = container(list)
         .padding(theme.spacing.xs)
-        .style(move |_iced_theme| iced::widget::container::Style {
+        .class(iced::widget::container::Style {
             background: (variant == TabsVariant::Default)
                 .then_some(Background::Color(theme.palette.muted)),
             border: Border {
@@ -412,50 +411,74 @@ where
     }
 }
 
+/// The theme tokens a tab trigger's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these hundred
+/// bytes keeps a 1.1 KB `Theme` copy out of the heap once per trigger per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+struct TriggerTokens {
+    accent: Color,
+    background: Color,
+    border: Color,
+    foreground: Color,
+    muted_foreground: Color,
+    ring: Color,
+    radius: f32,
+}
+
+impl TriggerTokens {
+    fn new(theme: &Theme) -> Self {
+        Self {
+            accent: theme.palette.accent,
+            background: theme.palette.background,
+            border: theme.palette.border,
+            foreground: theme.palette.foreground,
+            muted_foreground: theme.palette.muted_foreground,
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
 fn trigger_style(
-    theme: &Theme,
+    tokens: TriggerTokens,
     selected: bool,
     variant: TabsVariant,
     status: Status,
 ) -> focus_control::Style {
-    let mut style = focus_control::style(theme, status);
+    let mut style = focus_control::ring_style(tokens.ring, tokens.radius);
     style.background = match (variant, selected, status) {
         (TabsVariant::Default, true, Status::Disabled) => {
-            Some(Background::Color(alpha(theme.palette.background, 0.7)))
+            Some(Background::Color(alpha(tokens.background, 0.7)))
         }
-        (TabsVariant::Default, true, _) => Some(Background::Color(theme.palette.background)),
-        (_, false, Status::Hovered | Status::Pressed) => {
-            Some(Background::Color(theme.palette.accent))
-        }
+        (TabsVariant::Default, true, _) => Some(Background::Color(tokens.background)),
+        (_, false, Status::Hovered | Status::Pressed) => Some(Background::Color(tokens.accent)),
         _ => None,
     };
     style.text_color = Some(if status == Status::Disabled {
-        mix(
-            theme.palette.background,
-            theme.palette.muted_foreground,
-            0.8,
-        )
+        mix(tokens.background, tokens.muted_foreground, 0.8)
     } else if selected {
-        theme.palette.foreground
+        tokens.foreground
     } else {
-        theme.palette.muted_foreground
+        tokens.muted_foreground
     });
     style.border = Border {
         color: if variant == TabsVariant::Default && selected {
-            theme.palette.border
+            tokens.border
         } else {
-            iced::Color::TRANSPARENT
+            Color::TRANSPARENT
         },
         width: if variant == TabsVariant::Default && selected {
             1.0
         } else {
             0.0
         },
-        radius: theme.radius.button.into(),
+        radius: tokens.radius.into(),
     };
     style.shadow = if variant == TabsVariant::Default && selected {
         Shadow {
-            color: alpha(theme.palette.foreground, 0.08),
+            color: alpha(tokens.foreground, 0.08),
             offset: iced::Vector::new(0.0, 1.0),
             blur_radius: 2.0,
         }
@@ -680,17 +703,32 @@ mod tests {
     #[test]
     fn variants_keep_selected_and_disabled_details_distinct_in_both_themes() {
         for theme in [LIGHT, DARK] {
-            let selected = trigger_style(&theme, true, TabsVariant::Default, Status::Active);
+            let selected = trigger_style(
+                TriggerTokens::new(&theme),
+                true,
+                TabsVariant::Default,
+                Status::Active,
+            );
             assert!(selected.background.is_some());
             assert_eq!(selected.border.width, 1.0);
             assert!(selected.shadow.color.a > 0.0);
 
-            let line = trigger_style(&theme, true, TabsVariant::Line, Status::Active);
+            let line = trigger_style(
+                TriggerTokens::new(&theme),
+                true,
+                TabsVariant::Line,
+                Status::Active,
+            );
             assert!(line.background.is_none());
             assert_eq!(line.border.width, 0.0);
             assert_eq!(line.shadow, Shadow::default());
 
-            let disabled = trigger_style(&theme, false, TabsVariant::Default, Status::Disabled);
+            let disabled = trigger_style(
+                TriggerTokens::new(&theme),
+                false,
+                TabsVariant::Default,
+                Status::Disabled,
+            );
             assert!(
                 disabled
                     .text_color

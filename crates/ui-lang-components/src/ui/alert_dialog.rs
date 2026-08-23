@@ -1,6 +1,6 @@
 //! High-friction confirmation dialog with distinct cancel and action outcomes.
 
-use super::button::{ButtonVariant, style as button_style};
+use super::button::{ButtonTokens, ButtonVariant, style as button_style};
 use super::dialog::{DialogActionAlignment, DialogAlignment, dialog_message_panel};
 use super::direction::{Direction, directed_row};
 use super::focus_control::{FocusControl, Status as FocusStatus, Style as FocusStyle};
@@ -9,7 +9,7 @@ use super::theme::Theme;
 use iced::alignment::Vertical;
 use iced::widget::text::IntoFragment;
 use iced::widget::{container, text};
-use iced::{Border, Element, Task, widget};
+use iced::{Border, Color, Element, Task, widget};
 use std::rc::Rc;
 
 /// Stable IDs for the least-destructive control, action, and opening trigger.
@@ -286,21 +286,43 @@ where
         .height(36.0)
         .padding([0.0, 16.0])
         .align_y(Vertical::Center);
-    let ui_theme = *theme;
+    let tokens = ControlTokens::from(theme);
 
     FocusControl::new(id, content, on_activate, theme)
-        .style(move |_iced_theme, status| control_style(&ui_theme, variant, status))
+        .style(move |_iced_theme, status| control_style(tokens, variant, status))
         .into()
 }
 
-fn control_style(theme: &Theme, variant: ButtonVariant, status: FocusStatus) -> FocusStyle {
+/// The theme tokens an alert-dialog control's style closure reads.
+///
+/// Every styled widget boxes its style closure, so capturing these instead of
+/// the whole 1.1 KB `Theme` keeps the copy off the heap once per control per
+/// frame.
+#[derive(Debug, Clone, Copy)]
+struct ControlTokens {
+    button: ButtonTokens,
+    ring: Color,
+    radius: f32,
+}
+
+impl From<&Theme> for ControlTokens {
+    fn from(theme: &Theme) -> Self {
+        Self {
+            button: ButtonTokens::from(theme),
+            ring: theme.palette.ring,
+            radius: theme.radius.button,
+        }
+    }
+}
+
+fn control_style(tokens: ControlTokens, variant: ButtonVariant, status: FocusStatus) -> FocusStyle {
     let native_status = match status {
         FocusStatus::Active | FocusStatus::Focused => iced::widget::button::Status::Active,
         FocusStatus::Hovered => iced::widget::button::Status::Hovered,
         FocusStatus::Pressed => iced::widget::button::Status::Pressed,
         FocusStatus::Disabled => iced::widget::button::Status::Disabled,
     };
-    let button = button_style(theme, variant, native_status);
+    let button = button_style(tokens.button, variant, native_status);
 
     FocusStyle {
         background: button.background,
@@ -308,9 +330,9 @@ fn control_style(theme: &Theme, variant: ButtonVariant, status: FocusStatus) -> 
         border: button.border,
         shadow: button.shadow,
         focus_ring: Border {
-            color: theme.palette.ring,
+            color: tokens.ring,
             width: 2.0,
-            radius: (theme.radius.button + 4.0).into(),
+            radius: (tokens.radius + 4.0).into(),
         },
         focus_offset: 2.0,
     }
@@ -354,7 +376,11 @@ mod tests {
 
     #[test]
     fn focus_ring_stays_outside_the_36_pixel_control() {
-        let style = control_style(&LIGHT, ButtonVariant::Destructive, Status::Focused);
+        let style = control_style(
+            ControlTokens::from(&LIGHT),
+            ButtonVariant::Destructive,
+            Status::Focused,
+        );
         assert_eq!(style.focus_ring.color, LIGHT.palette.ring);
         assert_eq!(style.focus_ring.width, 2.0);
         assert_eq!(style.focus_offset, 2.0);

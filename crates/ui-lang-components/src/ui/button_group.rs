@@ -25,9 +25,7 @@ where
         ButtonGroupOrientation::Horizontal => Row::with_children(children).into(),
         ButtonGroupOrientation::Vertical => Column::with_children(children).into(),
     };
-    let theme = *theme;
-
-    container(content).style(move |_| style(&theme))
+    container(content).class(style(theme))
 }
 
 pub fn style(theme: &Theme) -> iced::widget::container::Style {

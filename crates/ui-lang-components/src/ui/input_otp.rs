@@ -216,8 +216,6 @@ where
     } else {
         theme.palette.foreground
     };
-    let style_theme = *theme;
-
     container(
         text(copy)
             .size(theme.typography.section_title)
@@ -228,7 +226,7 @@ where
     .height(SLOT_SIZE)
     .align_x(Horizontal::Center)
     .align_y(Vertical::Center)
-    .style(move |_iced_theme| slot_style(&style_theme, invalid, disabled))
+    .class(slot_style(theme, invalid, disabled))
     .into()
 }
 

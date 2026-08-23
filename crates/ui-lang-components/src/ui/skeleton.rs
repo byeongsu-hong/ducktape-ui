@@ -8,8 +8,7 @@ pub fn skeleton<'a, Message>(theme: &Theme) -> Container<'a, Message>
 where
     Message: 'a,
 {
-    let styled_theme = *theme;
-    container(Space::new()).style(move |_iced_theme| style(&styled_theme))
+    container(Space::new()).class(style(theme))
 }
 
 pub fn style(theme: &Theme) -> iced::widget::container::Style {

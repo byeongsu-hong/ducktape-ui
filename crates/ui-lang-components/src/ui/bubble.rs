@@ -19,10 +19,9 @@ pub fn bubble<'a, Message>(
 where
     Message: 'a,
 {
-    let theme = *theme;
     let content = container(content)
         .padding([theme.spacing.sm, theme.spacing.md])
-        .style(move |_iced_theme| style(&theme, variant));
+        .class(style(theme, variant));
 
     container(content)
         .width(Length::Fill)

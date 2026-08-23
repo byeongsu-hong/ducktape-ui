@@ -20,8 +20,7 @@ pub fn surface<'a, Message>(
 where
     Message: 'a,
 {
-    let theme = *theme;
-    container(content).style(move |_iced_theme| style(&theme, variant))
+    container(content).class(style(theme, variant))
 }
 
 pub fn style(theme: &Theme, variant: SurfaceVariant) -> iced::widget::container::Style {

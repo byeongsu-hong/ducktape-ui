@@ -1,4 +1,4 @@
-use super::input::{InputVariant, style as input_style};
+use super::input::{InputTokens, InputVariant, style as input_style};
 use super::theme::{Theme, menu_style};
 use iced::widget::{ComboBox, combo_box};
 use std::fmt::Display;
@@ -18,11 +18,12 @@ pub fn combobox<'a, T, Message>(
 where
     T: Display + Clone,
 {
-    let theme = *theme;
+    let menu = menu_style(theme);
+    let tokens = InputTokens::from(theme);
 
     combo_box(state, placeholder, selection, on_selected)
         .padding([8, 12])
         .size(theme.typography.list)
-        .input_style(move |_iced_theme, status| input_style(&theme, InputVariant::Default, status))
-        .menu_style(move |_iced_theme| menu_style(&theme))
+        .input_style(move |_iced_theme, status| input_style(tokens, InputVariant::Default, status))
+        .menu_style(move |_iced_theme| menu)
 }

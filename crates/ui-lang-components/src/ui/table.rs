@@ -66,12 +66,11 @@ pub fn frame<'a, Message>(
 where
     Message: 'a,
 {
-    let theme = *theme;
     container(content)
         .width(Length::Fill)
         .padding(Padding::default().right(1.0))
         .clip(true)
-        .style(move |_| frame_style(&theme))
+        .class(frame_style(theme))
 }
 
 /// Creates muted caption text. Place it directly before or after [`frame`].
