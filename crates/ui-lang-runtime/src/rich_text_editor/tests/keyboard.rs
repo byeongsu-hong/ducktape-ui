@@ -83,3 +83,53 @@ fn a_key_binding_override_parts_plain_enter_from_shift_enter() {
         "shift+enter delegates to the stock newline binding"
     );
 }
+
+#[test]
+fn command_up_and_down_move_or_select_to_the_document_edges() {
+    use iced::keyboard::key::Named;
+
+    // `Modifiers::macos_command` is false off macOS, so the decision is
+    // driven directly and the stock binding is left to iced.
+    assert!(
+        matches!(
+            document_edge_binding(Named::ArrowDown, true, false),
+            Some(Binding::Move(Motion::DocumentEnd))
+        ),
+        "Cmd+Down moves to the end of the document"
+    );
+    assert!(
+        matches!(
+            document_edge_binding(Named::ArrowUp, true, false),
+            Some(Binding::Move(Motion::DocumentStart))
+        ),
+        "Cmd+Up moves to the start of the document"
+    );
+    assert!(
+        matches!(
+            document_edge_binding(Named::ArrowDown, true, true),
+            Some(Binding::Select(Motion::DocumentEnd))
+        ),
+        "Shift+Cmd+Down selects to the end of the document"
+    );
+    assert!(
+        matches!(
+            document_edge_binding(Named::ArrowUp, true, true),
+            Some(Binding::Select(Motion::DocumentStart))
+        ),
+        "Shift+Cmd+Up selects to the start of the document"
+    );
+    assert!(
+        document_edge_binding(Named::ArrowDown, false, false).is_none(),
+        "a plain arrow keeps iced's line motion"
+    );
+    assert!(
+        document_edge_binding(Named::ArrowLeft, true, false).is_none(),
+        "Cmd+Left keeps iced's Home remap"
+    );
+
+    // The motion is a native one, so the content it is applied to lands on
+    // the last line.
+    let mut content: Content = Content::with_text("first\nsecond\nthird");
+    content.perform(text_editor::Action::Move(Motion::DocumentEnd));
+    assert_eq!(content.cursor().position, Position { line: 2, column: 5 });
+}

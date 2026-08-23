@@ -61,8 +61,37 @@ pub(super) fn rich_binding(press: &text_editor::KeyPress) -> Option<Binding<Edit
                 Binding::Delete,
             ]))
         }
+        keyboard::Key::Named(named @ (key::Named::ArrowUp | key::Named::ArrowDown)) => {
+            document_edge_binding(
+                named,
+                press.modifiers.macos_command(),
+                press.modifiers.shift(),
+            )
+        }
         _ => None,
     }
+}
+
+/// macOS moves the caret to the document edges on Cmd+Up/Down; iced's stock
+/// binding only remaps Cmd+Left/Right to Home/End.
+pub(super) fn document_edge_binding(
+    key: key::Named,
+    command: bool,
+    shift: bool,
+) -> Option<Binding<Edit>> {
+    if !command {
+        return None;
+    }
+    let motion = match key {
+        key::Named::ArrowUp => Motion::DocumentStart,
+        key::Named::ArrowDown => Motion::DocumentEnd,
+        _ => return None,
+    };
+    Some(if shift {
+        Binding::Select(motion)
+    } else {
+        Binding::Move(motion)
+    })
 }
 
 /// The editor's stock key handling: application command shortcuts bubble,
