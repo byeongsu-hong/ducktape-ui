@@ -354,7 +354,9 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     let mut utilities = Vec::new();
     for child in &line.children {
         ensure_leaf(child)?;
-        let source = child.text.strip_prefix('@').unwrap_or(&child.text);
+        let Some(source) = child.text.strip_prefix('@') else {
+            return Err(error("E046", child, "recipe utility lines start with `@`"));
+        };
         utilities.extend(source.split_ascii_whitespace().map(str::to_owned));
     }
     if utilities.is_empty() {
@@ -604,6 +606,14 @@ fn parse_document(
                 {
                     let source = &item.text[keyword.len() + 1..];
                     let function = if unit {
+                        let close = matching_paren(source, item)?;
+                        if !source[close + 1..].trim().is_empty() {
+                            return Err(error(
+                                "E022",
+                                item,
+                                format!("a `{keyword}` declaration takes no return type"),
+                            ));
+                        }
                         parse_extern_fn(&format!("{source} -> unit"), item, &path, kind)?
                     } else {
                         parse_extern_fn(source, item, &path, kind)?

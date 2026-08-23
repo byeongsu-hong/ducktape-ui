@@ -1,0 +1,2 @@
+E022
+a `text-style` declaration takes no return type

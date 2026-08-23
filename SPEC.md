@@ -505,7 +505,7 @@ style_recipe_target
                = "col" | "row" | "flex" | "grid" | "stack" | "box"
                | "text" | "input" | "button"
 style_recipe_line
-               = "@"? utility+
+               = "@" utility+
 
 font_decl      = "font" name font_property*
 font_property  = "family=" (string | "serif" | "sans" | "cursive" | "fantasy" | "mono")
@@ -6054,10 +6054,10 @@ view
 
 Recipe names must be unique within their checked namespace. An aliased recipe
 resolves an unqualified `extends` base relative to that namespace. A recipe may
-contain one or more utility-only lines and targets exactly one of `col`, `row`, `flex`, `grid`,
+contain one or more `@`-prefixed utility-only lines and targets exactly one of `col`, `row`, `flex`, `grid`,
 `stack`, `box`, `text`, `input`, or `button`; `text` also covers rich text and
-spans. A recipe may extend at most one recipe with the same target. Missing
-bases, target mismatches, and inheritance cycles are `E046`; multiple bases and
+spans. A recipe may extend at most one recipe with the same target. A body line
+without its `@`, missing bases, target mismatches, and inheritance cycles are `E046`; multiple bases and
 free recipe composition are not syntax. Every flattened recipe body is checked
 against its declared target even when the recipe is not used by the current
 view.

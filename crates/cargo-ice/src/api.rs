@@ -1010,7 +1010,7 @@ palette light for AppTheme
   accent #445566
   {extra_token} #778899
 recipe panel for box
-  {recipe_utility}
+  @{recipe_utility}
 {component}
 view
   space
@@ -1027,7 +1027,7 @@ view
         );
         let reordered = source(
             "component Alpha( value : str = \"x\" )\n    space\n\ncomponent Zebra()\n    space",
-            "@p-2",
+            "p-2",
             "extra",
         );
         let formatted = format_source(&reordered).unwrap();
@@ -1204,7 +1204,7 @@ view
         .unwrap();
         fs::write(
             temp.path().join("inner.ice"),
-            "component Inner()\n  space\nrecipe compact for text\n  text-sm\n",
+            "component Inner()\n  space\nrecipe compact for text\n  @text-sm\n",
         )
         .unwrap();
         fs::write(

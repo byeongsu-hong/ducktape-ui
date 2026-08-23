@@ -549,6 +549,19 @@ view
     let error =
         parse(&source.replace(" highlighter=", " highlight=\"rs\" highlighter=")).unwrap_err();
     assert!(error.message.contains("either highlight or highlighter"));
+
+    for return_type in ["unit", "EditorCommand"] {
+        let error = parse(&source.replace(
+            "editor-highlighter editor_highlight(language:str)",
+            &format!("editor-highlighter editor_highlight(language:str) -> {return_type}"),
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, "E022");
+        assert_eq!(
+            error.message,
+            "a `editor-highlighter` declaration takes no return type"
+        );
+    }
 }
 
 #[test]
