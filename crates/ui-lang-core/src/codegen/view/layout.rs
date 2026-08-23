@@ -874,10 +874,18 @@ fn render_flex_children(
                     env,
                     ValueMode::TransientBorrowed,
                 )?;
+                // Copy rows are free to copy; anything else iterates by
+                // reference, exactly as a `for` outside a flex layout does.
+                let element_ty = &program.expressions().local(iteration.item.local).ty;
+                let iterate = if copy_expression_type(element_ty) {
+                    ".iter().cloned().enumerate()"
+                } else {
+                    ".iter().enumerate()"
+                };
                 let reconciliation_scope = borrowed_scope(reconciliation_scope(scope, env));
                 write!(
                     out,
-                    " for (__ice_index, {item_name}) in {items}.iter().cloned().enumerate() {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
+                    " for (__ice_index, {item_name}) in {items}{iterate} {{ let __for_scope = format!(\"{{}}/@for:{}({{}})\", {reconciliation_scope}, __ice_index);",
                     iteration.reconciliation_line
                 )
                 .unwrap();
