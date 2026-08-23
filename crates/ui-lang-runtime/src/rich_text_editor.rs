@@ -200,6 +200,7 @@ where
     min_height: f32,
     max_height: f32,
     padding: Padding,
+    end_padding: f32,
     wrapping: text::Wrapping,
     on_action: Option<Box<dyn Fn(Action) -> Message + 'a>>,
     key_binding: Option<Box<KeyBindingFn<'a>>>,
@@ -240,6 +241,7 @@ impl<'a, Message> RichTextEditor<'a, text::highlighter::PlainText, Message> {
             min_height: 0.0,
             max_height: f32::INFINITY,
             padding: Padding::new(5.0),
+            end_padding: 0.0,
             wrapping: text::Wrapping::default(),
             on_action: None,
             key_binding: None,
@@ -294,6 +296,15 @@ where
     /// Sets the minimum height.
     pub fn min_height(mut self, height: impl Into<Pixels>) -> Self {
         self.min_height = height.into().0;
+        self
+    }
+
+    /// Lets the document scroll past its last line by this much, so the end
+    /// of a long note can sit well above the bottom edge while the clip still
+    /// runs to that edge. Unlike bottom `padding`, it never shortens the
+    /// visible text area.
+    pub fn end_padding(mut self, padding: impl Into<Pixels>) -> Self {
+        self.end_padding = padding.into().0.max(0.0);
         self
     }
 
@@ -437,6 +448,7 @@ where
             min_height: self.min_height,
             max_height: self.max_height,
             padding: self.padding,
+            end_padding: self.end_padding,
             wrapping: self.wrapping,
             on_action: self.on_action,
             key_binding: self.key_binding,
@@ -721,6 +733,7 @@ where
     wrapping: text::Wrapping,
     format_key: u64,
     content_height: f32,
+    end_padding: f32,
     viewport_height: f32,
     scroll: f32,
     preferred_x: Option<f32>,
@@ -831,6 +844,7 @@ where
             wrapping: self.wrapping,
             format_key: u64::MAX,
             content_height: 0.0,
+            end_padding: 0.0,
             viewport_height: 0.0,
             scroll: 0.0,
             preferred_x: None,
@@ -929,7 +943,10 @@ where
             } else if caret.y + caret.height > scroll + viewport_height {
                 scroll = caret.y + caret.height - viewport_height;
             }
-            scroll.clamp(0.0, (state.content_height - viewport_height).max(0.0))
+            scroll.clamp(
+                0.0,
+                (state.content_height + self.end_padding - viewport_height).max(0.0),
+            )
         } else {
             state.scroll
         };
@@ -1053,6 +1070,7 @@ where
         }
 
         state.viewport_height = viewport_height;
+        state.end_padding = self.end_padding;
         state.scroll = state.scroll.clamp(0.0, state.max_scroll());
 
         if source_changed || preedit_changed || settings_updated || cursor != state.last_cursor {
@@ -1927,7 +1945,7 @@ where
     }
 
     fn max_scroll(&self) -> f32 {
-        (self.content_height - self.viewport_height).max(0.0)
+        (self.content_height + self.end_padding - self.viewport_height).max(0.0)
     }
 
     fn reveal(&mut self, position: Position) {
