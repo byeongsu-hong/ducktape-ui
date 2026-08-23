@@ -151,9 +151,31 @@ view
         Type::List(Box::new(Type::Named("Item".into())))
     );
 
-    let error = parse(&source.replace("component native_row", "sync native_row")).unwrap_err();
-    assert_eq!(error.code, "E021");
-    assert!(error.message.contains("only extern component parameters"));
+    for kind in ["pure", "sync"] {
+        let document =
+            parse(&source.replace("component native_row", &format!("{kind} native_row"))).unwrap();
+        assert_eq!(document.functions[0].borrowed, vec![true, true, true]);
+    }
+    for declaration in [
+        "native_row(label:&str, items:&[Item], active:&bool) -> bool ! Item",
+        "task native_row(label:&str, items:&[Item], active:&bool) -> bool",
+        "stream native_row(label:&str, items:&[Item], active:&bool) -> bool",
+        "markdown-viewer native_row(label:&str, items:&[Item], active:&bool) -> bool",
+    ] {
+        let error = parse(&source.replace(
+            "component native_row(label:&str, items:&[Item], active:&bool) -> bool",
+            declaration,
+        ))
+        .unwrap_err();
+        assert_eq!(error.code, "E021", "{declaration}");
+        assert!(
+            error
+                .message
+                .contains("only extern component, pure, and sync parameters may borrow"),
+            "{declaration}: {}",
+            error.message
+        );
+    }
 }
 
 #[test]

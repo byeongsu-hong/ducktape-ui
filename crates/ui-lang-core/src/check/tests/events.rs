@@ -131,6 +131,15 @@ view
     .unwrap_err();
     assert_eq!(error.code, "E101");
     assert!(error.message.contains("expected `str`, got `event`"));
+
+    // The runtime hands a filter its payload by value.
+    let error = analyze(&source.replace(
+        "pure event_label(value:event) -> str?",
+        "pure event_label(value:&event) -> str?",
+    ))
+    .unwrap_err();
+    assert_eq!(error.code, "E142");
+    assert!(error.message.contains("cannot declare `&` parameters"));
 }
 
 #[test]

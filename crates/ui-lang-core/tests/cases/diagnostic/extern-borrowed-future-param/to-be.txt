@@ -1,0 +1,2 @@
+E021
+only extern component, pure, and sync parameters may borrow with `&type`; a spawned future, task, stream, or adapter cannot borrow app state

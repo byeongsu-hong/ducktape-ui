@@ -817,6 +817,7 @@ fn check_animation_state(state: &State, inner: &Type, document: &Document) -> Re
         let function = extern_function(document, easing, ExternKind::Pure, &state.span)?;
         if function.params.len() != 1
             || function.params[0].1 != Type::F64
+            || function.borrowed != [false]
             || function.output != Type::F64
             || function.error.is_some()
         {

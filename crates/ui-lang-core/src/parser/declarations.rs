@@ -113,11 +113,16 @@ pub(in crate::parser) fn parse_extern_fn(
             let (is_borrowed, ty) = ty
                 .strip_prefix('&')
                 .map_or((false, ty), |ty| (true, ty.trim_start()));
-            if is_borrowed && kind != ExternKind::Component {
+            if is_borrowed
+                && !matches!(
+                    kind,
+                    ExternKind::Component | ExternKind::Pure | ExternKind::Sync
+                )
+            {
                 return Err(error(
                     "E021",
                     line,
-                    "only extern component parameters may borrow with `&type`",
+                    "only extern component, pure, and sync parameters may borrow with `&type`; a spawned future, task, stream, or adapter cannot borrow app state",
                 ));
             }
             params.push((identifier(name.trim(), line)?, parse_type(ty, line)?));

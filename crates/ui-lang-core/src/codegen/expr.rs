@@ -737,7 +737,29 @@ fn expr_node_code(
                 }
                 ResolvedCallTarget::Extern(id) => {
                     let function = context.program.extern_function(*id);
-                    let args = expr_node_list_code(&args.values()?, env, context)?;
+                    // A `&` parameter borrows the argument for the call only:
+                    // the output is owned Ice data, so the borrow is transient
+                    // even inside a view.
+                    let args = args
+                        .values()?
+                        .iter()
+                        .zip(&function.params)
+                        .zip(&function.borrowed)
+                        .map(|((value, (_, ty)), borrowed)| {
+                            if *borrowed {
+                                let code = expr_node_code(
+                                    *value,
+                                    env,
+                                    context,
+                                    ValueMode::TransientBorrowed,
+                                )?;
+                                Ok(borrowed_argument_code(ty, &code))
+                            } else {
+                                expr_node_code(*value, env, context, ValueMode::Owned)
+                            }
+                        })
+                        .collect::<Result<Vec<_>, Error>>()?
+                        .join(", ");
                     return Ok(format!("{}({args})", function.rust_path));
                 }
                 ResolvedCallTarget::Builtin(name) => name,

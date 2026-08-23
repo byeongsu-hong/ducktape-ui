@@ -62,7 +62,7 @@ extern crate::adapters
   task select_apply(state:SelectState, event:SelectEvent) -> SelectState
   component select(state:&SelectState) -> SelectEvent
   sync dropdown_menu_state() -> DropdownMenuState
-  pure dropdown_menu_is_open(state:DropdownMenuState) -> bool
+  pure dropdown_menu_is_open(state:&DropdownMenuState) -> bool
   task dropdown_menu_apply(state:DropdownMenuState, event:DropdownMenuEvent) -> DropdownMenuState
   component dropdown_menu(state:&DropdownMenuState) -> DropdownMenuEvent
   sync context_menu_state() -> ContextMenuState
@@ -70,7 +70,7 @@ extern crate::adapters
   component context_menu(state:&ContextMenuState) -> ContextMenuEvent
   sync alert_dialog_state() -> AlertDialogState
   task alert_dialog_apply(state:AlertDialogState, event:AlertDialogEvent) -> AlertDialogState
-  pure alert_dialog_is_open(state:AlertDialogState) -> bool
+  pure alert_dialog_is_open(state:&AlertDialogState) -> bool
   component alert_dialog(state:&AlertDialogState) -> AlertDialogEvent
   sync sidebar_state() -> SidebarState
   pure sidebar_apply(state:SidebarState, event:SidebarEvent) -> SidebarState

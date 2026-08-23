@@ -2661,11 +2661,38 @@ kind may declare `! Error`; both return their values directly. The compiler
 probes types but does not inspect Rust bodies, so a dishonest `pure` declaration
 is a backend contract violation.
 
+A `pure` or `sync` parameter may borrow with `&type`, exactly as an extern
+component parameter can. The call site is unchanged: an argument of type `str`,
+`[T]`, `T`, or `editor` satisfies the `&` parameter, and the generated call
+passes a reference to the state field, local, `for` row, or lazy alias instead
+of cloning it. `&str` lowers to `&str`, `&bytes` and `&[T]` to slices, `&editor`
+to `&iced::widget::text_editor::Content`, and any other `&T` to a shared Rust
+reference; the signature probe requires that reference, so an owned Rust
+parameter fails `cargo check`. Because the output is owned Ice data the borrow
+ends with the call, so borrowed parameters work in handlers, views, derived
+values, subscription conditions, component bodies, and `lazy` subtrees alike:
+
+```ice
+extern crate::backend
+  Row(id:i64, label:str)
+  pure keep_rows(rows:&[Row], next:Row) -> [Row]
+  pure page_text(doc:&editor) -> str
+```
+
+These require `fn keep_rows(&[Row], Row) -> Vec<Row>` and
+`fn page_text(&text_editor::Content) -> String`. Asynchronous externs (`task`,
+`stream`, `sip`, bare futures) and the fixed-shape adapters reject `&`: a spawned
+future cannot borrow app state, and animation easings and subscription filters
+receive their values by value. A `secret` parameter cannot borrow either: a
+reading is handed over once and wiped on return.
+
 An immediate self-assignment through one `pure` or `sync` extern call moves an
 `editor` or list state field into that call when the right-hand side references
-the field exactly once. For example, `rows = append(rows, next)` transfers the
-owned list instead of cloning it, then assigns the returned list. Expressions
-that read the target more than once keep ordinary clone semantics.
+the field exactly once through an owned parameter. For example,
+`rows = append(rows, next)` transfers the owned list instead of cloning it, then
+assigns the returned list. Expressions that read the target more than once keep
+ordinary clone semantics, and a read that feeds a `&` parameter such as
+`rows = keep_rows(rows, next)` borrows the field and then assigns the result.
 
 Thirty-two typed iced adapters expose framework capabilities without embedding Rust
 expressions in Ice:
@@ -2747,9 +2774,9 @@ fn workspace_panes(theme: &iced::Theme, active: bool) -> iced::widget::pane_grid
 
 An extern component parameter without `&` is owned. `&str`, `&bytes`, and
 `&[T]` lower to borrowed slices; any other `&T` parameter lowers to a shared
-Rust reference. A component may therefore return `Element<'a, Event, Theme,
-Renderer>` borrowing app state, while owned-only components may return
-`Element<'static, Event, Theme, Renderer>`. Both use the app's configured
+Rust reference, as for `pure` and `sync` functions. A component may therefore
+return `Element<'a, Event, Theme, Renderer>` borrowing app state, while
+owned-only components may return `Element<'static, Event, Theme, Renderer>`. Both use the app's configured
 renderer. A shader factory returns any concrete
 `shader::Program<Event>`; Ice constructs the native `Shader`, exposes its full
 width/height builder API, and maps the program's published event through a

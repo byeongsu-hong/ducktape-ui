@@ -541,6 +541,47 @@ view
     let error = analyze(&source.replace("pure elastic", "sync elastic")).unwrap_err();
     assert_eq!(error.code, "E130");
     assert!(error.message.contains("unknown extern pure function"));
+
+    // The easing closure hands the factory an owned `f32`-derived value.
+    let error = analyze(&source.replace("value:f64", "value:&f64")).unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert!(
+        error
+            .message
+            .contains("must be `pure elastic(value:f64) -> f64`")
+    );
+}
+
+#[test]
+fn rejects_borrowed_secret_extern_parameters() {
+    let source = r#"app Demo
+extern crate::backend
+  pure valid(phrase:secret) -> bool
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  ok = false
+secret phrase
+on check
+  ok = valid(phrase)
+view
+  input "Recovery phrase" #phrase <-> phrase
+"#;
+    analyze(source).unwrap();
+
+    // A secret is a reading handed over once and wiped on return; a shared
+    // reference cannot honor that.
+    let error = analyze(&source.replace("phrase:secret", "phrase:&secret")).unwrap_err();
+    assert_eq!(error.code, "E103");
+    assert_eq!(error.message, "`secret` cannot be borrowed with `&`");
 }
 
 #[test]
