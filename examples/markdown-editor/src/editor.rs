@@ -336,12 +336,12 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
             line_padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
             ..Format::default()
         },
-        MarkdownHighlight::CodeToken { color, font } => Format {
+        // Only Monoplex KR Regular is bundled, so a token's bold or italic
+        // request would fall through to the proportional body face; tokens
+        // keep their colour and the block keeps one monospace face.
+        MarkdownHighlight::CodeToken { color, .. } => Format {
             color: Some(color.unwrap_or(palette.text)),
-            font: Some(font.map_or_else(code_font, |font| Font {
-                family: Family::Name("Monoplex KR"),
-                ..font
-            })),
+            font: Some(code_font()),
             size: Some(Pixels(BODY_SIZE * CODE_BLOCK_SCALE)),
             line_height: Some(LineHeight::Absolute(Pixels(
                 BODY_SIZE * CODE_BLOCK_SCALE * BODY_LINE_HEIGHT,
@@ -2777,6 +2777,17 @@ mod tests {
         assert!(code.iter().any(|(_, style)| {
             matches!(style, MarkdownHighlight::CodeToken { color: Some(_), .. })
         }));
+
+        let keyword = code
+            .iter()
+            .find(|(_, style)| matches!(style, MarkdownHighlight::CodeToken { font: Some(_), .. }))
+            .expect("the highlighter asks for a bold keyword face");
+        let format = super::markdown_format(&keyword.1, &super::editor_theme(false));
+        assert_eq!(
+            format.font,
+            Some(super::code_font()),
+            "every token stays in the one bundled Monoplex face"
+        );
     }
 
     #[test]
