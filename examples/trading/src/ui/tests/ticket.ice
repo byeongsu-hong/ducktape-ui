@@ -463,3 +463,23 @@ test trading_the_share_buttons_fill_the_unit_the_field_is_typed_in
   expect ticket_coins == "0.17187"
   // And inside what the account can carry rather than over it.
   expect quote.notional <= 11000.0
+
+// The side the ticket is on is the one fact a trader reads before any figure,
+// and the radio that carries it was painting its label in the inverted
+// foreground — the colour of the panel behind it — once selected, because the
+// style was written for a filled pill the widget never draws. The chosen side
+// reads in its own money colour, and the other one in the muted ink every
+// unchosen control uses, in both directions.
+test trading_the_chosen_side_reads_in_its_own_colour
+  preset held
+  viewport 1660 900
+  target app = #app
+  target buy = app/terminal-fit/trade/ticket-panel/ticket-body/side-buy/buy-on
+  target sell = app/terminal-fit/trade/ticket-panel/ticket-body/side-sell/sell-off
+  expect ticket_buy
+  expect buy.text_color == color.rgb8(95, 174, 126)
+  expect sell.text_color == color.rgb8(147, 137, 124)
+  click sell
+  expect !ticket_buy
+  expect sell.text_color == color.rgb8(208, 100, 90)
+  expect buy.text_color == color.rgb8(147, 137, 124)

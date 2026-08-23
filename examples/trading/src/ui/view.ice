@@ -1207,9 +1207,9 @@ view
                                         w=fill
                                         text-size=11.0
                                         gap=8.0
-                                      active selected bg=up dot=fg_invert border=up text=fg_invert
+                                      active selected bg=up dot=fg_invert border=up text=up
                                       active unselected bg=raised dot=muted border=edge text=muted
-                                      hovered selected bg=up dot=fg_invert border=up text=fg_invert
+                                      hovered selected bg=up dot=fg_invert border=up text=up
                                       hovered unselected bg=edge dot=fg border=fg text=fg
                                   col #side-sell w=fill
                                     radio t(locale, "SELL / SHORT") #sell-off -> ticket_side _
@@ -1219,9 +1219,9 @@ view
                                         w=fill
                                         text-size=11.0
                                         gap=8.0
-                                      active selected bg=down dot=fg_invert border=down text=fg_invert
+                                      active selected bg=down dot=fg_invert border=down text=down
                                       active unselected bg=raised dot=muted border=edge text=muted
-                                      hovered selected bg=down dot=fg_invert border=down text=fg_invert
+                                      hovered selected bg=down dot=fg_invert border=down text=down
                                       hovered unselected bg=edge dot=fg border=fg text=fg
                                 // Market or limit, which is not a filter over one
                                 // order shape. A market order has no price to
