@@ -75,6 +75,7 @@ use "tests/render.ice"
 use "tests/indicators.ice"
 use "tests/export.ice"
 use "tests/scrolling.ice"
+use "tests/i18n.ice"
 
 font plex family="IBM Plex Sans KR" default=true
 font digits family="Monoplex KR"

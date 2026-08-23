@@ -591,3 +591,34 @@ test trading_the_header_keeps_its_shape_across_a_venue_switch
   expect equity.width ~= 303.18
   expect named.x ~= 16.0
   expect feed.x ~= 1604.9319
+
+// The settings page carries the same picker the header drops, inline under the
+// network's name, so the place that explains what a network is is also the
+// place one is chosen. It is the header's route rather than a second one —
+// `switch_venue` — so every claim the header's tests hold about a switch
+// holds for a switch made here, and this test only has to show the row reaches
+// it: the name in the card moves, and the rows swap which one carries the
+// state.
+test trading_the_network_picker_on_settings_switches_the_network
+  preset held
+  viewport 1660 900
+  target app = #app
+  target settings = app/settings
+  target card = settings/settings-content/settings-network
+  target named = card/settings-venue
+  target picker = card/settings-network-picker
+  target here = picker/settings-network-row("Hyperliquid")/root/tab-on
+  target other = picker/settings-network-row("Lighter")/root/tab-off
+  target there = picker/settings-network-row("Lighter")/root/tab-on
+  target left = picker/settings-network-row("Hyperliquid")/root/tab-off
+  dispatch navigate(Page.settings)
+  expect text "Hyperliquid" within named
+  expect exists here
+  expect exists other
+  click other
+  expect venue == Venue.lighter
+  expect page == Page.settings
+  expect text "Lighter" within named
+  expect missing here
+  expect exists there
+  expect exists left

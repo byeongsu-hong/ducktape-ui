@@ -75,7 +75,7 @@ component PortfolioAllocation(asset:PortfolioAsset)
 // One position as the dashboard lists it, and the way to its market: the
 // row is a button for the reason the terminal's position row is, because a
 // row that names a market and does nothing when pressed is a request ignored.
-component PortfolioAssetRow(asset:PortfolioAsset)
+component PortfolioAssetRow(asset:PortfolioAsset, locale:Locale)
   emits
     pick(str)
   button #root -> emit(pick, asset.coin)
@@ -143,7 +143,7 @@ component PortfolioAssetRow(asset:PortfolioAsset)
             font=digits
             @text-down
       if asset.liq <= 0.0
-        text "none"
+        text t(locale, "none")
           with
             size=11.0
             w=100.0
@@ -214,10 +214,10 @@ component PortfolioRealized(flow:PortfolioFlow)
           font=digits
           @text-down
 
-component PortfolioFundingRows(funding:PortfolioFunding)
+component PortfolioFundingRows(funding:PortfolioFunding, locale:Locale)
   col #root w=fill gap=11.0
     row w=fill align=center
-      text "PAID" size=10.0 @text-muted
+      text t(locale, "PAID") size=10.0 @text-muted
       space w=fill
       // Money out is red once there is any; a zero in red reads as a loss.
       col #paid
@@ -234,7 +234,7 @@ component PortfolioFundingRows(funding:PortfolioFunding)
               font=digits
               @text-faint
     row w=fill align=center
-      text "RECEIVED" size=10.0 @text-muted
+      text t(locale, "RECEIVED") size=10.0 @text-muted
       space w=fill
       col #received
         if funding.received > 0.0
@@ -251,7 +251,7 @@ component PortfolioFundingRows(funding:PortfolioFunding)
               @text-faint
     rule horizontal thickness=1.0 color=edge
     row w=fill align=center
-      text "NET" size=10.0 @text-muted
+      text t(locale, "NET") size=10.0 @text-muted
       space w=fill
       if funding.net >= 0.0
         text fmt_pnl(funding.net) #net-in
@@ -266,10 +266,10 @@ component PortfolioFundingRows(funding:PortfolioFunding)
             font=digits
             @text-down
 
-component PortfolioFillRows(flow:PortfolioFlow)
+component PortfolioFillRows(flow:PortfolioFlow, locale:Locale)
   col #root w=fill gap=11.0
     row w=fill align=center
-      text "FILLS" size=10.0 @text-muted
+      text t(locale, "FILLS") size=10.0 @text-muted
       space w=fill
       text fmt_count(flow.trades) #count
         with
@@ -277,7 +277,7 @@ component PortfolioFillRows(flow:PortfolioFlow)
           font=digits
           @text-fg
     row w=fill align=center
-      text "VOLUME" size=10.0 @text-muted
+      text t(locale, "VOLUME") size=10.0 @text-muted
       space w=fill
       text fmt_usd(flow.volume) #volume
         with
@@ -285,7 +285,7 @@ component PortfolioFillRows(flow:PortfolioFlow)
           font=digits
           @text-fg
     row w=fill align=center
-      text "CLOSED W / L" size=10.0 @text-muted
+      text t(locale, "CLOSED W / L") size=10.0 @text-muted
       space w=fill
       row gap=6.0 align=center
         text fmt_count(flow.wins) #wins
@@ -300,7 +300,7 @@ component PortfolioFillRows(flow:PortfolioFlow)
             font=digits
             @text-down
     row w=fill align=center
-      text "WIN RATE" size=10.0 @text-muted
+      text t(locale, "WIN RATE") size=10.0 @text-muted
       space w=fill
       // No round trip has closed yet, so there is no rate — which is a
       // different statement from a rate of zero, and reads differently.

@@ -33,7 +33,7 @@ test trading_the_wide_terminal_draws_every_pane_unfolded
   target fills_toggle = terminal/chart-bar/toggle-fills/root
   expect exists rail
   expect exists printed
-  expect text "MARKET" within rail
+  expect text "MARKETS" within rail
   expect text "BTC" within rail
   expect text "RECENT FILLS" within printed
   // The rightmost positions columns, which are the first thing a squeezed

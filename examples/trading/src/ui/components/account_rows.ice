@@ -222,7 +222,7 @@ component FillRow(fill:Fill)
               font=digits
               @text-faint
 
-component OrderRow(order:Order, now:i64, refusal:str)
+component OrderRow(order:Order, now:i64, refusal:str, locale:Locale)
   emits
     pick(Order)
     cancel(str, i64)
@@ -301,4 +301,4 @@ component OrderRow(order:Order, now:i64, refusal:str)
       active bg=panel text=faint r=3.0
       hovered bg=edge text=down r=3.0
       disabled bg=panel text=edge r=3.0
-      text "CANCEL" size=9.0 tracking=0.9
+      text t(locale, "CANCEL") size=9.0 tracking=0.9
