@@ -21,6 +21,8 @@ mod border_radius;
 #[cfg(test)]
 mod button_status_children;
 #[cfg(test)]
+mod canvas_text_offset;
+#[cfg(test)]
 mod color;
 #[cfg(test)]
 mod content_fit;
