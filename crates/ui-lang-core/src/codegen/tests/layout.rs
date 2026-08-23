@@ -1053,9 +1053,6 @@ view
       text "Pinned"
     sensor show=shown resize=resized hide=hidden key=sensor_key anticipate=32.0 delay=10
       text "Observed"
-    responsive at=600.0 w=fill h=40.0
-      text "Narrow"
-      text "Wide"
     responsive size=(available_width, available_height) w=fill h=fill
       col
         if available_width < available_height
@@ -1098,9 +1095,6 @@ view
     );
     assert!(generated.contains("::iced::widget::responsive({ let __ice_responsive_scope = ("));
     assert!(generated.contains("move |__size|"));
-    assert!(
-        generated.contains("if __size.width < ((600.0) as f32).max(f32::EPSILON).min(f32::MAX)")
-    );
     assert!(generated.contains("if ((__size.width as f64) < (__size.height as f64))"));
     assert!(generated.contains("if ((__size.width as f64) >= (__size.height as f64))"));
 }

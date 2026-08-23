@@ -198,8 +198,6 @@ fn normalized_render_kind(
         ResolvedViewKind::Float { .. } => "float",
         ResolvedViewKind::Pin { .. } => "pin",
         ResolvedViewKind::Sensor { .. } => "sensor",
-        ResolvedViewKind::ResponsiveBreakpoint { .. } | ResolvedViewKind::ResponsiveSize { .. } => {
-            "responsive"
-        }
+        ResolvedViewKind::ResponsiveSize { .. } => "responsive",
     }
 }

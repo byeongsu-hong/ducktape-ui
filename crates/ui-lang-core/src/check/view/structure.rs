@@ -167,44 +167,15 @@ pub(in crate::check) fn infer_structure_group(
                 document,
                 span,
             )?;
-            match content {
-                ResponsiveContent::Breakpoint {
-                    breakpoint,
-                    narrow,
-                    wide,
-                } => {
-                    require_type(
-                        &retained_view_expr_type(
-                            breakpoint,
-                            env,
-                            document,
-                            span,
-                            CheckedViewExprRole::ResponsiveBreakpoint,
-                        )?,
-                        &Type::F64,
-                        span,
-                    )?;
-                    require_f32_literal_range(
-                        breakpoint,
-                        f64::EPSILON,
-                        None,
-                        "responsive breakpoint",
-                        span,
-                    )?;
-                    infer_view(narrow, env, document, signatures, ids)?;
-                    infer_view(wide, env, document, signatures, ids)?;
-                }
-                ResponsiveContent::Size {
-                    width,
-                    height,
-                    content,
-                } => {
-                    let mut child_env = scoped_view_env(env);
-                    child_env.insert(width.clone(), Type::F64);
-                    child_env.insert(height.clone(), Type::F64);
-                    infer_view(content, &child_env, document, signatures, ids)?;
-                }
-            }
+            let ResponsiveContent::Size {
+                width,
+                height,
+                content,
+            } = content;
+            let mut child_env = scoped_view_env(env);
+            child_env.insert(width.clone(), Type::F64);
+            child_env.insert(height.clone(), Type::F64);
+            infer_view(content, &child_env, document, signatures, ids)?;
         }
         _ => return Ok(false),
     };

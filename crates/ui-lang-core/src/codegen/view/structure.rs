@@ -52,8 +52,8 @@ pub(in crate::codegen) fn render_structure(
             let sensor = program.resolved_sensor(node)?;
             render_resolved_sensor(sensor, program, message, env, content)
         }
-        // Neither responsive arm memoizes what its closure builds, and it
-        // stays that way for two reasons that survive each other.
+        // The responsive arm does not memoize what its closure builds, and
+        // it stays that way for two reasons that survive each other.
         //
         // The compile failure first: `MemoLazy` stores an `Element<'static>`,
         // and wrapping the builder in `memo_lazy((size, palette), ..)` fails
@@ -79,93 +79,31 @@ pub(in crate::codegen) fn render_structure(
         // memoized element would keep animating either way — the fade
         // interpolates at draw time; it is the animation's mounted-state
         // READ, not its motion, that pins the lifetime.
-        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
-            let program = document;
-            let responsive = program.resolved_responsive(node)?;
-            let builder = match &responsive.kind {
-                ResolvedResponsiveKind::Breakpoint { breakpoint } => {
-                    let breakpoint =
-                        clamped_f32_code(*breakpoint, "f32::EPSILON", "f32::MAX", program, env)?;
-                    // The `move` closure would move a shared scope local out
-                    // of the enclosing render (a component's scope binding);
-                    // rebind the chain to a closure-owned string instead.
-                    let mut child_env = ScopedBindingEnv::new(env);
-                    child_env.insert(
-                        RECONCILIATION_SCOPE_BINDING.into(),
-                        reconciliation_scope_binding("__ice_responsive_recon.clone()".into()),
-                    );
-                    let responsive_recon = reconciliation_scope(&child_scope, env).to_owned();
-                    let _derived_guard = enter_escaping_derived_reads();
-                    let narrow = render_node(
-                        *narrow,
-                        document,
-                        message,
-                        &child_env,
-                        "__ice_responsive_scope.clone()",
-                        slot,
-                    )?;
-                    let wide = render_node(
-                        *wide,
-                        document,
-                        message,
-                        &child_env,
-                        "__ice_responsive_scope.clone()",
-                        slot,
-                    )?;
-                    drop(_derived_guard);
-                    format!(
-                        "{{ let __ice_responsive_scope = ({child_scope}).to_owned(); let __ice_responsive_recon = ({responsive_recon}).to_owned(); let _ = (&__ice_responsive_scope, &__ice_responsive_recon); move |__size| {{ let __responsive: __IceElement<'_, {message}> = if __size.width < {breakpoint} {{ {narrow} }} else {{ {wide} }}; __responsive }} }}"
-                    )
-                }
-                _ => {
-                    return Err(document.invariant_at_origin(
-                        view.origin,
-                        "responsive source tree diverged from normalized HIR",
-                    ));
-                }
-            };
-            let mut code = format!("::iced::widget::responsive({builder})");
-            for (method, length) in [("width", &responsive.width), ("height", &responsive.height)] {
-                if let Some(length) = length {
-                    write!(
-                        code,
-                        ".{method}({})",
-                        resolved_length_code(length, program, env)?
-                    )
-                    .unwrap();
-                }
-            }
-            Ok(format!("{code}.into()"))
-        }
         ResolvedViewKind::ResponsiveSize { content } => {
             let program = document;
             let responsive = program.resolved_responsive(node)?;
-            let ResolvedResponsiveKind::Size { width, height } = &responsive.kind else {
-                return Err(document.invariant_at_origin(
-                    view.origin,
-                    "responsive size topology diverged from normalized HIR",
-                ));
-            };
             let mut child_env = ScopedBindingEnv::new(env);
             child_env.insert(
-                width.name.clone(),
+                responsive.measured_width.name.clone(),
                 resolved_local_binding(
                     LocalBindingTypeSource::Resolved(program),
-                    width.local,
+                    responsive.measured_width.local,
                     "(__size.width as f64)".into(),
                     true,
                 ),
             );
             child_env.insert(
-                height.name.clone(),
+                responsive.measured_height.name.clone(),
                 resolved_local_binding(
                     LocalBindingTypeSource::Resolved(program),
-                    height.local,
+                    responsive.measured_height.local,
                     "(__size.height as f64)".into(),
                     true,
                 ),
             );
-            // See the breakpoint arm: the `move` closure must own its scope.
+            // The `move` closure would move a shared scope local out of the
+            // enclosing render (a component's scope binding); rebind the chain
+            // to a closure-owned string instead.
             child_env.insert(
                 RECONCILIATION_SCOPE_BINDING.into(),
                 reconciliation_scope_binding("__ice_responsive_recon.clone()".into()),

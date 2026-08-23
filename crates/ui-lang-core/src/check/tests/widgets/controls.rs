@@ -261,29 +261,6 @@ view
 }
 
 #[test]
-fn rejects_a_non_positive_responsive_breakpoint() {
-    let source = r#"app Structure
-theme contract AppTheme
-  bg
-  fg
-  primary
-  danger
-palette app for AppTheme
-  bg #000000
-  fg #ffffff
-  primary #333333
-  danger #ff0000
-view
-  responsive at=0.0
-    text "Narrow"
-    text "Wide"
-"#;
-    let error = analyze(source).unwrap_err();
-    assert_eq!(error.code, "E128");
-    assert!(error.message.contains("responsive breakpoint"));
-}
-
-#[test]
 fn infers_mouse_move_and_scroll_payloads() {
     let source = r#"app Pointer
 theme contract AppTheme

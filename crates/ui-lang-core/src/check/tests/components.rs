@@ -1944,9 +1944,6 @@ view
       text "Pinned"
     sensor show=shown resize=resized hide=hidden key=sensor_key anticipate=32.0 delay=10
       text "Observed"
-    responsive at=600.0 w=fill h=40.0
-      text "Narrow"
-      text "Wide"
     responsive size=(available_width, available_height) w=fill h=fill
       col
         if available_width < available_height
@@ -2014,13 +2011,13 @@ view
     assert_eq!(error.code, "E092");
     assert!(error.message.contains("different names"));
 
-    let conflicting_responsive = source.replace(
+    let missing_size = source.replace(
         "responsive size=(available_width, available_height)",
-        "responsive at=600.0 size=(available_width, available_height)",
+        "responsive",
     );
-    let error = analyze(&conflicting_responsive).unwrap_err();
+    let error = analyze(&missing_size).unwrap_err();
     assert_eq!(error.code, "E092");
-    assert!(error.message.contains("either `at=` or `size=`"));
+    assert!(error.message.contains("requires `size=(width, height)`"));
 }
 
 #[test]

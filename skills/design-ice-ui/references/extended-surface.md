@@ -55,7 +55,7 @@ the exact syntax in `SPEC.md` section 4 and a compiling fixture before use.
 - `float`: scale/translate a child with optional shadow/radius.
 - `pin`: place a child at explicit coordinates inside checked bounds.
 - `sensor`: route show/resize/hide lifecycle observations.
-- `responsive`: build from current limits or expose width/height bindings.
+- `responsive`: expose the measured width/height as scoped bindings.
 - `tooltip`: exactly content plus tooltip nodes with position/style.
 - `mouse`: wrap a node in pointer routes and cursor behavior.
 - nested `theme` / `themer`: select a native theme for a subtree.

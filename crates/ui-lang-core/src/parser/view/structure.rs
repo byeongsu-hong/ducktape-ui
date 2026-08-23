@@ -160,18 +160,12 @@ pub(in crate::parser) fn parse_responsive(
         ));
     }
     let mut id = None;
-    let mut breakpoint = None;
     let mut size = None;
     let mut width = None;
     let mut height = None;
     for part in &parts[1..] {
         if part.starts_with('#') {
             parse_unique_id(part, &mut id, line, "E092", "responsive")?;
-        } else if let Some(value) = part.strip_prefix("at=") {
-            if breakpoint.is_some() {
-                return Err(error("E092", line, "responsive repeats `at=`"));
-            }
-            breakpoint = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("size=") {
             if size.is_some() {
                 return Err(error("E092", line, "responsive repeats `size=`"));
@@ -222,49 +216,20 @@ pub(in crate::parser) fn parse_responsive(
             ));
         }
     }
-    let content = match (breakpoint, size) {
-        (Some(_), Some(_)) => {
-            return Err(error(
-                "E092",
-                line,
-                "responsive accepts either `at=` or `size=`, not both",
-            ));
-        }
-        (Some(breakpoint), None) => {
-            if line.children.len() != 2 {
-                return Err(error(
-                    "E092",
-                    line,
-                    "responsive with `at=` requires two children: narrow, then wide",
-                ));
-            }
-            ResponsiveContent::Breakpoint {
-                breakpoint,
-                narrow: Box::new(parse_view(&line.children[0])?),
-                wide: Box::new(parse_view(&line.children[1])?),
-            }
-        }
-        (None, Some((width, height))) => {
-            if line.children.len() != 1 {
-                return Err(error(
-                    "E092",
-                    line,
-                    "responsive with `size=` requires exactly one child",
-                ));
-            }
-            ResponsiveContent::Size {
-                width,
-                height,
-                content: Box::new(parse_view(&line.children[0])?),
-            }
-        }
-        (None, None) => {
-            return Err(error(
-                "E092",
-                line,
-                "responsive requires `at=` or `size=(width, height)`",
-            ));
-        }
+    let Some((width_name, height_name)) = size else {
+        return Err(error(
+            "E092",
+            line,
+            "responsive requires `size=(width, height)`",
+        ));
+    };
+    if line.children.len() != 1 {
+        return Err(error("E092", line, "responsive requires exactly one child"));
+    }
+    let content = ResponsiveContent::Size {
+        width: width_name,
+        height: height_name,
+        content: Box::new(parse_view(&line.children[0])?),
     };
     Ok(ViewNode::Responsive {
         id,

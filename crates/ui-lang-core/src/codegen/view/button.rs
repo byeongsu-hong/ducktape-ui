@@ -211,7 +211,6 @@ fn content_carries_inherited_ink(node: ViewId, document: &LoweredProgram) -> Res
         }
         ResolvedViewKind::Tooltip { content, tip } => any(&[*content, *tip])?,
         ResolvedViewKind::Overlay { content, layer } => any(&[*content, *layer])?,
-        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => any(&[*narrow, *wide])?,
         ResolvedViewKind::Table { columns } => {
             let mut found = false;
             for column in columns {

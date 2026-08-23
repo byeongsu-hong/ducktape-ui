@@ -7,20 +7,11 @@ pub(crate) struct ResolvedResponsiveLocal {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum ResolvedResponsiveKind {
-    Breakpoint {
-        breakpoint: CheckedExprUseId,
-    },
-    Size {
-        width: ResolvedResponsiveLocal,
-        height: ResolvedResponsiveLocal,
-    },
-}
-
-#[derive(Clone, Debug)]
 pub(crate) struct ResolvedResponsive {
     pub(crate) id: ViewId,
-    pub(crate) kind: ResolvedResponsiveKind,
+    /// The scoped `f64` bindings `size=(width, height)` introduces.
+    pub(crate) measured_width: ResolvedResponsiveLocal,
+    pub(crate) measured_height: ResolvedResponsiveLocal,
     pub(crate) width: Option<ResolvedContainerLength>,
     pub(crate) height: Option<ResolvedContainerLength>,
     pub(crate) origin: OriginId,
@@ -54,63 +45,30 @@ impl Lowerer {
             return Err(self.invariant(span, "responsive scope diverged after semantic checking"));
         }
         let expected_key = crate::ast::responsive_semantic_key(content, width, height);
-        let expected_expression_count =
-            crate::ast::responsive_expression_count(content, width, height);
+        let expected_expression_count = crate::ast::responsive_expression_count(width, height);
         let mut expressions = ResponsiveExpressionValidation::default();
-        let (semantic_key, expression_count, dimensions, breakpoint, kind) =
-            match (&checked_view.flow, content) {
-                (
-                    CheckedViewFlow::ResponsiveBreakpoint {
-                        semantic_key,
-                        expression_count,
-                        breakpoint,
-                        dimensions,
-                    },
-                    ResponsiveContent::Breakpoint { .. },
-                ) => (
-                    semantic_key,
-                    expression_count,
-                    dimensions,
-                    Some(*breakpoint),
-                    ResolvedResponsiveKind::Breakpoint {
-                        breakpoint: *breakpoint,
-                    },
-                ),
-                (
-                    CheckedViewFlow::ResponsiveSize {
-                        semantic_key,
-                        expression_count,
-                        width,
-                        height,
-                        dimensions,
-                    },
-                    ResponsiveContent::Size { .. },
-                ) => (
-                    semantic_key,
-                    expression_count,
-                    dimensions,
-                    None,
-                    ResolvedResponsiveKind::Size {
-                        width: self.resolve_responsive_local(
-                            id,
-                            *width,
-                            CheckedViewLocalRole::ResponsiveWidth,
-                            span,
-                        )?,
-                        height: self.resolve_responsive_local(
-                            id,
-                            *height,
-                            CheckedViewLocalRole::ResponsiveHeight,
-                            span,
-                        )?,
-                    },
-                ),
-                _ => {
-                    return Err(
-                        self.invariant(span, "responsive content diverged after semantic checking")
-                    );
-                }
-            };
+        let CheckedViewFlow::ResponsiveSize {
+            semantic_key,
+            expression_count,
+            width: measured_width,
+            height: measured_height,
+            dimensions,
+        } = &checked_view.flow
+        else {
+            return Err(self.invariant(span, "responsive content diverged after semantic checking"));
+        };
+        let measured_width = self.resolve_responsive_local(
+            id,
+            *measured_width,
+            CheckedViewLocalRole::ResponsiveWidth,
+            span,
+        )?;
+        let measured_height = self.resolve_responsive_local(
+            id,
+            *measured_height,
+            CheckedViewLocalRole::ResponsiveHeight,
+            span,
+        )?;
         if semantic_key != &expected_key
             || !responsive_length_topology_matches(width, &dimensions[0])
             || !responsive_length_topology_matches(height, &dimensions[1])
@@ -119,11 +77,10 @@ impl Lowerer {
                 self.invariant(span, "responsive topology diverged after semantic checking")
             );
         }
-        let checked_expression_count = u32::from(breakpoint.is_some())
-            + dimensions
-                .iter()
-                .filter(|dimension| matches!(dimension, CheckedLength::Fixed { .. }))
-                .count() as u32;
+        let checked_expression_count = dimensions
+            .iter()
+            .filter(|dimension| matches!(dimension, CheckedLength::Fixed { .. }))
+            .count() as u32;
         if *expression_count != expected_expression_count
             || checked_expression_count != *expression_count
         {
@@ -132,18 +89,7 @@ impl Lowerer {
                 "responsive expression cardinality diverged after semantic checking",
             ));
         }
-        self.validate_responsive_expression_owners(id, breakpoint, dimensions, span)?;
-        if let Some(breakpoint) = breakpoint {
-            self.validate_responsive_expression(
-                id,
-                checked_view.scope,
-                breakpoint,
-                CheckedViewExprRole::ResponsiveBreakpoint,
-                &Type::F64,
-                span,
-                &mut expressions,
-            )?;
-        }
+        self.validate_responsive_expression_owners(id, dimensions, span)?;
         let width = self.resolve_responsive_length(
             id,
             checked_view.scope,
@@ -166,7 +112,8 @@ impl Lowerer {
 
         let resolved = ResolvedResponsive {
             id,
-            kind,
+            measured_width,
+            measured_height,
             width,
             height,
             origin: checked_view.origin,
@@ -304,12 +251,10 @@ impl Lowerer {
     fn validate_responsive_expression_owners(
         &self,
         responsive: ViewId,
-        breakpoint: Option<CheckedExprUseId>,
         dimensions: &[CheckedLength; 2],
         span: &Span,
     ) -> Result<(), Error> {
         let expected = [
-            (CheckedViewExprRole::ResponsiveBreakpoint, breakpoint),
             (
                 CheckedViewExprRole::ResponsiveWidthDimension,
                 responsive_dimension_expression(&dimensions[0]),

@@ -195,10 +195,6 @@ impl Session<'_> {
             ViewNode::Responsive { id, content, .. } => {
                 let risk = risk.with_id(id);
                 match content {
-                    ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                        self.visit(narrow, risk);
-                        self.visit(wide, risk);
-                    }
                     ResponsiveContent::Size { content, .. } => self.visit(content, risk),
                 }
             }

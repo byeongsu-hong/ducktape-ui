@@ -187,10 +187,6 @@ pub(crate) enum ResolvedViewKind {
     Sensor {
         content: ViewId,
     },
-    ResponsiveBreakpoint {
-        narrow: ViewId,
-        wide: ViewId,
-    },
     ResponsiveSize {
         content: ViewId,
     },
@@ -240,7 +236,7 @@ impl ResolvedViewKind {
             Self::Float { .. } => "float",
             Self::Pin { .. } => "pin",
             Self::Sensor { .. } => "sensor",
-            Self::ResponsiveBreakpoint { .. } | Self::ResponsiveSize { .. } => "responsive",
+            Self::ResponsiveSize { .. } => "responsive",
         }
     }
 }
@@ -679,14 +675,8 @@ impl Lowerer {
             ViewNode::Sensor { .. } => ResolvedViewKind::Sensor {
                 content: one("sensor")?,
             },
-            ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { .. } => {
-                    let (narrow, wide) = pair("responsive breakpoint")?;
-                    ResolvedViewKind::ResponsiveBreakpoint { narrow, wide }
-                }
-                ResponsiveContent::Size { .. } => ResolvedViewKind::ResponsiveSize {
-                    content: one("responsive size")?,
-                },
+            ViewNode::Responsive { .. } => ResolvedViewKind::ResponsiveSize {
+                content: one("responsive")?,
             },
         })
     }
@@ -913,7 +903,7 @@ impl LoweredProgram {
         expect!(
             self.responsives.len(),
             "responsive",
-            ResolvedViewKind::ResponsiveBreakpoint { .. } | ResolvedViewKind::ResponsiveSize { .. }
+            ResolvedViewKind::ResponsiveSize { .. }
         );
         Ok(())
     }
@@ -936,7 +926,6 @@ impl LoweredProgram {
             | ResolvedViewKind::ResponsiveSize { content } => vec![*content],
             ResolvedViewKind::Overlay { content, layer } => vec![*content, *layer],
             ResolvedViewKind::Tooltip { content, tip } => vec![*content, *tip],
-            ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => vec![*narrow, *wide],
             ResolvedViewKind::Button { content } => content.iter().copied().collect(),
             ResolvedViewKind::Match { arms } => arms.iter().flatten().copied().collect(),
             ResolvedViewKind::Table { columns } => columns
@@ -1035,8 +1024,7 @@ impl LoweredProgram {
             ResolvedViewKind::Float { .. } => self.resolved_float(view.id).map(|_| ()),
             ResolvedViewKind::Pin { .. } => self.resolved_pin(view.id).map(|_| ()),
             ResolvedViewKind::Sensor { .. } => self.resolved_sensor(view.id).map(|_| ()),
-            ResolvedViewKind::ResponsiveBreakpoint { .. }
-            | ResolvedViewKind::ResponsiveSize { .. } => {
+            ResolvedViewKind::ResponsiveSize { .. } => {
                 self.resolved_responsive(view.id).map(|_| ())
             }
             ResolvedViewKind::Component { call } => self.component_call_by_id(call).map(|_| ()),

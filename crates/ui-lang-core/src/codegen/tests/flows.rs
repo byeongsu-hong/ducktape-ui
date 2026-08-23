@@ -268,9 +268,10 @@ state
 derived
   visible = filter(rows)
 view
-  responsive at=600.0
-    text len(visible)
-    text len(visible)
+  responsive size=(available_width, available_height)
+    col
+      text len(visible)
+      text len(visible)
 "#;
 
     let generated = compile(source, "responsive.ice").unwrap();

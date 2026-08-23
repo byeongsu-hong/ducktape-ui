@@ -1212,10 +1212,6 @@ pub(crate) fn handler_emit_targets(
                 }
             }
             ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    walk_calls(narrow, scope, output);
-                    walk_calls(wide, scope, output);
-                }
                 ResponsiveContent::Size { content, .. } => walk_calls(content, scope, output),
             },
             _ => {}

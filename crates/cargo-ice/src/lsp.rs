@@ -1504,10 +1504,6 @@ fn visit_view<'a>(
             }
         }
         ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                visit_view(narrow, visitor);
-                visit_view(wide, visitor);
-            }
             ResponsiveContent::Size { content, .. } => visit_view(content, visitor),
         },
         _ => {}

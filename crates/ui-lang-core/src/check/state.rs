@@ -381,10 +381,6 @@ fn controlled_bindings(document: &Document, editors: bool) -> Result<ControlledO
                 components.remove(name);
             }
             ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, document, editors, env, components, output)?;
-                    collect(wide, document, editors, env, components, output)?;
-                }
                 ResponsiveContent::Size {
                     width,
                     height,

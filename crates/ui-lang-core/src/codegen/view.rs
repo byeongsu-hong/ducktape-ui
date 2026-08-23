@@ -164,10 +164,6 @@ pub(in crate::codegen) fn node_is_omitted(
             node_is_omitted(*content, document, env, slot)?
                 || node_is_omitted(*layer, document, env, slot)?
         }
-        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
-            node_is_omitted(*narrow, document, env, slot)?
-                || node_is_omitted(*wide, document, env, slot)?
-        }
         ResolvedViewKind::ResponsiveSize { content } => {
             node_is_omitted(*content, document, env, slot)?
         }
