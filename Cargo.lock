@@ -134,7 +134,7 @@ dependencies = [
 name = "ai-chat-example"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "iced",
  "serde",
  "serde_json",
@@ -6000,7 +6000,7 @@ dependencies = [
 name = "trading-example"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "ecgfp5",
  "getrandom 0.4.3",
  "hex",
