@@ -171,25 +171,39 @@ fn gutter_drag_moves_do_not_allocate_boundary_buffers() {
         iced::event::Status::Captured
     );
 
+    // The `clean_window` policy the stats_alloc contracts use, spelled against
+    // dhat's counters: dhat measures the whole process, so libtest's own
+    // main-thread setup can land inside a measured window. A drag that
+    // allocated would dirty *every* window; a one-time foreign block dirties
+    // at most one, so the drag is measured up to `WINDOWS` times and the
+    // contract asks for one clean window rather than a clean process.
+    const WINDOWS: usize = 4;
+
     let profiler = dhat::Profiler::builder().testing().build();
-    let before = dhat::HeapStats::get();
-    for index in 0..MOVES {
-        let point = Point::new(45.0, if index % 2 == 0 { 90.0 } else { 110.0 });
-        assert_eq!(
-            update!(
-                Event::Mouse(mouse::Event::CursorMoved { position: point }),
-                point
-            ),
-            iced::event::Status::Captured
+    let mut allocated = (0, 0);
+    for _ in 0..WINDOWS {
+        let before = dhat::HeapStats::get();
+        for index in 0..MOVES {
+            let point = Point::new(45.0, if index % 2 == 0 { 90.0 } else { 110.0 });
+            assert_eq!(
+                update!(
+                    Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                    point
+                ),
+                iced::event::Status::Captured
+            );
+        }
+        let after = dhat::HeapStats::get();
+        allocated = (
+            after.total_blocks - before.total_blocks,
+            after.total_bytes - before.total_bytes,
         );
+        if allocated == (0, 0) {
+            break;
+        }
     }
-    let after = dhat::HeapStats::get();
     drop(profiler);
 
-    let allocated = (
-        after.total_blocks - before.total_blocks,
-        after.total_bytes - before.total_bytes,
-    );
     eprintln!(
         "{MOVES} gutter drag moves across {LINES} lines: {} allocations, {} bytes",
         allocated.0, allocated.1
