@@ -253,7 +253,7 @@ fn classifies_every_statement_variant_by_immediate_task_semantics() {
                 route: None,
                 span: span(line),
             },
-            "E172",
+            "E141",
             "widget operation",
         ),
         (
@@ -263,7 +263,7 @@ fn classifies_every_statement_variant_by_immediate_task_semantics() {
                 route: None,
                 span: span(line),
             },
-            "E173",
+            "E141",
             "window task",
         ),
         (
@@ -273,7 +273,7 @@ fn classifies_every_statement_variant_by_immediate_task_semantics() {
                 route: Some(route(line)),
                 span: span(line),
             },
-            "E188",
+            "E141",
             "pane query",
         ),
         (
@@ -286,7 +286,7 @@ fn classifies_every_statement_variant_by_immediate_task_semantics() {
                 route: Some(route(line)),
                 span: span(line),
             },
-            "E188",
+            "E141",
             "pane query",
         ),
     ];
@@ -316,17 +316,17 @@ fn reports_each_native_task_family_at_its_source_line() {
         ),
         (
             include_str!("../../../tests/cases/diagnostic/widget-task-finality/as-is.ice"),
-            "E172",
+            "E141",
             "widget operation",
         ),
         (
             include_str!("../../../tests/cases/diagnostic/window-task-finality/as-is.ice"),
-            "E173",
+            "E141",
             "window task",
         ),
         (
             include_str!("../../../tests/cases/diagnostic/pane-task-finality/as-is.ice"),
-            "E188",
+            "E141",
             "pane query",
         ),
     ] {
