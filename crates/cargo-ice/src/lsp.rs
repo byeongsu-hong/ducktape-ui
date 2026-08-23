@@ -5381,7 +5381,7 @@ mod tests {
 
         let expected = (REQUESTS as u64 * 59, REQUESTS as u64 * 5_474);
         let _profiler = dhat::Profiler::builder().testing().build();
-        let measured = crate::allocation::clean_window(expected, || {
+        let measured = crate::allocation::clean_window(expected.0, || {
             for _ in 0..REQUESTS {
                 let signature = signature_help_at_with_db(&mut db, &documents, &position).unwrap();
                 assert_eq!(signature["activeParameter"], 1);
@@ -6073,7 +6073,7 @@ mod tests {
         assert_eq!(count(super::top_level_positions(SOURCE, ',')), 3);
 
         let _profiler = dhat::Profiler::builder().testing().build();
-        let measured = crate::allocation::clean_window((0, 0), || {
+        let measured = crate::allocation::clean_window(0, || {
             for _ in 0..CALLS {
                 assert_eq!(
                     count(std::hint::black_box(super::top_level_positions(

@@ -665,7 +665,7 @@ mod tests {
         assert_eq!(count(orphan_ice_files(&files, &dependencies)), 1);
 
         let _profiler = dhat::Profiler::builder().testing().build();
-        let measured = crate::allocation::clean_window((0, 0), || {
+        let measured = crate::allocation::clean_window(0, || {
             for _ in 0..CALLS {
                 assert_eq!(
                     count(std::hint::black_box(orphan_ice_files(

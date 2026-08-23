@@ -627,10 +627,17 @@ mod tests {
             options: BundleOptions::default(),
         };
 
-        const EXPECTED: (u64, u64) = (9_838, 2_135_435);
+        // Blocks are the portable half of this measurement. The parser keeps a
+        // span path per node, so the byte total scales with wherever
+        // `tempdir()` landed: a `TMPDIR` 49 characters longer moved it from
+        // 2,151,867 to 2,253,819 on one box while the block count did not
+        // move at all. Borrowing the source document rather than copying it is
+        // a statement about how many allocations resolving takes, so that is
+        // what this pins; the bytes are reported, not asserted.
+        const BLOCKS: u64 = 9_838;
         let mut resolved = None;
         let _profiler = dhat::Profiler::builder().testing().build();
-        let measured = crate::allocation::clean_window(EXPECTED, || {
+        let measured = crate::allocation::clean_window(BLOCKS, || {
             resolved = Some(BundleMeta::resolve(&package, Platform::MacOs).expect("resolve"));
         });
         let meta = resolved.expect("resolve identity");
@@ -638,7 +645,7 @@ mod tests {
         assert_eq!(meta.name, "Allocation");
         assert_eq!(meta.identifier, "dev.ducktape.allocation");
         assert_eq!(
-            measured, EXPECTED,
+            measured.0, BLOCKS,
             "bundle identity allocations: {measured:?}"
         );
         eprintln!(

@@ -115,7 +115,7 @@ mod tests {
         assert!(explicit_files(cwd, &arguments).is_empty());
 
         let _profiler = dhat::Profiler::builder().testing().build();
-        let measured = crate::allocation::clean_window((0, 0), || {
+        let measured = crate::allocation::clean_window(0, || {
             for _ in 0..REQUESTS {
                 assert!(
                     std::hint::black_box(explicit_files(cwd, std::hint::black_box(&arguments)))
