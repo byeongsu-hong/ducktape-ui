@@ -148,6 +148,10 @@ it re-marked on another.
 | **Portfolio** | what the account *is*, rather than what it is doing: the account's value over a chosen window and how far it sits off its peak, the PnL each step of that window booked, exposure, margin health, funding, the positions with their entry, liquidation and margin, and the orders and fills behind them |
 | **Settings** | one card per fact: the address being read, the network and the picker that changes it, the language, what the feed is doing, what this app may sign with and what each key can do, and the keyboard |
 
+![The portfolio](screenshots/portfolio.png)
+
+![Settings](screenshots/settings.png)
+
 The line is between watching a market and reading an account. The terminal is
 the first, whole. The portfolio is the second, and it is not the terminal's
 lists moved: it is folds over them — realized against unrealized, funding paid
@@ -180,6 +184,8 @@ arm — and the language card on settings offers each language in itself.
 The figures are the same figures. Sentences the Rust side composes at
 runtime — refusals, quotes, session readouts — are still English on either
 setting; they are the next table.
+
+![Settings, in Korean](screenshots/settings_ko.png)
 
 ### What the dashboard refuses to say
 
