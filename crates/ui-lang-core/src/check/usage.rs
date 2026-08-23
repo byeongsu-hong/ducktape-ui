@@ -401,7 +401,7 @@ fn record_derived_read(tracker: &mut Tracker, name: &str, site: (usize, usize)) 
 /// Collects the first segment of every path an expression reads, in first-use
 /// order. The `contains` guard bounds `expand`'s recursion: a derived that
 /// names the same dependency twice would otherwise re-walk its whole subtree.
-fn path_roots(expr: &Expr, output: &mut Vec<String>) {
+pub(in crate::check) fn path_roots(expr: &Expr, output: &mut Vec<String>) {
     match expr {
         Expr::Path(path) => {
             if let Some(name) = path.first()

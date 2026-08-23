@@ -1272,3 +1272,44 @@ fn follows_controlled_component_bindings_for_state_usage() {
     .unwrap();
     assert!(document.warnings().is_empty(), "{:?}", document.warnings());
 }
+
+/// The perf warning fixtures carry the nearest non-triggers beside each
+/// trigger; the fixture suite only proves presence, so the exact site set is
+/// pinned here.
+fn perf_warning_sites(case: &str, code: &str) -> Vec<usize> {
+    let source = std::fs::read_to_string(format!(
+        "{}/tests/cases/warning/{case}/as-is.ice",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let document = analyze(&source).unwrap();
+    document
+        .warnings()
+        .iter()
+        .filter(|warning| warning.code == code)
+        .map(|warning| warning.line)
+        .collect()
+}
+
+#[test]
+fn w016_skips_lazy_subtrees_literals_and_pure_results_of_literals() {
+    // Line 30: the direct call; 31 twice: `Answer.body` feeds both
+    // `markdown_body` and `plain_body`, one warning per extern. Silent: both
+    // lazy-wrapped forms, the literal, and `shout("static")`.
+    assert_eq!(
+        perf_warning_sites("perf-unmemoized-content", "W016"),
+        vec![30, 31, 31]
+    );
+}
+
+#[test]
+fn w017_skips_keyed_lazy_and_lazy_outside_loops() {
+    // Line 27: the plain `lazy message as row` inside `for`, where a message
+    // owns a `tags` list. Silent: the keyed form inside `keyed`, the plain
+    // form over a record of scalars, and the plain `lazy messages` outside a
+    // loop.
+    assert_eq!(
+        perf_warning_sites("perf-plain-lazy-in-loop", "W017"),
+        vec![27]
+    );
+}

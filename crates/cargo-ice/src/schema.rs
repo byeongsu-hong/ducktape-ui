@@ -2641,6 +2641,8 @@ pub fn document() -> Value {
                     "W013": "statement unreachable after an unconditional return",
                     "W014": "duplicate subscription delivery",
                     "W015": "component mounted without the public ID scope its widget targets need",
+                    "W016": "extern component content rebuilt from state on every view pass outside lazy",
+                    "W017": "plain lazy over a list-owning value inside a repetition clones and hashes it per item",
                 },
                 "generatedRustSourceMap": "ui-lang-build writes marked generated Rust below Cargo OUT_DIR; generated items suppress backend-only warnings; cargo ice check and clippy consume Cargo JSON and map nested generated error provenance regions to root or imported Ice syntax; the LSP ice.lint workspace command publishes mapped error-level Clippy and rustc diagnostics; test and compat run that check before the normal test runner",
             },

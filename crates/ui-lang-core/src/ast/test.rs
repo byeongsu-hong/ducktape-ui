@@ -1004,7 +1004,7 @@ fn widget_target_source(target: &WidgetTarget) -> String {
     )
 }
 
-fn expr_source(expr: &Expr) -> String {
+pub(crate) fn expr_source(expr: &Expr) -> String {
     match expr {
         Expr::Bool(value) => value.to_string(),
         Expr::I64(value) => value.to_string(),

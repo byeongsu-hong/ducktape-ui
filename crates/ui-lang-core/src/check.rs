@@ -63,6 +63,12 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
         &reachable,
         &reachable_handlers,
     ));
+    warnings.extend(performance_warnings(
+        &document,
+        &reachable,
+        &declarations,
+        &facts,
+    ));
     warnings.sort_by_key(|warning| warning.line);
     Ok(CheckedDocument::new(
         document,
@@ -1635,6 +1641,7 @@ mod handler;
 mod lazy_delivery;
 mod lifecycle;
 mod options;
+mod perf;
 mod reachability;
 mod smells;
 mod state;
@@ -1655,6 +1662,7 @@ use handler::*;
 use lazy_delivery::*;
 use lifecycle::*;
 use options::*;
+use perf::*;
 use reachability::*;
 use smells::*;
 use state::{check_qr_payload, check_theme, pane_grid_span, repeated_pane_grid_span};

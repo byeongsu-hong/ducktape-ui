@@ -1,0 +1,1 @@
+W017 lazy hashes a clone of `message` on every view pass; key it with `lazy message by <cheap keys> as row`
