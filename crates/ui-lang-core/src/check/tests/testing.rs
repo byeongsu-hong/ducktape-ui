@@ -73,12 +73,12 @@ test render_contract
   expect text "Draft" within root
   expect no text "Failed"
   click draft_input
-  hover #card/root/draft
+  move #card/root/draft
   press draft_input
   release
   type "local"
   key enter
-  resize 480 720
+  window resize 480 720
   dispatch increment
   dispatch selected("next")
 
@@ -111,8 +111,7 @@ fn checks_digits_in_snake_case_test_names() {
 fn checks_expanded_semantic_test_actions_and_inspection_fields() {
     let source = VALID.replace(
         "  expect count == 0",
-        r#"  enter draft_input
-  leave
+        r#"  leave
   move draft_input
   move root.center_x root.center_y
   click draft_input right
@@ -450,19 +449,20 @@ fn limits_custom_renderers_to_layout_and_interaction_assertions() {
         .replace("#draft <-> value", "#draft(1) <-> value")
         .replace("root/draft", "root/draft(1)")
         .replace(
-            "hover #card/root/draft(1)",
-            "hover #card/root/draft(dimension(root.width))",
+            "move #card/root/draft(1)",
+            "move #card/root/draft(dimension(root.width))",
         );
     analyze(&target_geometry).unwrap();
 
-    let paint_outside_expect = layout_only.replace("resize 480 720", "resize root.text_size 720");
+    let paint_outside_expect =
+        layout_only.replace("window resize 480 720", "window resize root.text_size 720");
     let failure = analyze(&paint_outside_expect).unwrap_err();
     assert_eq!(failure.code, "E194");
     assert!(failure.message.contains("paint assertions"));
 
     let paint_in_target = target_geometry.replace(
-        "hover #card/root/draft(dimension(root.width))",
-        "hover #card/root/draft(dimension(root.text_size))",
+        "move #card/root/draft(dimension(root.width))",
+        "move #card/root/draft(dimension(root.text_size))",
     );
     let failure = analyze(&paint_in_target).unwrap_err();
     assert_eq!(failure.code, "E194");

@@ -22,7 +22,7 @@ test dark_keyboard_and_focus
   focus field
   replace "Ice"
   chord control enter
-  hover submit
+  move submit
   expect a11y submit role "button"
   expect a11y submit action click
   capture dark_keyboard_and_focus

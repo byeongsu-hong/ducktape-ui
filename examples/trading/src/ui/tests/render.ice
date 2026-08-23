@@ -74,7 +74,7 @@ test trading_the_crosshair_reads_out_the_candle_under_it
   expect text "VOL" within traded
   expect text fmt_volume(hit_volume(demo_hover())) within traded
   expect missing compact
-  resize 1180 720
+  window resize 1180 720
   expect missing readout
   expect text "C" within compact
   expect text fmt_px(hit_close(demo_hover())) within compact_closed
@@ -89,7 +89,7 @@ test trading_the_crosshair_reads_out_the_candle_under_it
   expect a11y rail_toggle name "Show the markets pane"
   expect fills_toggle.width > 30.0
   expect a11y fills_toggle name "Show the fills pane"
-  resize 1280 720
+  window resize 1280 720
   expect missing readout
   expect exists compact
   expect text "C" within compact

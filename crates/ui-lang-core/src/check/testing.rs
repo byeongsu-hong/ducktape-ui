@@ -233,8 +233,6 @@ fn test_paint_span(test: &TestDecl) -> Option<&Span> {
                     }
                 },
                 TestStepKind::Click { target, .. }
-                | TestStepKind::Hover(target)
-                | TestStepKind::Enter(target)
                 | TestStepKind::Move(TestPointerPosition::Target(target))
                 | TestStepKind::Press { target, .. }
                 | TestStepKind::Drop(target)
@@ -403,8 +401,6 @@ fn check_test_step(
 ) -> Result<Option<(usize, usize)>, Error> {
     match &step.kind {
         TestStepKind::Click { target, .. }
-        | TestStepKind::Hover(target)
-        | TestStepKind::Enter(target)
         | TestStepKind::Move(TestPointerPosition::Target(target))
         | TestStepKind::Press { target, .. }
         | TestStepKind::Drop(target)

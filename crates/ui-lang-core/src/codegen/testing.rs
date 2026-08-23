@@ -346,22 +346,6 @@ fn generate_test(
                 let button = test_mouse_button_code(*button);
                 writeln!(out, "let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::ClickAt {{ position: ::iced::Point::new(__x, __y), button: {button}, count: {count} }}, {location});").unwrap();
             }
-            ResolvedTestStepKind::Hover(target) => {
-                let path = target_ref_path_code(target, test, &env, program)?;
-                writeln!(
-                    out,
-                    "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::MoveTo(__target.to_owned()), {location});"
-                )
-                .unwrap();
-            }
-            ResolvedTestStepKind::Enter(target) => {
-                let path = target_ref_path_code(target, test, &env, program)?;
-                writeln!(
-                    out,
-                    "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Enter(__target.to_owned()), {location});"
-                )
-                .unwrap();
-            }
             ResolvedTestStepKind::Leave => {
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Leave, {location});").unwrap();
             }

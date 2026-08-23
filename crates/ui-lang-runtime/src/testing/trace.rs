@@ -515,7 +515,7 @@ impl Generator {
             .collect::<Vec<_>>();
         let mut policies = vec!["redraw", "advance", "resize", "key", "chord"];
         if !visible.is_empty() {
-            policies.extend(["enter", "click"]);
+            policies.extend(["move_to", "click"]);
         }
         if !focusable.is_empty() {
             policies.push("focus");
@@ -527,9 +527,9 @@ impl Generator {
             policies.extend(["wheel", "leave"]);
         }
         match policies[self.random.index(policies.len())] {
-            "enter" => {
+            "move_to" => {
                 self.cursor_inside = true;
-                Action::Enter(visible[self.random.index(visible.len())].id.clone())
+                Action::MoveTo(visible[self.random.index(visible.len())].id.clone())
             }
             "click" => {
                 self.cursor_inside = true;
@@ -794,8 +794,7 @@ pub(super) fn source_location(source: Location) -> SourceLocation {
 
 pub(super) fn primary_target(action: &Action) -> Option<&str> {
     match action {
-        Action::Enter(target)
-        | Action::MoveTo(target)
+        Action::MoveTo(target)
         | Action::SnapEnd(target)
         | Action::DropAt(target)
         | Action::Focus(target) => Some(target),
@@ -840,7 +839,6 @@ fn replay_action(action: &RecordedAction) -> Result<Action, String> {
         })
     };
     match action.kind.as_str() {
-        "enter" => Ok(Action::Enter(target()?)),
         "leave" => Ok(Action::Leave),
         "move_to" => Ok(Action::MoveTo(target()?)),
         "move_to_point" => Ok(Action::MoveToPoint(Point::new(number("x")?, number("y")?))),
@@ -1419,7 +1417,6 @@ fn record_action(
     target_source: Option<Location>,
 ) -> RecordedAction {
     let (kind, target, parameters) = match action {
-        Action::Enter(target) => ("enter", Some(target.clone()), Value::Null),
         Action::Leave => ("leave", None, Value::Null),
         Action::MoveTo(target) => ("move_to", Some(target.clone()), Value::Null),
         Action::MoveToPoint(point) => {

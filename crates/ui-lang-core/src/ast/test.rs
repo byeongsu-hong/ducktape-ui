@@ -49,8 +49,6 @@ pub enum TestStepKind {
         button: TestMouseButton,
         count: u8,
     },
-    Hover(TestTargetRef),
-    Enter(TestTargetRef),
     Leave,
     Move(TestPointerPosition),
     Press {
@@ -334,8 +332,6 @@ pub(crate) fn test_step_expression_roots(step: &TestStep) -> Vec<&Expr> {
     let mut expressions = Vec::new();
     match &step.kind {
         TestStepKind::Click { target: value, .. }
-        | TestStepKind::Hover(value)
-        | TestStepKind::Enter(value)
         | TestStepKind::Move(TestPointerPosition::Target(value))
         | TestStepKind::Press { target: value, .. }
         | TestStepKind::SnapEnd(value)
@@ -563,8 +559,6 @@ pub(crate) fn test_step_semantic_key(step: &TestStep) -> String {
         TestStepKind::ClickAt { button, count, .. } => {
             format!("click-at:{button:?}:{count}")
         }
-        TestStepKind::Hover(target) => format!("hover:{}", test_target_ref_semantic_key(target)),
-        TestStepKind::Enter(target) => format!("enter:{}", test_target_ref_semantic_key(target)),
         TestStepKind::Leave => "leave".into(),
         TestStepKind::Move(TestPointerPosition::Target(target)) => {
             format!("move-target:{}", test_target_ref_semantic_key(target))
@@ -674,8 +668,6 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
             expr_source(y),
             mouse_button_suffix(*button)
         ),
-        TestStepKind::Hover(target) => format!("hover {}", target_ref_source(target)),
-        TestStepKind::Enter(target) => format!("enter {}", target_ref_source(target)),
         TestStepKind::Leave => "leave".into(),
         TestStepKind::Move(TestPointerPosition::Target(target)) => {
             format!("move {}", target_ref_source(target))
@@ -802,7 +794,11 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
             format!("window move {} {}", expr_source(x), expr_source(y))
         }
         TestStepKind::Resize(width, height) => {
-            format!("resize {} {}", expr_source(width), expr_source(height))
+            format!(
+                "window resize {} {}",
+                expr_source(width),
+                expr_source(height)
+            )
         }
         TestStepKind::Rescale(value) => format!("window rescale {}", expr_source(value)),
         TestStepKind::WindowClose => "window close-request".into(),

@@ -38,10 +38,10 @@ test mount_only_features
   expect exists #mount_root/canvas
   expect exists #mount_root/mount_panes
   dispatch restore_mount_panes
-  resize 500 300
+  window resize 500 300
   expect observed_width == 500.0
   expect resize_count == 1
-  resize 640 360
+  window resize 640 360
   expect observed_width == 640.0
   expect resize_count == 2
 

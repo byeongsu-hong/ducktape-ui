@@ -39,7 +39,7 @@ test shell_layout_and_toolbar_contract
   expect dark_theme.right <= toolbar.right
   expect a11y save name "Save"
   expect a11y dark_theme name "Use dark appearance"
-  resize 720 520
+  window resize 720 520
   expect toolbar.width ~= app.width
   expect document_name.right <= toolbar.right
   expect file_actions.right <= toolbar.right
@@ -85,7 +85,7 @@ test toolbar_theme_and_find_interactions
   click query_input
   type "native"
   expect query_input.value == "native"
-  resize 720 520
+  window resize 720 520
   expect find_bar.width ~= app.width
   expect query_input.right <= find_bar.right
   expect close_find.right <= find_bar.right

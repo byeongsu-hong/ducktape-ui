@@ -627,7 +627,7 @@ corruption tests cover stable IDs, missing owners, config/target/step mutations,
 post-check raw-expression poisoning, exact retained source text, imported
 locations, and all semantic action families. An ignored 4,000-step contract
 bounds combined lowering and Rust emission.
-A persistent headless Iced cache drives click, hover,
+A persistent headless Iced cache drives click, pointer move,
 press/release, pointer buttons and coordinates, wheel/scroll/drag/drop, exact
 focus, held keys/modifiers/chords, typing/selection/IME, touch, window/system/file
 events, dispatch, update, bounded time, deterministic redraw advancement,

@@ -39,7 +39,7 @@ test render_contract
   click draft_input
   type "local"
   key enter
-  resize 480 720
+  window resize 480 720
   dispatch increment
   expect count == 1
   expect incremented
@@ -250,7 +250,6 @@ test semantic_actions
   reduced-motion true
   target root = #root
   target field = root/field
-  enter field
   leave
   move field
   move 10 20
@@ -321,7 +320,6 @@ test semantic_actions
         ".locale(\"ko-KR\")",
         ".platform(::ui_lang_runtime::testing::Platform::Linux)",
         ".reduced_motion(true)",
-        "Action::Enter",
         "Action::Leave",
         "Action::MoveTo",
         "Action::MoveToPoint",
