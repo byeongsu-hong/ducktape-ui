@@ -1245,13 +1245,15 @@ fn continue_list(content: &mut Content) -> bool {
             },
             selection: None,
         };
+        let mut replacements = vec![Replacement {
+            start,
+            removed: text,
+            inserted,
+        }];
+        renumber_list(content, before.position.line, None, &mut replacements);
         content.move_to(after);
         record_change(Change {
-            data: ChangeData::Replace {
-                start,
-                removed: text,
-                inserted,
-            },
+            data: replacement_change(replacements),
             before,
             after,
             before_id: 0,
@@ -1287,19 +1289,10 @@ fn continue_list(content: &mut Content) -> bool {
         removed,
         inserted,
     }];
-    renumber_ordered_tail(content, before.position.line + 2, item, &mut replacements);
+    renumber_list(content, before.position.line + 1, None, &mut replacements);
     content.move_to(after);
     record_change(Change {
-        data: if replacements.len() == 1 {
-            let replacement = replacements.pop().expect("one list replacement");
-            ChangeData::Replace {
-                start: replacement.start,
-                removed: replacement.removed,
-                inserted: replacement.inserted,
-            }
-        } else {
-            ChangeData::Batch(replacements)
-        },
+        data: replacement_change(replacements),
         before,
         after,
         before_id: 0,
@@ -1311,77 +1304,107 @@ fn continue_list(content: &mut Content) -> bool {
 }
 
 fn parent_list_prefix(content: &Content, line: usize, indent: usize) -> Option<String> {
-    for index in (0..line).rev() {
-        let line = content.line(index)?;
-        if line.text.trim().is_empty() {
-            break;
-        }
-        let Some(item) = list_item(&line.text) else {
-            continue;
-        };
-        if item.indent < indent {
-            return Some(item.next_prefix(&line.text));
-        }
-    }
-    None
+    list_items_above(content, line)
+        .find(|(_, item)| item.indent < indent)
+        .map(|(text, item)| item.next_prefix(&text))
 }
 
-fn renumber_ordered_tail(
+/// The list items above `line` in the same block, nearest first; a blank line
+/// ends the block and plain lines are skipped.
+fn list_items_above(content: &Content, line: usize) -> impl Iterator<Item = (String, ListItem)> {
+    (0..line)
+        .rev()
+        .map_while(|index| content.line(index).map(|line| line.text.into_owned()))
+        .take_while(|text| !text.trim().is_empty())
+        .filter_map(|text| list_item(&text).map(|item| (text, item)))
+}
+
+fn replacement_change(mut replacements: Vec<Replacement>) -> ChangeData {
+    if replacements.len() == 1 {
+        let replacement = replacements.pop().expect("one list replacement");
+        ChangeData::Replace {
+            start: replacement.start,
+            removed: replacement.removed,
+            inserted: replacement.inserted,
+        }
+    } else {
+        ChangeData::Batch(replacements)
+    }
+}
+
+/// Renumbers every ordered item in the list block around `line`: siblings at
+/// one indent count up from the run's first number, a bullet or a shallower
+/// item ends the run, and `restart` is the item just nested, which starts at 1.
+/// The block is the list items around `line` with any blank lines between
+/// them, so a loose list is one block; the edited line itself is skipped when
+/// it is no longer an item, since a plain line there still renders as part of
+/// the list.
+fn renumber_list(
     content: &mut Content,
-    first_line: usize,
-    inserted_item: ListItem,
+    line: usize,
+    restart: Option<usize>,
     replacements: &mut Vec<Replacement>,
 ) {
-    let ListKind::Ordered {
-        mut number,
-        delimiter,
-    } = inserted_item.kind
-    else {
-        return;
-    };
-    let indent = inserted_item.indent;
-
-    for line_index in first_line..content.line_count() {
-        let Some(line) = content.line(line_index) else {
+    let first = (0..line)
+        .rev()
+        .take_while(|&index| {
+            content
+                .line(index)
+                .is_some_and(|line| line.text.trim().is_empty() || list_item(&line.text).is_some())
+        })
+        .last()
+        .unwrap_or(line);
+    let mut runs: Vec<(usize, u64)> = Vec::new();
+    for index in first..content.line_count() {
+        let Some(text) = content.line(index).map(|line| line.text.into_owned()) else {
             break;
         };
-        if line.text.trim().is_empty() {
+        let Some(item) = list_item(&text) else {
+            if index == line || text.trim().is_empty() {
+                continue;
+            }
+            break;
+        };
+        let ListKind::Ordered { number, .. } = item.kind else {
+            runs.retain(|&(indent, _)| indent < item.indent);
             continue;
-        }
-        let Some(item) = list_item(&line.text) else {
-            break;
         };
-        if item.indent > indent {
-            continue;
-        }
-        if item.indent < indent {
-            break;
-        }
-        let ListKind::Ordered {
-            number: candidate,
-            delimiter: candidate_delimiter,
-        } = item.kind
-        else {
-            break;
+        runs.retain(|&(indent, _)| indent <= item.indent);
+        let number = match runs.last_mut() {
+            Some((indent, last)) if *indent == item.indent => {
+                *last = last.saturating_add(1);
+                *last
+            }
+            _ => {
+                // Only the outermost run keeps the number it started with;
+                // a run nested under another ordered run counts from 1.
+                let number = if restart == Some(index) || !runs.is_empty() {
+                    1
+                } else {
+                    number
+                };
+                runs.push((item.indent, number));
+                number
+            }
         };
-        number = number.saturating_add(1);
-        if candidate != number || candidate_delimiter != delimiter {
-            break;
-        }
         let range = item.number.expect("ordered lists have a number");
+        let inserted = number.to_string();
+        if text[range.clone()] == inserted {
+            continue;
+        }
         let replacement = Replacement {
             start: Position {
-                line: line_index,
+                line: index,
                 column: range.start,
             },
-            removed: line.text[range.clone()].to_owned(),
-            inserted: number.saturating_add(1).to_string(),
+            removed: text[range.clone()].to_owned(),
+            inserted,
         };
         replace_range(
             content,
             replacement.start,
             Position {
-                line: line_index,
+                line: index,
                 column: range.end,
             },
             &replacement.inserted,
@@ -1420,13 +1443,15 @@ fn remove_list_marker(content: &mut Content) -> bool {
         },
         selection: None,
     };
+    let mut replacements = vec![Replacement {
+        start,
+        removed,
+        inserted,
+    }];
+    renumber_list(content, before.position.line, None, &mut replacements);
     content.move_to(after);
     record_change(Change {
-        data: ChangeData::Replace {
-            start,
-            removed,
-            inserted,
-        },
+        data: replacement_change(replacements),
         before,
         after,
         before_id: 0,
@@ -1453,18 +1478,23 @@ fn edit_list_indent(content: &mut Content, edit: &Edit) -> bool {
         return false;
     }
 
+    let line = before.position.line;
     let (removed, inserted) = match edit {
-        Edit::Indent if has_previous_list_item(content, before.position.line, item.indent) => {
-            (String::new(), "  ".to_owned())
-        }
-        Edit::Indent => return false,
-        Edit::Unindent if item.indent > 0 => {
-            let width = if text.starts_with('\t') {
-                1
-            } else {
-                item.indent.min(2)
+        Edit::Indent => {
+            let Some(content_column) = list_items_above(content, line)
+                .take_while(|(_, sibling)| sibling.indent >= item.indent)
+                .find(|(_, sibling)| sibling.indent == item.indent)
+                .map(|(_, sibling)| sibling.content)
+            else {
+                return false;
             };
-            (text[..width].to_owned(), String::new())
+            (String::new(), " ".repeat(content_column - item.indent))
+        }
+        Edit::Unindent if item.indent > 0 => {
+            let ancestor = list_items_above(content, line)
+                .find(|(_, ancestor)| ancestor.indent < item.indent)
+                .map_or(0, |(_, ancestor)| ancestor.indent);
+            (text[..item.indent - ancestor].to_owned(), String::new())
         }
         Edit::Unindent => return true,
         _ => return false,
@@ -1486,13 +1516,20 @@ fn edit_list_indent(content: &mut Content, edit: &Edit) -> bool {
         },
         selection: None,
     };
+    let mut replacements = vec![Replacement {
+        start,
+        removed,
+        inserted,
+    }];
+    renumber_list(
+        content,
+        line,
+        matches!(edit, Edit::Indent).then_some(line),
+        &mut replacements,
+    );
     content.move_to(after);
     record_change(Change {
-        data: ChangeData::Replace {
-            start,
-            removed,
-            inserted,
-        },
+        data: replacement_change(replacements),
         before,
         after,
         before_id: 0,
@@ -1622,27 +1659,6 @@ fn edit_plain_indent(content: &mut Content, edit: &Edit) {
         );
     }
     content.move_to(after);
-}
-
-fn has_previous_list_item(content: &Content, line: usize, indent: usize) -> bool {
-    for index in (0..line).rev() {
-        let Some(line) = content.line(index) else {
-            return false;
-        };
-        if line.text.trim().is_empty() {
-            return false;
-        }
-        let Some(item) = list_item(&line.text) else {
-            continue;
-        };
-        if item.indent < indent {
-            return false;
-        }
-        if item.indent == indent {
-            return true;
-        }
-    }
-    false
 }
 
 fn complete_fence(content: &mut Content) -> bool {
@@ -3125,6 +3141,64 @@ mod tests {
         assert_eq!(document.text(), "- a\n  - b");
         track_action(&mut document, Action::Edit(Edit::Unindent));
         assert_eq!(document.text(), "- a\n- b");
+    }
+
+    #[test]
+    fn ordered_lists_renumber_when_items_nest_lift_and_continue() {
+        use iced::widget::text_editor::{Cursor, Position};
+
+        let caret = |line, column| Cursor {
+            position: Position { line, column },
+            selection: None,
+        };
+
+        let mut document = reset_document("1. one\n2. two\n3. three".into());
+        document.move_to(caret(1, 6));
+        track_action(&mut document, Action::Edit(Edit::Indent));
+        assert_eq!(document.text(), "1. one\n   1. two\n2. three");
+        document = undo_document(document);
+        assert_eq!(document.text(), "1. one\n2. two\n3. three");
+        document = redo_document(document);
+        assert_eq!(document.text(), "1. one\n   1. two\n2. three");
+        track_action(&mut document, Action::Edit(Edit::Unindent));
+        assert_eq!(document.text(), "1. one\n2. two\n3. three");
+
+        document = reset_document("1. a\n5. b\n2. c".into());
+        document.move_to(caret(0, 4));
+        track_action(&mut document, Action::Edit(Edit::Enter));
+        assert_eq!(document.text(), "1. a\n2. \n3. b\n4. c");
+
+        document = reset_document("1. a\n- x\n7. b".into());
+        document.move_to(caret(0, 4));
+        track_action(&mut document, Action::Edit(Edit::Enter));
+        assert_eq!(document.text(), "1. a\n2. \n- x\n7. b");
+
+        document = reset_document("3. a\n9. b".into());
+        document.move_to(caret(0, 4));
+        track_action(&mut document, Action::Edit(Edit::Enter));
+        assert_eq!(document.text(), "3. a\n4. \n5. b");
+
+        document = reset_document("1. x\n   1. a\n   2. \n2. y".into());
+        document.move_to(caret(2, 6));
+        track_action(&mut document, Action::Edit(Edit::Enter));
+        assert_eq!(document.text(), "1. x\n   1. a\n2. \n3. y");
+
+        document = reset_document("1. a\n2. b\n3. c".into());
+        document.move_to(caret(1, 3));
+        track_action(&mut document, Action::Edit(Edit::Backspace));
+        assert_eq!(document.text(), "1. a\nb\n2. c");
+
+        document = reset_document("1. a\n\n2. b\n\n3. c\n\npara\n\n7. d".into());
+        document.move_to(caret(2, 4));
+        track_action(&mut document, Action::Edit(Edit::Enter));
+        assert_eq!(document.text(), "1. a\n\n2. b\n3. \n\n4. c\n\npara\n\n7. d");
+
+        // Lifting the first nested item leaves an orphaned nested run, which
+        // restarts at 1 like any other nested run.
+        document = reset_document("1. a\n   1. x\n   2. y\n2. b".into());
+        document.move_to(caret(1, 6));
+        track_action(&mut document, Action::Edit(Edit::Unindent));
+        assert_eq!(document.text(), "1. a\n2. x\n   1. y\n3. b");
     }
 
     #[test]
