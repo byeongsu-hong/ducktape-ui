@@ -14,6 +14,10 @@ app MarkdownEditor
     min-size 760 520
     position centered
     exit-on-close false
+    platform macos
+      title-hidden true
+      titlebar-transparent true
+      fullsize-content-view true
 
 use "theme.ice"
 use "recipes.ice"
@@ -54,7 +58,9 @@ view
               path=path
               dark=dark
               blocked=interaction_blocked
+              titlebar_hidden=titlebar_hidden
             events
+              drag_window -> drag_window
               search -> query_changed _
               new_note -> new_note
               select -> select_note _
@@ -84,27 +90,28 @@ view
                       next -> find_next
                       close -> toggle_find
                 if !find_open
-                  box #sheet-top
-                    with
-                      w=fill
-                      px=20.0
-                      pt=12.0
-                    row
+                  mouse press=drag_window
+                    box #sheet-top
                       with
                         w=fill
-                        gap=4.0
-                        align=center
-                      space w=fill h=1.0
-                      button "Find" #find -> toggle_find
+                        px=20.0
+                        pt=12.0
+                      row
                         with
-                          label="Find · Command or Ctrl+F"
-                          disabled=interaction_blocked
-                          @ghost_action
-                      button "Delete" #delete -> request_delete
-                        with
-                          label="Delete note"
-                          disabled=(interaction_blocked || empty(path))
-                          @ghost_action
+                          w=fill
+                          gap=4.0
+                          align=center
+                        space w=fill h=1.0
+                        button "Find" #find -> toggle_find
+                          with
+                            label="Find · Command or Ctrl+F"
+                            disabled=interaction_blocked
+                            @ghost_action
+                        button "Delete" #delete -> request_delete
+                          with
+                            label="Delete note"
+                            disabled=(interaction_blocked || empty(path))
+                            @ghost_action
                 mouse release=follow_link
                   EditorSurface #editor-surface -> edit_document _
                     with

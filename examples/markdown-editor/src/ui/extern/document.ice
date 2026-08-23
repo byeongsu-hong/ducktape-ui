@@ -3,6 +3,7 @@ extern crate::document
   open_url(url:str) -> unit ! EditorError
   pure link_at_cursor(line:str?, column:i64) -> str
   pure cursor_status(line:i64, column:i64, lines:i64) -> str
+  pure hides_native_titlebar() -> bool
   pure new_shortcut(press:key-press) -> unit?
   pure save_shortcut(press:key-press) -> unit?
   pure undo_shortcut(press:key-press) -> unit?

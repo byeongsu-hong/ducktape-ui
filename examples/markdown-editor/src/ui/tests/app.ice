@@ -247,3 +247,19 @@ test delete_dialog_contract
   expect text "Grocery list"
   expect a11y cancel name "Cancel"
   expect a11y delete name "Delete"
+
+test seamless_titlebar_reserves_a_drag_strip
+  preset seamless_titlebar
+  viewport 1120 720
+  target strip = #app/sidebar/root/titlebar-strip
+  target search = #app/sidebar/root/top/search
+  expect strip.height ~= 28.0
+  expect strip.y ~= 14.0
+  expect search.y >= strip.bottom
+  capture seamless_titlebar
+
+test decorated_window_has_no_drag_strip
+  preset test
+  viewport 1120 720
+  target strip = #app/sidebar/root/titlebar-strip
+  expect missing strip
