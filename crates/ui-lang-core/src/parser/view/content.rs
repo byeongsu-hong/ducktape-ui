@@ -66,7 +66,7 @@ pub(in crate::parser) fn parse_text_editor(
                 return Err(error("E099", line, "editor has more than one binding"));
             }
         } else if let Some(value) = part.strip_prefix("hint=") {
-            options.placeholder = Some(string_literal(value, line)?);
+            options.placeholder = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("w=") {
             options.width = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("h=") {

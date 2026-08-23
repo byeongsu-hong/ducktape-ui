@@ -13403,7 +13403,7 @@ view
         let input = program.resolved_input(ViewId(0)).unwrap();
 
         assert_eq!(input.label, "Secret");
-        assert_eq!(input.hint, "Paste token");
+        assert!(input.hint.is_some());
         assert!(matches!(
             input.binding,
             ResolvedInputBinding::State(WritableStateRef::App { ref name, .. }) if name == "value"
@@ -13613,7 +13613,7 @@ view
         };
         *label = "POISONED LABEL".into();
         *binding = "missing".into();
-        *hint = "POISONED HINT".into();
+        *hint = Some(Expr::Str("POISONED HINT".into()));
         *disabled = Some(Expr::Bool(true));
         *options = InputOptions::default();
         styles.clear();
@@ -13883,7 +13883,7 @@ view
         };
         *state = "missing".into();
         *selected = Expr::None;
-        *placeholder = "POISONED".into();
+        *placeholder = Expr::Str("POISONED".into());
         *options = ComboBoxOptions::default();
         route.handler = "missing".into();
         let actual = crate::codegen::generate(&program, "lowered-selection.ice").unwrap();
@@ -15841,7 +15841,7 @@ view
             editor.binding,
             WritableStateRef::App { ref name, .. } if name == "body"
         ));
-        assert_eq!(editor.placeholder.as_deref(), Some("Write"));
+        assert!(editor.placeholder.is_some());
         assert!(editor.disabled.is_some());
         assert!(editor.width.is_some());
         assert!(matches!(editor.height, Some(ResolvedContainerLength::Fill)));

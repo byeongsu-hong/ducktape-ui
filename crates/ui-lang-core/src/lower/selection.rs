@@ -101,7 +101,7 @@ pub(crate) struct ResolvedComboBox {
     pub(crate) id: ViewId,
     pub(crate) state: ResolvedComboState,
     pub(crate) selected: CheckedExprUseId,
-    pub(crate) placeholder: String,
+    pub(crate) placeholder: CheckedExprUseId,
     pub(crate) width: Option<ResolvedContainerLength>,
     pub(crate) menu_height: Option<ResolvedContainerLength>,
     pub(crate) padding: Option<CheckedExprUseId>,
@@ -340,7 +340,7 @@ impl Lowerer {
         &mut self,
         state: &str,
         selected: &Expr,
-        placeholder: &str,
+        placeholder: &Expr,
         options: &ComboBoxOptions,
         route: &Route,
         span: &Span,
@@ -348,7 +348,7 @@ impl Lowerer {
     ) -> Result<(), Error> {
         let (id, checked, scope, origin) = self.interaction_contract(
             CheckedInteractionKind::ComboBox,
-            crate::ast::combo_box_semantic_key(state, placeholder, options, route),
+            crate::ast::combo_box_semantic_key(state, options, route),
             span,
             outer_component,
         )?;
@@ -359,7 +359,7 @@ impl Lowerer {
             .ok_or_else(|| self.invariant(span, "combo box has no checked HIR facts"))?;
         self.validate_interaction_expression_graphs(id, scope, checked.expression_count, span)?;
         if checked.option_expressions.len()
-            != crate::ast::combo_box_expression_roots(selected, options).len()
+            != crate::ast::combo_box_expression_roots(selected, placeholder, options).len()
         {
             return Err(self.invariant(span, "combo expression cardinality diverged"));
         }
@@ -375,6 +375,7 @@ impl Lowerer {
             &Type::Option(Box::new(binding.option_type.clone())),
             "selected value",
         )?;
+        let placeholder = values.take(&Type::Str, "placeholder")?;
         let width = Self::resolve_selection_length(&mut values, &options.width, "width")?;
         let menu_height =
             Self::resolve_selection_length(&mut values, &options.menu_height, "menu height")?;
@@ -471,7 +472,7 @@ impl Lowerer {
             id,
             state: binding,
             selected,
-            placeholder: placeholder.to_owned(),
+            placeholder,
             width,
             menu_height,
             padding,

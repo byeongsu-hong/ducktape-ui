@@ -421,6 +421,7 @@ pub(in crate::check) fn infer_controls_group(
             state,
             id,
             selected,
+            placeholder,
             options,
             route,
             span,
@@ -454,6 +455,11 @@ pub(in crate::check) fn infer_controls_group(
                     "combo values must be bool, i64, f64, str, or an extern type",
                 ));
             }
+            require_type(
+                &expr_type(placeholder, env, document, span)?,
+                &Type::Str,
+                span,
+            )?;
             for length in [&options.width, &options.menu_height].into_iter().flatten() {
                 check_length_value(length, env, document, span, "combo size")?;
             }

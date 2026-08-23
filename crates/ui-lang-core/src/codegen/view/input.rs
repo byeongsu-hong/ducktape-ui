@@ -105,10 +105,12 @@ pub(in crate::codegen) fn render_input(
             .unwrap_or_else(|| "false".into())
     };
 
-    let mut widget = format!(
-        "::iced::widget::text_input({}, &{value_code})",
-        rust_string(&input.hint),
-    );
+    let hint = input
+        .hint
+        .map(|hint| resolved_str_argument_code(program, hint, env))
+        .transpose()?
+        .unwrap_or_else(|| "\"\"".to_owned());
+    let mut widget = format!("::iced::widget::text_input({hint}, &{value_code})");
     widget.push_str(".id(::iced::widget::Id::from(__a11y_key.clone()))");
     if let Some(padding) = input.utility_style.padding_code() {
         write!(widget, ".padding({padding})").unwrap();

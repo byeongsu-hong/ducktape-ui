@@ -506,6 +506,51 @@ view
 }
 
 #[test]
+fn rejects_non_str_hint_expressions() {
+    let source = r#"app Form
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  value = ""
+  notes:editor = ""
+  modes:combo[str] = ["One"]
+  mode:str? = none
+on mode_changed(next)
+  mode = some(next)
+view
+  col
+    input "Field" <-> value hint=3
+    editor <-> notes hint="Write"
+    combo modes mode "Search" -> mode_changed _
+"#;
+    let error = analyze(source).unwrap_err();
+    assert_eq!(error.code, "E101");
+    assert!(error.message.contains("expected `str`, got `i64`"));
+
+    let editor = source
+        .replace("hint=3", "hint=\"Type\"")
+        .replace("hint=\"Write\"", "hint=3");
+    let error = analyze(&editor).unwrap_err();
+    assert_eq!(error.code, "E101");
+    assert!(error.message.contains("expected `str`, got `i64`"));
+
+    let combo = source
+        .replace("hint=3", "hint=\"Type\"")
+        .replace("mode \"Search\"", "mode 3");
+    let error = analyze(&combo).unwrap_err();
+    assert_eq!(error.code, "E101");
+    assert!(error.message.contains("expected `str`, got `i64`"));
+}
+
+#[test]
 fn rejects_inline_input_icon_properties() {
     let source = r#"app Form
 theme contract AppTheme

@@ -15,7 +15,7 @@ pub(in crate::parser) fn parse_input(
     let label = string_literal(parts[1], line)?;
     let mut id = None;
     let mut binding = None;
-    let mut hint = String::new();
+    let mut hint = None;
     let mut disabled = None;
     let mut options = InputOptions::default();
     let mut index = 2;
@@ -32,7 +32,7 @@ pub(in crate::parser) fn parse_input(
                 return Err(error("E065", line, "input has more than one binding"));
             }
         } else if let Some(value) = part.strip_prefix("hint=") {
-            hint = string_literal(value, line)?;
+            hint = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if parse_accessibility_option(part, &mut options.accessibility, line)? {
         } else if let Some(value) = part.strip_prefix("disabled=") {
             disabled = Some(parse_expr(strip_wrapping_parens(value), line)?);

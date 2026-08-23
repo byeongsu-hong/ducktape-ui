@@ -1,0 +1,3 @@
+::iced::widget::text_input(::std::convert::AsRef::as_ref(&(crate::backend::placeholder_text(::std::convert::AsRef::as_ref(&(self.lang))))), &self.query)
+.placeholder(crate::backend::t(::std::convert::AsRef::as_ref(&(self.lang)), ::std::convert::AsRef::as_ref(&("Write"))))
+::iced::widget::combo_box(&self.modes, ::std::convert::AsRef::as_ref(&(crate::backend::placeholder_text(::std::convert::AsRef::as_ref(&(self.lang))))), __combo_selection.as_ref(),

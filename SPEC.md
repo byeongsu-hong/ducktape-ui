@@ -969,7 +969,7 @@ table_column_property = "w=" length
                       | "align-y=" ("top" | "center" | "bottom")
 editor_view    = "editor" id? "<->" name editor_property*
                  ("->" route)? (INDENT editor_status*)?
-editor_property = "hint=" string | "w=" expr | "h=" length
+editor_property = "hint=" expr | "w=" expr | "h=" length
                 | ("min-h=" | "max-h=" | "size="
                   | "line-h=" | "line-h-px=" | "p=") expr
                 | "wrap=" text_wrapping
@@ -1063,7 +1063,7 @@ accessibility_property = ("label=" | "description=") expr
 input          = "input" string id? accessibility_property* "<->" name
                  input_property* styles?
                  (INDENT input_child*)?
-input_property = "hint=" string | ("disabled=" | "secure=") expr
+input_property = "hint=" expr | ("disabled=" | "secure=") expr
                | ("change=" | "submit=" | "paste=") route | "w=" length
                | ("p=" | "text-size=" | "line-h=") expr
                | "align=" ("left" | "center" | "right")
@@ -1197,7 +1197,7 @@ pick_icon_property
                = "code=" string | "font=" font_ref
                | ("size=" | "line-h=") expr
                | "shape=" ("auto" | "basic" | "advanced")
-combo_box      = "combo" name expr string id? combo_property* "->" route
+combo_box      = "combo" name expr expr id? combo_property* "->" route
                  (INDENT combo_child*)?
 combo_property = "w=" length | "menu-h=" length
                | "p=" expr | ("text-size=" | "line-h=") expr
@@ -1846,7 +1846,8 @@ accessibility value is still the complete text. The two options a paragraph
 cannot express are rejected: `tracking=` with a rule and `shape=` with a rule
 are both `E174`.
 
-`input` binds either `str` state or a declared `secret`, and additionally supports checked
+`input` binds either `str` state or a declared `secret`, and additionally supports a checked
+`str` placeholder (`hint="Find"`, `hint=t(locale, "Find")`, or a state field), checked
 `label=`/`description=` accessibility text, bool secure mode, submit routes,
 str-payload change/paste routes, typed width/padding/text size, relative line height,
 horizontal alignment, complete font descriptors, and a complete text-input
@@ -2132,13 +2133,13 @@ Handles support iced's arrow with optional size, one static icon, distinct
 closed/open dynamic icons, or no handle. Icon code points contain exactly one
 Unicode scalar; icon size and relative line height are non-negative `f64`.
 
-`combo` requires a `combo[T]` search state and matching `T?` selection. Its
-main and `hover=` routes carry `T`; `input=` carries str; `open=` and `close=`
-carry no payload. A bare input/hover handler name receives the payload
-automatically. Width/menu height, padding, text size, relative line height,
-shaping, and complete fonts map to every native builder setter. A structured
-`icon` line covers the complete text-input icon: one Unicode scalar, font,
-size, spacing, and side.
+`combo` requires a `combo[T]` search state, a matching `T?` selection, and a
+`str` search placeholder expression. Its main and `hover=` routes carry `T`;
+`input=` carries str; `open=` and `close=` carry no payload. A bare input/hover
+handler name receives the payload automatically. Width/menu height, padding,
+text size, relative line height, shaping, and complete fonts map to every
+native builder setter. A structured `icon` line covers the complete text-input
+icon: one Unicode scalar, font, size, spacing, and side.
 
 The five `active`, `hovered`, `focused`, `focused-hovered`, and `disabled`
 lines expose every concrete input Style field. Every status inherits `active`,
@@ -2346,7 +2347,8 @@ inside repeated cells do not collide. Rust row values must be `Clone`, matching
 iced's table contract.
 
 Text editor content is another owned UI state type. A literal initializes it,
-and `editor(source)` replaces it from a runtime str:
+and `editor(source)` replaces it from a runtime str. Like `input`, its `hint=`
+placeholder is a checked `str` expression:
 
 ```ice
 state
