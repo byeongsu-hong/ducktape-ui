@@ -257,18 +257,24 @@ pub(in crate::codegen) fn generate_extern_probes(
                 )
                 .unwrap();
             }
-            ExternKind::Pure => writeln!(
-                out,
-                "#[allow(dead_code)] fn __ui_lang_check_pure_{}({params}) {{ let _: {output} = {}({args}); }}",
-                item.name, item.rust_path
-            )
-            .unwrap(),
-            ExternKind::Sync => writeln!(
-                out,
-                "#[allow(dead_code)] fn __ui_lang_check_sync_{}({params}) {{ let _: {output} = {}({args}); }}",
-                item.name, item.rust_path
-            )
-            .unwrap(),
+            ExternKind::Pure | ExternKind::Sync => {
+                let kind = if item.kind == ExternKind::Pure {
+                    "pure"
+                } else {
+                    "sync"
+                };
+                let lifetime = if item.borrowed.contains(&true) {
+                    "<'a>"
+                } else {
+                    ""
+                };
+                writeln!(
+                    out,
+                    "#[allow(dead_code)] fn __ui_lang_check_{kind}_{}{lifetime}({params}) {{ let _: {output} = {}({args}); }}",
+                    item.name, item.rust_path
+                )
+                .unwrap();
+            }
             ExternKind::Subscription => writeln!(
                 out,
                 "#[allow(dead_code)] fn __ui_lang_check_subscription_{}({params}) {{ let _: ::iced::Subscription<{output}> = {}({args}); }}",

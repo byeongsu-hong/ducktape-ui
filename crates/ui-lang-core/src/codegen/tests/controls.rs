@@ -266,6 +266,67 @@ view
 }
 
 #[test]
+fn borrows_a_list_into_a_borrowed_parameter_instead_of_moving_it() {
+    let source = r#"app Feed
+extern crate::backend
+  Row(id:i64)
+  pure keep_rows(rows:&[Row], next:Row) -> [Row]
+  pure count_rows(rows:&[Row]) -> i64
+  sync stamp(name:&str) -> str
+  pure page_text(doc:&editor) -> str
+  pure make_row(label:&str) -> Row
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  rows:[Row] = []
+  name = ""
+  doc:editor = ""
+  total = 0
+on received
+  rows = keep_rows(rows, make_row(name))
+  total = count_rows(rows)
+  name = stamp(name)
+on edited
+  name = page_text(doc)
+view
+  text "ready"
+"#;
+    let generated = compile(source, "feed.ice").unwrap();
+
+    assert!(generated.contains(
+        "self.rows = crate::backend::keep_rows(::std::convert::AsRef::as_ref(&(self.rows)), crate::backend::make_row(::std::convert::AsRef::as_ref(&(self.name))));"
+    ));
+    assert!(generated.contains(
+        "self.total = crate::backend::count_rows(::std::convert::AsRef::as_ref(&(self.rows)));"
+    ));
+    assert!(generated.contains(
+        "self.name = crate::backend::stamp(::std::convert::AsRef::as_ref(&(self.name)));"
+    ));
+    assert!(generated.contains(
+        "self.name = crate::backend::page_text(::std::borrow::Borrow::borrow(&(self.doc)));"
+    ));
+    assert!(!generated.contains("::std::mem::take(&mut self.rows)"));
+    assert!(!generated.contains("::std::mem::take(&mut self.doc)"));
+    assert!(generated.contains(
+        "fn __ui_lang_check_pure_keep_rows<'a>(arg0: &'a [crate::backend::Row], arg1: crate::backend::Row) { let _: ::std::vec::Vec<crate::backend::Row> = crate::backend::keep_rows(arg0, arg1); }"
+    ));
+    assert!(generated.contains(
+        "fn __ui_lang_check_sync_stamp<'a>(arg0: &'a str) { let _: ::std::string::String = crate::backend::stamp(arg0); }"
+    ));
+    assert!(generated.contains(
+        "fn __ui_lang_check_pure_page_text<'a>(arg0: &'a ::iced::widget::text_editor::Content)"
+    ));
+}
+
+#[test]
 fn keyed_lazy_exposes_bare_key_snapshots_to_its_body() {
     let source = r#"app Feed
 theme contract AppTheme

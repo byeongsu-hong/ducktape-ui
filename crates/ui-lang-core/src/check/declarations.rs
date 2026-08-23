@@ -66,7 +66,13 @@ pub(in crate::check) fn check_declared_types(document: &Document) -> Result<(), 
     }
     check_recursive_enums(document)?;
     for item in &document.functions {
-        for (_, ty) in &item.params {
+        for ((_, ty), borrowed) in item.params.iter().zip(&item.borrowed) {
+            // A reading is handed over once and wiped on return; a shared
+            // reference cannot honor that, and the generated call would not
+            // compile anyway.
+            if *borrowed {
+                reject_secret(ty, &item.span, "borrowed with `&`")?;
+            }
             reject_debug_span(ty, &item.span)?;
             check(ty, &item.span)?;
         }

@@ -410,6 +410,15 @@ pub(in crate::check) fn infer_subscriptions(
             for (actual, (_, expected)) in payloads.iter().zip(&function.params) {
                 require_type(actual, expected, &subscription.span)?;
             }
+            if function.borrowed.contains(&true) {
+                return Err(Error::new(
+                    "E142",
+                    &subscription.span,
+                    format!(
+                        "subscription filter `{filter}` receives owned payloads and cannot declare `&` parameters"
+                    ),
+                ));
+            }
             let Type::Option(output) = &function.output else {
                 return Err(Error::new(
                     "E142",

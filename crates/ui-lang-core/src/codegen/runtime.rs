@@ -355,6 +355,19 @@ fn __ice_canvas_interaction(value: &str) -> ::iced::mouse::Interaction {
     }
 }
 
+/// The argument expression handed to a `&`-declared extern parameter. `AsRef`
+/// and `Borrow` accept the binding whether it is the owned value or already a
+/// reference (a `for` row, a lazy alias), so the emitter needs no per-scope
+/// knowledge of how the value is held.
+pub(in crate::codegen) fn borrowed_argument_code(ty: &Type, code: &str) -> String {
+    match ty {
+        Type::Str | Type::Bytes | Type::List(_) => {
+            format!("::std::convert::AsRef::as_ref(&({code}))")
+        }
+        _ => format!("::std::borrow::Borrow::borrow(&({code}))"),
+    }
+}
+
 pub(in crate::codegen) fn borrowed_type(ty: &Type, program: &LoweredProgram) -> String {
     match ty {
         Type::Str => "&'a str".into(),

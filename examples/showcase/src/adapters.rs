@@ -763,7 +763,7 @@ pub fn dropdown_menu_state() -> DropdownMenuState {
     }
 }
 
-pub fn dropdown_menu_is_open(state: DropdownMenuState) -> bool {
+pub fn dropdown_menu_is_open(state: &DropdownMenuState) -> bool {
     state.open
 }
 
@@ -897,7 +897,7 @@ pub fn alert_dialog_apply(
     iced::Task::done(state).chain(focus).chain(transition)
 }
 
-pub fn alert_dialog_is_open(state: AlertDialogState) -> bool {
+pub fn alert_dialog_is_open(state: &AlertDialogState) -> bool {
     state.open
 }
 

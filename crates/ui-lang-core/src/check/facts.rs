@@ -2604,27 +2604,50 @@ impl CheckedFacts {
             return Ok(false);
         }
 
+        // Each entry carries whether the expression is fed straight into a
+        // `&` extern parameter: a read there is already a borrow, so taking
+        // the field would empty it for nothing.
         let mut occurrences = 0usize;
-        let mut stack = vec![expression_use.root];
-        while let Some(id) = stack.pop() {
+        let mut stack = vec![(expression_use.root, false)];
+        while let Some((id, borrowed)) = stack.pop() {
             let expression = self.try_expression(id).ok_or((
                 expression_use.origin,
                 "self-move expression descendant ID is outside its arena",
             ))?;
             match &expression.kind {
                 CheckedExprKind::Path { root, .. } => {
-                    occurrences += usize::from(*root == CheckedPathRoot::Value(target));
+                    if *root == CheckedPathRoot::Value(target) {
+                        if borrowed {
+                            return Ok(false);
+                        }
+                        occurrences += 1;
+                    }
                 }
-                CheckedExprKind::List(values) => stack.extend(values.iter().copied()),
-                CheckedExprKind::Call { arguments, .. } => {
-                    stack.extend(arguments.iter().filter_map(|argument| match argument {
-                        CheckedCallArgument::Value(value) => Some(*value),
-                        CheckedCallArgument::Binding(_) => None,
-                    }));
+                CheckedExprKind::List(values) => {
+                    stack.extend(values.iter().map(|value| (*value, false)));
                 }
-                CheckedExprKind::Unary { value, .. } => stack.push(*value),
+                CheckedExprKind::Call { target, arguments } => {
+                    let borrowed = match target {
+                        CheckedCallTarget::Extern(reference) => declarations
+                            .try_extern_decl(reference.id)
+                            .map(|function| function.borrowed.as_slice())
+                            .unwrap_or_default(),
+                        _ => &[],
+                    };
+                    stack.extend(
+                        arguments.iter().enumerate().filter_map(
+                            |(index, argument)| match argument {
+                                CheckedCallArgument::Value(value) => {
+                                    Some((*value, borrowed.get(index).copied().unwrap_or(false)))
+                                }
+                                CheckedCallArgument::Binding(_) => None,
+                            },
+                        ),
+                    );
+                }
+                CheckedExprKind::Unary { value, .. } => stack.push((*value, false)),
                 CheckedExprKind::Binary { left, right, .. } => {
-                    stack.extend([*left, *right]);
+                    stack.extend([(*left, false), (*right, false)]);
                 }
                 CheckedExprKind::Bool(_)
                 | CheckedExprKind::I64(_)
