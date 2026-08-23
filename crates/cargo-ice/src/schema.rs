@@ -1745,18 +1745,16 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "responsive" => details(
             &["view"],
-            "responsive [#<id>] (at=<number> | size=(<width-name>, <height-name>)) [w=<length>] [h=<length>]",
+            "responsive [#<id>] size=(<width-name>, <height-name>) [w=<length>] [h=<length>]",
             json!({
                 "min": 1,
-                "max": 2,
+                "max": 1,
                 "role": "view-root",
-                "condition": "at= requires narrow then wide; size= requires one child",
             }),
-            json!({ "requiredWhen": "size= is used", "names": ["width", "height"], "source": "responsive bounds" }),
+            json!({ "required": true, "names": ["width", "height"], "source": "responsive bounds" }),
             no_route(),
             properties(&[
-                ("at", "number", false),
-                ("size", "tuple(identifier,identifier)", false),
+                ("size", "tuple(identifier,identifier)", true),
                 ("w", "length", false),
                 ("h", "length", false),
             ]),

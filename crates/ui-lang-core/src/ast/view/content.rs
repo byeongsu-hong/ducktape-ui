@@ -81,28 +81,26 @@ pub(crate) fn responsive_semantic_key(
     width: &Option<LengthValue>,
     height: &Option<LengthValue>,
 ) -> String {
-    let kind = match content {
-        ResponsiveContent::Breakpoint { .. } => "breakpoint".into(),
-        ResponsiveContent::Size { width, height, .. } => format!("size:{width}:{height}"),
-    };
+    let ResponsiveContent::Size {
+        width: width_name,
+        height: height_name,
+        ..
+    } = content;
     format!(
-        "responsive|kind={kind}|width={}|height={}",
+        "responsive|kind=size:{width_name}:{height_name}|width={}|height={}",
         length_semantic_key(width),
         length_semantic_key(height)
     )
 }
 
 pub(crate) fn responsive_expression_count(
-    content: &ResponsiveContent,
     width: &Option<LengthValue>,
     height: &Option<LengthValue>,
 ) -> u32 {
-    let breakpoint = u32::from(matches!(content, ResponsiveContent::Breakpoint { .. }));
-    let dimensions = [width, height]
+    [width, height]
         .into_iter()
         .filter(|length| matches!(length, Some(LengthValue::Fixed(_))))
-        .count() as u32;
-    breakpoint + dimensions
+        .count() as u32
 }
 
 pub(crate) fn length_semantic_key(length: &Option<LengthValue>) -> String {
@@ -472,11 +470,6 @@ pub enum ThemePreset {
 
 #[derive(Clone, Debug)]
 pub enum ResponsiveContent {
-    Breakpoint {
-        breakpoint: Expr,
-        narrow: Box<ViewNode>,
-        wide: Box<ViewNode>,
-    },
     Size {
         width: String,
         height: String,

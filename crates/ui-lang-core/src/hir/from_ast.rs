@@ -1060,7 +1060,6 @@ pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
             slots.iter().map(|slot| slot.content.as_ref()).collect()
         }
         ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => vec![narrow, wide],
             ResponsiveContent::Size { content, .. } => vec![content],
         },
         // Spelled out rather than caught by `_`, because every walk that

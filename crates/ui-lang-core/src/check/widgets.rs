@@ -660,30 +660,6 @@ fn collect_widget_ids(
                 }
                 let child_scope = scoped(scope, id, env, document, span)?;
                 match content {
-                    ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                        collect(
-                            narrow,
-                            env,
-                            document,
-                            &child_scope,
-                            slot,
-                            components,
-                            output,
-                            component_scopes,
-                            inspect_all,
-                        )?;
-                        collect(
-                            wide,
-                            env,
-                            document,
-                            &child_scope,
-                            slot,
-                            components,
-                            output,
-                            component_scopes,
-                            inspect_all,
-                        )?;
-                    }
                     ResponsiveContent::Size {
                         width,
                         height,
@@ -816,10 +792,6 @@ pub(in crate::check) fn unscoped_component_widget_warnings(
                 visit(tip, target_counts, warnings);
             }
             ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    visit(narrow, target_counts, warnings);
-                    visit(wide, target_counts, warnings);
-                }
                 ResponsiveContent::Size { content, .. } => {
                     visit(content, target_counts, warnings);
                 }
@@ -1216,10 +1188,6 @@ pub(in crate::check) fn static_pane_grids(
                 }
             }
             ViewNode::Responsive { content, .. } => match content {
-                ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                    collect(narrow, states, document, output)?;
-                    collect(wide, states, document, output)?;
-                }
                 ResponsiveContent::Size { content, .. } => {
                     collect(content, states, document, output)?
                 }

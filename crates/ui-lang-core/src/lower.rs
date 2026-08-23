@@ -9154,10 +9154,6 @@ impl Lowerer {
             } => {
                 self.lower_responsive(content, width, height, span, outer_component)?;
                 match content {
-                    ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                        self.lower_view(narrow, outer_component)?;
-                        self.lower_view(wide, outer_component)?;
-                    }
                     ResponsiveContent::Size { content, .. } => {
                         self.lower_view(content, outer_component)?;
                     }
@@ -12049,14 +12045,14 @@ view
 
     #[test]
     fn malformed_checked_responsive_expression_and_local_ids_do_not_panic() {
-        let breakpoint_source = format!(
-            "app InvalidResponsiveFacts\n{THEME}view\n  responsive at=600.0 w=fill h=40.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+        let dimension_source = format!(
+            "app InvalidResponsiveFacts\n{THEME}view\n  responsive size=(available_width, available_height) w=fill h=40.0\n    text available_width\n"
         );
-        let mut checked = analyze(&breakpoint_source).unwrap();
+        let mut checked = analyze(&dimension_source).unwrap();
         checked.facts.corrupt_expression_use_root(
             crate::check::CheckedExprOwner::View {
                 view: ViewId(0),
-                role: CheckedViewExprRole::ResponsiveBreakpoint,
+                role: CheckedViewExprRole::ResponsiveHeightDimension,
             },
             u32::MAX,
         );
@@ -12122,7 +12118,7 @@ view
     #[test]
     fn malformed_checked_responsive_fixed_dimension_cannot_become_static() {
         let source = format!(
-            "app InvalidResponsiveTopology\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+            "app InvalidResponsiveTopology\n{THEME}view\n  responsive size=(available_width, available_height) w=40.0 h=50.0\n    text available_width\n"
         );
         for replacement in [CheckedLength::Fill, CheckedLength::None] {
             let mut checked = analyze(&source).unwrap();
@@ -12139,7 +12135,7 @@ view
     #[test]
     fn malformed_checked_responsive_fill_portion_value_drift_is_rejected() {
         let source = format!(
-            "app InvalidResponsivePortion\n{THEME}view\n  responsive at=600.0 w=fill(2) h=fill\n    text \"Narrow\"\n    text \"Wide\"\n"
+            "app InvalidResponsivePortion\n{THEME}view\n  responsive size=(available_width, available_height) w=fill(2) h=fill\n    text available_width\n"
         );
         let mut checked = analyze(&source).unwrap();
         checked
@@ -12154,12 +12150,12 @@ view
     #[test]
     fn malformed_checked_responsive_expression_cannot_be_left_unconsumed() {
         let source = format!(
-            "app InvalidResponsiveCardinality\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+            "app InvalidResponsiveCardinality\n{THEME}view\n  responsive size=(available_width, available_height) w=40.0 h=50.0\n    text available_width\n"
         );
         let mut checked = analyze(&source).unwrap();
         checked
             .facts
-            .corrupt_responsive_expression_count(ViewId(0), 2);
+            .corrupt_responsive_expression_count(ViewId(0), 3);
 
         let error = lower(checked).unwrap_err();
         assert_eq!(error.code, "E196");
@@ -12169,7 +12165,7 @@ view
     #[test]
     fn malformed_checked_responsive_cross_role_expression_is_rejected() {
         let source = format!(
-            "app InvalidResponsiveOwner\n{THEME}view\n  responsive at=600.0 w=40.0 h=50.0\n    text \"Narrow\"\n    text \"Wide\"\n"
+            "app InvalidResponsiveOwner\n{THEME}view\n  responsive size=(available_width, available_height) w=40.0 h=50.0\n    text available_width\n"
         );
         let mut checked = analyze(&source).unwrap();
         checked.facts.corrupt_responsive_dimension_expression_role(
@@ -16403,12 +16399,12 @@ view
     }
 
     #[test]
-    fn normalizes_responsive_modes_dimensions_and_size_locals() {
-        let breakpoint_source = format!(
-            "app BreakpointHir\n{THEME}state\n  breakpoint = 600.0\n  height = 40.0\n  native_width:length = length.fill()\nview\n  responsive at=breakpoint w=native_width h=height\n    text \"Narrow\"\n    text \"Wide\"\n"
+    fn normalizes_responsive_dimensions_and_size_locals() {
+        let source = format!(
+            "app ResponsiveHir\n{THEME}state\n  height = 40.0\n  native_width:length = length.fill()\nview\n  responsive size=(available_width, available_height) w=native_width h=height\n    text available_width\n"
         );
-        let breakpoint_program = lower(analyze(&breakpoint_source).unwrap()).unwrap();
-        let responsive = breakpoint_program.resolved_responsive(ViewId(0)).unwrap();
+        let program = lower(analyze(&source).unwrap()).unwrap();
+        let responsive = program.resolved_responsive(ViewId(0)).unwrap();
         assert_eq!(responsive.id, ViewId(0));
         assert!(matches!(
             responsive.width,
@@ -16418,33 +16414,20 @@ view
             responsive.height,
             Some(ResolvedContainerLength::FixedF64(_))
         ));
-        let ResolvedResponsiveKind::Breakpoint { breakpoint } = responsive.kind else {
-            panic!("root must be breakpoint responsive");
-        };
+        assert_eq!(responsive.measured_width.name, "available_width");
+        assert_eq!(responsive.measured_height.name, "available_height");
         assert_eq!(
-            breakpoint_program
+            program
                 .checked_facts()
-                .expression_use(breakpoint)
-                .source,
-            Type::F64
-        );
-
-        let size_source = format!(
-            "app SizeHir\n{THEME}view\n  responsive size=(available_width, available_height) w=fill h=fill\n    text available_width\n"
-        );
-        let size_program = lower(analyze(&size_source).unwrap()).unwrap();
-        let responsive = size_program.resolved_responsive(ViewId(0)).unwrap();
-        let ResolvedResponsiveKind::Size { width, height } = &responsive.kind else {
-            panic!("root must be size responsive");
-        };
-        assert_eq!(width.name, "available_width");
-        assert_eq!(height.name, "available_height");
-        assert_eq!(
-            size_program.checked_facts().local(width.local).ty,
+                .local(responsive.measured_width.local)
+                .ty,
             Type::F64
         );
         assert_eq!(
-            size_program.checked_facts().local(height.local).ty,
+            program
+                .checked_facts()
+                .local(responsive.measured_height.local)
+                .ty,
             Type::F64
         );
     }
@@ -16452,7 +16435,7 @@ view
     #[test]
     fn responsive_lowering_uses_checked_expressions_and_rejects_static_drift() {
         let source = format!(
-            "app CheckedResponsive\n{THEME}state\n  breakpoint = 600.0\n  height = 40.0\nview\n  responsive at=breakpoint w=fill h=height\n    text \"Narrow\"\n    text \"Wide\"\n"
+            "app CheckedResponsive\n{THEME}state\n  height = 40.0\nview\n  responsive size=(available_width, available_height) w=fill h=height\n    text available_width\n"
         );
         let expected = crate::codegen::generate(
             &lower(analyze(&source).unwrap()).unwrap(),
@@ -16461,16 +16444,9 @@ view
         .unwrap();
 
         let mut changed_expressions = analyze(&source).unwrap();
-        let ViewNode::Responsive {
-            content, height, ..
-        } = &mut changed_expressions.document.view
-        else {
+        let ViewNode::Responsive { height, .. } = &mut changed_expressions.document.view else {
             panic!("fixture root must be responsive");
         };
-        let ResponsiveContent::Breakpoint { breakpoint, .. } = content else {
-            panic!("fixture must use a breakpoint");
-        };
-        *breakpoint = Expr::F64(99.0);
         let Some(LengthValue::Fixed(height)) = height else {
             panic!("fixture height must be fixed");
         };
@@ -16495,7 +16471,7 @@ view
     #[test]
     fn responsive_codegen_ignores_raw_options_after_lowering() {
         let source = format!(
-            "app LoweredResponsive\n{THEME}state\n  breakpoint = 600.0\n  height = 40.0\nview\n  responsive at=breakpoint w=fill h=height\n    text \"Narrow\"\n    text \"Wide\"\n"
+            "app LoweredResponsive\n{THEME}state\n  height = 40.0\nview\n  responsive size=(available_width, available_height) w=fill h=height\n    text available_width\n"
         );
         let mut program = lower(analyze(&source).unwrap()).unwrap();
         let expected = crate::codegen::generate(&program, "lowered-responsive.ice").unwrap();
@@ -16509,10 +16485,10 @@ view
         else {
             panic!("fixture root must be responsive");
         };
-        let ResponsiveContent::Breakpoint { breakpoint, .. } = content else {
-            panic!("fixture must use a breakpoint");
-        };
-        *breakpoint = Expr::F64(99.0);
+        let ResponsiveContent::Size {
+            width: width_name, ..
+        } = content;
+        *width_name = "renamed_width".into();
         *width = Some(LengthValue::Shrink);
         *height = None;
 
@@ -17916,7 +17892,7 @@ view
         .unwrap();
         fs::write(
             &imported,
-            "component ResponsiveCard()\n  responsive at=600.0 w=fill h=40.0\n    text \"Narrow\"\n    text \"Wide\"\n",
+            "component ResponsiveCard()\n  responsive size=(available_width, available_height) w=fill h=40.0\n    text available_width\n",
         )
         .unwrap();
 
@@ -18468,10 +18444,10 @@ view
     fn performance_contract_four_thousand_responsives_lower_and_emit_under_two_seconds() {
         const RESPONSIVES: usize = 4_000;
         let mut source = format!("app ResponsiveScale\n{THEME}view\n  col\n");
-        for index in 0..RESPONSIVES {
+        for _ in 0..RESPONSIVES {
             writeln!(
                 source,
-                "    responsive at=600.0 w=fill h=40.0\n      text \"Narrow {index}\"\n      text \"Wide {index}\""
+                "    responsive size=(available_width, available_height) w=fill h=40.0\n      text available_width"
             )
             .unwrap();
         }

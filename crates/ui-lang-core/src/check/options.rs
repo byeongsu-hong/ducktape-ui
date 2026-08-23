@@ -82,10 +82,6 @@ pub(in crate::check) fn check_lazy_subtree(
             Ok(())
         }
         ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Breakpoint { narrow, wide, .. } => {
-                check_lazy_subtree(narrow, document, components, supplied_slot)?;
-                check_lazy_subtree(wide, document, components, supplied_slot)
-            }
             ResponsiveContent::Size { content, .. } => {
                 check_lazy_subtree(content, document, components, supplied_slot)
             }

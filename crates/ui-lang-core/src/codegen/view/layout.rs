@@ -755,9 +755,6 @@ fn contains_virtual_rows(
             content,
             tip: layer,
         } => any([*content, *layer], document, slots),
-        ResolvedViewKind::ResponsiveBreakpoint { narrow, wide } => {
-            any([*narrow, *wide], document, slots)
-        }
         ResolvedViewKind::If { children } | ResolvedViewKind::For { children } => {
             any(children.iter().copied(), document, slots)
         }

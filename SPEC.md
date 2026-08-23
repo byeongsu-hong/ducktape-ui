@@ -1231,9 +1231,7 @@ sensor         = "sensor" id? sensor_property* sensor_event sensor_property*
 sensor_property = sensor_event
                 | "key=" expr | "anticipate=" expr | "delay=" expr
 sensor_event   = ("show=" | "resize=" | "hide=") route
-responsive     = "responsive" id? "at=" expr
-                 (("w=" | "h=") length)* INDENT node node
-               | "responsive" id? "size=(" name "," name ")"
+responsive     = "responsive" id? "size=(" name "," name ")"
                  (("w=" | "h=") length)* INDENT node
 rule           = "rule" ("horizontal" | "vertical") id? rule_property* styles?
 rule_property  = "thickness=" expr | "style=" ("default" | "weak")
@@ -2173,10 +2171,12 @@ bounds; x/y is the direct decomposition of iced's `position(Point)` helper.
 height:f64)`, while hide has no payload; anticipation is non-negative f64 and
 delay is non-negative i64 milliseconds. `key=` owns a comparable Ice value and
 provides the same continuity behavior as iced's borrowed `key_ref` form.
-`responsive at=N` chooses its first child below width N and its second child
-otherwise. The general `responsive size=(width, height)` form binds the current
-iced `Size` as two scoped `f64` names and accepts one arbitrary child tree, so
-conditions and component inputs can depend on either dimension.
+`responsive size=(width, height)` binds the current iced `Size` as two scoped
+`f64` names and accepts one arbitrary child tree, so conditions and component
+inputs can depend on either dimension. A two-way size choice is one container
+holding two complementary `if`s on the bound width — Ice has no `else` — as in
+`examples/showcase/src/ui/app.ice`, whose `col` wraps `if feature_width < 900.0`
+and `if feature_width >= 900.0`.
 
 `theme` applies an iced theme to exactly one child subtree. With no preset or
 `default`, iced chooses the default theme for the outer light/dark mode; `app`
@@ -3459,7 +3459,7 @@ The implemented native nodes are:
 | `float` | one child with positive scale, bounds/viewport-aware x/y translation, shadow and per-corner shadow radius |
 | `pin` | one child with typed width/height and fixed x/y position |
 | `sensor` | one child with show/resize `(width, height)` routes, including direct named component-event emission, plus hide, key, anticipation and delay |
-| `responsive` | breakpoint sugar or one arbitrary size-dependent child tree with scoped width/height bindings and typed bounds |
+| `responsive` | one arbitrary size-dependent child tree with scoped width/height bindings and typed bounds |
 | `rule` | horizontal/vertical separator with non-negative thickness, all fill modes, default/weak preset, color, corner radii and snap |
 | `qr` | literal or runtime text/binary payload with correction/version, cell/overall sizing and checked colors |
 | `space` | optional fixed/fill/fill-portion/shrink width and height |
