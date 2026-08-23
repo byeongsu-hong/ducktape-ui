@@ -329,15 +329,15 @@ a note for backend debugging.
 ## The analysis database
 
 All file-backed frontends share `ui_lang_core::AnalysisDb`, a process-local
-incremental analysis API. Its parsed-file key contains the canonical path,
-SHA-256 content hash, Ice language revision, and compiler feature set. The DB
-retains parsed files, direct and reverse import edges, and checked roots. A
-changed overlay or disk file invalidates only roots reachable through reverse
-imports; byte-identical updates keep checked roots reusable. Missing imports
-and failed roots remain tracked so creating or repairing a dependency retries
-the owning root. It also exposes per-session counters for files and bytes
-loaded and hashed, files scanned for imports, roots checked/reused, symbols
-indexed, codegen roots, and load/check/codegen elapsed time.
+incremental analysis API. Its parsed-file key contains the canonical path and
+SHA-256 content hash. The DB retains parsed files, direct and reverse import
+edges, and checked roots. A changed overlay or disk file invalidates only
+roots reachable through reverse imports; byte-identical updates keep checked
+roots reusable. Missing imports and failed roots remain tracked so creating or
+repairing a dependency retries the owning root. It also exposes per-session
+counters for files and bytes loaded and hashed, files scanned for imports,
+roots checked/reused, symbols indexed, codegen roots, and load/check/codegen
+elapsed time.
 `cargo ice dev` also passes the final watcher-stabilized bytes for notified Ice
 files into the DB. Reanalysis scans those files once and reuses every unchanged
 parsed file in the retained import closure instead of reading and hashing the

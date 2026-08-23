@@ -634,7 +634,7 @@ mod tests {
         // move at all. Borrowing the source document rather than copying it is
         // a statement about how many allocations resolving takes, so that is
         // what this pins; the bytes are reported, not asserted.
-        const BLOCKS: u64 = 9_562;
+        const BLOCKS: u64 = 9_558;
         let mut resolved = None;
         let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(BLOCKS, || {

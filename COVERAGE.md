@@ -25,12 +25,12 @@ counts toward the row below.
 
 Editor diagnostics use open buffers throughout every open app root's import
 graph and fall back to disk when a buffer closes.
-The shared process-local `AnalysisDb` keys parsed files by canonical path,
-SHA-256 content hash, language revision, and compiler feature set. It records
-direct and reverse imports, invalidates only reverse-dependent checked roots,
-retains failed roots and unresolved import edges for recovery, and reports
-loaded/hashed byte, source/asset metadata-probe, import-scan,
-checked/reused-root, indexed-symbol, codegen-root, and phase-timing counters.
+The shared process-local `AnalysisDb` keys parsed files by canonical path and
+SHA-256 content hash. It records direct and reverse imports, invalidates only
+reverse-dependent checked roots, retains failed roots and unresolved import
+edges for recovery, and reports loaded/hashed byte, source/asset
+metadata-probe, import-scan, checked/reused-root, indexed-symbol, codegen-root,
+and phase-timing counters.
 Every retained root also owns lexical-link identity, resolved-target identity,
 metadata, and content hashes for its complete non-overlay source and host-asset
 closure. Semantic queries validate those inputs on a bounded epoch before
