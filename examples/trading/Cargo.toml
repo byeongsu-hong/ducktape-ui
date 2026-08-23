@@ -31,7 +31,7 @@ iced = { version = "=0.14.0", features = ["smol"] }
 # secp256k1 with public-key recovery, which is the whole of what an Ethereum
 # r/s/v needs. Pure Rust, and it shares the sha2/digest/zeroize already in the
 # lockfile; the C-binding alternative would drag a build script and a compiler.
-k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+k256 = { version = "0.14", default-features = false, features = ["ecdsa", "std"] }
 # PBKDF2-HMAC-SHA512 and ChaCha20-Poly1305, which is the whole of the file
 # vault an unsigned build falls back to — see `src/vault.rs`. Already in the
 # lockfile under rustls, so naming it costs a line and no build time, and it
