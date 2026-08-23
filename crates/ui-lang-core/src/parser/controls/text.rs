@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_text(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -47,11 +47,11 @@ pub(in crate::parser) fn parse_text(
                 "E063",
                 "text style must be a declared style call",
             )?);
-        } else if part == "underline" {
+        } else if *part == "underline" {
             options.underline = Some(Expr::Bool(true));
         } else if let Some(value) = part.strip_prefix("underline=") {
             options.underline = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if part == "strike" {
+        } else if *part == "strike" {
             options.strikethrough = Some(Expr::Bool(true));
         } else if let Some(value) = part.strip_prefix("strike=") {
             options.strikethrough = Some(parse_expr(strip_wrapping_parens(value), line)?);
@@ -94,7 +94,7 @@ fn parse_text_tracking(source: &str, line: &Line) -> Result<f64, Error> {
 }
 
 pub(in crate::parser) fn parse_rich_text(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route_source: Option<&str>,
     line: &Line,
@@ -197,7 +197,7 @@ pub(in crate::parser) fn parse_rich_span(line: &Line) -> Result<RichSpan, Error>
         },
     );
     let parts = split_words(core);
-    if parts.first().map(String::as_str) != Some("span") {
+    if parts.first().copied() != Some("span") {
         return Err(error(
             "E186",
             line,
@@ -227,11 +227,11 @@ pub(in crate::parser) fn parse_rich_span(line: &Line) -> Result<RichSpan, Error>
         } else if parse_radius_option(part, &mut options.radius, "", line)?
             || parse_padding_option(part, &mut options.padding, line)?
         {
-        } else if part == "underline" {
+        } else if *part == "underline" {
             options.underline = Some(Expr::Bool(true));
         } else if let Some(value) = part.strip_prefix("underline=") {
             options.underline = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if part == "strike" {
+        } else if *part == "strike" {
             options.strikethrough = Some(Expr::Bool(true));
         } else if let Some(value) = part.strip_prefix("strike=") {
             options.strikethrough = Some(parse_expr(strip_wrapping_parens(value), line)?);

@@ -2,7 +2,7 @@ use super::*;
 
 pub(in crate::parser) fn parse_media(
     kind: &str,
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -51,7 +51,7 @@ pub(in crate::parser) fn parse_media(
                 return Err(error("E085", line, "opacity is not available on viewer"));
             }
             options.opacity = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if part == "memory" {
+        } else if *part == "memory" {
             if media_kind != MediaKind::Svg {
                 return Err(error("E085", line, "memory is only available on svg"));
             }
@@ -189,7 +189,7 @@ pub(in crate::parser) fn parse_length(source: &str, line: &Line) -> Result<Lengt
 }
 
 pub(in crate::parser) fn parse_tooltip(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -312,7 +312,7 @@ pub(in crate::parser) fn parse_tooltip(
 }
 
 pub(in crate::parser) fn parse_mouse_area(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -399,7 +399,7 @@ pub(in crate::parser) fn parse_mouse_area(
 }
 
 pub(in crate::parser) fn parse_resize_handle(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {

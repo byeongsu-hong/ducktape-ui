@@ -31,7 +31,7 @@ pub(in crate::parser) fn line_tree(
             number: index + 1,
             indent,
             text: trimmed.into(),
-            original_text: trimmed.into(),
+            original_text: None,
             metadata: Vec::new(),
             children: Vec::new(),
             namespace: namespaces[index].clone(),
@@ -152,7 +152,7 @@ pub(in crate::parser) fn matching_paren(source: &str, line: &Line) -> Result<usi
     closing_paren(source, open).ok_or_else(|| error("E024", line, "missing closing `)`"))
 }
 
-pub(crate) fn split_words(source: &str) -> Vec<String> {
+pub(crate) fn split_words(source: &str) -> Vec<&str> {
     let mut output = Vec::new();
     let mut start = 0;
     let mut depth = 0;
@@ -165,7 +165,7 @@ pub(crate) fn split_words(source: &str) -> Vec<String> {
             ')' | ']' if !string => depth -= 1,
             ch if ch.is_whitespace() && !string && depth == 0 => {
                 if start < byte {
-                    output.push(source[start..byte].into());
+                    output.push(&source[start..byte]);
                 }
                 start = byte + ch.len_utf8();
             }
@@ -173,7 +173,7 @@ pub(crate) fn split_words(source: &str) -> Vec<String> {
         }
     }
     if start < source.len() {
-        output.push(source[start..].into());
+        output.push(&source[start..]);
     }
     output
 }

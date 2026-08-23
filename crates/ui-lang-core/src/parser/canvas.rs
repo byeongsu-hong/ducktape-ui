@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_canvas(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -381,7 +381,7 @@ pub(in crate::parser) fn parse_canvas_command(line: &Line) -> Result<CanvasComma
     let parts = split_words(core);
     let kind = parts
         .first()
-        .map(String::as_str)
+        .copied()
         .ok_or_else(|| error("E190", line, "empty canvas command"))?;
     let span = Span::line(line.number);
     match kind {
@@ -535,17 +535,14 @@ pub(in crate::parser) fn parse_canvas_command(line: &Line) -> Result<CanvasComma
             let source = parts
                 .get(1)
                 .ok_or_else(|| error("E190", line, "canvas svg requires a source"))?;
-            let memory_count = parts[2..]
-                .iter()
-                .filter(|part| part.as_str() == "memory")
-                .count();
+            let memory_count = parts[2..].iter().filter(|part| **part == "memory").count();
             if memory_count > 1 {
                 return Err(error("E190", line, "duplicate canvas svg `memory` flag"));
             }
             let properties = parts[2..]
                 .iter()
-                .filter(|part| part.as_str() != "memory")
-                .cloned()
+                .filter(|part| **part != "memory")
+                .copied()
                 .collect::<Vec<_>>();
             let fields = canvas_fields(
                 &properties,
@@ -638,7 +635,7 @@ pub(in crate::parser) fn parse_canvas_command(line: &Line) -> Result<CanvasComma
 }
 
 pub(in crate::parser) fn parse_canvas_text(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
 ) -> Result<CanvasCommand, Error> {
     ensure_leaf(line)?;
@@ -727,7 +724,7 @@ pub(in crate::parser) fn parse_canvas_path_segment(
     let parts = split_words(&line.text);
     let kind = parts
         .first()
-        .map(String::as_str)
+        .copied()
         .ok_or_else(|| error("E190", line, "empty canvas path segment"))?;
     let allowed = match kind {
         "move" | "line" => &["x", "y"][..],
@@ -824,7 +821,7 @@ pub(in crate::parser) fn parse_canvas_path_segment(
 }
 
 pub(in crate::parser) fn canvas_fields(
-    parts: &[String],
+    parts: &[&str],
     allowed: &[&str],
     line: &Line,
 ) -> Result<BTreeMap<String, String>, Error> {

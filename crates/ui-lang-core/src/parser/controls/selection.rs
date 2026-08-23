@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_slider(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -40,7 +40,7 @@ pub(in crate::parser) fn parse_slider(
                 "E076",
                 "slider style must be a declared style call",
             )?);
-        } else if part == "vertical" {
+        } else if *part == "vertical" {
             vertical = true;
         } else if let Some(value) = part.strip_prefix("release=") {
             release = Some(parse_route(value, line)?);
@@ -79,7 +79,7 @@ pub(in crate::parser) fn parse_slider_style(
 ) -> Result<(), Error> {
     ensure_leaf(line)?;
     let parts = split_words(&line.text);
-    let (slot, status) = match parts.first().map(String::as_str) {
+    let (slot, status) = match parts.first().copied() {
         Some("active") => (&mut styles.active, "active"),
         Some("hovered") => (&mut styles.hovered, "hovered"),
         Some("dragged") => (&mut styles.dragged, "dragged"),
@@ -163,7 +163,7 @@ pub(in crate::parser) fn parse_slider_handle(
 }
 
 pub(in crate::parser) fn parse_progress(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -216,7 +216,7 @@ pub(in crate::parser) fn parse_progress(
         } else if let Some(value) = part.strip_prefix("border-w=") {
             options.border_width = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if parse_radius_option(part, &mut options.radius, "", line)? {
-        } else if part == "vertical" {
+        } else if *part == "vertical" {
             vertical = true;
         } else {
             return Err(error(
@@ -239,7 +239,7 @@ pub(in crate::parser) fn parse_progress(
 }
 
 pub(in crate::parser) fn parse_radio(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -301,8 +301,8 @@ pub(in crate::parser) fn parse_radio_status_style(
 ) -> Result<(), Error> {
     ensure_leaf(line)?;
     let parts = split_words(&line.text);
-    let status = parts.first().map(String::as_str);
-    let selected = parts.get(1).map(String::as_str);
+    let status = parts.first().copied();
+    let selected = parts.get(1).copied();
     let slot = match (status, selected) {
         (Some("active"), Some("selected")) => &mut styles.active_selected,
         (Some("active"), Some("unselected")) => &mut styles.active_unselected,
@@ -355,12 +355,12 @@ pub(in crate::parser) fn parse_radio_status_style(
 }
 
 pub(in crate::parser) fn parse_rule(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
     ensure_leaf(line)?;
-    let axis = match parts.get(1).map(String::as_str) {
+    let axis = match parts.get(1).copied() {
         Some("horizontal") => Axis::Horizontal,
         Some("vertical") => Axis::Vertical,
         _ => return Err(error("E079", line, "rule uses `rule horizontal|vertical`")),
@@ -439,7 +439,7 @@ pub(in crate::parser) fn parse_rule_fill(source: &str, line: &Line) -> Result<Ru
 }
 
 pub(in crate::parser) fn parse_space(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {

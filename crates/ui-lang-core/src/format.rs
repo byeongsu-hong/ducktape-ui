@@ -241,7 +241,7 @@ fn split_metadata(source: &str) -> Option<(String, Vec<String>)> {
         return None;
     }
     let component = head.chars().next().is_some_and(char::is_uppercase);
-    let mut inline = vec![head.clone()];
+    let mut inline = vec![head.to_string()];
     let mut metadata = Vec::new();
     for part in &parts[1..] {
         if metadata_part(head, component, part) {

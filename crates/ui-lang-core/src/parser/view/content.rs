@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_component_call(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
 ) -> Result<(String, Vec<ComponentArg>, Option<Id>), Error> {
     let head = &parts[0];
@@ -18,7 +18,7 @@ pub(in crate::parser) fn parse_component_call(
             .map(|(prop, value)| (prop, value, true))
             .or_else(|| split_top_once(part, '=').map(|(prop, value)| (prop, value, false)))
             .or_else(|| {
-                crate::valid_identifier(part).then_some((part.as_str(), part.as_str(), false))
+                crate::valid_identifier(part).then_some((part, part, false))
             })
             .ok_or_else(|| {
                 error(
@@ -37,7 +37,7 @@ pub(in crate::parser) fn parse_component_call(
 }
 
 pub(in crate::parser) fn parse_text_editor(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -54,7 +54,7 @@ pub(in crate::parser) fn parse_text_editor(
         let part = &parts[index];
         if part.starts_with('#') {
             parse_unique_id(part, &mut id, line, "E099", "editor")?;
-        } else if part == "<->" {
+        } else if *part == "<->" {
             index += 1;
             let value = identifier(
                 parts
@@ -162,7 +162,7 @@ pub(in crate::parser) fn parse_text_editor(
     };
     for child in &line.children {
         let parts = split_words(&child.text);
-        match parts.first().map(String::as_str) {
+        match parts.first().copied() {
             Some("active" | "hovered" | "focused" | "focused-hovered" | "disabled") => {
                 ensure_leaf(child)?;
                 parse_text_input_status(
@@ -193,14 +193,14 @@ pub(in crate::parser) fn parse_text_editor(
 }
 
 pub(in crate::parser) fn parse_table(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
     if !styles.is_empty() {
         return Err(error("E098", line, "table does not accept `@` utilities"));
     }
-    if parts.len() < 4 || parts.get(2).map(String::as_str) != Some("in") {
+    if parts.len() < 4 || parts.get(2).copied() != Some("in") {
         return Err(error("E098", line, "table uses `table item in rows`"));
     }
     if line.children.is_empty() {
@@ -236,8 +236,8 @@ pub(in crate::parser) fn parse_table(
         }
     }
     Ok(ViewNode::Table {
-        item: identifier(&parts[1], line)?,
-        rows: parse_expr(strip_wrapping_parens(&parts[3]), line)?,
+        item: identifier(parts[1], line)?,
+        rows: parse_expr(strip_wrapping_parens(parts[3]), line)?,
         id,
         options,
         columns: line
@@ -251,7 +251,7 @@ pub(in crate::parser) fn parse_table(
 
 pub(in crate::parser) fn parse_table_column(line: &Line) -> Result<TableColumn, Error> {
     let parts = split_words(&line.text);
-    if parts.first().map(String::as_str) != Some("col") {
+    if parts.first().copied() != Some("col") {
         return Err(error("E098", line, "table children must be `col` nodes"));
     }
     let mut width = None;
@@ -312,7 +312,7 @@ pub(in crate::parser) fn parse_table_column(line: &Line) -> Result<TableColumn, 
 }
 
 pub(in crate::parser) fn parse_markdown(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -397,7 +397,7 @@ pub(in crate::parser) fn parse_markdown(
 pub(in crate::parser) fn parse_markdown_style(line: &Line) -> Result<MarkdownStyleOptions, Error> {
     ensure_leaf(line)?;
     let parts = split_words(&line.text);
-    if parts.first().map(String::as_str) != Some("style") {
+    if parts.first().copied() != Some("style") {
         return Err(error("E097", line, "markdown child must be `style`"));
     }
     let mut style = MarkdownStyleOptions {
@@ -449,7 +449,7 @@ pub(in crate::parser) fn parse_markdown_style(line: &Line) -> Result<MarkdownSty
 }
 
 pub(in crate::parser) fn parse_lazy(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -457,12 +457,12 @@ pub(in crate::parser) fn parse_lazy(
         return Err(error("E096", line, "lazy does not accept `@` utilities"));
     }
     let usage = "lazy uses `lazy dependency as name` or `lazy value by key, key as name`";
-    let as_index = match parts.get(2).map(String::as_str) {
+    let as_index = match parts.get(2).copied() {
         Some("as") => 2,
         Some("by") => {
             let index = parts
                 .iter()
-                .rposition(|part| part == "as")
+                .rposition(|part| *part == "as")
                 .ok_or_else(|| error("E096", line, usage))?;
             if index < 4 {
                 return Err(error("E096", line, usage));
@@ -495,9 +495,9 @@ pub(in crate::parser) fn parse_lazy(
         parse_unique_id(part, &mut id, line, "E096", "lazy")?;
     }
     Ok(ViewNode::Lazy {
-        dependency: parse_expr(strip_wrapping_parens(&parts[1]), line)?,
+        dependency: parse_expr(strip_wrapping_parens(parts[1]), line)?,
         keys,
-        binding: identifier(&parts[as_index + 1], line)?,
+        binding: identifier(parts[as_index + 1], line)?,
         id,
         child: Box::new(parse_view(&line.children[0])?),
         span: Span::line(line.number),
@@ -505,7 +505,7 @@ pub(in crate::parser) fn parse_lazy(
 }
 
 pub(in crate::parser) fn parse_keyed_column(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -519,7 +519,7 @@ pub(in crate::parser) fn parse_keyed_column(
             "keyed requires exactly one child template",
         ));
     }
-    if parts.len() < 5 || parts.get(2).map(String::as_str) != Some("in") {
+    if parts.len() < 5 || parts.get(2).copied() != Some("in") {
         return Err(error(
             "E095",
             line,
@@ -535,7 +535,7 @@ pub(in crate::parser) fn parse_keyed_column(
         if part.starts_with('#') {
             parse_unique_id(part, &mut id, line, "E095", "keyed")?;
         } else {
-            option_parts.push(part.clone());
+            option_parts.push(*part);
         }
     }
     let options = parse_layout_options("col", &option_parts, line)?;
@@ -547,8 +547,8 @@ pub(in crate::parser) fn parse_keyed_column(
         ));
     }
     Ok(ViewNode::KeyedColumn {
-        item: identifier(&parts[1], line)?,
-        items: parse_expr(strip_wrapping_parens(&parts[3]), line)?,
+        item: identifier(parts[1], line)?,
+        items: parse_expr(strip_wrapping_parens(parts[3]), line)?,
         key: parse_expr(strip_wrapping_parens(key), line)?,
         id,
         options: Box::new(options),
@@ -558,7 +558,7 @@ pub(in crate::parser) fn parse_keyed_column(
 }
 
 pub(in crate::parser) fn parse_slot(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -575,7 +575,7 @@ pub(in crate::parser) fn parse_slot(
         |name| {
             let (name, optional) = name
                 .strip_suffix('?')
-                .map_or((name.as_str(), false), |name| (name, true));
+                .map_or((*name, false), |name| (name, true));
             Ok::<_, Error>((identifier(name, line)?, optional))
         },
     )?;
@@ -587,7 +587,7 @@ pub(in crate::parser) fn parse_slot(
 }
 
 pub(in crate::parser) fn parse_theme(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -651,7 +651,7 @@ pub(in crate::parser) fn parse_theme_preset(
 }
 
 pub(in crate::parser) fn parse_qr_code(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {

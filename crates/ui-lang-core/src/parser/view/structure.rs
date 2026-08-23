@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_float(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -55,7 +55,7 @@ pub(in crate::parser) fn parse_float(
 }
 
 pub(in crate::parser) fn parse_pin(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -101,7 +101,7 @@ pub(in crate::parser) fn parse_pin(
 }
 
 pub(in crate::parser) fn parse_sensor(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -148,7 +148,7 @@ pub(in crate::parser) fn parse_sensor(
 }
 
 pub(in crate::parser) fn parse_responsive(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {

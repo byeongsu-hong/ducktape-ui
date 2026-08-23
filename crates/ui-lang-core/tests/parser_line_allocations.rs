@@ -25,5 +25,5 @@ fn performance_contract_line_tree_moves_owned_lines() {
         "{LINES} view lines: {} allocations / {} reallocations / {} bytes",
         stats.allocations, stats.reallocations, stats.bytes_allocated
     );
-    assert!(stats.allocations <= 37_000, "{stats:?}");
+    assert!(stats.allocations <= 20_013, "{stats:?}");
 }

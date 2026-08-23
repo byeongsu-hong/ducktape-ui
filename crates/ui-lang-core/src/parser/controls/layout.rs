@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_flexbox_options(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
 ) -> Result<LayoutOptions, Error> {
     let mut flexbox = FlexboxOptions::default();
@@ -59,8 +59,8 @@ pub(in crate::parser) fn parse_flexbox_options(
             }
             align_content_seen = true;
             flexbox.align_content = Some(parse_flex_content_alignment(value, line)?);
-        } else if let Some(value) = part.strip_prefix("gap=") {
-            native.push(format!("gap={value}"));
+        } else if part.starts_with("gap=") {
+            native.push(*part);
         } else if let Some(value) = part.strip_prefix("gap-y=") {
             if flexbox.row_gap.is_some() {
                 return Err(error("E074", line, "gap-y may only be set once"));
@@ -75,7 +75,7 @@ pub(in crate::parser) fn parse_flexbox_options(
             max_width = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("max-h=") {
             max_height = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if part == "wrap"
+        } else if *part == "wrap"
             || part.starts_with("align=")
             || part.starts_with("wrap-gap=")
             || part.starts_with("wrap-align=")
@@ -86,7 +86,7 @@ pub(in crate::parser) fn parse_flexbox_options(
                 format!("unknown flex property `{part}`"),
             ));
         } else {
-            native.push(part.clone());
+            native.push(*part);
         }
     }
 
@@ -103,7 +103,7 @@ pub(in crate::parser) fn parse_flexbox_options(
 
 pub(in crate::parser) fn parse_layout_options(
     kind: &str,
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
 ) -> Result<LayoutOptions, Error> {
     let mut options = LayoutOptions::default();
@@ -252,7 +252,7 @@ pub(in crate::parser) fn parse_layout_options(
             options.virtual_row = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if is_flex && let Some(value) = part.strip_prefix("align=") {
             options.align = Some(parse_flex_alignment(value, line)?);
-        } else if is_flex && part == "wrap" {
+        } else if is_flex && *part == "wrap" {
             options.wrap = true;
         } else if is_flex && let Some(value) = part.strip_prefix("wrap-gap=") {
             options.wrap_spacing = Some(parse_expr(strip_wrapping_parens(value), line)?);
@@ -384,10 +384,10 @@ pub(in crate::parser) fn parse_grid_sizing(source: &str, line: &Line) -> Result<
 }
 
 pub(in crate::parser) fn parse_scroll_status_style(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
 ) -> Result<ScrollStatusStyle, Error> {
-    let status = match parts.first().map(String::as_str) {
+    let status = match parts.first().copied() {
         Some("active") => ScrollStatus::Active,
         Some("hovered") => ScrollStatus::Hovered,
         Some("dragged") => ScrollStatus::Dragged,
@@ -443,7 +443,7 @@ pub(in crate::parser) fn parse_scroll_status_style(
     for child in &line.children {
         ensure_leaf(child)?;
         let parts = split_words(&child.text);
-        let Some(kind) = parts.first().map(String::as_str) else {
+        let Some(kind) = parts.first().copied() else {
             return Err(error("E074", child, "empty scroll style section"));
         };
         if kind == "gap" {
