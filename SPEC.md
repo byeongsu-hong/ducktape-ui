@@ -937,7 +937,9 @@ keyed_property = ("w=" | "h=") length | "gap=" expr
                  | "pl=") expr
                | "max-w=" expr | "virtual-row=" expr
                | "align=" ("start" | "center" | "end")
-lazy_node      = "lazy" expr ("," name)* ("by" expr ("," expr)*)? "as" name id?
+lazy_node      = "lazy" expr ("," name)* "as" name id?
+                 INDENT node
+               | "lazy" expr "by" expr ("," expr)* "as" name id?
                  INDENT node
 markdown_view  = "markdown" name id? markdown_property* "->" route
                  (INDENT markdown_style)?

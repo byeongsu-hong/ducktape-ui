@@ -237,17 +237,19 @@ pub(in crate::check) fn infer_documents_group(
                     _ => None,
                 };
                 // A plain-form extra is a snapshot local first and a hash
-                // input second, so it must name something to snapshot.
+                // input second, so it must name something to snapshot — and
+                // not the name the alias is about to take.
                 if !keyed && bare.is_none() {
-                    return Err(Error::new(
-                        "E139",
-                        span,
-                        format!(
-                            "lazy extra `{}` is not a bare identifier",
-                            expr_source(key)
-                        ),
-                    )
-                    .hint("name a state field, prop, or row local distinct from the alias; the keyed form takes computed projections"));
+                    let message = match key {
+                        Expr::Path(segments) if matches!(segments.as_slice(), [name] if name == binding) =>
+                        {
+                            format!("lazy extra `{binding}` is also the alias")
+                        }
+                        _ => format!("lazy extra `{}` is not a bare identifier", expr_source(key)),
+                    };
+                    return Err(Error::new("E139", span, message).hint(
+                        "name a state field, prop, or row local distinct from the alias; the keyed form takes computed projections",
+                    ));
                 }
                 if let Some(name) = bare {
                     key_bindings.push((name.clone(), key_type));
