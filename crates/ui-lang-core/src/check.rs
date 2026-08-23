@@ -68,6 +68,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
         &reachable,
         &declarations,
         &facts,
+        &origins,
     ));
     warnings.sort_by_key(|warning| warning.line);
     Ok(CheckedDocument::new(

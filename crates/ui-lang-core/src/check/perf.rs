@@ -3,24 +3,38 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::Warning;
 use crate::ast::expr_source;
-use crate::check::facts::{CheckedExprOwner, CheckedFacts, CheckedViewExprRole};
+use crate::check::facts::{
+    CheckedCallArgument, CheckedCallTarget, CheckedExprKind, CheckedExprOwner, CheckedFacts,
+    CheckedPathRoot, CheckedSubscriptionExprRole, CheckedValueRef, CheckedViewExprRole,
+    CheckedViewScope,
+};
 use crate::check::usage::path_roots;
-use crate::hir::{DeclarationIndex, view_children};
+use crate::hir::{DeclarationIndex, OriginArena, ViewId, view_children};
 
 /// iced rebuilds the whole view on every message, so anything a view
 /// expression computes or clones is paid per view pass unless a `lazy`
 /// boundary memoizes it. These warnings name the sites where that cost is
 /// proportional to content: a native widget rebuilt from a string or list,
-/// and a plain `lazy` that hashes a record or list clone once per loop item.
+/// a plain `lazy` that hashes a record or list clone once per loop item, and
+/// a string, bytes, list, or editor state cloned into a by-value extern parameter.
 pub(in crate::check) fn performance_warnings(
     document: &Document,
     reachable_components: &HashSet<String>,
     declarations: &DeclarationIndex,
     facts: &CheckedFacts,
+    origins: &OriginArena,
 ) -> Vec<Warning> {
     let mut warnings = unmemoized_content_warnings(document, reachable_components, |span| {
         lazy_dependency_type(span, declarations, facts)
     });
+    by_value_state_clone_warnings(
+        document,
+        reachable_components,
+        declarations,
+        facts,
+        origins,
+        &mut warnings,
+    );
     warnings.sort_by_key(|warning| (warning.line, warning.column));
     warnings
 }
@@ -333,4 +347,143 @@ fn content_site(
             "a list can be keyed with `lazy {arg} by <cheap keys> as <alias>` so only the keys are hashed per pass"
         )),
     );
+}
+
+/// A by-value `pure`/`sync` parameter clones its argument; when the argument
+/// is a state field read straight from a per-pass owner, that clone is paid
+/// once per frame (or once per subscription check) for nothing the borrowed
+/// `&type` form would not give.
+fn by_value_state_clone_warnings(
+    document: &Document,
+    reachable_components: &HashSet<String>,
+    declarations: &DeclarationIndex,
+    facts: &CheckedFacts,
+    origins: &OriginArena,
+    warnings: &mut Vec<Warning>,
+) {
+    let call_views = facts
+        .views()
+        .iter()
+        .filter_map(|view| Some((declarations.component_call_id(view.id)?, view.id)))
+        .collect::<HashMap<_, _>>();
+    let reachable = reachable_components
+        .iter()
+        .filter_map(|name| declarations.component_id(name))
+        .collect::<HashSet<_>>();
+    // A test mount renders once, and an unreachable component never; every
+    // other view expression is re-evaluated per view pass. A `lazy` subtree
+    // needs no check here: only its alias and key locals are in scope there,
+    // so no state field can be named under one.
+    let per_pass_view = |view: ViewId| match facts.view(view).scope {
+        CheckedViewScope::App => true,
+        CheckedViewScope::Component(component) => reachable.contains(&component),
+        CheckedViewScope::Test(_) => false,
+    };
+    for expr in facts.expressions() {
+        let CheckedExprKind::Call {
+            target: CheckedCallTarget::Extern(function),
+            arguments,
+        } = &expr.kind
+        else {
+            continue;
+        };
+        let Some(declaration) = declarations.try_extern_decl(function.id) else {
+            continue;
+        };
+        if !matches!(declaration.kind, ExternKind::Pure | ExternKind::Sync) {
+            continue;
+        }
+        // Handlers run once per message, and a `derived` value is about to be
+        // cached across frames (feat/derived-cache), so only view-owned and
+        // subscription-owned calls are per pass.
+        let per_pass = |view| per_pass_view(view).then_some("view pass");
+        let cadence = match facts.expression_use(expr.owner).owner {
+            CheckedExprOwner::View { view, .. } => per_pass(view),
+            CheckedExprOwner::Interaction(id) => per_pass(id.widget),
+            CheckedExprOwner::Media(id) => per_pass(id.media),
+            CheckedExprOwner::Tooltip(id) => per_pass(id.tooltip),
+            CheckedExprOwner::Float(id) => per_pass(id.float),
+            CheckedExprOwner::Pin(id) => per_pass(id.pin),
+            CheckedExprOwner::ComponentArgument { call, .. } => {
+                call_views.get(&call).and_then(|view| per_pass(*view))
+            }
+            CheckedExprOwner::Subscription {
+                role: CheckedSubscriptionExprRole::Condition,
+                ..
+            } => Some("subscription check"),
+            _ => None,
+        };
+        let Some(cadence) = cadence else {
+            continue;
+        };
+        report_by_value_arguments(
+            document,
+            facts,
+            origins,
+            declaration,
+            arguments,
+            expr.origin,
+            cadence,
+            warnings,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn report_by_value_arguments(
+    document: &Document,
+    facts: &CheckedFacts,
+    origins: &OriginArena,
+    declaration: &crate::hir::ExternDeclaration,
+    arguments: &[CheckedCallArgument],
+    origin: crate::hir::OriginId,
+    cadence: &str,
+    warnings: &mut Vec<Warning>,
+) {
+    for (argument, borrowed) in arguments.iter().zip(&declaration.borrowed) {
+        if *borrowed {
+            continue;
+        }
+        let CheckedCallArgument::Value(argument) = argument else {
+            continue;
+        };
+        // Only a bare state read is a whole-value clone the callee could
+        // borrow; a projection already narrows to one field.
+        let CheckedExprKind::Path {
+            root:
+                CheckedPathRoot::Value(
+                    value @ (CheckedValueRef::AppState(_) | CheckedValueRef::ComponentState(_)),
+                ),
+            projections,
+        } = &facts.expression(*argument).kind
+        else {
+            continue;
+        };
+        if !projections.is_empty() {
+            continue;
+        }
+        let value = facts.value_by_ref(*value);
+        if !matches!(value.ty, Type::Str | Type::Bytes | Type::Editor)
+            && !owns_collection(&value.ty, document)
+        {
+            continue;
+        }
+        let origin = origins.get(origin);
+        let span = Span {
+            line: origin.line,
+            column: origin.column,
+        };
+        let ty = value.ty.display();
+        warnings.push(
+            Warning::new(
+                "W018",
+                &span,
+                format!(
+                    "the {ty} state `{}` is cloned for `{}` on every {cadence}; declare the parameter borrowed (`&{ty}`) or move the result into state in the handler that writes `{}`",
+                    value.name, declaration.name, value.name
+                ),
+            )
+            .hint("a `pure` or `sync` parameter declared `&str`, `&bytes`, `&[T]`, `&T`, or `&editor` receives a reference; the call site is unchanged"),
+        );
+    }
 }

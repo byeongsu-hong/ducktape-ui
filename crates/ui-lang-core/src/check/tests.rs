@@ -1354,3 +1354,17 @@ fn w017_skips_keyed_lazy_and_lazy_outside_loops() {
         vec![27]
     );
 }
+
+#[test]
+fn w018_skips_handlers_lazy_borrowed_literal_derived_and_test_mounts() {
+    // Line 39: the component body reading its own `scratch` state; 47: the
+    // subscription condition over `rows`; 59-62: the view reading `draft`,
+    // `doc`, the list-owning `book`, and `blob`. Silent: the scalar record
+    // `row`, the handler, the derived initializer, the test mount, the
+    // unreachable `Orphan` body, the `&[Row]` parameter, the literal, the
+    // lazy alias, and the `draft` snapshot a lazy extra puts in scope.
+    assert_eq!(
+        perf_warning_sites("perf-by-value-state-clone", "W018"),
+        vec![39, 47, 59, 60, 61, 62]
+    );
+}

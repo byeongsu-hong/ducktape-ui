@@ -1,0 +1,6 @@
+W018 the str state `scratch` is cloned for `word_count` on every view pass; declare the parameter borrowed (`&str`) or move the result into state in the handler that writes `scratch`
+W018 the [Row] state `rows` is cloned for `has_rows` on every subscription check; declare the parameter borrowed (`&[Row]`) or move the result into state in the handler that writes `rows`
+W018 the str state `draft` is cloned for `word_count` on every view pass; declare the parameter borrowed (`&str`) or move the result into state in the handler that writes `draft`
+W018 the editor state `doc` is cloned for `page_text` on every view pass; declare the parameter borrowed (`&editor`) or move the result into state in the handler that writes `doc`
+W018 the Book? state `book` is cloned for `depth` on every view pass; declare the parameter borrowed (`&Book?`) or move the result into state in the handler that writes `book`
+W018 the bytes state `blob` is cloned for `blob_size` on every view pass; declare the parameter borrowed (`&bytes`) or move the result into state in the handler that writes `blob`

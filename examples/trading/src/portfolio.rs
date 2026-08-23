@@ -65,7 +65,7 @@ pub struct PortfolioFunding {
     pub net: f64,
 }
 
-pub fn portfolio_flow(fills: Vec<Fill>) -> PortfolioFlow {
+pub fn portfolio_flow(fills: &[Fill]) -> PortfolioFlow {
     let wins = fills.iter().filter(|fill| fill.closed_pnl > 0.0).count() as i64;
     let losses = fills.iter().filter(|fill| fill.closed_pnl < 0.0).count() as i64;
     let closed = wins + losses;
@@ -87,7 +87,7 @@ pub fn portfolio_flow(fills: Vec<Fill>) -> PortfolioFlow {
     }
 }
 
-pub fn portfolio_funding(positions: Vec<Position>) -> PortfolioFunding {
+pub fn portfolio_funding(positions: &[Position]) -> PortfolioFunding {
     let paid = positions
         .iter()
         .map(|position| position.funding.max(0.0))
@@ -107,7 +107,7 @@ pub fn portfolio_funding(positions: Vec<Position>) -> PortfolioFunding {
 /// positions themselves rather than taken as `value - withdrawable`: the
 /// latter also carries whatever else the venue is holding, and this panel is
 /// about the positions.
-pub fn portfolio_margin_posted(positions: Vec<Position>) -> f64 {
+pub fn portfolio_margin_posted(positions: &[Position]) -> f64 {
     positions.iter().map(|position| position.margin).sum()
 }
 
@@ -189,7 +189,7 @@ fn notional(position: &Position) -> f64 {
     (position.mark * position.size.abs()).max(0.0)
 }
 
-pub fn portfolio_assets(positions: Vec<Position>) -> Vec<PortfolioAsset> {
+pub fn portfolio_assets(positions: &[Position]) -> Vec<PortfolioAsset> {
     let total: f64 = positions.iter().map(notional).sum();
     let mut assets: Vec<_> = positions
         .iter()
@@ -234,11 +234,11 @@ pub fn asset_label(asset: PortfolioAsset) -> String {
     format!("Open the {} market", asset.coin)
 }
 
-pub fn portfolio_exposure(positions: Vec<Position>) -> f64 {
+pub fn portfolio_exposure(positions: &[Position]) -> f64 {
     positions.iter().map(notional).sum()
 }
 
-pub fn portfolio_long_exposure(positions: Vec<Position>) -> f64 {
+pub fn portfolio_long_exposure(positions: &[Position]) -> f64 {
     positions
         .iter()
         .filter(|position| position.size > 0.0)
@@ -249,8 +249,8 @@ pub fn portfolio_long_exposure(positions: Vec<Position>) -> f64 {
 /// The long side's share of gross exposure as the width of a rail
 /// [`EXPOSURE_RAIL_WIDTH`] wide, so the LONG / SHORT tile can draw the split
 /// rather than leave the reader to compare two figures.
-pub fn portfolio_long_rail(positions: Vec<Position>) -> f64 {
-    let long = portfolio_long_exposure(positions.clone());
+pub fn portfolio_long_rail(positions: &[Position]) -> f64 {
+    let long = portfolio_long_exposure(positions);
     let total = portfolio_exposure(positions);
     if total <= 0.0 {
         return 0.0;
@@ -258,7 +258,7 @@ pub fn portfolio_long_rail(positions: Vec<Position>) -> f64 {
     long / total * EXPOSURE_RAIL_WIDTH
 }
 
-pub fn portfolio_short_exposure(positions: Vec<Position>) -> f64 {
+pub fn portfolio_short_exposure(positions: &[Position]) -> f64 {
     positions
         .iter()
         .filter(|position| position.size < 0.0)
@@ -355,10 +355,10 @@ pub fn range_label(range: String) -> String {
 }
 
 /// The window as a heading over the figures read off it.
-pub fn range_heading(locale: crate::Locale, range: String) -> String {
+pub fn range_heading(locale: crate::Locale, range: &str) -> String {
     crate::i18n::t(
         locale,
-        match range.as_str() {
+        match range {
             "day" => "LAST DAY",
             "week" => "LAST WEEK",
             "month" => "LAST MONTH",
@@ -430,34 +430,34 @@ fn selected<'a>(history: &'a PortfolioHistory, range: &str) -> &'a Series {
     }
 }
 
-pub fn portfolio_history_note(history: PortfolioHistory) -> String {
+pub fn portfolio_history_note(history: &PortfolioHistory) -> String {
     history.note.clone()
 }
 
-pub fn portfolio_history_ready(history: PortfolioHistory, range: String) -> bool {
-    selected(&history, &range).values.len() > 1
+pub fn portfolio_history_ready(history: &PortfolioHistory, range: &str) -> bool {
+    selected(history, range).values.len() > 1
 }
 
-pub fn portfolio_history_start(history: PortfolioHistory, range: String) -> f64 {
-    selected(&history, &range)
+pub fn portfolio_history_start(history: &PortfolioHistory, range: &str) -> f64 {
+    selected(history, range)
         .values
         .first()
         .map_or(0.0, |(_, value)| *value)
 }
 
-pub fn portfolio_history_end(history: PortfolioHistory, range: String) -> f64 {
-    selected(&history, &range)
+pub fn portfolio_history_end(history: &PortfolioHistory, range: &str) -> f64 {
+    selected(history, range)
         .values
         .last()
         .map_or(0.0, |(_, value)| *value)
 }
 
-pub fn portfolio_history_change(history: PortfolioHistory, range: String) -> f64 {
-    portfolio_history_end(history.clone(), range.clone()) - portfolio_history_start(history, range)
+pub fn portfolio_history_change(history: &PortfolioHistory, range: &str) -> f64 {
+    portfolio_history_end(history, range) - portfolio_history_start(history, range)
 }
 
-pub fn portfolio_history_change_pct(history: PortfolioHistory, range: String) -> f64 {
-    let start = portfolio_history_start(history.clone(), range.clone());
+pub fn portfolio_history_change_pct(history: &PortfolioHistory, range: &str) -> f64 {
+    let start = portfolio_history_start(history, range);
     if start == 0.0 {
         0.0
     } else {
@@ -466,8 +466,8 @@ pub fn portfolio_history_change_pct(history: PortfolioHistory, range: String) ->
 }
 
 /// The highest the account stood over the window.
-pub fn portfolio_history_peak(history: PortfolioHistory, range: String) -> f64 {
-    selected(&history, &range)
+pub fn portfolio_history_peak(history: &PortfolioHistory, range: &str) -> f64 {
+    selected(history, range)
         .values
         .iter()
         .map(|(_, value)| *value)
@@ -477,8 +477,8 @@ pub fn portfolio_history_peak(history: PortfolioHistory, range: String) -> f64 {
 
 /// How far under its peak the account stands now, as a share of that peak.
 /// Zero at a new high; never negative.
-pub fn portfolio_history_drawdown(history: PortfolioHistory, range: String) -> f64 {
-    let peak = portfolio_history_peak(history.clone(), range.clone());
+pub fn portfolio_history_drawdown(history: &PortfolioHistory, range: &str) -> f64 {
+    let peak = portfolio_history_peak(history, range);
     let end = portfolio_history_end(history, range);
     if peak <= 0.0 {
         0.0
@@ -489,10 +489,10 @@ pub fn portfolio_history_drawdown(history: PortfolioHistory, range: String) -> f
 
 /// The deepest peak-to-trough fall anywhere in the window, as a share of the
 /// peak it fell from — what a reader asks about a curve before anything else.
-pub fn portfolio_history_max_drawdown(history: PortfolioHistory, range: String) -> f64 {
+pub fn portfolio_history_max_drawdown(history: &PortfolioHistory, range: &str) -> f64 {
     let mut peak = f64::NEG_INFINITY;
     let mut worst: f64 = 0.0;
-    for (_, value) in &selected(&history, &range).values {
+    for (_, value) in &selected(history, range).values {
         peak = peak.max(*value);
         if peak > 0.0 {
             worst = worst.max((peak - value) / peak * 100.0);
@@ -505,8 +505,8 @@ pub fn portfolio_history_max_drawdown(history: PortfolioHistory, range: String) 
 /// first, which is also what the bars under it sum to. The two are one figure
 /// whether or not the venue starts the window's series at zero. Distinct from
 /// the change in value: a deposit moves one and not the other.
-pub fn portfolio_history_pnl(history: PortfolioHistory, range: String) -> f64 {
-    let pnl = &selected(&history, &range).pnl;
+pub fn portfolio_history_pnl(history: &PortfolioHistory, range: &str) -> f64 {
+    let pnl = &selected(history, range).pnl;
     match (pnl.first(), pnl.last()) {
         (Some((_, first)), Some((_, last))) => last - first,
         _ => 0.0,
@@ -516,8 +516,8 @@ pub fn portfolio_history_pnl(history: PortfolioHistory, range: String) -> f64 {
 /// Whether the venue sent a PnL series at all for this window. Hyperliquid
 /// does; a venue read through an address alone does not, and the bars then
 /// say so rather than drawing a flat zero.
-pub fn portfolio_pnl_ready(history: PortfolioHistory, range: String) -> bool {
-    selected(&history, &range).pnl.len() > 1
+pub fn portfolio_pnl_ready(history: &PortfolioHistory, range: &str) -> bool {
+    selected(history, range).pnl.len() > 1
 }
 
 pub fn hover_label(hover: PortfolioHover) -> String {
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn assets_are_sorted_and_allocate_the_whole_exposure() {
         let positions = crate::hyperliquid::demo_positions();
-        let assets = portfolio_assets(positions);
+        let assets = portfolio_assets(&positions);
         assert!(assets.windows(2).all(|pair| pair[0].value >= pair[1].value));
         let share: f64 = assets.iter().map(|asset| asset.share).sum();
         assert!((share - 100.0).abs() < 1e-9, "{share}");
@@ -704,7 +704,7 @@ mod tests {
     #[test]
     fn an_asset_reports_the_same_return_the_terminal_does() {
         let positions = crate::hyperliquid::demo_positions();
-        let assets = portfolio_assets(positions.clone());
+        let assets = portfolio_assets(&positions);
 
         for position in &positions {
             let asset = assets
@@ -742,7 +742,7 @@ mod tests {
     fn the_demo_history_ends_where_the_demo_account_stands() {
         let value = crate::hyperliquid::demo_account().value;
         for range in ["day", "week", "month", "all"] {
-            let end = portfolio_history_end(demo_portfolio_history(), range.to_owned());
+            let end = portfolio_history_end(&demo_portfolio_history(), range);
             assert!((end - value).abs() < 1e-6, "{range}: {end} vs {value}");
         }
     }
@@ -754,7 +754,7 @@ mod tests {
         let history = demo_portfolio_history();
         let starts: Vec<f64> = ["day", "week", "month", "all"]
             .into_iter()
-            .map(|range| portfolio_history_start(history.clone(), range.to_owned()))
+            .map(|range| portfolio_history_start(&history, range))
             .collect();
         for pair in starts.windows(2) {
             assert!((pair[0] - pair[1]).abs() > 1.0, "{starts:?}");
@@ -783,14 +783,11 @@ mod tests {
             ..PortfolioHistory::default()
         };
         let rising = series(&[100.0, 110.0, 120.0]);
-        assert_eq!(
-            portfolio_history_drawdown(rising.clone(), "month".into()),
-            0.0
-        );
-        assert_eq!(portfolio_history_max_drawdown(rising, "month".into()), 0.0);
+        assert_eq!(portfolio_history_drawdown(&rising, "month"), 0.0);
+        assert_eq!(portfolio_history_max_drawdown(&rising, "month"), 0.0);
         let fallen = series(&[100.0, 200.0, 150.0, 160.0]);
-        assert!((portfolio_history_drawdown(fallen.clone(), "month".into()) - 20.0).abs() < 1e-9);
-        assert!((portfolio_history_max_drawdown(fallen, "month".into()) - 25.0).abs() < 1e-9);
+        assert!((portfolio_history_drawdown(&fallen, "month") - 20.0).abs() < 1e-9);
+        assert!((portfolio_history_max_drawdown(&fallen, "month") - 25.0).abs() < 1e-9);
     }
 
     /// The bars are the venue's cumulative PnL differenced, so they sum back
@@ -805,8 +802,8 @@ mod tests {
             },
             ..PortfolioHistory::default()
         };
-        assert!(portfolio_pnl_ready(history.clone(), "month".into()));
-        assert_eq!(portfolio_history_pnl(history.clone(), "month".into()), 2.0);
+        assert!(portfolio_pnl_ready(&history, "month"));
+        assert_eq!(portfolio_history_pnl(&history, "month"), 2.0);
         let cumulative = &selected(&history, "month").pnl;
         let steps: Vec<f64> = cumulative
             .windows(2)
@@ -821,11 +818,8 @@ mod tests {
         let parsed = parse_history(&json!([
             ["perpMonth", { "accountValueHistory": [[1, "10"], [2, "12"]], "pnlHistory": [[1, "0"], [2, "2"]] }]
         ]));
-        assert_eq!(
-            portfolio_history_pnl(parsed.clone(), "month".to_owned()),
-            2.0
-        );
-        assert!(portfolio_pnl_ready(parsed, "month".to_owned()));
+        assert_eq!(portfolio_history_pnl(&parsed, "month"), 2.0);
+        assert!(portfolio_pnl_ready(&parsed, "month"));
     }
 
     #[test]
@@ -834,11 +828,8 @@ mod tests {
             ["month", { "accountValueHistory": [[1, "1"]] }],
             ["perpMonth", { "accountValueHistory": [[1, "10"], [2, "12"]] }]
         ]));
-        assert_eq!(
-            portfolio_history_start(parsed.clone(), "month".to_owned()),
-            10.0
-        );
-        assert_eq!(portfolio_history_change(parsed, "month".to_owned()), 2.0);
+        assert_eq!(portfolio_history_start(&parsed, "month"), 10.0);
+        assert_eq!(portfolio_history_change(&parsed, "month"), 2.0);
     }
 
     /// Every expectation below is derived from the fixture rather than typed
@@ -847,7 +838,7 @@ mod tests {
     #[test]
     fn a_flow_folds_exactly_the_fills_it_was_given() {
         let fills = crate::hyperliquid::demo_fills();
-        let flow = portfolio_flow(fills.clone());
+        let flow = portfolio_flow(&fills);
 
         assert_eq!(flow.trades, fills.len() as i64);
         assert_eq!(
@@ -878,7 +869,7 @@ mod tests {
             .filter(|fill| fill.closed_pnl == 0.0)
             .collect();
         assert!(!opening.is_empty());
-        let flow = portfolio_flow(opening.clone());
+        let flow = portfolio_flow(&opening);
         assert_eq!(flow.trades, opening.len() as i64);
         assert_eq!(flow.closed, 0);
         assert_eq!(flow.realized, 0.0);
@@ -887,7 +878,7 @@ mod tests {
     #[test]
     fn funding_splits_the_charge_from_the_credit() {
         let positions = crate::hyperliquid::demo_positions();
-        let funding = portfolio_funding(positions.clone());
+        let funding = portfolio_funding(&positions);
 
         assert_eq!(
             funding.paid,
@@ -925,7 +916,7 @@ mod tests {
         positions[0].funding = 900.0;
         positions[1].funding = -900.0;
         positions[2].funding = 0.0;
-        let funding = portfolio_funding(positions);
+        let funding = portfolio_funding(&positions);
         assert_eq!(funding.net, 0.0);
         assert_eq!(funding.paid, 900.0);
         assert_eq!(funding.received, 900.0);
@@ -937,7 +928,7 @@ mod tests {
         let account = crate::hyperliquid::demo_account();
 
         assert_eq!(
-            portfolio_margin_posted(positions.clone()),
+            portfolio_margin_posted(&positions),
             positions
                 .iter()
                 .map(|position| position.margin)
@@ -949,10 +940,10 @@ mod tests {
         );
         // Gross exposure and the account's own notional are the same fold over
         // the same positions, so the two figures on the page agree.
-        assert_eq!(portfolio_exposure(positions.clone()), account.notional);
+        assert_eq!(portfolio_exposure(&positions), account.notional);
         assert_eq!(
-            portfolio_exposure(positions.clone()),
-            portfolio_long_exposure(positions.clone()) + portfolio_short_exposure(positions)
+            portfolio_exposure(&positions),
+            portfolio_long_exposure(&positions) + portfolio_short_exposure(&positions)
         );
     }
 

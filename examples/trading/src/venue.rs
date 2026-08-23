@@ -682,7 +682,7 @@ pub fn venue_note(venue: Venue) -> String {
 /// account read that has not landed yet leaves it false, and drawing "no
 /// account here" over it reports a slow venue as an empty one. A failure wins
 /// over both, because a read that broke says nothing about what is there.
-pub fn venue_account_note(venue: Venue, watching: bool, missing: bool, failure: String) -> String {
+pub fn venue_account_note(venue: Venue, watching: bool, missing: bool, failure: &str) -> String {
     if !watching {
         return "No account is being read. Settings takes an address.".to_owned();
     }
@@ -708,7 +708,7 @@ pub fn venue_account_note(venue: Venue, watching: bool, missing: bool, failure: 
 /// list because the list is not evidence of anything once the read behind it
 /// is gone. It cannot outrank the gap: a venue that does not carry the channel
 /// is never asked, so it never fails.
-pub fn venue_orders_note(venue: Venue, watching: bool, failure: String) -> String {
+pub fn venue_orders_note(venue: Venue, watching: bool, failure: &str) -> String {
     match venue_account_gap(venue) {
         gap if !gap.is_empty() => gap,
         _ if !failure.is_empty() => format!("Resting orders could not be read: {failure}"),
@@ -720,7 +720,7 @@ pub fn venue_orders_note(venue: Venue, watching: bool, failure: String) -> Strin
 /// The same for fills. An address is what separates the two things a venue
 /// that does answer can say; a venue that does not answer says so either way,
 /// because connecting an address would not change it.
-pub fn venue_fills_note(venue: Venue, watching: bool, failure: String) -> String {
+pub fn venue_fills_note(venue: Venue, watching: bool, failure: &str) -> String {
     match venue_account_gap(venue) {
         gap if !gap.is_empty() => gap,
         _ if !failure.is_empty() => format!("Fills could not be read: {failure}"),
@@ -1141,8 +1141,8 @@ pub fn order_window(kind: OrderKind, minutes: String) -> String {
 /// Minutes and hours rather than minutes alone: a window is a thing a reader
 /// chose and has to recognise, and "180 minutes" is a figure they have to
 /// convert before they can tell whether it is the one they meant.
-pub fn order_worked(minutes: String) -> String {
-    let minutes = amount(&minutes);
+pub fn order_worked(minutes: &str) -> String {
+    let minutes = amount(minutes);
     if minutes.is_nan() || minutes <= 0.0 {
         return String::new();
     }
@@ -2400,26 +2400,26 @@ mod tests {
         let gap = venue_account_gap(Venue::Lighter);
         assert!(gap.contains("Lighter") && gap.contains("API-key"), "{gap}");
         for watching in [false, true] {
-            assert_eq!(venue_orders_note(Venue::Lighter, watching, none()), gap);
-            assert_eq!(venue_fills_note(Venue::Lighter, watching, none()), gap);
+            assert_eq!(venue_orders_note(Venue::Lighter, watching, &none()), gap);
+            assert_eq!(venue_fills_note(Venue::Lighter, watching, &none()), gap);
         }
         assert!(venue_account_gap(Venue::Hyperliquid).is_empty());
         // Hyperliquid answers both, so its panels say only what the account
         // holds — and an address is what separates the two things it can say.
         assert_eq!(
-            venue_orders_note(Venue::Hyperliquid, true, none()),
+            venue_orders_note(Venue::Hyperliquid, true, &none()),
             "No resting orders."
         );
         assert_eq!(
-            venue_orders_note(Venue::Hyperliquid, false, none()),
+            venue_orders_note(Venue::Hyperliquid, false, &none()),
             "Orders need an address."
         );
         assert_eq!(
-            venue_fills_note(Venue::Hyperliquid, true, none()),
+            venue_fills_note(Venue::Hyperliquid, true, &none()),
             "No fills on this account yet."
         );
         assert_eq!(
-            venue_fills_note(Venue::Hyperliquid, false, none()),
+            venue_fills_note(Venue::Hyperliquid, false, &none()),
             "Fills need an address."
         );
     }
@@ -2432,27 +2432,27 @@ mod tests {
     fn a_read_that_failed_does_not_read_as_a_venue_with_nothing_to_say() {
         let broke = "Hyperliquid unreachable".to_owned();
         for watching in [false, true] {
-            let orders = venue_orders_note(Venue::Hyperliquid, watching, broke.clone());
-            let fills = venue_fills_note(Venue::Hyperliquid, watching, broke.clone());
+            let orders = venue_orders_note(Venue::Hyperliquid, watching, &broke);
+            let fills = venue_fills_note(Venue::Hyperliquid, watching, &broke);
             assert!(orders.contains(&broke), "{orders}");
             assert!(fills.contains(&broke), "{fills}");
             assert_ne!(
                 orders,
-                venue_orders_note(Venue::Hyperliquid, watching, none())
+                venue_orders_note(Venue::Hyperliquid, watching, &none())
             );
             assert_ne!(
                 fills,
-                venue_fills_note(Venue::Hyperliquid, watching, none())
+                venue_fills_note(Venue::Hyperliquid, watching, &none())
             );
         }
         // A venue that never carries the channel is never asked for it, so the
         // gap is what it says either way rather than a failure it cannot have.
         assert_eq!(
-            venue_orders_note(Venue::Lighter, true, broke.clone()),
+            venue_orders_note(Venue::Lighter, true, &broke),
             venue_account_gap(Venue::Lighter)
         );
         assert_eq!(
-            venue_fills_note(Venue::Lighter, true, broke),
+            venue_fills_note(Venue::Lighter, true, &broke),
             venue_account_gap(Venue::Lighter)
         );
     }
@@ -2507,7 +2507,7 @@ mod tests {
     #[test]
     fn no_account_says_whether_there_is_an_address_or_only_no_account_here() {
         for venue in BOTH {
-            let missing = venue_account_note(venue, true, true, none());
+            let missing = venue_account_note(venue, true, true, &none());
             assert!(
                 missing.contains(&venue_name(venue)),
                 "the absence is this venue's, so it has to name it: {missing}"
@@ -2517,7 +2517,7 @@ mod tests {
                 "the address is already connected: {missing}"
             );
             assert_eq!(
-                venue_account_note(venue, false, true, none()),
+                venue_account_note(venue, false, true, &none()),
                 "No account is being read. Settings takes an address.",
                 "with no address it is the app that has nothing, not the venue"
             );
@@ -2525,8 +2525,8 @@ mod tests {
         // And the two venues do not sound alike, because which one answered
         // nothing is the useful half.
         assert_ne!(
-            venue_account_note(Venue::Hyperliquid, true, true, none()),
-            venue_account_note(Venue::Lighter, true, true, none())
+            venue_account_note(Venue::Hyperliquid, true, true, &none()),
+            venue_account_note(Venue::Lighter, true, true, &none())
         );
     }
 
@@ -2538,9 +2538,9 @@ mod tests {
     #[test]
     fn an_unread_account_is_not_an_account_the_venue_says_is_not_there() {
         for venue in BOTH {
-            let absent = venue_account_note(venue, true, true, none());
-            let reading = venue_account_note(venue, true, false, none());
-            let broke = venue_account_note(venue, true, false, "no wire".to_owned());
+            let absent = venue_account_note(venue, true, true, &none());
+            let reading = venue_account_note(venue, true, false, &none());
+            let broke = venue_account_note(venue, true, false, "no wire");
             assert_ne!(reading, absent, "a read in flight is not an answer");
             assert_ne!(broke, absent, "a read that failed is not an answer");
             assert_ne!(broke, reading);
@@ -2551,10 +2551,7 @@ mod tests {
             );
             // A failure outranks the venue's last answer, because a read that
             // broke says nothing about what is there now.
-            assert_eq!(
-                venue_account_note(venue, true, true, "no wire".to_owned()),
-                broke
-            );
+            assert_eq!(venue_account_note(venue, true, true, "no wire"), broke);
         }
     }
 
@@ -3467,7 +3464,7 @@ mod tests {
     /// right and says nothing about the arithmetic these tests are here for.
     fn ladder(from: &str, to: &str, rungs: &str, size: &str, reduce_only: bool) -> Sweep {
         let market = demo_symbols().into_iter().find(|row| row.name == "BTC");
-        let held = position_held(demo_positions(), "BTC".to_owned());
+        let held = position_held(&demo_positions(), "BTC");
         let quote = price_ticket(
             (amount(from) + amount(to)) / 2.0,
             size.to_owned(),

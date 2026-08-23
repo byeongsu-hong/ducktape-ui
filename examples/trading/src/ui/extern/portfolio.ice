@@ -11,35 +11,35 @@ extern crate::portfolio
   venue_portfolio(venue:Venue, address:str) -> PortfolioHistory ! HlError
   pure range_label(range:str) -> str
   // The window as a column heading over its figures.
-  pure range_heading(locale:Locale, range:str) -> str
+  pure range_heading(locale:Locale, range:&str) -> str
   pure portfolio_empty() -> PortfolioHistory
   pure portfolio_unavailable(message:str) -> PortfolioHistory
   pure demo_portfolio_history() -> PortfolioHistory
-  pure portfolio_assets(positions:[Position]) -> [PortfolioAsset]
+  pure portfolio_assets(positions:&[Position]) -> [PortfolioAsset]
   // What pressing an asset row does, for its accessible name.
   pure asset_label(asset:PortfolioAsset) -> str
-  pure portfolio_exposure(positions:[Position]) -> f64
-  pure portfolio_long_exposure(positions:[Position]) -> f64
-  pure portfolio_short_exposure(positions:[Position]) -> f64
+  pure portfolio_exposure(positions:&[Position]) -> f64
+  pure portfolio_long_exposure(positions:&[Position]) -> f64
+  pure portfolio_short_exposure(positions:&[Position]) -> f64
   // The long side of a 200px rail, for the tile that draws the split.
-  pure portfolio_long_rail(positions:[Position]) -> f64
-  pure portfolio_flow(fills:[Fill]) -> PortfolioFlow
-  pure portfolio_funding(positions:[Position]) -> PortfolioFunding
-  pure portfolio_margin_posted(positions:[Position]) -> f64
+  pure portfolio_long_rail(positions:&[Position]) -> f64
+  pure portfolio_flow(fills:&[Fill]) -> PortfolioFlow
+  pure portfolio_funding(positions:&[Position]) -> PortfolioFunding
+  pure portfolio_margin_posted(positions:&[Position]) -> f64
   pure portfolio_leverage(account:Account?) -> f64
-  pure portfolio_history_note(history:PortfolioHistory) -> str
-  pure portfolio_history_ready(history:PortfolioHistory, range:str) -> bool
-  pure portfolio_history_start(history:PortfolioHistory, range:str) -> f64
-  pure portfolio_history_end(history:PortfolioHistory, range:str) -> f64
-  pure portfolio_history_change(history:PortfolioHistory, range:str) -> f64
-  pure portfolio_history_change_pct(history:PortfolioHistory, range:str) -> f64
-  pure portfolio_history_peak(history:PortfolioHistory, range:str) -> f64
-  pure portfolio_history_drawdown(history:PortfolioHistory, range:str) -> f64
-  pure portfolio_history_max_drawdown(history:PortfolioHistory, range:str) -> f64
+  pure portfolio_history_note(history:&PortfolioHistory) -> str
+  pure portfolio_history_ready(history:&PortfolioHistory, range:&str) -> bool
+  pure portfolio_history_start(history:&PortfolioHistory, range:&str) -> f64
+  pure portfolio_history_end(history:&PortfolioHistory, range:&str) -> f64
+  pure portfolio_history_change(history:&PortfolioHistory, range:&str) -> f64
+  pure portfolio_history_change_pct(history:&PortfolioHistory, range:&str) -> f64
+  pure portfolio_history_peak(history:&PortfolioHistory, range:&str) -> f64
+  pure portfolio_history_drawdown(history:&PortfolioHistory, range:&str) -> f64
+  pure portfolio_history_max_drawdown(history:&PortfolioHistory, range:&str) -> f64
   // The PnL the venue says the window booked, which is not the change in
   // value: a deposit moves one and not the other.
-  pure portfolio_history_pnl(history:PortfolioHistory, range:str) -> f64
-  pure portfolio_pnl_ready(history:PortfolioHistory, range:str) -> bool
+  pure portfolio_history_pnl(history:&PortfolioHistory, range:&str) -> f64
+  pure portfolio_pnl_ready(history:&PortfolioHistory, range:&str) -> bool
   pure hover_label(hover:PortfolioHover) -> str
   pure hover_value(hover:PortfolioHover) -> f64
   pure hover_readout(hover:PortfolioHover?, signed:bool) -> str

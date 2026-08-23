@@ -24,8 +24,8 @@ extern crate::venue
   // settings and never where rows would be: a sentence under an empty panel
   // reads as the reason the panel is empty.
   pure venue_note(venue:Venue) -> str
-  pure venue_account_note(venue:Venue, watching:bool, missing:bool, failure:str) -> str
-  pure venue_orders_note(venue:Venue, watching:bool, failure:str) -> str
+  pure venue_account_note(venue:Venue, watching:bool, missing:bool, failure:&str) -> str
+  pure venue_orders_note(venue:Venue, watching:bool, failure:&str) -> str
   pure tif_name(venue:Venue, tif:Tif) -> str
   pure tif_act(venue:Venue, tif:Tif) -> str
   pure venue_tif_note(venue:Venue, tif:Tif) -> str
@@ -43,7 +43,7 @@ extern crate::venue
   pure venue_twap_note(venue:Venue) -> str
   // How long the venue will be working this order, in the words the panel
   // prints. Empty for an order that goes at one moment.
-  pure order_worked(minutes:str) -> str
+  pure order_worked(minutes:&str) -> str
   // Which price the ticket's readouts are quoted from, which is not the same
   // field on every kind: a limit's is typed, a market's is the book's, and a
   // scale's is the average its rungs fill at. One figure so the value, the
@@ -106,7 +106,7 @@ extern crate::venue
   pure margin_mode(cross:bool) -> str
   pure venue_attaches_levels(venue:Venue) -> bool
   pure venue_levels_note(venue:Venue) -> str
-  pure venue_fills_note(venue:Venue, watching:bool, failure:str) -> str
+  pure venue_fills_note(venue:Venue, watching:bool, failure:&str) -> str
   // When this venue charges funding again. A rate says what holding a position
   // costs and never when the bill lands; this is the other half, and it is a
   // dash on a network that has not stated a boundary rather than an hour the

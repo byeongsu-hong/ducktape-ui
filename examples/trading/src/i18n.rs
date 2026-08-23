@@ -471,10 +471,7 @@ mod tests {
             }
         }
         for range in ["day", "week", "month", "all"] {
-            english.push(crate::portfolio::range_heading(
-                Locale::En,
-                range.to_owned(),
-            ));
+            english.push(crate::portfolio::range_heading(Locale::En, range));
         }
         for key in english {
             assert!(ko(&key).is_some(), "no Korean for {key:?}");

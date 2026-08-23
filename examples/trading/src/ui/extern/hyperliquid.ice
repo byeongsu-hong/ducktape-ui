@@ -39,16 +39,16 @@ extern crate::hyperliquid
   pure tray_positions(positions:[Position]) -> str
   pure tray_venue(venue:Venue) -> str
   pure tray_feed(millis:i64, live:bool) -> str
-  pure impact_price(book:Book?, size:str, buy:bool) -> str
-  pure impact_slippage(book:Book?, size:str, buy:bool) -> str
-  pure impact_short(book:Book?, size:str, buy:bool) -> bool
+  pure impact_price(book:&Book?, size:str, buy:bool) -> str
+  pure impact_slippage(book:&Book?, size:str, buy:bool) -> str
+  pure impact_short(book:&Book?, size:str, buy:bool) -> bool
   pure price_ticket(entry:f64, size:str, leverage:str, market:SymbolRow?, buy:bool, held:f64, cross:bool, account:Account?) -> Ticket
   pure order_size(size:str, usd:bool, price:f64, market:SymbolRow?, reduce:bool, held:f64, buy:bool) -> str
-  pure order_price(market:bool, price:str, book:Book?, size:str, buy:bool, focus:SymbolRow?) -> f64
-  pure size_price(market:bool, price:str, book:Book?, focus:SymbolRow?) -> f64
+  pure order_price(market:bool, price:str, book:&Book?, size:str, buy:bool, focus:SymbolRow?) -> f64
+  pure size_price(market:bool, price:&str, book:&Book?, focus:SymbolRow?) -> f64
   pure retype_size(size:str, usd:bool, price:f64, market:SymbolRow?) -> str
-  pure size_note(usd:bool, market:bool, price:str, book:Book?, focus:SymbolRow?) -> str
-  pure market_note(book:Book?, size:str, buy:bool, focus:SymbolRow?) -> str
+  pure size_note(usd:bool, market:bool, price:&str, book:&Book?, focus:SymbolRow?) -> str
+  pure market_note(book:&Book?, size:str, buy:bool, focus:SymbolRow?) -> str
   pure reduce_refused(positions:[Position], coin:str, buy:bool) -> str
   pure level_pnl(entry:f64, exit:str, size:str, buy:bool) -> f64
   pure tp_refused(entry:f64, price:str, buy:bool) -> str
@@ -59,7 +59,7 @@ extern crate::hyperliquid
   pure liquidation_gap(market:SymbolRow?, loaded:bool, cross:bool, banked:bool) -> str
   pure push_trades(tape:[Trade], tick:MarketTick, limit:i64) -> [Trade]
   pure push_fills(history:[Fill], incoming:[Fill], limit:i64) -> [Fill]
-  pure valid_address(address:str) -> bool
+  pure valid_address(address:&str) -> bool
   pure demo_symbols() -> [SymbolRow]
   pure demo_positions() -> [Position]
   sync demo_candles() -> Tape
@@ -89,18 +89,18 @@ extern crate::hyperliquid
   pure demo_tape_full() -> [Trade]
   pure demo_tape_at(mid:f64) -> [Trade]
   pure demo_tape() -> [Trade]
-  pure position_held(positions:[Position], coin:str) -> f64
+  pure position_held(positions:&[Position], coin:&str) -> f64
   pure mark_price(market:SymbolRow?) -> f64
   pure alert_label(alert:Alert) -> str
   pure alert_arrow(alert:Alert) -> str
   pure add_alert(alerts:[Alert], coin:str, price:str, mark:f64) -> [Alert]
   pure alert_refused(alerts:[Alert], coin:str, price:str, mark:f64) -> str
   pure check_alerts(alerts:[Alert], tick:MarketTick) -> [Alert]
-  pure waiting_alerts(alerts:[Alert]) -> i64
+  pure waiting_alerts(alerts:&[Alert]) -> i64
   pure drop_alert(alerts:[Alert], coin:str, price:f64) -> [Alert]
   pure share_size(account:Account?, price:f64, market:SymbolRow?, leverage:f64, share:f64, usd:bool, reduce:bool, held:f64) -> str
-  pure ticket_effect(positions:[Position], coin:str, size:str, buy:bool) -> str
-  pure order_load(account:Account?, coin:str, size:str, buy:bool, market:SymbolRow?) -> str
+  pure ticket_effect(positions:&[Position], coin:&str, size:str, buy:bool) -> str
+  pure order_load(account:Account?, coin:&str, size:str, buy:bool, market:SymbolRow?) -> str
   pure funding_day(market:SymbolRow?, price:f64, size:str, buy:bool) -> str
   pure market_label(market:SymbolRow) -> str
   pure group_note(market:SymbolRow) -> str
@@ -119,7 +119,7 @@ extern crate::hyperliquid
   pure hit_low(hit:CandleHit) -> f64
   pure hit_close(hit:CandleHit) -> f64
   pure hit_volume(hit:CandleHit) -> f64
-  pure tape_pressure(prints:[Trade]) -> f64
+  pure tape_pressure(prints:&[Trade]) -> f64
   sync now_seconds() -> i64
   pure fmt_age(ts:i64, now:i64) -> str
   pure pane_height(wanted:f64) -> f64
@@ -143,10 +143,10 @@ extern crate::hyperliquid
   pure fmt_count(value:i64) -> str
   pure fmt_leverage_mode(value:f64, mode:str) -> str
   pure fmt_time(ts:i64) -> str
-  pure chart_indicator_active(indicators:[ChartIndicator], target:ChartIndicator) -> bool
+  pure chart_indicator_active(indicators:&[ChartIndicator], target:ChartIndicator) -> bool
   pure chart_indicator_name(indicator:ChartIndicator) -> str
   pure chart_indicator_action(indicator:ChartIndicator, active:bool) -> str
-  pure chart_indicator_picker_label(indicators:[ChartIndicator]) -> str
+  pure chart_indicator_picker_label(indicators:&[ChartIndicator]) -> str
   task focus_chart_indicators(window:window-id?) -> unit
   pure toggle_chart_indicator(indicators:[ChartIndicator], target:ChartIndicator) -> [ChartIndicator]
   component chart(venue:Venue, tape:&Tape, fills:&[Fill], positions:&[Position], orders:&[Order], coin:&str, indicators:&[ChartIndicator]) -> ChartSignal

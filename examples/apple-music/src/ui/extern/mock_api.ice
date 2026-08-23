@@ -9,7 +9,7 @@ extern crate::mock_api
   pure playback_remaining(progress:f64) -> str
   pure remember_volume(volume:f64, previous:f64) -> f64
   pure toggle_mute(volume:f64, unmuted_volume:f64) -> f64
-  pure lyrics_for(title:str, progress:f64) -> [LyricLine]
+  pure lyrics_for(title:&str, progress:f64) -> [LyricLine]
   load_home() -> HomeFeed ! ApiError
   authenticate() -> Session ! ApiError
   search_catalog(query:str) -> [Album] ! ApiError
