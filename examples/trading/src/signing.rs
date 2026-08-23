@@ -201,10 +201,7 @@ impl Wallet {
     }
 
     fn sign_digest(&self, digest: [u8; 32]) -> Signature {
-        let (signature, recovery) = self
-            .key
-            .sign_prehash_recoverable(&digest)
-            .expect("a 32-byte digest is always signable");
+        let (signature, recovery) = self.key.sign_prehash_recoverable(&digest);
         let bytes = signature.to_bytes();
         let mut r = [0u8; 32];
         let mut s = [0u8; 32];
@@ -230,7 +227,7 @@ impl fmt::Debug for Wallet {
 /// the `0x04` uncompressed-form tag is dropped, and hashing it instead is the
 /// classic way to derive an address nobody else agrees with.
 fn address_of(key: &VerifyingKey) -> Address {
-    let point = key.to_encoded_point(false);
+    let point = key.to_sec1_point(false);
     let hash = keccak(&point.as_bytes()[1..]);
     let mut bytes = [0u8; 20];
     bytes.copy_from_slice(&hash[12..]);

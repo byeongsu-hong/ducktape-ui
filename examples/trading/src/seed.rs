@@ -63,7 +63,7 @@
 // somebody's account.
 #![allow(dead_code)]
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256, Sha512};
 
 use crate::hyperliquid::HlError;
@@ -335,7 +335,7 @@ fn stretch(password: &[u8], salt: &[u8]) -> [u8; 64] {
 
 fn hmac_sha512(key: &[u8], message: &[u8]) -> [u8; 64] {
     let mut mac =
-        <Hmac<Sha512> as Mac>::new_from_slice(key).expect("HMAC takes a key of any length");
+        <Hmac<Sha512> as KeyInit>::new_from_slice(key).expect("HMAC takes a key of any length");
     mac.update(message);
     mac.finalize().into_bytes().into()
 }
