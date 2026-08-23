@@ -621,3 +621,49 @@ fn a_format_delta_that_can_move_a_glyph_rebuilds_eagerly_everywhere() {
     assert_eq!(resized.rebuilt_lines, 50);
     assert_eq!(resized.format_stale_before, 0);
 }
+
+/// `end_padding` lets the last line scroll up from the bottom edge without
+/// shortening the text area the way bottom `padding` would.
+#[test]
+fn end_padding_extends_the_scroll_range_but_not_the_clip() {
+    use iced::advanced::renderer::Headless;
+
+    let content = Content::with_text(&"line\n".repeat(40));
+    let renderer = iced_test::futures::futures::executor::block_on(
+        <iced::Renderer as Headless>::new(Font::DEFAULT, Pixels(16.0), Some("tiny-skia")),
+    )
+    .expect("headless renderer");
+    let limits = layout::Limits::new(Size::ZERO, Size::new(400.0, 300.0));
+
+    let scroll_range = |end_padding: f32| {
+        let mut editor = RichTextEditor::new(&content, ContentVersion::new(1, 0))
+            .width(Length::Fixed(400.0))
+            .height(Length::Fixed(300.0))
+            .padding(0.0)
+            .end_padding(end_padding);
+        let mut tree = widget::Tree::new(&editor as &dyn Widget<Action, Theme, iced::Renderer>);
+        let node = editor.layout(&mut tree, &renderer, &limits);
+        let state = tree
+            .state
+            .downcast_ref::<State<text::highlighter::PlainText>>();
+        (
+            state.max_scroll(),
+            state.viewport_height,
+            node.size().height,
+        )
+    };
+
+    let (plain_max, plain_viewport, plain_height) = scroll_range(0.0);
+    let (padded_max, padded_viewport, padded_height) = scroll_range(120.0);
+    assert!(plain_max > 0.0, "forty lines overflow a 300px editor");
+    assert_eq!(
+        padded_max,
+        plain_max + 120.0,
+        "the last line can scroll 120px above the bottom edge"
+    );
+    assert_eq!(
+        padded_viewport, plain_viewport,
+        "the visible text area is unchanged"
+    );
+    assert_eq!(padded_height, plain_height, "the widget keeps its size");
+}
