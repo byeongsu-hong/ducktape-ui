@@ -112,14 +112,14 @@ pub fn toggle_mute(volume: f64, unmuted_volume: f64) -> f64 {
     if volume > 0.0 { 0.0 } else { unmuted_volume }
 }
 
-pub fn lyrics_for(title: String, progress: f64) -> Vec<LyricLine> {
+pub fn lyrics_for(title: &str, progress: f64) -> Vec<LyricLine> {
     let text = [
         title,
-        "After blue".into(),
-        "Under a velvet sun".into(),
-        "Soft weather moving in".into(),
-        "An amber signal".into(),
-        "Across the open water".into(),
+        "After blue",
+        "Under a velvet sun",
+        "Soft weather moving in",
+        "An amber signal",
+        "Across the open water",
     ];
     let progress = if progress.is_finite() {
         progress.clamp(0.0, 100.0)
@@ -132,7 +132,7 @@ pub fn lyrics_for(title: String, progress: f64) -> Vec<LyricLine> {
         .enumerate()
         .map(|(id, text)| LyricLine {
             id: id as i64,
-            text,
+            text: text.to_owned(),
             position: id as f64 * 20.0,
             active: id == active,
         })
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn lyrics_follow_the_playhead() {
-        let lines = lyrics_for("Liquid Light".into(), 34.0);
+        let lines = lyrics_for("Liquid Light", 34.0);
 
         assert_eq!(lines.len(), 6);
         assert_eq!(lines[0].text, "Liquid Light");

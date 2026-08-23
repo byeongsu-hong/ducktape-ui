@@ -653,7 +653,7 @@ pub fn mint_wallet() -> Minted {
 }
 
 /// What the panel asks for, in the owner's numbering.
-pub fn backup_asks(positions: Vec<i64>) -> String {
+pub fn backup_asks(positions: &[i64]) -> String {
     let named: Vec<String> = positions.iter().map(|at| format!("word {at}")).collect();
     match named.split_last() {
         None => String::new(),
@@ -666,7 +666,7 @@ pub fn backup_asks(positions: Vec<i64>) -> String {
 ///
 /// One field per position, so the label *is* the question: nobody has to work
 /// out which of three boxes the ninth word goes in.
-pub fn backup_label(positions: Vec<i64>, at: i64) -> String {
+pub fn backup_label(positions: &[i64], at: i64) -> String {
     usize::try_from(at)
         .ok()
         .and_then(|at| positions.get(at))
@@ -692,7 +692,7 @@ pub fn backup_refused(phrase: String, positions: Vec<i64>, given: Vec<String>) -
         return "There is no phrase waiting to be confirmed.".to_owned();
     }
     if given.len() != positions.len() {
-        return format!("Fill in {}.", backup_asks(positions));
+        return format!("Fill in {}.", backup_asks(&positions));
     }
     let wrong: Vec<i64> = positions
         .iter()
@@ -717,7 +717,7 @@ pub fn backup_refused(phrase: String, positions: Vec<i64>, given: Vec<String>) -
     } else {
         format!(
             "{} does not match what you wrote down. Check your copy — nothing has been stored.",
-            backup_asks(wrong),
+            backup_asks(&wrong),
         )
     }
 }
@@ -987,7 +987,7 @@ fn generate(scheme: Signing) -> Result<(Vec<u8>, String), String> {
 /// thing: a rule about what a reader has agreed to before a key is used. The
 /// same rule governs an eviction — one incident names every network it covers,
 /// and never rides along on another action's sheet.
-pub fn enrolment_plan(address: String) -> String {
+pub fn enrolment_plan(address: &str) -> String {
     let address = address.trim().to_lowercase();
     if address.is_empty() {
         return String::new();
@@ -3530,10 +3530,10 @@ mod tests {
     #[test]
     fn each_box_is_labelled_with_the_position_it_takes() {
         let positions = vec![2i64, 9, 24];
-        assert_eq!(backup_label(positions.clone(), 0), "Word 2");
-        assert_eq!(backup_label(positions.clone(), 1), "Word 9");
-        assert_eq!(backup_label(positions.clone(), 2), "Word 24");
-        assert_eq!(backup_label(positions, 3), "");
+        assert_eq!(backup_label(&positions, 0), "Word 2");
+        assert_eq!(backup_label(&positions, 1), "Word 9");
+        assert_eq!(backup_label(&positions, 2), "Word 24");
+        assert_eq!(backup_label(&positions, 3), "");
     }
 
     /// A minted wallet: the shape the panel and the check both depend on.
@@ -3588,8 +3588,8 @@ mod tests {
     /// What the panel asks for, in words rather than in a list.
     #[test]
     fn the_backup_asks_for_its_positions_in_a_sentence() {
-        assert_eq!(backup_asks(vec![2, 9, 24]), "word 2, word 9 and word 24");
-        assert_eq!(backup_asks(vec![7]), "word 7");
-        assert_eq!(backup_asks(Vec::new()), "");
+        assert_eq!(backup_asks(&[2, 9, 24]), "word 2, word 9 and word 24");
+        assert_eq!(backup_asks(&[7]), "word 7");
+        assert_eq!(backup_asks(&[]), "");
     }
 }

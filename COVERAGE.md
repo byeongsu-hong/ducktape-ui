@@ -91,9 +91,12 @@ no-ops/dead gates and unreachable statements include
 preset boot statements; statically disabled subscriptions are excluded from
 duplicate-delivery warnings. Performance warnings name per-frame work a `lazy`
 boundary would avoid: extern component content rebuilt from state outside
-`lazy` (`W016`) and a plain `lazy` inside a repetition over a list-owning value
-(`W017`); evidence is the two `perf-*` warning fixtures plus the `w016`/`w017`
-checker unit tests pinning each fixture's exact site set.
+`lazy` (`W016`), a plain `lazy` inside a repetition over a list-owning value
+(`W017`), and a `str`, `bytes`, list, `editor`, or list-owning record state
+field cloned into a by-value `pure`/`sync` parameter from a view expression or
+subscription condition (`W018`); evidence is the three `perf-*` warning fixtures plus the
+`w016`/`w017`/`w018` checker unit tests pinning each fixture's exact site set,
+and `cargo ice check` reporting zero warnings over the in-repo examples.
 Component and handler reachability is combined
 across all workspace or open-editor roots. `cargo ice` additionally reports
 workspace `.ice` files outside every root graph as CLI-only `W010`. Cargo JSON

@@ -1535,19 +1535,15 @@ fn size_step(market: Option<&SymbolRow>) -> f64 {
 ///
 /// Deliberately not what crossing would pay: that price is a function of the
 /// size, and the size would then be a function of it.
-pub fn size_price(
-    market: bool,
-    price: String,
-    book: Option<Book>,
-    focus: Option<SymbolRow>,
-) -> f64 {
+pub fn size_price(market: bool, price: &str, book: &Option<Book>, focus: Option<SymbolRow>) -> f64 {
     if !market {
-        let typed = amount(&price);
+        let typed = amount(price);
         if typed > 0.0 {
             return typed;
         }
     }
-    book.map(|depth| depth.mid)
+    book.as_ref()
+        .map(|depth| depth.mid)
         .filter(|mid| *mid > 0.0)
         .or_else(|| focus.map(|row| row.price))
         .unwrap_or(0.0)
@@ -1567,7 +1563,7 @@ pub fn size_price(
 pub fn order_price(
     market: bool,
     price: String,
-    book: Option<Book>,
+    book: &Option<Book>,
     size: String,
     buy: bool,
     focus: Option<SymbolRow>,
@@ -1575,11 +1571,12 @@ pub fn order_price(
     if !market {
         return amount(&price).max(0.0);
     }
-    let impact = book_impact(book.clone(), size, buy);
+    let impact = book_impact(book, size, buy);
     if impact.ready {
         return impact.paid;
     }
-    book.map(|depth| depth.mid)
+    book.as_ref()
+        .map(|depth| depth.mid)
         .filter(|mid| *mid > 0.0)
         .or_else(|| focus.map(|row| row.price))
         .unwrap_or(0.0)
@@ -1627,7 +1624,7 @@ pub struct Impact {
     pub ready: bool,
 }
 
-pub fn book_impact(book: Option<Book>, size: String, buy: bool) -> Impact {
+pub fn book_impact(book: &Option<Book>, size: String, buy: bool) -> Impact {
     let empty = Impact {
         paid: 0.0,
         slippage_pct: 0.0,
@@ -1684,7 +1681,7 @@ pub fn book_impact(book: Option<Book>, size: String, buy: bool) -> Impact {
 /// What crossing right now would pay, as the panel reads it. Three thin
 /// readings rather than one struct: the boundary carries what the view draws,
 /// and the view draws a price, a distance, and a warning.
-pub fn impact_price(book: Option<Book>, size: String, buy: bool) -> String {
+pub fn impact_price(book: &Option<Book>, size: String, buy: bool) -> String {
     let impact = book_impact(book, size, buy);
     if impact.ready {
         fmt_px(impact.paid)
@@ -1693,7 +1690,7 @@ pub fn impact_price(book: Option<Book>, size: String, buy: bool) -> String {
     }
 }
 
-pub fn impact_slippage(book: Option<Book>, size: String, buy: bool) -> String {
+pub fn impact_slippage(book: &Option<Book>, size: String, buy: bool) -> String {
     let impact = book_impact(book, size, buy);
     if impact.ready {
         fmt_bps(impact.slippage_pct)
@@ -1702,7 +1699,7 @@ pub fn impact_slippage(book: Option<Book>, size: String, buy: bool) -> String {
     }
 }
 
-pub fn impact_short(book: Option<Book>, size: String, buy: bool) -> bool {
+pub fn impact_short(book: &Option<Book>, size: String, buy: bool) -> bool {
     book_impact(book, size, buy).short
 }
 
@@ -3083,7 +3080,7 @@ pub fn fmt_sweep(count: i64) -> String {
 /// address with a plain-text parser complaint rather than JSON, so a typo
 /// surfaces as "Hyperliquid sent bad JSON" — the one error message that blames
 /// the exchange for something the user just typed.
-pub fn valid_address(address: String) -> bool {
+pub fn valid_address(address: &str) -> bool {
     let address = address.trim();
     address.len() == 42
         && address.starts_with("0x")
@@ -3216,7 +3213,7 @@ pub fn check_alerts(alerts: Vec<Alert>, tick: MarketTick) -> Vec<Alert> {
 }
 
 /// How many are still waiting, which is the only count worth a header.
-pub fn waiting_alerts(alerts: Vec<Alert>) -> i64 {
+pub fn waiting_alerts(alerts: &[Alert]) -> i64 {
     alerts.iter().filter(|alert| !alert.fired).count() as i64
 }
 
@@ -3390,7 +3387,7 @@ pub fn share_size(
 /// account. An isolated order changes nothing here and says so.
 pub fn order_load(
     account: Option<Account>,
-    coin: String,
+    coin: &str,
     size: String,
     buy: bool,
     market: Option<SymbolRow>,
@@ -3457,7 +3454,7 @@ pub fn funding_day(market: Option<SymbolRow>, price: f64, size: String, buy: boo
     format!("{}/day", fmt_signed_usd(signed))
 }
 
-pub fn ticket_effect(positions: Vec<Position>, coin: String, size: String, buy: bool) -> String {
+pub fn ticket_effect(positions: &[Position], coin: &str, size: String, buy: bool) -> String {
     let size = amount(&size).abs();
     if size <= 0.0 {
         return String::new();
@@ -3484,9 +3481,9 @@ pub fn ticket_effect(positions: Vec<Position>, coin: String, size: String, buy: 
 
 /// The signed size held in one market, or zero when none is. Signed, because
 /// the ticket needs both how much to close and which way that trade goes.
-pub fn position_held(positions: Vec<Position>, coin: String) -> f64 {
+pub fn position_held(positions: &[Position], coin: &str) -> f64 {
     positions
-        .into_iter()
+        .iter()
         .find(|position| position.coin == coin)
         .map_or(0.0, |position| position.size)
 }
@@ -3503,7 +3500,7 @@ pub fn position_held(positions: Vec<Position>, coin: String) -> f64 {
 /// CLOSE POSITION is this same promise with the size and the side filled in,
 /// which is why it sets the box rather than carrying a second path of its own.
 pub fn reduce_refused(positions: Vec<Position>, coin: String, buy: bool) -> String {
-    let held = position_held(positions, coin);
+    let held = position_held(&positions, &coin);
     if held == 0.0 {
         return "Reduce-only needs a position to reduce, and there is none in this market."
             .to_owned();
@@ -3662,12 +3659,12 @@ pub fn margin_note(cross: bool) -> String {
 /// below prints — so the two cannot disagree, and a book too thin to price the
 /// size says so there rather than leaving the figure to look firm.
 pub fn market_note(
-    book: Option<Book>,
+    book: &Option<Book>,
     size: String,
     buy: bool,
     focus: Option<SymbolRow>,
 ) -> String {
-    let impact = book_impact(book.clone(), size.clone(), buy);
+    let impact = book_impact(book, size.clone(), buy);
     if impact.ready {
         return format!("Crosses the spread now, at {}.", fmt_px(impact.paid));
     }
@@ -3689,18 +3686,18 @@ pub fn market_note(
 pub fn size_note(
     usd: bool,
     market: bool,
-    price: String,
-    book: Option<Book>,
+    price: &str,
+    book: &Option<Book>,
     focus: Option<SymbolRow>,
 ) -> String {
     if !usd {
         return String::new();
     }
-    let at = size_price(market, price.clone(), book, focus);
+    let at = size_price(market, price, book, focus);
     if at <= 0.0 {
         return "Nothing on screen prices this market yet, so dollars cannot be sized.".to_owned();
     }
-    let source = if !market && amount(&price) > 0.0 {
+    let source = if !market && amount(price) > 0.0 {
         "the limit price"
     } else {
         "the market's mid"
@@ -3901,7 +3898,7 @@ pub fn fill_label(fill: Fill) -> String {
 /// is crossing tells you something a price alone does not: the same price with
 /// buyers taking it and with sellers hitting it are two different markets.
 /// Reads 50 on an empty tape, which is the only honest reading of no trades.
-pub fn tape_pressure(prints: Vec<Trade>) -> f64 {
+pub fn tape_pressure(prints: &[Trade]) -> f64 {
     let (bought, total) = prints.iter().fold((0.0, 0.0), |(bought, total), print| {
         let size = print.size.abs();
         (bought + if print.buy { size } else { 0.0 }, total + size)
@@ -5620,7 +5617,7 @@ mod tests {
         let load = |size: &str, buy: bool, market: Option<SymbolRow>| {
             order_load(
                 Some(account.clone()),
-                market
+                &market
                     .as_ref()
                     .map_or_else(String::new, |row| row.name.clone()),
                 size.to_owned(),
@@ -5646,7 +5643,7 @@ mod tests {
         assert_eq!(load("1", true, eth), "91% → 92%");
 
         // Nothing to say without an account, a size, or a market.
-        assert!(order_load(None, "BTC".to_owned(), "5".to_owned(), true, btc.clone()).is_empty());
+        assert!(order_load(None, "BTC", "5".to_owned(), true, btc.clone()).is_empty());
         assert!(load("", true, btc).is_empty());
         assert!(load("5", true, None).is_empty());
     }
@@ -5898,7 +5895,7 @@ mod tests {
 
         // Inside the best ask: one level, one price, and the slippage is the
         // half spread and nothing else.
-        let small = book_impact(book(), "1.0".to_owned(), true);
+        let small = book_impact(&book(), "1.0".to_owned(), true);
         assert!(small.ready && !small.short);
         assert!(1.0 < best_ask.size, "a 1.0 buy has to rest on one level");
         assert!((small.paid - best_ask.price).abs() < 1e-9);
@@ -5910,7 +5907,7 @@ mod tests {
 
         // Through two levels: the whole best ask, and the rest behind it.
         let size = best_ask.size + 1.2;
-        let deeper = book_impact(book(), format!("{size}"), true);
+        let deeper = book_impact(&book(), format!("{size}"), true);
         let expected = (best_ask.size * best_ask.price + 1.2 * next_ask.price) / size;
         assert!((deeper.paid - expected).abs() < 1e-9, "{}", deeper.paid);
         assert!(deeper.paid > small.paid, "depth costs more, never less");
@@ -5918,7 +5915,7 @@ mod tests {
         // Selling walks the bids down, and the slippage still reads positive:
         // it is what the crossing costs, not which way the price went.
         let size = best_bid.size + 0.6;
-        let sold = book_impact(book(), format!("{size}"), false);
+        let sold = book_impact(&book(), format!("{size}"), false);
         let expected = (best_bid.size * best_bid.price + 0.6 * next_bid.price) / size;
         assert!((sold.paid - expected).abs() < 1e-9);
         assert!(sold.slippage_pct > 0.0);
@@ -5931,7 +5928,7 @@ mod tests {
     fn a_sweep_starts_at_the_best_price_not_the_first_row() {
         let fixture = demo_book();
         let (best_ask, _) = touch(&fixture.asks, true);
-        let impact = book_impact(Some(demo_book()), "0.5".to_owned(), true);
+        let impact = book_impact(&Some(demo_book()), "0.5".to_owned(), true);
         assert!(
             (impact.paid - best_ask.price).abs() < 1e-9,
             "a small buy pays the best ask, not {}",
@@ -5950,7 +5947,7 @@ mod tests {
             .iter()
             .map(|level| level.size * level.price)
             .sum::<f64>();
-        let impact = book_impact(Some(demo_book()), "100".to_owned(), true);
+        let impact = book_impact(&Some(demo_book()), "100".to_owned(), true);
         assert!(depth < 100.0, "the fixture has to be short of the ask");
         assert!(impact.short, "{depth} of asks cannot fill 100");
         assert!((impact.filled - depth).abs() < 1e-9);
@@ -5959,8 +5956,8 @@ mod tests {
             "and it is priced over what is actually there"
         );
 
-        assert!(!book_impact(Some(demo_book()), "0".to_owned(), true).ready);
-        assert!(!book_impact(None, "1".to_owned(), true).ready);
+        assert!(!book_impact(&Some(demo_book()), "0".to_owned(), true).ready);
+        assert!(!book_impact(&None, "1".to_owned(), true).ready);
     }
 
     /// The address the app opens on, which is a real account with real
@@ -6733,7 +6730,7 @@ mod tests {
         // Weighted by size, not by row count: one large seller against three
         // small buyers is a selling tape however the rows look.
         assert_eq!(
-            tape_pressure(vec![
+            tape_pressure(&[
                 print(1.0, true),
                 print(1.0, true),
                 print(1.0, true),
@@ -6741,17 +6738,14 @@ mod tests {
             ]),
             25.0
         );
-        assert_eq!(tape_pressure(vec![print(4.0, true)]), 100.0);
-        assert_eq!(tape_pressure(vec![print(4.0, false)]), 0.0);
-        assert_eq!(
-            tape_pressure(vec![print(1.0, true), print(1.0, false)]),
-            50.0
-        );
+        assert_eq!(tape_pressure(&[print(4.0, true)]), 100.0);
+        assert_eq!(tape_pressure(&[print(4.0, false)]), 0.0);
+        assert_eq!(tape_pressure(&[print(1.0, true), print(1.0, false)]), 50.0);
         // No trades is not a one-sided market, and must not divide by zero.
-        assert_eq!(tape_pressure(Vec::new()), 50.0);
-        assert_eq!(tape_pressure(vec![print(0.0, true)]), 50.0);
+        assert_eq!(tape_pressure(&[]), 50.0);
+        assert_eq!(tape_pressure(&[print(0.0, true)]), 50.0);
         assert_eq!(
-            fmt_share(tape_pressure(demo_tape())),
+            fmt_share(tape_pressure(&demo_tape())),
             "34%",
             "the fixture tape"
         );
@@ -7022,9 +7016,9 @@ mod tests {
         assert!(set("65000", 0.0).is_empty(), "no mark to compare against");
 
         let watched = set("65000", 64_000.0);
-        assert_eq!(waiting_alerts(watched.clone()), 1);
+        assert_eq!(waiting_alerts(&watched), 1);
         assert_eq!(
-            waiting_alerts(check_alerts(watched.clone(), beat(65_000.0))),
+            waiting_alerts(&check_alerts(watched.clone(), beat(65_000.0))),
             0
         );
         // The row deletes the level it names, so its label says so rather than
@@ -7172,8 +7166,7 @@ mod tests {
             funding: 0.0,
         };
         let held = vec![short(-30.0)];
-        let effect =
-            |size: &str, buy: bool| ticket_effect(held.clone(), "BTC".into(), size.into(), buy);
+        let effect = |size: &str, buy: bool| ticket_effect(&held, "BTC", size.into(), buy);
 
         // A buy against a short is the interesting case: the same ticket that
         // opens a position on one side closes one on the other, and the only
@@ -7185,13 +7178,10 @@ mod tests {
 
         // A market you hold nothing in, and a market that is not this one.
         assert_eq!(
-            ticket_effect(held.clone(), "ETH".into(), "1".into(), true),
+            ticket_effect(&held, "ETH", "1".into(), true),
             "Opens 1 long"
         );
-        assert_eq!(
-            ticket_effect(Vec::new(), "BTC".into(), "1".into(), true),
-            "Opens 1 long"
-        );
+        assert_eq!(ticket_effect(&[], "BTC", "1".into(), true), "Opens 1 long");
         // Nothing typed is not an order, and says nothing.
         assert_eq!(effect("", true), "");
         assert_eq!(effect("0", true), "");
@@ -7584,18 +7574,18 @@ mod tests {
 
         // Signed, because the ticket needs both the size to fill and the side
         // that closing takes — and they come from the same number.
-        assert_eq!(position_held(book.clone(), "BTC".into()), -30.0);
-        assert_eq!(position_held(book.clone(), "ETH".into()), 5.0);
-        assert_eq!(position_held(book.clone(), "SOL".into()), 0.0, "none held");
-        assert_eq!(position_held(Vec::new(), "BTC".into()), 0.0);
+        assert_eq!(position_held(&book, "BTC"), -30.0);
+        assert_eq!(position_held(&book, "ETH"), 5.0);
+        assert_eq!(position_held(&book, "SOL"), 0.0, "none held");
+        assert_eq!(position_held(&[], "BTC"), 0.0);
 
         // What the panel then fills: an unsigned size, and the opposite side.
-        let short = position_held(book.clone(), "BTC".into());
+        let short = position_held(&book, "BTC");
         assert_eq!(fmt_size(short), "30", "the field takes no sign");
         assert!(short < 0.0, "so closing a short buys");
         // And the effect line agrees with what the button just did.
         assert_eq!(
-            ticket_effect(book, "BTC".into(), fmt_size(short), short < 0.0),
+            ticket_effect(&book, "BTC", fmt_size(short), short < 0.0),
             "Closes your short"
         );
     }
@@ -7643,7 +7633,7 @@ mod tests {
         // What CLOSE POSITION fills in has to close the position: a rounded
         // seed reads back as a partial close, or past the position as a flip.
         assert_eq!(
-            ticket_effect(vec![position], "BTC".into(), seeded, held < 0.0),
+            ticket_effect(&[position], "BTC", seeded, held < 0.0),
             "Closes your short"
         );
     }
@@ -8248,31 +8238,31 @@ mod tests {
     #[test]
     fn an_address_is_checked_before_it_reaches_the_exchange() {
         // The address the app opens on, and the vault the live test reads.
-        assert!(valid_address(WATCHED.to_owned()));
+        assert!(valid_address(WATCHED));
         assert!(valid_address(
-            "  0xdfc24b077bc1425ad1dea75bcb6f8158e10df303  ".to_owned()
+            "  0xdfc24b077bc1425ad1dea75bcb6f8158e10df303  "
         ));
         assert!(
-            valid_address("0xDFC24B077BC1425AD1DEA75BCB6F8158E10DF303".to_owned()),
+            valid_address("0xDFC24B077BC1425AD1DEA75BCB6F8158E10DF303"),
             "checksummed addresses are the same address"
         );
 
-        assert!(!valid_address(String::new()), "the prompt starts empty");
-        assert!(!valid_address("0x".to_owned()));
+        assert!(!valid_address(""), "the prompt starts empty");
+        assert!(!valid_address("0x"));
         assert!(
-            !valid_address("dfc24b077bc1425ad1dea75bcb6f8158e10df303".to_owned()),
+            !valid_address("dfc24b077bc1425ad1dea75bcb6f8158e10df303"),
             "forty digits without the prefix is not an address"
         );
         assert!(
-            !valid_address("0xdfc24b077bc1425ad1dea75bcb6f8158e10df3033".to_owned()),
+            !valid_address("0xdfc24b077bc1425ad1dea75bcb6f8158e10df3033"),
             "one digit too many"
         );
         assert!(
-            !valid_address("0xzzc24b077bc1425ad1dea75bcb6f8158e10df303".to_owned()),
+            !valid_address("0xzzc24b077bc1425ad1dea75bcb6f8158e10df303"),
             "the right length, but not hexadecimal"
         );
         // Forty-two bytes of multibyte text must not be sliced mid-character.
-        assert!(!valid_address("0x".to_owned() + &"é".repeat(20)));
+        assert!(!valid_address(&("0x".to_owned() + &"é".repeat(20))));
     }
 
     #[test]

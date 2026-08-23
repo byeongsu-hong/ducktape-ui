@@ -14,7 +14,7 @@ const STROKE_WIDTH: f32 = 1.25;
 type Values = Vec<Option<f64>>;
 type Bands = (Values, Values, Values);
 
-pub fn chart_indicator_active(indicators: Vec<ChartIndicator>, target: ChartIndicator) -> bool {
+pub fn chart_indicator_active(indicators: &[ChartIndicator], target: ChartIndicator) -> bool {
     indicators.contains(&target)
 }
 
@@ -41,7 +41,7 @@ pub fn chart_indicator_action(indicator: ChartIndicator, active: bool) -> String
     format!("{action} {name}")
 }
 
-pub fn chart_indicator_picker_label(indicators: Vec<ChartIndicator>) -> String {
+pub fn chart_indicator_picker_label(indicators: &[ChartIndicator]) -> String {
     format!("Choose chart indicators, {} selected", indicators.len())
 }
 

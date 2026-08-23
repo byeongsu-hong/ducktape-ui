@@ -6270,6 +6270,7 @@ Successful analysis may also emit stable semantic warnings:
 | `W015` | a component with targetable widget IDs is mounted without the public ID scope needed to address them from its caller |
 | `W016` | an extern component rebuilds its native widget from string or list content on every view pass, outside any `lazy` boundary |
 | `W017` | a plain `lazy` inside a repetition clones and hashes a list, or a record owning one, on every view pass |
+| `W018` | a `str`, `bytes`, `[T]`, `editor`, or list-owning record state field is cloned into a by-value `pure`/`sync` parameter on every view pass or subscription check |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -6324,7 +6325,7 @@ widget operations. Component-local handlers may still use their own relative
 paths; the warning covers operation paths hidden from the caller and suggests
 adding an explicit component ID.
 
-`W016` and `W017` are performance warnings: iced rebuilds the whole view on
+`W016`, `W017`, and `W018` are performance warnings: iced rebuilds the whole view on
 every message, so a view expression is paid once per frame unless a `lazy`
 boundary memoizes it. `W016` reports an `extern ... component` call whose
 `str` or `[T]` argument reads app state, a derived value, or component state
@@ -6340,7 +6341,24 @@ or `table` when the value is a list or a record with a list field: the plain
 form clones its dependency into the memo tuple and hashes the clone once per
 item per frame, where `lazy value by <cheap keys> as alias` captures it by
 reference and hashes only the keys. A record of scalars and strings is the
-whole-row memo idiom and is not reported.
+whole-row memo idiom and is not reported. `W018` reports a `pure` or `sync`
+extern call whose by-value parameter receives a bare app-state or
+component-state field of type `str`, `bytes`, `[T]`, `editor`, or a record
+whose Ice declaration has a list field, when the call is owned by a view
+expression (reachable component bodies, interaction, media, tooltip, float,
+pin, and component argument expressions included) or by a subscription `when`
+condition: the generated call clones the whole field once per view pass or
+subscription check. Handler-owned calls run once per message and `derived`
+initializers are not reported; a literal or projected argument, a test mount,
+an unreachable component, and a parameter already declared `&str`, `&bytes`,
+`&[T]`, `&T`, or `&editor` (section 5) are silent. A `lazy` subtree needs no
+exemption because only its alias and its key or extra snapshots are in scope
+there, and a component mounted only behind `lazy` is still reported, since
+the rule classifies the body rather than its mounts. Opaque extern records are not inspected: a record
+declared `History(note:str)` whose Rust struct owns vectors clones them
+silently, so zero `W018` sites does not mean zero per-frame record clones.
+The fix is the borrowed parameter, which leaves the call site unchanged, or
+moving the result into state from the handler that writes the field.
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
@@ -6368,7 +6386,7 @@ The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
 output rather than actionable Ice syntax and are suppressed at the generated
 item boundary; Ice's non-CLI-only semantic warnings (`W001-W009` and
-`W011-W017`) continue to come directly from the language checker.
+`W011-W018`) continue to come directly from the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source
 revision.

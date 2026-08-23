@@ -55,8 +55,8 @@ extern crate::custody
   Minted(phrase:str, positions:[i64], error:str)
   sync mint_wallet() -> Minted
   // What the backup step asks for, and why it has not been answered yet.
-  pure backup_asks(positions:[i64]) -> str
-  pure backup_label(positions:[i64], at:i64) -> str
+  pure backup_asks(positions:&[i64]) -> str
+  pure backup_label(positions:&[i64], at:i64) -> str
   pure backup_refused(phrase:str, positions:[i64], given:[str]) -> str
   // The typed door. Both parameters are `secret`, which makes this the single
   // place a typed phrase becomes readable anywhere in this program: what
@@ -89,7 +89,7 @@ extern crate::custody
   // The owner's rule is that a master signature never happens without a sheet
   // just answered and a naming of everything it covers; one prompt for four
   // networks is one explicit act, four prompts saying "approve a key" is not.
-  pure enrolment_plan(address:str) -> str
+  pure enrolment_plan(address:&str) -> str
   enrol_all(address:str, passphrase:secret) -> Entry ! CustodyFault
   unlock_agent(venue:Venue, address:str, passphrase:secret) -> Entry ! CustodyFault
   // Why the send is dead, or nothing when it is live. One sentence over both

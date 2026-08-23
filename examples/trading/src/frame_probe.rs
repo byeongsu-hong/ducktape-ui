@@ -711,8 +711,8 @@ fn beat_cost() {
 }
 
 /// What the view pays for direct Rust calls, per call. Each is
-/// written the way the generated view writes it — the boundary takes owned
-/// values, so the collection the app holds is cloned at the call site.
+/// written the way the generated view writes it — an owned parameter clones
+/// the value the app holds at the call site, and a `&` parameter borrows it.
 #[test]
 #[ignore = "frame-cost probe, run explicitly: prints per-call costs, asserts nothing"]
 fn direct_call_cost() {
@@ -740,57 +740,45 @@ fn direct_call_cost() {
         };
     }
 
-    // Whole-collection arguments: the clone is the call.
+    // Whole-collection arguments, borrowed: the walk is the call.
     price!(
         "position_held(positions)",
-        hyperliquid::position_held(state.positions.clone(), state.coin.clone())
+        hyperliquid::position_held(&state.positions, &state.coin)
     );
     price!(
         "ticket_effect(positions)",
         hyperliquid::ticket_effect(
-            state.positions.clone(),
-            state.coin.clone(),
+            &state.positions,
+            &state.coin,
             state.ticket_size.clone(),
             state.ticket_buy
         )
     );
     price!(
         "impact_price(book)",
-        hyperliquid::impact_price(
-            state.book.clone(),
-            state.ticket_size.clone(),
-            state.ticket_buy
-        )
+        hyperliquid::impact_price(&state.book, state.ticket_size.clone(), state.ticket_buy)
     );
     price!(
         "impact_slippage(book)",
-        hyperliquid::impact_slippage(
-            state.book.clone(),
-            state.ticket_size.clone(),
-            state.ticket_buy
-        )
+        hyperliquid::impact_slippage(&state.book, state.ticket_size.clone(), state.ticket_buy)
     );
     price!(
         "impact_short(book)",
-        hyperliquid::impact_short(
-            state.book.clone(),
-            state.ticket_size.clone(),
-            state.ticket_buy
-        )
+        hyperliquid::impact_short(&state.book, state.ticket_size.clone(), state.ticket_buy)
     );
     price!(
         "tape_pressure(tape_prints)",
-        hyperliquid::tape_pressure(state.tape_prints.clone())
+        hyperliquid::tape_pressure(&state.tape_prints)
     );
     price!(
         "waiting_alerts(alerts)",
-        hyperliquid::waiting_alerts(state.alerts.clone())
+        hyperliquid::waiting_alerts(&state.alerts)
     );
     price!(
         "order_load(account, focus)",
         hyperliquid::order_load(
             state.account.clone(),
-            state.coin.clone(),
+            &state.coin,
             state.ticket_size.clone(),
             state.ticket_buy,
             state.focus.clone()
@@ -803,7 +791,7 @@ fn direct_call_cost() {
             hyperliquid::order_price(
                 false,
                 state.ticket_price.clone(),
-                state.book.clone(),
+                &state.book,
                 state.ticket_size.clone(),
                 state.ticket_buy,
                 state.focus.clone()
@@ -841,7 +829,7 @@ fn direct_call_cost() {
     );
     price!(
         "valid_address(draft)",
-        hyperliquid::valid_address(state.draft.clone())
+        hyperliquid::valid_address(&state.draft)
     );
     price!("header_inset()", hyperliquid::header_inset());
 
@@ -944,7 +932,7 @@ fn direct_call_cost() {
             hyperliquid::order_price(
                 false,
                 state.ticket_price.clone(),
-                state.book.clone(),
+                &state.book,
                 state.ticket_size.clone(),
                 state.ticket_buy,
                 state.focus.clone()
