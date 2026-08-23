@@ -321,7 +321,10 @@ root node.
 ## 4. Compact grammar
 
 The grammar below uses indentation (`INDENT`) as a block delimiter. `expr` is
-defined in section 6.
+defined in section 6, the `utility` vocabulary in section 10, and the
+`mouse_cursor` names in section 8. Bare `name`, `PascalName`, `kebab_name`,
+`string`, `number`, `bool`, unsigned-integer, and `rust_path` tokens follow
+section 3.
 
 ```text
 source_graph   = root_file imported_file*
@@ -825,7 +828,8 @@ node_form      = layout | text | input | button | checkbox | toggler
                | if_node | match_node | for_node
                | keyed_column | lazy_node | markdown_view | table_view
                | editor_view | box | overlay | rich_text | pane_grid
-node_metadata  = "with" INDENT (property | styles)+
+node_metadata  = "with" INDENT (node_property | styles)+
+node_property  = any property or id the node's own form accepts, one per line
 layout         = "col" id? column_property* styles? (INDENT node+)?
                | "row" id? flex_property* styles? (INDENT node+)?
                | "flex" id? css_flex_property* styles? (INDENT node+)?
@@ -1074,8 +1078,9 @@ input_style_property
                | ("border-w=" | "r=" | "r-tl="
                  | "r-tr=" | "r-br=" | "r-bl=") expr
 input_icon     = "icon" combo_icon_property+
-button         = "button" (string | INDENT node) id? button_property*
-                 styles? "->" route (INDENT button_status_style*)?
+button         = "button" string? id? button_property*
+                 styles? "->" route
+                 (INDENT (node | button_status_style)*)?
 button_property = accessibility_property | ("disabled=" | "checked=" | "expanded=") expr
                 | ("w=" | "h=") length
                 | ("p=" | "clip=") expr
@@ -1294,7 +1299,7 @@ canvas_property = ("w=" | "h=") length
                 | "cursor=" (mouse_cursor | "(" expr ")")
                 | "cursor-outside=" expr
 canvas_item    = canvas_state | canvas_event | canvas_command
-canvas_state   = "state" INDENT state+
+canvas_state   = "state" INDENT state_entry+
 canvas_event   = "event" canvas_event_source "->" route
                | "event" canvas_event_source ("as" name_list)?
                  INDENT canvas_event_action+
@@ -1365,9 +1370,12 @@ built_in_iced_theme
 theme_property = "fg=" color_ref | "bg=" background_value
 component_name = PascalName ("." PascalName)*
 component_call = component_name component_item* ("->" route)?
-                 (INDENT (component_route_block | node | named_slot+ | component_call+))?
+                 (INDENT component_child_block)?
+component_child_block = component_route_block? component_forward_block?
+                        (node | named_slot+ | component_call+)?
 component_item = named_prop | bound_prop | name | id
 component_route_block = "events" INDENT component_route+
+component_forward_block = "forward" INDENT name+
 component_route = name "->" route
 named_prop     = name "=" expr
 bound_prop     = name "<->" name
@@ -1387,12 +1395,16 @@ result_pattern = "ok" "(" name ")" | "err" "(" name ")"
 enum_pattern   = PascalName "." name ("(" name ")")?
 for_node       = "for" name "in" expr INDENT node+
 
-property       = "hint=" string | "disabled=" expr | "checked=" expr
 styles         = "@" utility+
 id             = static_id | "#" kebab_name "(" expr ")"
 static_id      = "#" kebab_name
 route          = name (route_arg* | "(" (route_arg ("," route_arg)*)? ")")
 route_arg      = expr | "_"
+call           = qualified_name "(" expr_list? ")"
+expr_list      = expr ("," expr)*
+name_list      = name ("," name)*
+type_list      = type ("," type)*
+color          = "#RRGGBB" | "#RRGGBBAA"
 ```
 
 Plain `text` nodes support mouse drag selection across explicit and wrapped
@@ -3363,7 +3375,7 @@ system, clipboard-read, font-load, and image-allocation tasks. It also accepts `
 ```ice
 flow
   from done 7
-  then value -> done value + 1
+  map value -> value + 1
   done -> finished _
 
 flow
