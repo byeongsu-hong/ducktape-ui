@@ -49,7 +49,7 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
             number: line.number,
             indent: line.indent,
             text: core.to_owned(),
-            original_text: line.original_text.clone(),
+            original_text: Some(line.original_text().to_owned()),
             metadata: metadata.children.clone(),
             children: line
                 .children
@@ -226,7 +226,7 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
         );
     }
     let parts = split_words(core);
-    let Some(kind) = parts.first().map(String::as_str) else {
+    let Some(kind) = parts.first().copied() else {
         return Err(error("E061", line, "empty view node"));
     };
     let component_like = kind
@@ -269,11 +269,11 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
                 .map(|part| parse_id(part, line))
                 .transpose()?;
             let option_start = usize::from(id.is_some()) + 1;
-            let option_parts = parts[option_start..].to_vec();
+            let options_slice = &parts[option_start..];
             let mut options = if kind == "flex" {
-                parse_flexbox_options(&option_parts, line)?
+                parse_flexbox_options(options_slice, line)?
             } else {
-                parse_layout_options(kind, &option_parts, line)?
+                parse_layout_options(kind, options_slice, line)?
             };
             let layout_kind = match options.flexbox.as_ref().map(|flex| flex.direction) {
                 Some(FlexDirectionValue::Row | FlexDirectionValue::RowReverse) => "row",
@@ -286,7 +286,7 @@ pub(in crate::parser) fn parse_view(line: &Line) -> Result<ViewNode, Error> {
                 for child in &line.children {
                     let parts = split_words(&child.text);
                     if matches!(
-                        parts.first().map(String::as_str),
+                        parts.first().copied(),
                         Some("active" | "hovered" | "dragged")
                     ) {
                         scroll

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_combo_box(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route_source: Option<&str>,
     line: &Line,
@@ -74,10 +74,10 @@ pub(in crate::parser) fn parse_combo_box(
         parse_combo_box_child(child, &mut options)?;
     }
     Ok(ViewNode::ComboBox {
-        state: identifier(&parts[1], line)?,
+        state: identifier(parts[1], line)?,
         id,
-        selected: parse_expr(&parts[2], line)?,
-        placeholder: string_literal(&parts[3], line)?,
+        selected: parse_expr(parts[2], line)?,
+        placeholder: string_literal(parts[3], line)?,
         options,
         route: parse_route(route.trim(), line)?,
         span: Span::line(line.number),
@@ -89,7 +89,7 @@ pub(in crate::parser) fn parse_combo_box_child(
     options: &mut ComboBoxOptions,
 ) -> Result<(), Error> {
     let parts = split_words(&line.text);
-    match parts.first().map(String::as_str) {
+    match parts.first().copied() {
         Some("active" | "hovered" | "focused" | "focused-hovered" | "disabled") => {
             ensure_leaf(line)?;
             parse_text_input_status(&parts, line, &mut options.style, "E088", "combo", true)
@@ -119,7 +119,7 @@ pub(in crate::parser) fn parse_combo_box_child(
 }
 
 pub(in crate::parser) fn parse_text_input_status(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
     styles: &mut TextInputStyleSet,
     code: &'static str,
@@ -127,7 +127,7 @@ pub(in crate::parser) fn parse_text_input_status(
     supports_icon: bool,
 ) -> Result<(), Error> {
     let status = parts.first().expect("text input status line");
-    let slot = match status.as_str() {
+    let slot = match *status {
         "active" => &mut styles.active,
         "hovered" => &mut styles.hovered,
         "focused" => &mut styles.focused,
@@ -182,7 +182,7 @@ pub(in crate::parser) fn parse_text_input_status(
 }
 
 pub(in crate::parser) fn parse_text_input_icon(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
     code: &'static str,
     widget: &str,
@@ -238,7 +238,7 @@ pub(in crate::parser) fn parse_text_input_icon(
 }
 
 pub(in crate::parser) fn parse_pick_list(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route_source: Option<&str>,
     line: &Line,
@@ -309,9 +309,9 @@ pub(in crate::parser) fn parse_pick_list(
         parse_pick_list_child(child, &mut config)?;
     }
     Ok(ViewNode::PickList {
-        options: parse_expr(&parts[1], line)?,
+        options: parse_expr(parts[1], line)?,
         id,
-        selected: parse_expr(&parts[2], line)?,
+        selected: parse_expr(parts[2], line)?,
         options_config: config,
         route: parse_route(route.trim(), line)?,
         span: Span::line(line.number),
@@ -323,7 +323,7 @@ pub(in crate::parser) fn parse_pick_list_child(
     options: &mut PickListOptions,
 ) -> Result<(), Error> {
     let parts = split_words(&line.text);
-    match parts.first().map(String::as_str) {
+    match parts.first().copied() {
         Some("active" | "hovered" | "opened" | "opened-hovered") => {
             ensure_leaf(line)?;
             parse_pick_list_status(&parts, line, &mut options.style)
@@ -352,12 +352,12 @@ pub(in crate::parser) fn parse_pick_list_child(
 }
 
 pub(in crate::parser) fn parse_pick_list_status(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
     styles: &mut PickListStyleSet,
 ) -> Result<(), Error> {
     let status = parts.first().expect("pick status line");
-    let slot = match status.as_str() {
+    let slot = match *status {
         "active" => &mut styles.active,
         "hovered" => &mut styles.hovered,
         "opened" => &mut styles.opened,
@@ -406,7 +406,7 @@ pub(in crate::parser) fn parse_pick_list_status(
 }
 
 pub(in crate::parser) fn parse_menu_style(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
     code: &'static str,
     widget: &str,
@@ -440,10 +440,10 @@ pub(in crate::parser) fn parse_menu_style(
 }
 
 pub(in crate::parser) fn parse_pick_list_handle(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
 ) -> Result<PickListHandle, Error> {
-    let kind = parts.get(1).map(String::as_str).ok_or_else(|| {
+    let kind = parts.get(1).copied().ok_or_else(|| {
         error(
             "E087",
             line,
@@ -511,7 +511,7 @@ pub(in crate::parser) fn parse_pick_list_handle(
 }
 
 pub(in crate::parser) fn parse_pick_list_icon(
-    parts: &[String],
+    parts: &[&str],
     line: &Line,
 ) -> Result<PickListIcon, Error> {
     let mut code_point = None;

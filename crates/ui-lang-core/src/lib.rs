@@ -258,9 +258,6 @@ impl CheckedDocument {
 
     pub(crate) fn with_parsed_symbols(mut self, parsed: Vec<parser::ParsedSymbol>) -> Self {
         struct Builder {
-            kind: SymbolKind,
-            scope: Option<String>,
-            name: String,
             definition: Option<SourceRange>,
             references: Vec<SourceRange>,
             complete: bool,
@@ -268,15 +265,13 @@ impl CheckedDocument {
 
         let mut symbols = BTreeMap::<(SymbolKind, Option<String>, String), Builder>::new();
         for parsed in parsed {
-            let key = (parsed.kind, parsed.scope.clone(), parsed.name.clone());
-            let symbol = symbols.entry(key).or_insert_with(|| Builder {
-                kind: parsed.kind,
-                scope: parsed.scope,
-                name: parsed.name,
-                definition: None,
-                references: Vec::new(),
-                complete: true,
-            });
+            let symbol = symbols
+                .entry((parsed.kind, parsed.scope, parsed.name))
+                .or_insert_with(|| Builder {
+                    definition: None,
+                    references: Vec::new(),
+                    complete: true,
+                });
             let Some(range) = parsed.range else {
                 symbol.complete = false;
                 continue;
@@ -290,15 +285,15 @@ impl CheckedDocument {
             }
         }
         self.symbols = symbols
-            .into_values()
-            .filter_map(|symbol| {
+            .into_iter()
+            .filter_map(|((kind, scope, name), symbol)| {
                 let definition = symbol.definition?;
                 Some(CheckedSymbol {
-                    kind: symbol.kind,
-                    scope: symbol.scope,
+                    kind,
+                    scope,
                     renameable: symbol.complete
-                        && !(symbol.kind == SymbolKind::Handler && symbol.name == "mount"),
-                    name: symbol.name,
+                        && !(kind == SymbolKind::Handler && name == "mount"),
+                    name,
                     definition,
                     references: symbol.references,
                 })

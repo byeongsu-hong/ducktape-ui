@@ -68,7 +68,7 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
         let parts = split_words(source);
         if parts.len() > 2
             || parts.is_empty()
-            || parts.get(1).is_some_and(|value| value != "abort-on-drop")
+            || parts.get(1).is_some_and(|value| *value != "abort-on-drop")
         {
             return Err(error(
                 "E050",
@@ -84,7 +84,7 @@ pub(in crate::parser) fn parse_statement(line: &Line) -> Result<Statement, Error
             ));
         }
         return Ok(Statement::Abortable {
-            handle: identifier(&parts[0], line)?,
+            handle: identifier(parts[0], line)?,
             abort_on_drop: parts.len() == 2,
             task: Box::new(parse_statement(&line.children[0])?),
             span: Span::line(line.number),
@@ -705,7 +705,7 @@ pub(in crate::parser) fn parse_pane_operation(
         )
     };
     let edge = |index: usize| {
-        Ok(match parts.get(index).map(String::as_str) {
+        Ok(match parts.get(index).copied() {
             Some("top") => PaneEdge::Top,
             Some("left") => PaneEdge::Left,
             Some("right") => PaneEdge::Right,
@@ -720,7 +720,7 @@ pub(in crate::parser) fn parse_pane_operation(
         })
     };
     let axis = |index: usize| {
-        Ok(match parts.get(index).map(String::as_str) {
+        Ok(match parts.get(index).copied() {
             Some("horizontal") => PaneAxis::Horizontal,
             Some("vertical") => PaneAxis::Vertical,
             _ => {
@@ -732,7 +732,7 @@ pub(in crate::parser) fn parse_pane_operation(
             }
         })
     };
-    let operation = match parts.get(1).map(String::as_str) {
+    let operation = match parts.get(1).copied() {
         Some("maximize") if parts.len() == 3 => PaneOperation::Maximize { pane: pane(2)? },
         Some("restore") if parts.len() == 2 => PaneOperation::Restore,
         Some("maximized") if parts.len() == 2 => PaneOperation::Maximized,
@@ -751,17 +751,17 @@ pub(in crate::parser) fn parse_pane_operation(
         },
         Some("resize") if (3..=4).contains(&parts.len()) => PaneOperation::Resize {
             split: (parts.len() == 4)
-                .then(|| identifier(&parts[2], line))
+                .then(|| identifier(parts[2], line))
                 .transpose()?,
             ratio: parse_expr(
-                strip_wrapping_parens(&parts[if parts.len() == 4 { 3 } else { 2 }]),
+                strip_wrapping_parens(parts[if parts.len() == 4 { 3 } else { 2 }]),
                 line,
             )?,
         },
         Some("drop") if parts.len() == 5 => PaneOperation::Drop {
             pane: pane(2)?,
             target: pane(3)?,
-            edge: match parts[4].as_str() {
+            edge: match parts[4] {
                 "center" => None,
                 _ => Some(edge(4)?),
             },
@@ -860,7 +860,7 @@ pub(in crate::parser) fn parse_widget_operation(
             all: false,
         }
     } else {
-        match parts.first().map(String::as_str) {
+        match parts.first().copied() {
             Some("focus-prev") if parts.len() == 1 => {
                 if window.is_some() {
                     return Err(error(
@@ -968,8 +968,8 @@ pub(in crate::parser) fn parse_widget_selector(
             ));
         }
         Ok(WidgetSelector::Point {
-            x: parse_expr(&values[0], line)?,
-            y: parse_expr(&values[1], line)?,
+            x: parse_expr(values[0], line)?,
+            y: parse_expr(values[1], line)?,
         })
     } else if source == "focused" {
         Ok(WidgetSelector::Focused)
@@ -1047,7 +1047,7 @@ pub(in crate::parser) fn parse_window_operation(
         )
     };
     let size = || match parts.as_slice() {
-        [_, value] if value == "none" => Ok(None),
+        [_, value] if *value == "none" => Ok(None),
         [_, _, _] => Ok(Some((expr(1)?, expr(2)?))),
         _ => Err(error(
             "E053",
@@ -1055,28 +1055,26 @@ pub(in crate::parser) fn parse_window_operation(
             "window size task expects `width height` or `none`",
         )),
     };
-    let operation = match parts.first().map(String::as_str) {
+    let operation = match parts.first().copied() {
         Some("open") if parts.len() == 1 => WindowOperation::Open(None),
         Some("open") if parts.len() == 2 => {
-            WindowOperation::Open(Some(identifier(&parts[1], line)?))
+            WindowOperation::Open(Some(identifier(parts[1], line)?))
         }
         Some("oldest") if parts.len() == 1 => WindowOperation::Oldest,
         Some("latest") if parts.len() == 1 => WindowOperation::Latest,
         Some("close") if parts.len() == 1 => WindowOperation::Close,
         Some("drag") if parts.len() == 1 => WindowOperation::Drag,
-        Some("drag-resize") if parts.len() == 2 => {
-            WindowOperation::DragResize(match parts[1].as_str() {
-                "north" => WindowDirection::North,
-                "south" => WindowDirection::South,
-                "east" => WindowDirection::East,
-                "west" => WindowDirection::West,
-                "north-east" => WindowDirection::NorthEast,
-                "north-west" => WindowDirection::NorthWest,
-                "south-east" => WindowDirection::SouthEast,
-                "south-west" => WindowDirection::SouthWest,
-                _ => return Err(error("E053", line, "unknown window resize direction")),
-            })
-        }
+        Some("drag-resize") if parts.len() == 2 => WindowOperation::DragResize(match parts[1] {
+            "north" => WindowDirection::North,
+            "south" => WindowDirection::South,
+            "east" => WindowDirection::East,
+            "west" => WindowDirection::West,
+            "north-east" => WindowDirection::NorthEast,
+            "north-west" => WindowDirection::NorthWest,
+            "south-east" => WindowDirection::SouthEast,
+            "south-west" => WindowDirection::SouthWest,
+            _ => return Err(error("E053", line, "unknown window resize direction")),
+        }),
         Some("resize") if parts.len() == 3 => WindowOperation::Resize(expr(1)?, expr(2)?),
         Some("resizable") if parts.len() == 2 => WindowOperation::Resizable(expr(1)?),
         Some("min-size") => WindowOperation::MinSize(size()?),
@@ -1091,7 +1089,7 @@ pub(in crate::parser) fn parse_window_operation(
         Some("scale") if parts.len() == 1 => WindowOperation::ScaleFactor,
         Some("move") if parts.len() == 3 => WindowOperation::Move(expr(1)?, expr(2)?),
         Some("mode") if parts.len() == 1 => WindowOperation::Mode,
-        Some("set-mode") if parts.len() == 2 => WindowOperation::SetMode(match parts[1].as_str() {
+        Some("set-mode") if parts.len() == 2 => WindowOperation::SetMode(match parts[1] {
             "windowed" => WindowMode::Windowed,
             "fullscreen" => WindowMode::Fullscreen,
             "hidden" => WindowMode::Hidden,
@@ -1105,22 +1103,20 @@ pub(in crate::parser) fn parse_window_operation(
         }),
         Some("toggle-maximize") if parts.len() == 1 => WindowOperation::ToggleMaximize,
         Some("toggle-decorations") if parts.len() == 1 => WindowOperation::ToggleDecorations,
-        Some("attention") if parts.len() == 2 => {
-            WindowOperation::Attention(match parts[1].as_str() {
-                "none" => None,
-                "critical" => Some(WindowAttention::Critical),
-                "informational" => Some(WindowAttention::Informational),
-                _ => {
-                    return Err(error(
-                        "E053",
-                        line,
-                        "window attention must be none, critical, or informational",
-                    ));
-                }
-            })
-        }
+        Some("attention") if parts.len() == 2 => WindowOperation::Attention(match parts[1] {
+            "none" => None,
+            "critical" => Some(WindowAttention::Critical),
+            "informational" => Some(WindowAttention::Informational),
+            _ => {
+                return Err(error(
+                    "E053",
+                    line,
+                    "window attention must be none, critical, or informational",
+                ));
+            }
+        }),
         Some("focus") if parts.len() == 1 => WindowOperation::Focus,
-        Some("level") if parts.len() == 2 => WindowOperation::SetLevel(match parts[1].as_str() {
+        Some("level") if parts.len() == 2 => WindowOperation::SetLevel(match parts[1] {
             "normal" => WindowLevel::Normal,
             "always-on-bottom" => WindowLevel::AlwaysOnBottom,
             "always-on-top" => WindowLevel::AlwaysOnTop,

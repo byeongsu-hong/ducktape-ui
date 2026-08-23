@@ -19,7 +19,8 @@ struct Line {
     number: usize,
     indent: usize,
     text: String,
-    original_text: String,
+    /// `None` when the line still reads exactly as `text`.
+    original_text: Option<String>,
     metadata: Vec<Line>,
     children: Vec<Line>,
     namespace: Option<String>,
@@ -42,8 +43,12 @@ impl Line {
         }
     }
 
+    fn original_text(&self) -> &str {
+        self.original_text.as_deref().unwrap_or(&self.text)
+    }
+
     fn origin_for(&self, source: &str) -> &Self {
-        if source.is_empty() || self.original_text.contains(source) {
+        if source.is_empty() || self.original_text().contains(source) {
             self
         } else {
             self.metadata
@@ -312,7 +317,7 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     let parts = split_words(source);
     let (name, separator, target, base) = match parts.as_slice() {
         [name, separator, target] => (name, separator, target, None),
-        [name, separator, target, extends, base] if extends == "extends" => {
+        [name, separator, target, extends, base] if *extends == "extends" => {
             (name, separator, target, Some(base))
         }
         _ => {
@@ -323,7 +328,7 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
             ));
         }
     };
-    if separator != "for" {
+    if *separator != "for" {
         return Err(error(
             "E046",
             line,
@@ -333,7 +338,7 @@ fn parse_style_recipe(source: &str, line: &Line) -> Result<StyleRecipe, Error> {
     if line.children.is_empty() {
         return Err(error("E046", line, "recipe requires at least one utility"));
     }
-    let target = match target.as_str() {
+    let target = match *target {
         "col" => StyleRecipeTarget::Column,
         "row" => StyleRecipeTarget::Row,
         "flex" => StyleRecipeTarget::Flex,
@@ -428,7 +433,7 @@ fn parse_palette(source: &str, line: &Line) -> Result<Palette, Error> {
             "palette uses `palette name for Contract`",
         ));
     };
-    if separator != "for" {
+    if *separator != "for" {
         return Err(error(
             "E010",
             line,

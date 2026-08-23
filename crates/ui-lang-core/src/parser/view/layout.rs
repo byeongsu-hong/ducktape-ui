@@ -1,11 +1,11 @@
 use super::*;
 
 pub(in crate::parser) fn parse_container(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
-    let kind = parts.first().map_or("box", String::as_str);
+    let kind = parts.first().copied().unwrap_or("box");
     if line.children.len() != 1 {
         return Err(error(
             "E184",
@@ -185,7 +185,7 @@ fn parse_flex_shorthand(
 }
 
 pub(in crate::parser) fn parse_overlay(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -384,7 +384,7 @@ pub(in crate::parser) fn parse_container_style_option(
 
 pub(in crate::parser) fn parse_pane_view(
     name: &str,
-    style_parts: &[String],
+    style_parts: &[&str],
     styles: Vec<String>,
     line: &Line,
     names: &mut std::collections::HashSet<String>,
@@ -432,7 +432,7 @@ pub(in crate::parser) fn parse_pane_contents(
     for section in &line.children {
         let (core, styles) = split_style_utilities(&section.text, section);
         let parts = split_words(core);
-        let kind = parts.first().map(String::as_str).unwrap_or("");
+        let kind = parts.first().copied().unwrap_or("");
         match kind {
             "title" => {
                 if title.is_some() {
@@ -526,7 +526,7 @@ pub(in crate::parser) fn parse_pane_contents(
 }
 
 pub(in crate::parser) fn parse_pane_title(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<PaneTitle, Error> {
@@ -535,7 +535,7 @@ pub(in crate::parser) fn parse_pane_title(
     let mut style = ContainerStyleOptions::default();
     for part in parts {
         if parse_padding_option(part, &mut padding, line)? {
-        } else if part == "always-controls" {
+        } else if *part == "always-controls" {
             always_show_controls = true;
         } else if parse_container_style_option(part, &mut style, line)? {
         } else {
@@ -566,9 +566,9 @@ pub(in crate::parser) fn parse_pane_configuration(
 ) -> Result<PaneConfiguration, Error> {
     let (core, styles) = split_style_utilities(&line.text, line);
     let parts = split_words(core);
-    match parts.first().map(String::as_str) {
+    match parts.first().copied() {
         Some("pane") if parts.len() >= 2 => Ok(PaneConfiguration::Pane(parse_pane_view(
-            &parts[1],
+            parts[1],
             &parts[2..],
             styles,
             line,
@@ -579,10 +579,10 @@ pub(in crate::parser) fn parse_pane_configuration(
             if !styles.is_empty() {
                 return Err(error("E187", line, "nested pane split does not accept `@`"));
             }
-            let (name, axis_index) = if matches!(parts[1].as_str(), "horizontal" | "vertical") {
+            let (name, axis_index) = if matches!(parts[1], "horizontal" | "vertical") {
                 (None, 1)
             } else {
-                let name = identifier(&parts[1], line)?;
+                let name = identifier(parts[1], line)?;
                 if !splits.insert(name.clone()) {
                     return Err(error(
                         "E187",
@@ -592,7 +592,7 @@ pub(in crate::parser) fn parse_pane_configuration(
                 }
                 (Some(name), 2)
             };
-            let axis = match parts.get(axis_index).map(String::as_str) {
+            let axis = match parts.get(axis_index).copied() {
                 Some("horizontal") => PaneAxis::Horizontal,
                 Some("vertical") => PaneAxis::Vertical,
                 _ => {
@@ -665,7 +665,7 @@ pub(in crate::parser) fn parse_closed_pane(
             "extra pane templates use `pane name closed`",
         ));
     }
-    parse_pane_view(&parts[1], &parts[3..], styles, line, names, panes)?;
+    parse_pane_view(parts[1], &parts[3..], styles, line, names, panes)?;
     Ok(())
 }
 
@@ -689,8 +689,8 @@ pub(in crate::parser) fn parse_pane_template(
             "dynamic pane templates use `pane item in state by=item.id`",
         )
     })?;
-    let item = identifier(&parts[1], line)?;
-    let items = identifier(&parts[3], line)?;
+    let item = identifier(parts[1], line)?;
+    let items = identifier(parts[3], line)?;
     let mut panes = Vec::new();
     parse_pane_view(&item, &parts[5..], styles, line, names, &mut panes)?;
     let pane = panes.pop().expect("pane template was parsed");
@@ -712,11 +712,11 @@ pub(in crate::parser) fn parse_pane_template(
 
 pub(in crate::parser) fn is_pane_template(line: &Line) -> bool {
     let (core, _) = split_style_utilities(&line.text, line);
-    split_words(core).get(2).map(String::as_str) == Some("in")
+    split_words(core).get(2).copied() == Some("in")
 }
 
 pub(in crate::parser) fn parse_pane_grid(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -740,7 +740,7 @@ pub(in crate::parser) fn parse_pane_grid(
             options.min_size = Some(parse_expr(strip_wrapping_parens(value), line)?);
         } else if let Some(value) = part.strip_prefix("resize=") {
             options.resize_leeway = Some(parse_expr(strip_wrapping_parens(value), line)?);
-        } else if part == "drag" {
+        } else if *part == "drag" {
             options.draggable = true;
         } else if let Some(value) = part.strip_prefix("click=") {
             options.click = Some(parse_route(value, line)?);
@@ -822,7 +822,7 @@ pub(in crate::parser) fn parse_pane_grid_style(line: &Line) -> Result<PaneGridSt
             return Err(error("E187", status, "panes style statuses are leaves"));
         }
         let parts = split_words(&status.text);
-        let kind = parts.first().map(String::as_str).unwrap_or("");
+        let kind = parts.first().copied().unwrap_or("");
         if !statuses.insert(kind.to_owned()) {
             return Err(error(
                 "E187",

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_extern_component(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -45,7 +45,7 @@ pub(in crate::parser) fn parse_extern_component(
 }
 
 pub(in crate::parser) fn parse_themer(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -89,7 +89,7 @@ pub(in crate::parser) fn parse_themer(
 }
 
 pub(in crate::parser) fn parse_shader(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -105,7 +105,7 @@ pub(in crate::parser) fn parse_shader(
             "shader uses `shader name(args) w=fill h=120.0 -> handler _`",
         ));
     }
-    let (function, args) = parse_signature(&parts[1], line)?;
+    let (function, args) = parse_signature(parts[1], line)?;
     let mut id = None;
     let mut width = None;
     let mut height = None;

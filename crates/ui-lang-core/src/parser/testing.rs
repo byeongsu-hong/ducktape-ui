@@ -319,8 +319,8 @@ fn parse_test_step(
     } else if let Some(value) = line.text.strip_prefix("click-at ") {
         let values = split_words(value);
         let (x, y, button) = match values.as_slice() {
-            [x, y] => (x.as_str(), y.as_str(), TestMouseButton::Left),
-            [x, y, button] => (x.as_str(), y.as_str(), parse_mouse_button(button, line)?),
+            [x, y] => (x, y, TestMouseButton::Left),
+            [x, y, button] => (x, y, parse_mouse_button(button, line)?),
             _ => {
                 return Err(error(
                     TEST_ERROR,
@@ -372,9 +372,9 @@ fn parse_test_step(
     } else if let Some(values) = line.text.strip_prefix("wheel ") {
         let values = split_words(values);
         let (unit, x, y) = match values.as_slice() {
-            [x, y] => (TestWheelUnit::Pixels, x.as_str(), y.as_str()),
-            [unit, x, y] if unit == "pixels" => (TestWheelUnit::Pixels, x.as_str(), y.as_str()),
-            [unit, x, y] if unit == "lines" => (TestWheelUnit::Lines, x.as_str(), y.as_str()),
+            [x, y] => (TestWheelUnit::Pixels, x, y),
+            [unit, x, y] if *unit == "pixels" => (TestWheelUnit::Pixels, x, y),
+            [unit, x, y] if *unit == "lines" => (TestWheelUnit::Lines, x, y),
             _ => {
                 return Err(error(
                     TEST_ERROR,
@@ -498,11 +498,8 @@ fn parse_test_step(
     } else if let Some(value) = line.text.strip_prefix("tap ") {
         let values = split_words(value);
         let (target, count) = match values.as_slice() {
-            [target] => (target.as_str(), 1),
-            [target, count] => (
-                target.as_str(),
-                parse_static_count(count, "tap count", line)?,
-            ),
+            [target] => (target, 1),
+            [target, count] => (target, parse_static_count(count, "tap count", line)?),
             _ => return Err(error(TEST_ERROR, line, "tap uses `tap target [count]`")),
         };
         TestStepKind::Tap {
@@ -605,8 +602,8 @@ fn parse_target_and_button(
 ) -> Result<(TestTargetRef, TestMouseButton), Error> {
     let values = split_words(source);
     let (target, button) = match values.as_slice() {
-        [target] => (target.as_str(), TestMouseButton::Left),
-        [target, button] => (target.as_str(), parse_mouse_button(button, line)?),
+        [target] => (target, TestMouseButton::Left),
+        [target, button] => (target, parse_mouse_button(button, line)?),
         _ => {
             return Err(error(
                 TEST_ERROR,
@@ -787,10 +784,10 @@ pub(super) fn test_key_name_shape(source: &str) -> (bool, bool) {
     (exact, ergonomic)
 }
 
-fn parse_test_modifiers(values: &[String], line: &Line) -> Result<TestModifiers, Error> {
+fn parse_test_modifiers(values: &[&str], line: &Line) -> Result<TestModifiers, Error> {
     let mut modifiers = TestModifiers::default();
     for value in values {
-        let slot = match value.as_str() {
+        let slot = match *value {
             "shift" => &mut modifiers.shift,
             "control" => &mut modifiers.control,
             "alt" => &mut modifiers.alt,
@@ -886,7 +883,7 @@ fn parse_touch_step(
             "touch uses `touch down|move|up|cancel id x y`",
         ));
     };
-    let phase = match phase.as_str() {
+    let phase = match *phase {
         "down" => TestTouchPhase::Down,
         "move" => TestTouchPhase::Move,
         "up" => TestTouchPhase::Up,
@@ -967,7 +964,7 @@ fn parse_accessibility_action(
             "a11y actions use `a11y activate|focus target`",
         ));
     };
-    let action = match action.as_str() {
+    let action = match *action {
         "activate" => TestAccessibilityAction::Activate,
         "focus" => TestAccessibilityAction::Focus,
         _ => {
@@ -1053,7 +1050,7 @@ fn parse_accessibility_expectation(
     let target = parse_test_target_ref(target, line, scope, targets)?;
     let expression =
         |source: &str| parse_test_expr(strip_wrapping_parens(source), line, scope, targets);
-    let property = match (property.as_str(), rest) {
+    let property = match (*property, rest) {
         ("role", [value]) => TestAccessibilityProperty::Role(expression(value)?),
         ("name", [value]) => TestAccessibilityProperty::Name(expression(value)?),
         ("value", [value]) => TestAccessibilityProperty::Value(expression(value)?),
@@ -1061,7 +1058,7 @@ fn parse_accessibility_expectation(
         ("expanded", [value]) => TestAccessibilityProperty::Expanded(expression(value)?),
         ("disabled", [value]) => TestAccessibilityProperty::Disabled(expression(value)?),
         ("focused", [value]) => TestAccessibilityProperty::Focused(expression(value)?),
-        ("action", [name]) if name == "true" => {
+        ("action", [name]) if *name == "true" => {
             return Err(error(
                 TEST_ERROR,
                 line,
@@ -1071,21 +1068,21 @@ fn parse_accessibility_expectation(
         ("action", [name]) => {
             validate_accessibility_action_name(name, line)?;
             TestAccessibilityProperty::Action {
-                name: name.to_owned(),
+                name: (*name).to_owned(),
                 expected: Expr::Bool(true),
             }
         }
-        ("action", [name, expected]) if expected == "true" => {
+        ("action", [name, expected]) if *expected == "true" => {
             validate_accessibility_action_name(name, line)?;
             TestAccessibilityProperty::Action {
-                name: name.to_owned(),
+                name: (*name).to_owned(),
                 expected: Expr::Bool(true),
             }
         }
         ("action", [name, expected]) => {
             validate_accessibility_action_name(name, line)?;
             TestAccessibilityProperty::Action {
-                name: name.to_owned(),
+                name: (*name).to_owned(),
                 expected: expression(expected)?,
             }
         }

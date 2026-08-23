@@ -1,7 +1,7 @@
 use super::*;
 
 pub(in crate::parser) fn parse_input(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     line: &Line,
 ) -> Result<ViewNode, Error> {
@@ -12,7 +12,7 @@ pub(in crate::parser) fn parse_input(
             "input uses `input \"Label\" #id <-> state`",
         ));
     }
-    let label = string_literal(&parts[1], line)?;
+    let label = string_literal(parts[1], line)?;
     let mut id = None;
     let mut binding = None;
     let mut hint = String::new();
@@ -23,7 +23,7 @@ pub(in crate::parser) fn parse_input(
         let part = &parts[index];
         if part.starts_with('#') {
             parse_unique_id(part, &mut id, line, "E065", "input")?;
-        } else if part == "<->" {
+        } else if *part == "<->" {
             index += 1;
             let value = parts
                 .get(index)
@@ -77,7 +77,7 @@ pub(in crate::parser) fn parse_input(
     }
     for child in &line.children {
         let parts = split_words(&child.text);
-        match parts.first().map(String::as_str) {
+        match parts.first().copied() {
             Some("active" | "hovered" | "focused" | "focused-hovered" | "disabled") => {
                 ensure_leaf(child)?;
                 parse_text_input_status(&parts, child, &mut options.style, "E065", "input", true)?;
@@ -111,7 +111,7 @@ pub(in crate::parser) fn parse_input(
 }
 
 pub(in crate::parser) fn parse_button(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -176,9 +176,10 @@ pub(in crate::parser) fn parse_button(
     let mut content = None;
     for child in &line.children {
         let parts = split_words(&child.text);
-        if parts.first().is_some_and(|part| {
-            matches!(part.as_str(), "active" | "hovered" | "pressed" | "disabled")
-        }) {
+        if parts
+            .first()
+            .is_some_and(|part| matches!(*part, "active" | "hovered" | "pressed" | "disabled"))
+        {
             parse_button_status_style(child, &mut options.style)?;
         } else {
             if content.is_some() {
@@ -218,7 +219,7 @@ pub(in crate::parser) fn parse_button_status_style(
 ) -> Result<(), Error> {
     ensure_leaf(line)?;
     let parts = split_words(&line.text);
-    let (slot, status) = match parts.first().map(String::as_str) {
+    let (slot, status) = match parts.first().copied() {
         Some("active") => (&mut styles.active, "active"),
         Some("hovered") => (&mut styles.hovered, "hovered"),
         Some("pressed") => (&mut styles.pressed, "pressed"),
@@ -250,7 +251,7 @@ pub(in crate::parser) fn parse_button_status_style(
 }
 
 pub(in crate::parser) fn parse_checkbox(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -323,8 +324,8 @@ pub(in crate::parser) fn parse_checkbox_status_style(
 ) -> Result<(), Error> {
     ensure_leaf(line)?;
     let parts = split_words(&line.text);
-    let status = parts.first().map(String::as_str);
-    let checked = parts.get(1).map(String::as_str);
+    let status = parts.first().copied();
+    let checked = parts.get(1).copied();
     let slot = match (status, checked) {
         (Some("active"), Some("checked")) => &mut styles.active_checked,
         (Some("active"), Some("unchecked")) => &mut styles.active_unchecked,
@@ -381,7 +382,7 @@ pub(in crate::parser) fn parse_checkbox_status_style(
 }
 
 pub(in crate::parser) fn parse_toggler(
-    parts: &[String],
+    parts: &[&str],
     styles: Vec<String>,
     route: Option<&str>,
     line: &Line,
@@ -443,8 +444,8 @@ pub(in crate::parser) fn parse_toggler_status_style(
 ) -> Result<(), Error> {
     ensure_leaf(line)?;
     let parts = split_words(&line.text);
-    let status = parts.first().map(String::as_str);
-    let checked = parts.get(1).map(String::as_str);
+    let status = parts.first().copied();
+    let checked = parts.get(1).copied();
     let slot = match (status, checked) {
         (Some("active"), Some("checked")) => &mut styles.active_checked,
         (Some("active"), Some("unchecked")) => &mut styles.active_unchecked,

@@ -597,7 +597,7 @@ pub(in crate::parser) fn config_window_icon(
             format!("{kind} icon-rgba expects `\"relative/path.rgba\" width height`"),
         ));
     }
-    let path = string_literal(&parts[0], line)?;
+    let path = string_literal(parts[0], line)?;
     if !crate::is_relative_asset_path(&path) {
         return Err(error(
             "E015",
@@ -618,8 +618,8 @@ pub(in crate::parser) fn config_window_icon(
                 )
             })
     };
-    let width = dimension(&parts[1])?;
-    let height = dimension(&parts[2])?;
+    let width = dimension(parts[1])?;
+    let height = dimension(parts[2])?;
     let byte_len = width
         .checked_mul(height)
         .and_then(|pixels| usize::try_from(pixels).ok())
@@ -690,8 +690,8 @@ pub(in crate::parser) fn config_pair(source: &str, line: &Line) -> Result<(f64, 
         return Err(error("E015", line, "window size expects `width height`"));
     }
     Ok((
-        config_number(&parts[0], line)?,
-        config_number(&parts[1], line)?,
+        config_number(parts[0], line)?,
+        config_number(parts[1], line)?,
     ))
 }
 
