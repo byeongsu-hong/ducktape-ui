@@ -176,7 +176,7 @@ view
                     button #venues label=venue_switch_label(venue) p=0.0 -> open_venues
                       active bg=panel text=fg r=3.0
                       hovered bg=raised text=fg r=3.0
-                      col w=138.0 gap=3.0
+                      col w=138.0 gap=3.0 align=center
                         text venue_name(venue) #venue-name
                           with
                             size=10.0

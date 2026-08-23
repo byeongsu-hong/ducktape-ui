@@ -361,11 +361,17 @@ test trading_the_header_says_which_kind_of_network_is_on_screen
   preset held
   viewport 1660 820
   target app = #app
+  target venues = app/header/venues
   target named = app/header/venues/venue-name
   target kind = app/header/venues/venue-kind/root
   expect text "Hyperliquid" within named
   expect text "REAL MONEY" within kind
   expect no text "TESTNET" within kind
+  // Both lines sit on the control's own axis. The column is wider than
+  // either so the button keeps one width across networks, and a line left
+  // against its edge read as a label beside an empty slot.
+  expect named.x - venues.x ~= venues.right - named.right
+  expect kind.x - venues.x ~= venues.right - kind.right
   dispatch switch_venue(Venue.hyperliquid_testnet)
   expect venue == Venue.hyperliquid_testnet
   expect text "Hyperliquid Testnet" within named
