@@ -1,7 +1,6 @@
 theme contract AppTheme
   bg
   surface
-  toolbar
   fg
   muted
   border
@@ -14,31 +13,29 @@ theme contract AppTheme
   selection
 
 palette light for AppTheme
-  bg           #efeee9
-  surface      #fbfaf7
-  toolbar      #f7f6f2
-  fg           #292824
-  muted        #817f77
-  border       #dfddd5
-  hover        #ebe9e2
-  pressed      #dfdcd2
-  primary      #315fbd
-  primary_soft #e7edf9
-  danger       #b4433d
-  danger_soft  #fae9e7
-  selection    #b9cdf4
+  bg           #f3f4f6
+  surface      #ffffff
+  fg           #18181b
+  muted        #71717a
+  border       #e4e4e7
+  hover        #e9eaee
+  pressed      #dfe1e6
+  primary      #5b5bd6
+  primary_soft #e8e8fb
+  danger       #e5484d
+  danger_soft  #fde8e8
+  selection    #cfcff5
 
 palette dark for AppTheme
-  bg           #21252b
-  surface      #282c34
-  toolbar      #24282f
-  fg           #d7dae0
-  muted        #9da5b4
-  border       #3a3f4b
-  hover        #3a3f4b
-  pressed      #2c313a
-  primary      #61afef
-  primary_soft #303b52
-  danger       #e06c75
-  danger_soft  #493036
-  selection    #465474
+  bg           #131316
+  surface      #1c1c21
+  fg           #ececf0
+  muted        #8e8e99
+  border       #2a2a31
+  hover        #25252c
+  pressed      #2e2e36
+  primary      #7c7cf0
+  primary_soft #2a2a4f
+  danger       #e5484d
+  danger_soft  #3b1a1c
+  selection    #3a3a7a

@@ -1,7 +1,10 @@
 # Markdown editor example
 
-This example is a native, single-document Markdown editor. Markdown formatting
-is presented inline by a purpose-built rich-text editor widget instead of a
+This example is a native Markdown notes app. A sidebar lists every `.md` file
+in the notes folder (`$MARKDOWN_NOTES_DIR`, else `~/Documents/Markdown Notes`),
+the selected note is edited in place, and edits are written back a moment
+after typing stops — there is no Save or Open dialog. Markdown formatting is
+presented inline by a purpose-built rich-text editor widget instead of a
 separate preview or web view.
 
 ## Project structure
@@ -9,17 +12,19 @@ separate preview or web view.
 ```text
 src/
 ├── main.rs                  Rust entry point and native-buffer check
-├── document.rs              file dialogs, persistence, links, shortcuts
-├── editor.rs                highlighting and bounded edit history
+├── library.rs               the notes folder: listing, titles, atomic saves, renames
+├── document.rs              links and platform shortcuts
+├── editor.rs                highlighting, find, and bounded edit history
+├── welcome.md               the note a fresh library starts with
 └── ui/
-    ├── app.ice              app settings, imports, and root composition
-    ├── theme.ice            semantic color tokens
-    ├── recipes.ice          shared control recipes
-    ├── state.ice            document state and derived cursor state
-    ├── components/          editor chrome and writing surface
-    ├── extern/              typed Rust boundaries
-    ├── handlers/            file, edit, find, and close flows
-    └── tests/               app behavior contract
+    ├── app.ice              app settings, imports, and root composition
+    ├── theme.ice            semantic color tokens
+    ├── recipes.ice          shared control recipes
+    ├── state.ice            library, document, and derived cursor state
+    ├── components/          sidebar, writing surface, find bar, status, delete dialog
+    ├── extern/              typed Rust boundaries
+    ├── handlers/            library, autosave, edit, find, and close flows
+    └── tests/               app behavior contract
 ```
 
 The editor keeps one native `text_editor::Content` in application state. The
@@ -81,10 +86,11 @@ hold:
 | Navigation and selection | Mouse hit testing, padding clicks, in/out-of-bounds drags, post-drag clicks, double/triple selection, arrows, word/line/page movement, and Select All use the same wrapped rich geometry shown on screen | shared paragraph geometry tests plus `clicks_in_editor_padding_focus_and_clear_selection` and `a_selection_drag_does_not_turn_the_next_click_into_a_double_click` in `rich_text_editor.rs` |
 | Clipboard | Command/Ctrl+C, X, and V copy, cut, and paste through Iced's native clipboard without stealing application shortcuts | `application_command_shortcuts_are_not_inserted_as_text` and the runtime binding adapter |
 | Undo and redo | Command/Ctrl+Z and Command/Ctrl+Shift+Z (plus Ctrl+Y) reach the application under non-Latin input sources; adjacent typing is one bounded event; a new edit clears redo | `undo_and_redo_shortcuts_survive_a_non_latin_input_source`, `app_undo_and_redo_apply_grouped_typing`, and `undo_redo_tracks_deltas_and_saved_state` |
-| Document lifecycle | New, Open, Save, Save As, dirty-close confirmation, UTF-8 errors, and cancelled dialogs preserve the current document until the user makes an explicit choice | typed handlers in `ui/handlers/app.ice` and delta-based saved-revision tracking |
-| Find, formatting, and links | Find next/previous, bold, italic, inline code, link insertion, and safe HTTP(S) link opening work from toolbar or platform shortcuts | formatting/history tests, `resolves_only_the_link_under_the_cursor`, and Ice handler contracts |
+| Library | The sidebar lists the notes folder newest first with a title, snippet, and age; a new note opens immediately; selecting another note flushes unsaved edits first; a note's file follows its first line; deleting asks once; a fresh folder is seeded with the welcome note | `library_boots_with_a_welcome_note_selected`, `new_note_appears_in_the_list_and_autosaves_its_title`, `selecting_a_note_flushes_the_current_one_first`, `deleting_the_last_note_reseeds_the_welcome_note`, and the `library.rs` unit tests |
+| Autosave | A dirty note is written after one quiet second (two ticks of the 1 s timer with no new revision), on Command/Ctrl+S, before a note switch, and before the window closes; a completion only marks the revision it wrote, and a note switch invalidates an in-flight save | `save_completion_marks_only_the_revision_written_to_disk`, the autosave-tick steps in `new_note_appears_in_the_list_and_autosaves_its_title`, `close_request_flushes_and_closes` |
+| Find, formatting, and links | Find washes every occurrence, selects the current one, counts "k of n", and steps next/previous while the find field keeps keyboard focus; bold, italic, inline code, link insertion, and safe HTTP(S) link opening work from platform shortcuts | `find_washes_every_occurrence_and_counts_the_caret_position`, `find_highlights_matches_and_counts_them`, formatting/history tests, `resolves_only_the_link_under_the_cursor` |
 | Rich presentation | Every fenced code block is one continuous surface with real 16 px inner layout padding; inline-code backgrounds reserve horizontal space and cannot bleed into neighboring lines | `consecutive_line_highlights_share_one_surface`, `line_padding_changes_wrapping_caret_and_hit_geometry`, `inline_highlight_padding_cannot_bleed_into_adjacent_lines`, and `hidden_inline_code_delimiters_reserve_the_highlight_margin` |
-| Viewport and scale | The editor fills the window, wraps within the 800 px page, scrolls and reveals the rich caret, and edits a 10,000-line native buffer through the app update path | `inline_editor_fills_the_window` and `large_document_edits_stay_in_the_native_buffer` |
+| Viewport and scale | The editor fills the sheet down to the status strip, wraps within the 880 px page, scrolls past its last line by `END_PADDING` so the end of a note never sits on the clip edge, reveals the rich caret, and edits a 10,000-line native buffer through the app update path | `shell_layout_contract`, `long_document_scrolls_to_its_last_line`, and `large_document_edits_stay_in_the_native_buffer` |
 
 ## Behavioral references
 
@@ -96,7 +102,7 @@ Concrete editor behavior is translated from these pinned JavaScript sources:
 | H1–H6 scales `1.875, 1.5, 1.375, 1.25, 1.125, 1` and 1.4 line height | [MarkText/Muya heading CSS](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/blockSyntax.css#L37-L82) | `RichTextEditor` span metrics and shared caret geometry |
 | 90% monospace fenced code, 1.6 line height, surface, 1 px border, 3 px radius | [MarkText/Muya code-block CSS](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/blockSyntax.css#L196-L235) | One coalesced native visual-line decoration; hidden fence rows provide vertical inset |
 | Body-size monospace inline code with distinct spacing and a shared code surface | [MarkText/Muya inline padding and shared code-block background](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/inlineSyntax.css#L59-L69), [MarkText One Dark code surfaces](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/desktop/src/renderer/src/assets/themes/one-dark.theme.css#L15-L35), and [Typora GitHub inline code](https://github.com/typora/typora-default-themes/blob/cf4f2cb7e81a73050456367cfdfdb80b5a14a7b2/themes/github.css#L265-L275) | Transparent source delimiters reserve `0.4em` on both sides, the 1.6 body line height supplies vertical space, and line clipping prevents highlight paint from entering adjacent rows |
-| Dark appearance follows the OS at startup and while running, with a direct toolbar override | [MarkText system-theme startup and update handling](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/desktop/src/main/app/index.ts#L274-L355) and [One Dark palette](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/desktop/src/renderer/src/assets/themes/one-dark.theme.css#L15-L43) | Ice system-theme task/subscription selects a typed light or dark palette; the native syntax highlighter changes theme with it |
+| Dark appearance follows the OS at startup and while running, with a direct sidebar override | [MarkText system-theme startup and update handling](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/desktop/src/main/app/index.ts#L274-L355) and [One Dark palette](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/desktop/src/renderer/src/assets/themes/one-dark.theme.css#L15-L43) | Ice system-theme task/subscription selects a typed light or dark palette; the native syntax highlighter changes theme with it |
 | Enter on ```` ```lang ```` creates an empty fenced block and puts the caret in its code body | [MarkText/Muya paragraph conversion](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/block/content/paragraphContent/index.ts#L42-L64) and [Enter handler](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/block/content/paragraphContent/index.ts#L256-L315) | One native delta inserts the blank body and matching closing fence; one undo removes all of it |
 | Fenced code uses language-aware token colors and emphasis | [MarkText/Muya Prism light theme](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/prismjs/light.theme.css#L28-L99) | Existing native `iced_highlighter` parses the info-string language incrementally |
 | Syntax markers disappear unless the cursor intersects their token | [MarkText/Muya renderer](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/inlineRenderer/renderer/index.ts#L111-L136) and [marker CSS](https://github.com/marktext/marktext/blob/e52106fd1cdcbd33c1258b7b0cdc7013c4c5d86c/packages/muya/src/assets/styles/inlineSyntax.css#L1-L30) | Caret-aware highlighter collapses parser-confirmed delimiter ranges; transparent inline-code delimiters retain only the surface margin, while uncovered whitespace remains body text |

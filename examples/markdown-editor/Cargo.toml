@@ -5,10 +5,9 @@ edition.workspace = true
 publish = false
 
 [dependencies]
-iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tiny-skia", "wgpu", "x11"] }
+iced = { version = "=0.14.0", default-features = false, features = ["advanced", "smol", "tiny-skia", "wgpu", "x11"] }
 iced_highlighter = "=0.14.0"
 pulldown-cmark = { version = "=0.13.4", default-features = false }
-rfd = "=0.17.2"
 ui-lang.workspace = true
 ui-lang-runtime.workspace = true
 unicode-segmentation = "1"

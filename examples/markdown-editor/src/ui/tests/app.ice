@@ -1,353 +1,249 @@
-test inline_editor_fills_the_window
+test shell_layout_contract
   preset test
-  viewport 1200 800
-  timeout 5s
+  viewport 1120 720
   target app = #app
-  target editor_surface = #app/editor-surface/root
-  target document_editor = #app/editor-surface/root/page/document
-  expect app.width ~= 1200.0
-  expect app.height ~= 800.0
-  expect editor_surface.width ~= app.width
+  target sidebar = #app/sidebar/root
+  target search = #app/sidebar/root/top/search
+  target new = #app/sidebar/root/top/new
+  target sheet = #app/sheet-frame/sheet
+  target find = #app/sheet-frame/sheet/sheet-top/find
+  target editor_surface = #app/sheet-frame/sheet/editor-surface/root
+  target page = #app/sheet-frame/sheet/editor-surface/root/page
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  target status = #app/sheet-frame/sheet/status-bar/root
+  expect app.width ~= 1120.0
+  expect app.height ~= 720.0
+  expect sidebar.width ~= 272.0
+  expect sidebar.height ~= app.height
+  expect sheet.x ~= sidebar.right
+  expect sheet.right ~= app.right - 10.0
+  expect sheet.bottom ~= app.bottom - 10.0
+  expect find.right <= sheet.right
+  expect editor_surface.width ~= sheet.width
+  expect page.width <= 880.0
+  expect document_editor.visible
+  expect status.bottom ~= sheet.bottom
+  expect a11y new name "New note"
+  expect a11y search name "Search notes"
+  window resize 760 520
+  expect sidebar.width ~= 272.0
+  expect sheet.right ~= app.right - 10.0
+  expect status.bottom ~= sheet.bottom
   expect document_editor.visible
 
-test shell_layout_and_toolbar_contract
-  preset test
-  viewport 1200 800
-  target app = #app
-  target toolbar = #app/toolbar/root
-  target file_actions = #app/toolbar/root/file-row/file-actions
-  target edit_actions = #app/toolbar/root/action-row/edit-actions
-  target format_actions = #app/toolbar/root/action-row/format-actions
-  target save = #app/toolbar/root/file-row/file-actions/save
-  target document_name = #app/toolbar/root/file-row/document-meta/document-name
-  target dark_theme = #app/toolbar/root/action-row/dark-theme
-  target editor_surface = #app/editor-surface/root
-  target page = #app/editor-surface/root/page
-  target status = #app/status-bar/root
-  expect toolbar.height ~= 92.0
-  expect file_actions.visible
-  expect edit_actions.visible
-  expect format_actions.visible
-  expect save.height > 28.0
-  expect editor_surface.y ~= toolbar.bottom
-  expect status.bottom ~= app.bottom
-  expect page.width <= 880.0
-  expect document_name.right <= toolbar.right
-  expect file_actions.right <= toolbar.right
-  expect edit_actions.right <= toolbar.right
-  expect format_actions.right <= toolbar.right
-  expect dark_theme.right <= toolbar.right
-  expect a11y save name "Save"
-  expect a11y dark_theme name "Use dark appearance"
-  window resize 720 520
-  expect toolbar.width ~= app.width
-  expect document_name.right <= toolbar.right
-  expect file_actions.right <= toolbar.right
-  expect edit_actions.right <= toolbar.right
-  expect format_actions.right <= toolbar.right
-  expect dark_theme.right <= toolbar.right
-  expect editor_surface.visible
-  expect status.bottom ~= app.bottom
-  expect save.visible
+test library_boots_with_a_welcome_note_selected
+  viewport 1120 720
+  target rows = #app/sidebar/root/list/rows
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  expect !loading
+  expect len(notes) == 1
+  expect !empty(path)
+  expect current_title == "Welcome to your notes"
+  expect text "Welcome to your notes" within rows
+  expect text "Just now" within rows
+  expect editor_focused
+  expect document_editor.visible
+  capture welcome_light
+  system-theme dark
+  capture welcome_dark
 
-test save_tracks_document_dirty_state
-  preset test
-  viewport 1200 800
-  target save = #app/toolbar/root/file-row/file-actions/save
-  target document_editor = #app/editor-surface/root/page/document
-  expect a11y save name "Save"
-  expect a11y save disabled true
-  capture save_clean
-  click document_editor
-  type "!"
-  expect text "Unsaved"
-  expect a11y save disabled false
-  capture save_dirty
-
-test toolbar_theme_and_find_interactions
-  preset test
-  viewport 1200 800
-  target app = #app
-  target find = #app/toolbar/root/action-row/find
-  target dark_theme = #app/toolbar/root/action-row/dark-theme
-  target light_theme = #app/toolbar/root/action-row/light-theme
-  target find_bar = #app/find_bar/root
-  target query_input = #app/find_bar/root/find_query
-  target close_find = #app/find_bar/root/close
-  expect missing find_bar
-  click dark_theme
-  expect text "Light"
-  click light_theme
-  expect text "Dark"
-  click find
-  expect find_bar.visible
-  expect find_bar.height ~= 50.0
-  click query_input
-  type "native"
-  expect query_input.value == "native"
-  window resize 720 520
-  expect find_bar.width ~= app.width
-  expect query_input.right <= find_bar.right
-  expect close_find.right <= find_bar.right
-  click close_find
-  expect missing find_bar
-
-test shell_click_releases_editor_focus
-  preset test
-  viewport 1200 800
-  target document_editor = #app/editor-surface/root/page/document
-  target dark_theme = #app/toolbar/root/action-row/dark-theme
+test new_note_appears_in_the_list_and_autosaves_its_title
+  viewport 1120 720
+  target new = #app/sidebar/root/top/new
+  target rows = #app/sidebar/root/list/rows
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  target saved = #app/sheet-frame/sheet/status-bar/root/message/saved
+  target edited = #app/sheet-frame/sheet/status-bar/root/message/edited
+  expect !loading
+  click new
+  expect !loading
+  expect len(notes) == 2
+  expect current_title == "Untitled"
+  expect text "Untitled" within rows
   expect editor_focused
   click document_editor
-  click dark_theme
-  expect !editor_focused
-  click document_editor
-  expect editor_focused
+  type "# Grocery list"
+  expect history.dirty
+  expect exists edited
+  dispatch autosave_tick
+  expect history.dirty
+  dispatch autosave_tick
+  expect !history.dirty
+  expect exists saved
+  expect current_title == "Grocery list"
+  expect text "Grocery list" within rows
+  expect no text "Untitled" within rows
 
-test dirty_new_confirmation_interaction
-  preset test
-  viewport 1200 800
-  target new = #app/toolbar/root/file-row/file-actions/new
-  target document_editor = #app/editor-surface/root/page/document
-  target save = #app/toolbar/root/file-row/file-actions/save
-  target dark_theme = #app/toolbar/root/action-row/dark-theme
-  target dialog = #confirm/root
-  target cancel = #confirm/root/cancel-new
-  click document_editor
-  type "!"
-  expect text "Unsaved"
+test selecting_a_note_flushes_the_current_one_first
+  viewport 1120 720
+  target new = #app/sidebar/root/top/new
+  target rows = #app/sidebar/root/list/rows
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  expect !loading
   click new
-  expect pending == PendingAction.new_document
-  expect dialog.visible
-  expect dialog.width == 440.0
-  expect a11y save disabled true
-  expect a11y dark_theme disabled true
-  expect exists cancel
-  click cancel
-  expect pending == PendingAction.idle
-  expect no text "Unsaved changes"
+  expect !loading
+  click document_editor
+  type "# Second note"
+  expect history.dirty
+  click #app/sidebar/root/list/rows/note("Welcome to your notes")/root/control
+  expect !loading
+  expect !history.dirty
+  expect current_title == "Welcome to your notes"
+  expect text "Second note" within rows
 
-test close_confirmation_closes_find
-  preset test
-  viewport 1200 800
-  target document_editor = #app/editor-surface/root/page/document
-  target find = #app/toolbar/root/action-row/find
-  target find_bar = #app/find_bar/root
-  target cancel = #confirm/root/cancel-close
+test search_filters_the_note_list
+  viewport 1120 720
+  target search = #app/sidebar/root/top/search
+  target rows = #app/sidebar/root/list/rows
+  expect !loading
+  click search
+  type "markdown file"
+  expect query == "markdown file"
+  expect text "Welcome to your notes" within rows
+  clear
+  type "nothing like this"
+  expect len(visible) == 0
+  expect text "No notes match" within rows
+
+test deleting_the_last_note_reseeds_the_welcome_note
+  viewport 1120 720
+  target delete = #app/sheet-frame/sheet/sheet-top/delete
+  target dialog = #confirm/root
+  target cancel = #confirm/root/cancel
+  target confirm = #confirm/root/delete
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  expect !loading
   click document_editor
   type "!"
+  click delete
+  expect confirming_delete
+  expect dialog.visible
+  expect dialog.width == 400.0
+  expect text "Delete this note?"
+  click cancel
+  expect !confirming_delete
+  click delete
+  click confirm
+  expect !loading
+  expect !confirming_delete
+  expect len(notes) == 1
+  expect !history.dirty
+  expect current_title == "Welcome to your notes"
+
+test escape_closes_the_delete_dialog
+  viewport 1120 720
+  target delete = #app/sheet-frame/sheet/sheet-top/delete
+  target dialog = #confirm/root
+  expect !loading
+  click delete
+  expect dialog.visible
+  key escape
+  expect !confirming_delete
+  expect missing dialog
+
+test find_highlights_matches_and_counts_them
+  viewport 1120 720
+  target find = #app/sheet-frame/sheet/sheet-top/find
+  target find_bar = #app/sheet-frame/sheet/find_bar/root
+  target query_input = #app/sheet-frame/sheet/find_bar/root/card/find_query
+  target summary = #app/sheet-frame/sheet/find_bar/root/card/summary
+  target next = #app/sheet-frame/sheet/find_bar/root/card/next
+  target previous = #app/sheet-frame/sheet/find_bar/root/card/previous
+  target close = #app/sheet-frame/sheet/find_bar/root/card/close
+  expect !loading
+  expect missing find_bar
   click find
   expect find_bar.visible
-  dispatch request_close
-  expect pending == PendingAction.close_window
+  expect a11y query_input focused true
+  type "note"
+  expect query_input.value == "note"
+  expect editor_has_selection(document)
+  expect summary.value == "1 of 4"
+  click next
+  expect summary.value == "2 of 4"
+  click previous
+  expect summary.value == "1 of 4"
+  click previous
+  expect summary.value == "4 of 4"
+  capture find_matches
+  click close
   expect missing find_bar
-  expect exists cancel
-  click cancel
-  expect pending == PendingAction.idle
+  expect find_query == ""
 
-test confirmation_backdrop_cancels
-  preset test
-  viewport 720 520
-  target document_editor = #app/editor-surface/root/page/document
-  target new = #app/toolbar/root/file-row/file-actions/new
-  target dialog = #confirm/root
+test close_request_flushes_and_closes
+  viewport 1120 720
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  expect !loading
   click document_editor
   type "!"
-  click new
-  expect dialog.visible
-  click-at 20.0 240.0
-  expect pending == PendingAction.idle
-
-test new_clears_previous_error
-  preset error
-  viewport 1200 800
-  target new = #app/toolbar/root/file-row/file-actions/new
-  expect text "Previous error"
-  click new
-  expect no text "Previous error"
-
-test close_clears_previous_error
-  preset error
-  viewport 1200 800
-  expect text "Previous error"
+  expect history.dirty
   dispatch request_close
-  expect no text "Previous error"
+  expect !loading
+  expect empty(error)
 
 test status_error_can_be_dismissed
   preset error
-  viewport 720 520
-  target dismiss = #app/status-bar/root/message/dismiss
+  viewport 760 520
+  target dismiss = #app/sheet-frame/sheet/status-bar/root/message/dismiss
   expect text "Previous error"
   expect a11y dismiss name "Dismiss"
   click dismiss
   expect no text "Previous error"
 
-test long_document_name_stays_in_header
-  preset long_name
-  viewport 720 520
-  target toolbar = #app/toolbar/root
-  target document_name = #app/toolbar/root/file-row/document-meta/document-name
-  expect document_name.right <= toolbar.right
-  expect document_name.height <= 24.0
-  expect document_name.value == "a-document-name-that-is-long-enough-to-exercise…"
-
 test long_error_stays_in_status_bar
   preset long_error
-  viewport 720 520
-  target status = #app/status-bar/root
-  target error_slot = #app/status-bar/root/message/error-slot
-  target error_message = #app/status-bar/root/message/error-slot/error-message
-  target dismiss = #app/status-bar/root/message/dismiss
-  target cursor = #app/status-bar/root/cursor
+  viewport 760 520
+  target status = #app/sheet-frame/sheet/status-bar/root
+  target error_slot = #app/sheet-frame/sheet/status-bar/root/message/error-slot
+  target error_message = #app/sheet-frame/sheet/status-bar/root/message/error-slot/error-message
+  target dismiss = #app/sheet-frame/sheet/status-bar/root/message/dismiss
+  target cursor = #app/sheet-frame/sheet/status-bar/root/cursor
   expect error_message.height <= 18.0
   expect error_slot.right <= status.right
-  expect dismiss.visible
-  expect cursor.right <= status.right
+  expect dismiss.right <= status.right
+  expect cursor.visible
 
-test busy_shell_contract
-  preset busy
-  viewport 1200 800
-  target save = #app/toolbar/root/file-row/file-actions/save
-  target dark_theme = #app/toolbar/root/action-row/dark-theme
-  expect text "Working…"
-  expect a11y save disabled true
-  expect a11y dark_theme disabled true
+test theme_toggle_releases_editor_focus
+  preset test
+  viewport 1120 720
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  target dark_theme = #app/sidebar/root/footer/dark-theme
+  target light_theme = #app/sidebar/root/footer/light-theme
+  expect editor_focused
+  click document_editor
+  click dark_theme
+  expect !editor_focused
+  expect dark
+  expect text "Light appearance"
+  click light_theme
+  expect !dark
+  click document_editor
+  expect editor_focused
 
-test busy_confirmation_cannot_be_dismissed
-  preset busy_modal
-  viewport 720 520
-  target dialog = #confirm/root
-  target cancel = #confirm/root/cancel-new
-  expect dialog.visible
-  expect a11y cancel disabled true
-  dispatch cancel_pending
-  expect pending == PendingAction.new_document
-  key escape
-  expect pending == PendingAction.new_document
+test long_document_scrolls_to_its_last_line
+  preset long_document
+  viewport 1120 720
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  target sheet = #app/sheet-frame/sheet
+  target status = #app/sheet-frame/sheet/status-bar/root
+  expect document_editor.bottom ~= status.y
+  click document_editor
+  repeat arrow-down 60
+  expect caret_line == line_count - 1
+  capture long_document_end
 
-test confirmation_dialog_action_variants
-  viewport 960 320
-  mount
-    row gap=16.0 align=center
-      ConfirmDialog #open
-        with
-          action=PendingAction.open_document
-          name="notes.md"
-          busy=false
-          error=""
-        events
-          save_new -> save_then_new
-          discard_new -> discard_new
-          save_open -> save_then_open
-          discard_open -> discard_open
-          save_close -> save_then_close
-          discard_close -> discard_close
-          cancel -> cancel_pending
-      ConfirmDialog #close
-        with
-          action=PendingAction.close_window
-          name="notes.md"
-          busy=false
-          error=""
-        events
-          save_new -> save_then_new
-          discard_new -> discard_new
-          save_open -> save_then_open
-          discard_open -> discard_open
-          save_close -> save_then_close
-          discard_close -> discard_close
-          cancel -> cancel_pending
-  target open = #open/root
-  target open_cancel = #open/root/cancel-open
-  target open_discard = #open/root/discard-open
-  target open_save = #open/root/save-open
-  target close = #close/root
-  target close_cancel = #close/root/cancel-close
-  target close_discard = #close/root/discard-close
-  target close_save = #close/root/save-close
-  expect open.visible
-  expect close.visible
-  expect open.width == 440.0
-  expect close.width == 440.0
-  expect a11y open_cancel name "Cancel"
-  expect a11y open_discard name "Discard"
-  expect a11y open_save name "Save"
-  expect a11y close_cancel name "Cancel"
-  expect a11y close_discard name "Discard"
-  expect a11y close_save name "Save"
-
-test confirmation_dialog_contract
+test delete_dialog_contract
   viewport 560 320
   mount
-    ConfirmDialog #dialog
-      with
-        action=PendingAction.new_document
-        name="Untitled.md"
-        busy=false
-        error=""
+    DeleteDialog #dialog title="Grocery list" busy=false
       events
-        save_new -> save_then_new
-        discard_new -> discard_new
-        save_open -> save_then_open
-        discard_open -> discard_open
-        save_close -> save_then_close
-        discard_close -> discard_close
-        cancel -> cancel_pending
+        delete -> confirm_delete
+        cancel -> cancel_delete
   target dialog = #dialog/root
-  target cancel = #dialog/root/cancel-new
-  target discard = #dialog/root/discard-new
-  target save = #dialog/root/save-new
-  expect dialog.visible
-  expect dialog.width == 440.0
-  expect dialog.height > 150.0
-  expect text "Unsaved changes"
-  expect text "Save your changes before continuing?"
+  target cancel = #dialog/root/cancel
+  target delete = #dialog/root/delete
+  expect dialog.width == 400.0
+  expect text "Delete this note?"
+  expect text "Grocery list"
   expect a11y cancel name "Cancel"
-  expect a11y discard name "Discard"
-  expect a11y save name "Save"
-
-test confirmation_dialog_busy_error_contract
-  viewport 560 320
-  mount
-    ConfirmDialog #dialog
-      with
-        action=PendingAction.new_document
-        name="Untitled.md"
-        busy=true
-        error="Disk full"
-      events
-        save_new -> save_then_new
-        discard_new -> discard_new
-        save_open -> save_then_open
-        discard_open -> discard_open
-        save_close -> save_then_close
-        discard_close -> discard_close
-        cancel -> cancel_pending
-  target cancel = #dialog/root/cancel-new
-  expect text "Saving…"
-  expect text "Disk full"
-  expect a11y cancel disabled true
-
-test confirmation_dialog_long_error_stays_compact
-  viewport 560 320
-  mount
-    ConfirmDialog #dialog
-      with
-        action=PendingAction.new_document
-        name="Untitled.md"
-        busy=false
-        error="Could not save /a/very/long/path/with/many/nested/directories/that/should/not/break/the/dialog/layout/when/permission/is/denied.md: permission denied"
-      events
-        save_new -> save_then_new
-        discard_new -> discard_new
-        save_open -> save_then_open
-        discard_open -> discard_open
-        save_close -> save_then_close
-        discard_close -> discard_close
-        cancel -> cancel_pending
-  target dialog = #dialog/root
-  target error_slot = #dialog/root/error-slot
-  target error_message = #dialog/root/error-slot/error-message
-  expect dialog.height < 260.0
-  expect error_slot.width <= dialog.width
-  expect error_message.height <= 18.0
+  expect a11y delete name "Delete"

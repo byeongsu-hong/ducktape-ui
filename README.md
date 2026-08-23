@@ -226,7 +226,7 @@ application, and signs and notarizes it when you supply a certificate; see
 cargo run -p music-example     # macOS-Music-style flows, liquid-glass player
 cargo run -p browser-example   # native CEF child inside an Ice shell (see examples/cef-browser)
 cargo ice dev -p hotreload-example # side-by-side hot reload preview and Ice editor
-cargo run -p markdown-example  # native Markdown editor (see examples/markdown-editor/DESIGN.md)
+cargo run -p markdown-example  # native Markdown notes app (see examples/markdown-editor/DESIGN.md)
 cargo run -p terminal-example  # native PTY terminal component (see examples/terminal)
 cargo run -p showcase          # the default component catalog (crates/ui-lang-components)
 cargo run -p ice-starter       # the minimal copyable build/include/test path
