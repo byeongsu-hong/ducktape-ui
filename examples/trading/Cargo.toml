@@ -39,7 +39,7 @@ k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"]
 # an AEAD assembled here.
 ring = "0.17"
 serde_json = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 # keccak256. `sha2` is already here but SHA-3 and SHA-2 share nothing but a
 # name; this is the same RustCrypto `digest` traits, so it adds one small crate.
 sha3 = "0.12"
