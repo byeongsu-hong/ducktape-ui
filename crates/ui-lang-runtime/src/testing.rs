@@ -5133,7 +5133,7 @@ fn inspect_paint<Renderer: 'static>(
                 let Some(text_bounds) = text
                     .visible_bounds()
                     .map(|bounds| bounds * transformation)
-                    .and_then(|bounds| bounds.intersection(&group.clip_bounds()))
+                    .and_then(|bounds| bounds.intersection(&(group.clip_bounds() * transformation)))
                     .and_then(|bounds| bounds.intersection(&layer.bounds))
                 else {
                     continue;
@@ -5204,6 +5204,11 @@ fn rendered_text_exists<Renderer: 'static>(
 
 /// Walks every text primitive that is actually on screen, stopping early when
 /// `visit` is satisfied.
+///
+/// A canvas text group's clip rectangle is recorded in the canvas's own
+/// coordinates while its text, once transformed, is in the window's — so the
+/// clip is carried through the same transformation before the two meet, or a
+/// canvas laid out past its own width and height finds none of its text.
 fn for_each_visible_text<Renderer: 'static>(
     renderer: &mut Renderer,
     within: Option<Rectangle>,
@@ -5217,7 +5222,7 @@ fn for_each_visible_text<Renderer: 'static>(
                 let Some(bounds) = text
                     .visible_bounds()
                     .map(|bounds| bounds * transformation)
-                    .and_then(|bounds| bounds.intersection(&group.clip_bounds()))
+                    .and_then(|bounds| bounds.intersection(&(group.clip_bounds() * transformation)))
                     .and_then(|bounds| bounds.intersection(&layer.bounds))
                 else {
                     continue;
