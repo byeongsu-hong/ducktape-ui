@@ -15,14 +15,14 @@ plist = "1.10"
 png = "0.18"
 # An icon is shapes; without `text` this drops fontdb, rustybuzz, and the
 # system font scan from every `cargo install cargo-ice`.
-resvg = { version = "0.45", default-features = false }
+resvg = { version = "0.48", default-features = false }
 same-file = "1.0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11.0"
 # `png-format` is not in resvg's own tiny-skia feature set, and the encoder is
 # what un-premultiplies the rendered icon.
-tiny-skia = { version = "0.11", features = ["png-format"] }
+tiny-skia = { version = "0.12", features = ["png-format"] }
 toml_edit = { version = "0.25", default-features = false, features = ["parse"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }

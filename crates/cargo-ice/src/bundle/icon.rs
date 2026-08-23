@@ -214,8 +214,11 @@ mod tests {
     #[ignore = "allocation contract; run alone with --test-threads=1"]
     fn performance_contract_ico_reuses_output_storage() {
         const RENDERS: usize = 16;
-        const MAX_BLOCKS: u64 = 8_448;
-        const MAX_BYTES: u64 = 22_559_744;
+        const MAX_BLOCKS: u64 = 8_160;
+        // Most of this is the PNG encoder, not the renderer: `encode_png`
+        // clones the pixmap to demultiply it and builds a fresh deflate state
+        // per image. Peak footprint stays under a megabyte; this is churn.
+        const MAX_BYTES: u64 = 51_464_992;
 
         let source = source();
         drop(ico(&source).expect("warm the icon renderer"));
