@@ -1631,7 +1631,10 @@ where
         draw_line_rules(renderer, &state.document, text_bounds, origin);
         draw_span_highlights(renderer, &state.document, text_bounds, origin);
 
-        if state.focus.is_some() && state.composition.is_none() {
+        // The selection outlives focus: a Find bar that owns the keyboard
+        // still has to show the match it selected in here. Only the caret
+        // is a focus affordance.
+        if state.composition.is_none() {
             draw_selection(
                 renderer,
                 &state.document,
