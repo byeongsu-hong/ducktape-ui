@@ -21,6 +21,22 @@ members = [
     "conformance/ice",
 ]
 resolver = "3"
+# A path dependency is not a member unless listed, and this one must not be:
+# it is a patch over a published crate, not a crate of this workspace.
+exclude = ["vendor/iced_tiny_skia"]
+
+# `iced_tiny_skia 0.14.0` translates a canvas group's clip rectangle by the
+# group's own transformation twice — once when the layer records it and again
+# when the renderer draws it — so any `canvas` geometry drawn at an offset is
+# clipped to a rectangle displaced by that offset. The software renderer is the
+# one every headless capture and `cargo ice inspect` draws with, so a chart in a
+# scrolled page drew nothing and the terminal's candle chart lost its left
+# third in every capture. Upstream fixed it in iced-rs/iced@76b32d4906 ("Fix
+# transformation of `canvas` primitives in `tiny_skia`"), which no 0.14 release
+# carries; `vendor/iced_tiny_skia` is the published 0.14.0 source with exactly
+# that commit applied. Drop the directory and this patch when a release has it.
+[patch.crates-io]
+iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 
 [workspace.package]
 edition = "2024"
