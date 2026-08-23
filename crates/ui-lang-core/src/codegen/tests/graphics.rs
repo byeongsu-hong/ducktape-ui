@@ -23,7 +23,7 @@ on scrolled(x, y, pixels)
 on entered
 on exited
 view
-  canvas w=fill h=240.0 cache=cached cache-group=drawings capture=true cursor=crosshair press=pressed release=released move=moved scroll=scrolled enter=entered exit=exited
+  canvas w=fill h=240.0 cache=cached cache-group=drawings capture=true cursor=crosshair press=pressed release=released right-press=pressed right-release=released middle-press=pressed middle-release=released move=moved scroll=scrolled enter=entered exit=exited
     rect x=0.0 y=0.0 w=canvas_width h=canvas_height fill=linear(1.57, bg@0.0, primary@1.0) stroke=fg
     rect x=8.0 y=8.0 w=72.0 h=40.0 r=8.0 r-tl=4.0 stroke=fg stroke-w=2.0 dash=(4.0, 2.0) dash-offset=1 cap=round join=bevel
     circle x=120.0 y=60.0 r=24.0 fill=primary fill-rule=even-odd stroke=fg
@@ -68,6 +68,12 @@ view
         "size: ::iced::Pixels(((18.0) as f32).max(f32::EPSILON).min(f32::MAX))",
         "LineHeight::Relative(((1.2) as f32).max(f32::EPSILON).min(f32::MAX))",
         "__frame.draw_image",
+        // The non-left buttons are spelled kebab-case like every other Ice
+        // attribute, and each reaches its own native mouse button.
+        "::iced::mouse::Event::ButtonPressed(::iced::mouse::Button::Right)",
+        "::iced::mouse::Event::ButtonReleased(::iced::mouse::Button::Right)",
+        "::iced::mouse::Event::ButtonPressed(::iced::mouse::Button::Middle)",
+        "::iced::mouse::Event::ButtonReleased(::iced::mouse::Button::Middle)",
         "__frame.draw_svg",
         "opacity: ((0.8) as f32).max(0.0).min(1.0)",
         "opacity: ((0.9) as f32).max(0.0).min(1.0)",

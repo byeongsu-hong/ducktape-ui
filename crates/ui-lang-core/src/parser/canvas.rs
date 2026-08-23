@@ -28,13 +28,13 @@ pub(in crate::parser) fn parse_canvas(
             options.press = Some(parse_payload_route(value, line, 2)?);
         } else if let Some(value) = part.strip_prefix("release=") {
             options.release = Some(parse_payload_route(value, line, 2)?);
-        } else if let Some(value) = part.strip_prefix("right_press=") {
+        } else if let Some(value) = part.strip_prefix("right-press=") {
             options.right_press = Some(parse_payload_route(value, line, 2)?);
-        } else if let Some(value) = part.strip_prefix("right_release=") {
+        } else if let Some(value) = part.strip_prefix("right-release=") {
             options.right_release = Some(parse_payload_route(value, line, 2)?);
-        } else if let Some(value) = part.strip_prefix("middle_press=") {
+        } else if let Some(value) = part.strip_prefix("middle-press=") {
             options.middle_press = Some(parse_payload_route(value, line, 2)?);
-        } else if let Some(value) = part.strip_prefix("middle_release=") {
+        } else if let Some(value) = part.strip_prefix("middle-release=") {
             options.middle_release = Some(parse_payload_route(value, line, 2)?);
         } else if let Some(value) = part.strip_prefix("enter=") {
             options.enter = Some(parse_route(value, line)?);

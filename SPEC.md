@@ -1281,8 +1281,8 @@ hover_area     = "hover" id? ("tint=" name ("/" u8)?)? ("r=" number)?
                  ("open=" expr)? INDENT node node
 mouse_area     = "mouse" id? mouse_property+ INDENT node
 mouse_property = ("press=" | "press-at=" | "release=" | "double="
-               | "right_press=" | "right_release=" | "middle_press="
-               | "middle_release=" | "enter=" | "move=" | "scroll="
+               | "right-press=" | "right-release=" | "middle-press="
+               | "middle-release=" | "enter=" | "move=" | "scroll="
                | "exit=") route
                | "cursor=" mouse_cursor
 resize_handle  = "resize-handle" id? "drag=" route
@@ -1291,8 +1291,8 @@ resize_handle  = "resize-handle" id? "drag=" route
 canvas         = "canvas" id? canvas_property* INDENT canvas_item*
 canvas_property = ("w=" | "h=") length
                 | "cache=" expr | "cache-group=" name | "capture=" expr
-                | ("press=" | "release=" | "right_press=" | "right_release="
-                  | "middle_press=" | "middle_release=" | "enter=" | "move="
+                | ("press=" | "release=" | "right-press=" | "right-release="
+                  | "middle-press=" | "middle-release=" | "enter=" | "move="
                   | "scroll=" | "exit=") route
                 | "cursor=" (mouse_cursor | "(" expr ")")
                 | "cursor-outside=" expr
