@@ -94,8 +94,8 @@ fn performance_contract_100k_by_16_unchanged_render() {
     const P95_BUDGET_US: u128 = 6_000;
     // The mounted 15-by-16 cell tree alone performs 1,930 element-construction
     // allocations before Iced diffs or lays it out. Keep modest headroom over
-    // the measured 3,025-allocation complete unchanged frame.
-    const ALLOCATION_BUDGET: usize = 3_200;
+    // the measured 2,479-allocation complete unchanged frame.
+    const ALLOCATION_BUDGET: usize = 2_654;
     const ALLOCATED_BYTES_BUDGET: usize = 1024 * 1024;
 
     let state = prepared();

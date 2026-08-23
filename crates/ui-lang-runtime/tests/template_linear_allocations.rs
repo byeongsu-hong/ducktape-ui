@@ -11,9 +11,11 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 #[test]
 fn linear_children_use_bounded_temporary_storage() {
     const CHILDREN: usize = 64;
-    // The direct loop measures 71 allocations. The old `flat_map` path
+    // The direct loop measures 70 allocations. The old `flat_map` path
     // measured 135: one additional singleton `Vec` for every ordinary child.
-    const ALLOCATION_BUDGET: usize = 80;
+    // The headroom between the two is what makes this a shape guard rather
+    // than a pin, so it moves only by what a change actually earns.
+    const ALLOCATION_BUDGET: usize = 79;
 
     let template = Template {
         root: Node::Linear {

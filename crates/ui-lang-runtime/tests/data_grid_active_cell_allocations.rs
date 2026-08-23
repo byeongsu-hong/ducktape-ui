@@ -40,8 +40,8 @@ type Renderer = iced_test::renderer::Renderer;
 #[test]
 fn active_cell_moves_into_the_rendered_grid() {
     const FRAMES: usize = 256;
-    const ALLOCATIONS: usize = 15_616;
-    const ALLOCATED_BYTES: usize = 1_320_960;
+    const ALLOCATIONS: usize = 14_336;
+    const ALLOCATED_BYTES: usize = 1_269_760;
 
     let config = DataGridConfig::new(20.0, 20.0).unwrap();
     let rows = [String::from("row-key-owned")];

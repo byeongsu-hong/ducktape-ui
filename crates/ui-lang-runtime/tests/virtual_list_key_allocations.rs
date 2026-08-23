@@ -41,8 +41,8 @@ fn config() -> VirtualListConfig {
 #[ignore = "virtual-list allocation contract run explicitly in CI"]
 fn performance_contract_string_key_render_moves_mounted_keys() {
     const SAMPLES: usize = 256;
-    const ALLOCATIONS_PER_RENDER: usize = 52;
-    const BYTES_PER_RENDER: usize = 5_328;
+    const ALLOCATIONS_PER_RENDER: usize = 46;
+    const BYTES_PER_RENDER: usize = 5_088;
 
     let items = (0..16)
         .map(|index| format!("row-key-{index:02}"))
