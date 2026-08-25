@@ -372,6 +372,12 @@ pub(in crate::codegen) fn generate_boot(
             component_state_field(&component.name),
         )
         .unwrap();
+        writeln!(
+            out,
+            "{}: ::std::default::Default::default(),",
+            component_state_initial_field(&component.name)
+        )
+        .unwrap();
         for state in component
             .states
             .iter()

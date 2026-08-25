@@ -1,0 +1,6 @@
+crate::backend::header(::std::convert::AsRef::as_ref(&((*self.__ice_component_browser.get(&__ice_use_scope).map_or(&self.__ice_component_browser_initial.path, |__ice_local| &__ice_local.path)))), ::std::convert::AsRef::as_ref(&((*self.__ice_component_browser.get(&__ice_use_scope).map_or(&self.__ice_component_browser_initial.rev, |__ice_local| &__ice_local.rev)))))
+crate::backend::rows_label(::std::convert::AsRef::as_ref(&((*self.__ice_component_browser.get(&__ice_use_scope).map_or(&self.__ice_component_browser_initial.rows, |__ice_local| &__ice_local.rows)))))
+crate::backend::header(::std::convert::AsRef::as_ref(&((*self.__ice_component_panel.values().get(&__ice_use_scope).map_or(&self.__ice_component_panel_initial.title, |__ice_local| &__ice_local.title)))), ::std::convert::AsRef::as_ref(&((*self.__ice_component_panel.values().get(&__ice_use_scope).map_or(&self.__ice_component_panel_initial.title, |__ice_local| &__ice_local.title)))))
+crate::backend::picture(::std::convert::AsRef::as_ref(&((*self.__ice_component_browser.get(&__ice_use_scope).map_or(&self.__ice_component_browser_initial.path, |__ice_local| &__ice_local.path)))))
+pub(crate) __ice_component_browser_initial: __IceBrowserState,
+__ice_component_browser_initial: ::std::default::Default::default(),

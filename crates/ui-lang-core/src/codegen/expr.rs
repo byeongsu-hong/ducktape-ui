@@ -2199,16 +2199,18 @@ fn expr_node_list_code(
         .join(", "))
 }
 
-/// A component-state read rebuilt against an explicit scope identifier. The
-/// binding's baked code embeds the call-site scope binding, and inside a
-/// `move` closure that identifier must not be named at all — so the read is
-/// rebuilt from the state's contract rather than patched textually, since a
-/// user string literal in the initializer could legally contain the
-/// identifier.
+/// A component-state read rebuilt against an explicit scope identifier and the
+/// consumer's value mode. The binding's baked code is the owned read against
+/// the call-site scope binding: inside a `move` closure that identifier must
+/// not be named at all, and a borrowing consumer wants the field itself rather
+/// than a clone of it. Both are rebuilt from the state's contract rather than
+/// patched textually, since a user string literal in the initializer could
+/// legally contain the identifier.
 fn scoped_component_state_read_code(
     program: &LoweredProgram,
     state: crate::hir::ComponentStateId,
     scope: &str,
+    mode: ValueMode,
     span: &Span,
 ) -> Result<String, Error> {
     let component = program.component(state.component);
@@ -2237,6 +2239,14 @@ fn scoped_component_state_read_code(
     };
     if declaration.ty == Type::Editor {
         return Ok(component_editor_read_code(
+            &component.name,
+            &states,
+            scope,
+            &declaration.name,
+        ));
+    }
+    if mode == ValueMode::Borrowed {
+        return Ok(component_state_borrow_code(
             &component.name,
             &states,
             scope,
@@ -2303,9 +2313,18 @@ fn resolved_path_code(
                     rust_string(&value.name)
                 ));
             }
-            let code = match (context.component_state_scope, value_ref) {
+            // A borrowing consumer rebuilds the read against the scope the
+            // binding was baked with, so the field is borrowed out of the
+            // instance instead of cloned into a temporary first.
+            let scope = context.component_state_scope.or(match &binding.state {
+                Some(StateBinding::Component { scope, .. }) if mode == ValueMode::Borrowed => {
+                    Some(scope.as_str())
+                }
+                _ => None,
+            });
+            let code = match (scope, value_ref) {
                 (Some(scope), ResolvedValueRef::ComponentState(state)) => {
-                    scoped_component_state_read_code(program, *state, scope, &span)?
+                    scoped_component_state_read_code(program, *state, scope, mode, &span)?
                 }
                 _ => binding.code.clone(),
             };
