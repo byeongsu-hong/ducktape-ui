@@ -985,6 +985,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             .unwrap(),
             ComponentStorage::Stateless => unreachable!(),
         }
+        writeln!(
+            out,
+            "pub(crate) {}: {ty},",
+            component_state_initial_field(&component.name)
+        )
+        .unwrap();
         for state in component
             .states
             .iter()

@@ -198,6 +198,31 @@ pub(in crate::codegen) fn component_state_read_code(
     format!("{states}.get(&{scope}).map_or_else(|| {initial}, |__state| __state.{state}.clone())")
 }
 
+/// The same read for a consumer that only borrows it — a `&` extern parameter,
+/// a widget that keeps the reference. A PLACE EXPRESSION, not a reference
+/// VALUE: the deref reborrows out of the map, so the borrow is tied to `self`
+/// instead of to a temporary the statement frees. Nothing is cloned, and the
+/// instance that has not materialized yet borrows the app's initial instance,
+/// which is the same value the read's owned shape builds from the initializer.
+pub(in crate::codegen) fn component_state_borrow_code(
+    component: &str,
+    states: &str,
+    scope: &str,
+    state: &str,
+) -> String {
+    format!(
+        "(*{states}.get(&{scope}).map_or(&self.{initial}.{state}, |__ice_local| &__ice_local.{state}))",
+        initial = component_state_initial_field(component)
+    )
+}
+
+/// The app-struct field holding one component's initial state instance. A
+/// borrow needs a stable address, which the instance map cannot provide for a
+/// scope it has never seen.
+pub(in crate::codegen) fn component_state_initial_field(component: &str) -> String {
+    format!("{}_initial", component_state_field(component))
+}
+
 pub(in crate::codegen) fn component_state_field(component: &str) -> String {
     if canonical_component(component) {
         format!("__ice_component_{}", component.to_ascii_lowercase())

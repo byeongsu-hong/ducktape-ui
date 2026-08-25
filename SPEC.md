@@ -2696,13 +2696,14 @@ is a backend contract violation.
 A `pure` or `sync` parameter may borrow with `&type`, exactly as an extern
 component parameter can. The call site is unchanged: an argument of type `str`,
 `[T]`, `T`, or `editor` satisfies the `&` parameter, and the generated call
-passes a reference to the state field, local, `for` row, or lazy alias instead
-of cloning it. `&str` lowers to `&str`, `&bytes` and `&[T]` to slices, `&editor`
-to `&iced::widget::text_editor::Content`, and any other `&T` to a shared Rust
-reference; the signature probe requires that reference, so an owned Rust
-parameter fails `cargo check`. Because the output is owned Ice data the borrow
-ends with the call, so borrowed parameters work in handlers, views, derived
-values, subscription conditions, component bodies, and `lazy` subtrees alike:
+passes a reference to the state field (app or component instance), local, `for`
+row, or lazy alias instead of cloning it. `&str` lowers to `&str`, `&bytes` and
+`&[T]` to slices, `&editor` to `&iced::widget::text_editor::Content`, and any
+other `&T` to a shared Rust reference; the signature probe requires that
+reference, so an owned Rust parameter fails `cargo check`. Because the output
+is owned Ice data the borrow ends with the call, so borrowed parameters work
+in handlers, views, derived values, subscription conditions, component bodies,
+and `lazy` subtrees alike:
 
 ```ice
 extern crate::backend

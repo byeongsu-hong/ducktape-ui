@@ -1,4 +1,4 @@
 let __ice_lazy_context_1 = (__ice_use_scope).to_owned();
 memo_lazy((self.__ice_component_card.get(&__ice_use_scope).map_or(0, |__state| __state.__ice_rev[0]), (format!("{}/root", __ice_use_scope)).to_owned()
 move |__dependency| { let count: i64 = self.__ice_component_card.get(&__ice_lazy_context_1).map_or_else(|| 0, |__state| __state.count.clone()); let __lazy_scope = __dependency.1.clone(); let row: i64 = self.__ice_component_card.get(&__ice_lazy_context_1).map_or_else(|| 0, |__state| __state.count.clone());
-self.__ice_component_card.get(&__ice_use_scope).map_or_else(|| "x".to_owned(), |__state| __state.label.clone())
+(*self.__ice_component_card.get(&__ice_use_scope).map_or(&self.__ice_component_card_initial.label, |__ice_local| &__ice_local.label))
