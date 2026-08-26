@@ -45,6 +45,9 @@ zeroize = { version = "1", features = ["alloc"] }
 accesskit_unix = "=0.22.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Already in the graph via tray-icon's `muda`; used only for the safe
+# main-thread check guarding tray init.
+objc2 = "0.6"
 tray-icon = { version = "0.24", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
