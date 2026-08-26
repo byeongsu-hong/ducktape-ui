@@ -13,6 +13,7 @@ ui-lang-runtime.workspace = true
 ui-lang-build.workspace = true
 
 [dev-dependencies]
+ui-lang-runtime = { workspace = true, features = ["test-runtime"] }
 iced_runtime = "0.14.0"
 
 [lints]

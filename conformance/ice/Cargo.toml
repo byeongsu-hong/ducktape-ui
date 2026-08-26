@@ -13,6 +13,7 @@ ui-lang-runtime.workspace = true
 ui-lang-build.workspace = true
 
 [dev-dependencies]
+ui-lang-runtime = { workspace = true, features = ["test-runtime"] }
 ui-lang-components = { workspace = true, features = ["button", "theme"] }
 iced_test = "=0.14.0"
 png = "0.18"

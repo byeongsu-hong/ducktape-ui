@@ -9,8 +9,15 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["full-runtime", "test-runtime"]
-full-runtime = ["data-grid"]
+# `test-runtime` is deliberately not a default: it drags the headless test
+# driver (iced_test, png) and the wgpu renderer into every consumer's release
+# graph. Test builds turn it on through a dev-dependency instead. `x11` stays
+# because winit refuses to compile on Linux with no platform selected.
+default = ["full-runtime", "x11"]
+# `tiny-skia` here is load-bearing, not a renderer preference:
+# `rich_text_editor` names the concrete paragraph type that only exists once
+# a graphics backend is enabled.
+full-runtime = ["data-grid", "tiny-skia"]
 data-grid = []
 wgpu = ["iced/wgpu"]
 tiny-skia = ["iced/tiny-skia"]
@@ -54,6 +61,9 @@ tray-icon = { version = "0.24", default-features = false }
 accesskit_windows = "=0.32.0"
 
 [dev-dependencies]
+# Self dev-dependency: turns `test-runtime` on for this crate's own tests
+# without putting it back in `default`.
+ui-lang-runtime = { path = ".", features = ["test-runtime"] }
 dhat = "=0.3.3"
 serde_json = "1"
 stats_alloc = "0.1.10"

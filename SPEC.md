@@ -257,7 +257,9 @@ unsuppressed.
 Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so
 a consuming application must declare `iced = "=0.14.0"` and
 `ui-lang-runtime = "=0.1.0"` as direct dependencies. It must also declare
-`ui-lang-build = "=0.1.0"` as a direct build dependency.
+`ui-lang-build = "=0.1.0"` as a direct build dependency. The headless test
+driver is not a default feature of the runtime; test builds require
+`ui-lang-runtime` with the `test-runtime` feature as a dev dependency.
 The runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
 on Windows; the reference application uses workspace paths with exact
 versions. `cargo ice compat` verifies the lockfile and direct-manifest contract.

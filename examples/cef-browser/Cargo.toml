@@ -41,3 +41,6 @@ helper_name = "cef-browser-helper"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+ui-lang-runtime = { workspace = true, features = ["test-runtime"] }
