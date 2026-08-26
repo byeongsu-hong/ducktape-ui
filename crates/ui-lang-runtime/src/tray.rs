@@ -559,6 +559,13 @@ mod platform {
         }
     }
 
+    /// Whether this thread is the process main thread — the only thread a
+    /// status item can be created on. `MainThreadMarker` is the same
+    /// `pthread_main_np` check `muda` asserts with, behind a safe API.
+    fn on_main_thread() -> bool {
+        objc2::MainThreadMarker::new().is_some()
+    }
+
     struct TrayState {
         icon: tray_icon::TrayIcon,
         /// Declaration order, so a row index from generated code lands on the
@@ -575,10 +582,14 @@ mod platform {
         static TRAY: RefCell<Option<TrayState>> = const { RefCell::new(None) };
     }
 
-    /// Creates the status item. Must run on the main thread with the iced
-    /// event loop initialized — generated boot satisfies both. A platform
-    /// failure is reported to stderr and leaves every later call a no-op;
-    /// the application itself keeps running.
+    /// Creates the status item. Needs the main thread with the iced event
+    /// loop initialized; anywhere else it refuses up front — reported to
+    /// stderr, every later native call a no-op — the same shape as any other
+    /// platform failure here. The refusal is load-bearing: generated boot
+    /// also runs on worker threads (every Ice semantic test and frame probe
+    /// constructs the app off-main), and `muda` asserts the main thread
+    /// rather than failing, so an unguarded call takes the whole harness
+    /// down instead of costing one status item.
     ///
     /// NOT PROVABLE OFF macOS: that the menu raises on a left click, that a
     /// disabled row draws as a legible grey stat rather than something that
@@ -586,6 +597,10 @@ mod platform {
     /// and, because [`set_icon`] is the only thing that keeps it, after a
     /// guard has swapped the icon at least once.
     pub fn init(config: TrayConfig) {
+        if !on_main_thread() {
+            eprintln!("ice tray: init off the main thread — no status item");
+            return;
+        }
         let menu = Menu::new();
         let mut items = Vec::with_capacity(config.rows.len());
         build(
