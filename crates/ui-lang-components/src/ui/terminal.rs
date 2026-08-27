@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, Once};
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
@@ -1238,7 +1238,31 @@ fn sync_terminal_focus(terminal: &mut Terminal, state: &mut SurfaceState, now: I
     true
 }
 
+/// Register the two faces the terminal names. `Font::with_name` only RESOLVES
+/// a family the font system already holds, so a host without them — most of
+/// them — silently falls back to the default proportional face: the cell grid
+/// is then measured off a variable-width "M", and a Hangul syllable paints at
+/// a third of the two-cell slot the grid reserved for it. The component ships
+/// the fonts it asks for rather than hoping every app registers them.
+fn load_terminal_fonts() {
+    static LOADED: Once = Once::new();
+
+    LOADED.call_once(|| {
+        use iced::advanced::graphics::text::font_system;
+        use std::borrow::Cow;
+
+        let mut fonts = font_system().write().expect("font system");
+        fonts.load_font(Cow::Borrowed(include_bytes!(
+            "../../../../assets/fonts/JetBrainsMono-Regular.ttf"
+        )));
+        fonts.load_font(Cow::Borrowed(include_bytes!(
+            "../../../../assets/fonts/MonoplexKR-Regular.ttf"
+        )));
+    });
+}
+
 fn terminal_cell_size(font_size: f32) -> Size {
+    load_terminal_fonts();
     let paragraph = <iced::Renderer as text::Renderer>::Paragraph::with_text(text::Text {
         content: "M",
         bounds: Size::INFINITE,
@@ -1256,6 +1280,7 @@ fn terminal_cell_size(font_size: f32) -> Size {
 }
 
 fn terminal_wide_font_size(font_size: f32) -> f32 {
+    load_terminal_fonts();
     let paragraph = <iced::Renderer as text::Renderer>::Paragraph::with_text(text::Text {
         content: "M",
         bounds: Size::INFINITE,
@@ -2732,8 +2757,8 @@ mod tests {
         ClipboardRequest, EventProxy, Flags, KeyEventKind, LineKind, Modifiers, Named, PaintCell,
         Rgb8, SurfaceState, TerminalFrame, TerminalSize, TextFont, TextStyle, advance_cursor_blink,
         bell_requests_attention, build_line_runs, build_text_runs, clipboard_kind, encode_key,
-        encode_key_event, line_rects, motion_mouse_code, mouse_report_bytes, named_key,
-        paste_bytes, queried_color, reset_cursor_blink, scroll_multiplier,
+        encode_key_event, line_rects, load_terminal_fonts, motion_mouse_code, mouse_report_bytes,
+        named_key, paste_bytes, queried_color, reset_cursor_blink, scroll_multiplier,
         service_clipboard_requests, terminal_cell_size, terminal_input_modifiers,
         terminal_mouse_interaction, terminal_text_origin, terminal_wide_font_size,
         zoomed_font_size,
@@ -2747,24 +2772,6 @@ mod tests {
     use std::sync::atomic::AtomicBool;
     use std::time::{Duration, Instant};
     use tokio::sync::mpsc;
-
-    fn load_terminal_test_font() {
-        use iced::advanced::graphics::text::font_system;
-        use std::borrow::Cow;
-
-        font_system()
-            .write()
-            .expect("font system")
-            .load_font(Cow::Borrowed(include_bytes!(
-                "../../../../assets/fonts/JetBrainsMono-Regular.ttf"
-            )));
-        font_system()
-            .write()
-            .expect("font system")
-            .load_font(Cow::Borrowed(include_bytes!(
-                "../../../../assets/fonts/MonoplexKR-Regular.ttf"
-            )));
-    }
 
     fn test_term(recording: &[u8]) -> Term<EventProxy> {
         let (sender, _) = mpsc::unbounded_channel();
@@ -3176,7 +3183,6 @@ mod tests {
 
     #[test]
     fn command_plus_and_minus_zoom_the_terminal_font() {
-        load_terminal_test_font();
         let command = Modifiers::LOGO;
 
         assert_eq!(
@@ -3222,7 +3228,7 @@ mod tests {
 
     #[test]
     fn terminal_cell_matches_the_fractional_glyph_advance() {
-        load_terminal_test_font();
+        load_terminal_fonts();
 
         let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
             iced::advanced::text::Text {
@@ -3527,7 +3533,8 @@ mod tests {
 
     #[test]
     fn monoplex_wide_glyph_occupies_exactly_two_terminal_cells() {
-        load_terminal_test_font();
+        // No explicit font load: the sizing path is what has to register the
+        // faces, because in an app nothing else will.
         let wide_size = terminal_wide_font_size(super::FONT_SIZE);
         let paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph::with_text(
             iced::advanced::text::Text {
