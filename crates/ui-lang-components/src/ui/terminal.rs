@@ -45,7 +45,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Once};
 use std::time::Duration;
 use tokio::sync::mpsc::{self, UnboundedReceiver};
 
-const FONT_SIZE: f32 = 14.0;
+const FONT_SIZE: f32 = 12.0;
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 32.0;
 const LINE_HEIGHT: f32 = 1.4;
@@ -3190,6 +3190,7 @@ mod tests {
     #[test]
     fn command_plus_and_minus_zoom_the_terminal_font() {
         let command = Modifiers::LOGO;
+        let one_step_up = super::FONT_SIZE + 1.0;
 
         assert_eq!(
             zoomed_font_size(
@@ -3197,7 +3198,7 @@ mod tests {
                 command | Modifiers::SHIFT,
                 super::FONT_SIZE,
             ),
-            Some(15.0)
+            Some(one_step_up)
         );
         assert_eq!(
             zoomed_font_size(
@@ -3205,10 +3206,14 @@ mod tests {
                 command,
                 super::FONT_SIZE,
             ),
-            Some(15.0)
+            Some(one_step_up)
         );
         assert_eq!(
-            zoomed_font_size(&iced::keyboard::Key::Character("-".into()), command, 15.0,),
+            zoomed_font_size(
+                &iced::keyboard::Key::Character("-".into()),
+                command,
+                one_step_up,
+            ),
             Some(super::FONT_SIZE)
         );
         assert_eq!(
