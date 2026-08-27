@@ -26,6 +26,10 @@ ui-lang-runtime = "=0.1.0"
 
 [build-dependencies]
 ui-lang-build = "=0.1.0"
+
+[dev-dependencies]
+# The headless Ice test driver; generated `#[cfg(test)]` code requires it.
+ui-lang-runtime = { version = "=0.1.0", features = ["test-runtime"] }
 ```
 
 ```rust

@@ -16,3 +16,6 @@ ui-lang-build.workspace = true
 
 [lints.rust]
 unsafe_code = "forbid"
+
+[dev-dependencies]
+ui-lang-runtime = { workspace = true, features = ["test-runtime"] }
