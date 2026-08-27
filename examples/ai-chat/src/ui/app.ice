@@ -6,9 +6,9 @@ app AiChat
   font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
   font "../../../../assets/fonts/IBMPlexSansKR-Bold.ttf"
   font "../../../../assets/fonts/IBMPlexSans-Italic.ttf"
-  font "../../../../assets/fonts/JetBrainsMono-Regular.ttf"
-  font "../../../../assets/fonts/JetBrainsMono-Bold.ttf"
-  font "../../../../assets/fonts/JetBrainsMono-Italic.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/JetBrainsMono-Regular.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/JetBrainsMono-Bold.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/JetBrainsMono-Italic.ttf"
   text-size 14
   window
     // Wide enough that the sidebar is beside the conversation rather than

@@ -2,10 +2,10 @@ app TerminalWorkspace
   title "Terminal"
   palette AppTheme.terminal
   id "dev.ducktape.ice.terminal"
-  font "../../../../assets/fonts/JetBrainsMono-Regular.ttf"
-  font "../../../../assets/fonts/JetBrainsMono-Bold.ttf"
-  font "../../../../assets/fonts/JetBrainsMono-Italic.ttf"
-  font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/JetBrainsMono-Regular.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/JetBrainsMono-Bold.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/JetBrainsMono-Italic.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/MonoplexKR-Regular.ttf"
   text-size 14
   antialiasing true
   window

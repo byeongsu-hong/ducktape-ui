@@ -2655,7 +2655,7 @@ mod tests {
             .write()
             .expect("font system")
             .load_font(Cow::Borrowed(include_bytes!(
-                "../../../assets/fonts/MonoplexKR-Regular.ttf"
+                "../../../crates/ui-lang-components/assets/fonts/MonoplexKR-Regular.ttf"
             )));
         let markers = ["before `code` after", "before ``code`` after"]
             .into_iter()
