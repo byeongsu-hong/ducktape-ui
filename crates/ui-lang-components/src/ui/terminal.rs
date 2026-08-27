@@ -1238,12 +1238,16 @@ fn sync_terminal_focus(terminal: &mut Terminal, state: &mut SurfaceState, now: I
     true
 }
 
-/// Register the two faces the terminal names. `Font::with_name` only RESOLVES
-/// a family the font system already holds, so a host without them — most of
+/// Register the faces the terminal names. `Font::with_name` only RESOLVES a
+/// family the font system already holds, so a host without them — most of
 /// them — silently falls back to the default proportional face: the cell grid
 /// is then measured off a variable-width "M", and a Hangul syllable paints at
-/// a third of the two-cell slot the grid reserved for it. The component ships
-/// the fonts it asks for rather than hoping every app registers them.
+/// a third of the two-cell slot the grid reserved for it. The grid is a metric
+/// contract, not a theming choice, so the component ships the fonts it asks
+/// for (they live under its own `assets/`, where `cargo package` can reach
+/// them) rather than hoping every app registers them. Bold and italic ride
+/// along: a bold run that misses the family falls out to a proportional face
+/// and drifts off the same grid.
 fn load_terminal_fonts() {
     static LOADED: Once = Once::new();
 
@@ -1252,12 +1256,14 @@ fn load_terminal_fonts() {
         use std::borrow::Cow;
 
         let mut fonts = font_system().write().expect("font system");
-        fonts.load_font(Cow::Borrowed(include_bytes!(
-            "../../../../assets/fonts/JetBrainsMono-Regular.ttf"
-        )));
-        fonts.load_font(Cow::Borrowed(include_bytes!(
-            "../../../../assets/fonts/MonoplexKR-Regular.ttf"
-        )));
+        for face in [
+            include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf").as_slice(),
+            include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf").as_slice(),
+            include_bytes!("../../assets/fonts/JetBrainsMono-Italic.ttf").as_slice(),
+            include_bytes!("../../assets/fonts/MonoplexKR-Regular.ttf").as_slice(),
+        ] {
+            fonts.load_font(Cow::Borrowed(face));
+        }
     });
 }
 

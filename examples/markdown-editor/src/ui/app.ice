@@ -6,7 +6,7 @@ app MarkdownEditor
   font "../../../../assets/fonts/IBMPlexSansKR-Bold.ttf"
   font "../../../../assets/fonts/IBMPlexSans-Italic.ttf"
   font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
-  font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/MonoplexKR-Regular.ttf"
   text-size 14
   antialiasing true
   window

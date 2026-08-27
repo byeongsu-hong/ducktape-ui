@@ -28,7 +28,7 @@ daemon Trading
       t(locale, "Quit") -> quit
   font "../../../../assets/fonts/IBMPlexSansKR-Regular.ttf"
   font "../../../../assets/fonts/IBMPlexSansKR-SemiBold.ttf"
-  font "../../../../assets/fonts/MonoplexKR-Regular.ttf"
+  font "../../../../crates/ui-lang-components/assets/fonts/MonoplexKR-Regular.ttf"
   text-size 13
   window main
     size 1760 940
