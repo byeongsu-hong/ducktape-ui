@@ -45,6 +45,13 @@ The windowing backends the host asks iced for (`x11`, `wayland`) are
 requested only on Linux, so a macOS or Windows build resolves without them —
 only Linux is exercised here.
 
+The gates are `cargo fmt --all -- --check`, `cargo clippy --workspace --tests
+--no-deps` and `cargo test --workspace`. `--tests`, not `--all-targets`:
+Ice generates a `#[cfg(test)]` harness that needs the runtime's test driver,
+which pulls wgpu into a workspace built to stay on tiny-skia, so every crate
+here sets `test = false` and keeps its tests in `tests/`. `--all-targets`
+builds a test target anyway and fails on the missing driver.
+
 Install everything: every app gets a window, all of them live at once.
 Press `+` on the counter and watch Activity — and the store's own stderr,
 where the counter's log lines come out. Toggle a todo, uninstall it,
@@ -156,7 +163,7 @@ store keeps answering. The status line in every window is what the last
 tick cost, plus the bus deliveries the guest was not there to take.
 
 Fuel and memory bound what a module does to itself. What it can make the
-*host* do is bounded by the constants in `store.rs`:
+*host* do is bounded by the constants in `limits.rs`:
 
 | limit | value | what a guest past it gets |
 |---|---|---|
@@ -194,7 +201,7 @@ still be minutes of drawing. `sanitize` therefore also clips and budgets:
 
 | bounded | to | why |
 |---|---|---|
-| every layer's rectangle | the guest's own window | a layer *is* a clip, and iced's `push_clip` replaces the clip instead of intersecting it — without this a guest paints over the sidebar and its neighbours |
+| every layer's rectangle | the guest's own window | a layer *is* a clip, and iced's `push_clip` replaces the clip instead of intersecting it — without this a guest paints over the sidebar and its neighbours (the shadow pass had its own way out, fixed in `vendor/iced_tiny_skia`) |
 | layers · quads · lines | 256 · 16384 · 4096 | each layer rebuilds a window-sized clip mask per redraw |
 | text bytes | 64 KiB per frame | every line is shaped by cosmic-text on the window thread |
 | filled pixels | 8 M per frame, charged for the part inside the window | 16000 window-sized quads is billions of pixel writes; a quad past the budget is dropped |
@@ -218,13 +225,6 @@ An honest inventory, grouped by where the work would land. Items marked
   laid out in the guest and shaped again on the host, per line.
 - Overlays (pick_list menus, tooltips, combo boxes) are clipped to the app's
   window; they cannot float over the desk.
-- A guest's quad shadow is drawn without the layer's clip mask (the shadow
-  pixmap goes to tiny-skia with `None`), so a shadow still paints outside the
-  guest's window — up to the two-window reach `sanitize` allows for a quad —
-  over the store column. Everything else a guest draws is clipped to its
-  window. Fixing this one is a change in the vendored `iced_tiny_skia`, which
-  the whole repository renders through, not here: the mask the engine has is
-  chosen from the quad's bounds, not the shadow's. **bug**
 - No scale factor, theme (`ThemeChanged`) or locale reaches the guest; an
   app cannot follow the host's dark mode.
 
@@ -300,8 +300,9 @@ An honest inventory, grouped by where the work would land. Items marked
   maximise; the app's own `window size` is ignored. One instance per
   module.
 - The manifest has no icon, version, author or preferred size.
-- The catalog is one directory scanned once at boot: no rescan, no remote
-  catalog, no download, no upgrade path, no data migration. Each install —
+- The catalog is one local directory, rescanned only when the user presses
+  Rescan: no watch, no remote catalog, no download, no upgrade path, no data
+  migration. Each install —
   and each Restart — compiles from scratch (about 1.7 s) — no `Module::serialize` cache, no
   sharing between installs of the same module. Scanning reads every module
   in full just for its manifest.

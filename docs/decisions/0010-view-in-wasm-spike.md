@@ -1,6 +1,7 @@
 # 0010: An Ice view can run inside wasm — measured
 
-- Status: Proposed (spike; shape (b) built as `examples/app-store`)
+- Status: Measured. Shape (b) is built as `examples/app-store`; whether
+  ducktape ships third-party views at all stays open.
 - Date: 2026-08-28
 
 ## Context
@@ -30,9 +31,11 @@ Everything below is a release build on the 2026-08-28 dev box, 41-frame
 medians, one view shape: N rows of `row(text, text, button)` inside a
 scrollable in a 1024×768 viewport, built through the same runtime helpers the
 code generator emits (`accessible`, `selectable_text`, `bounded_fill_element`).
-The spike code is `docs/spikes/view-in-wasm/`: a shared `viewcore` crate, a
-`guest` cdylib for wasm32, and a wasmtime `host` that drives the guest and the
-same code natively and compares their output byte for byte.
+The numbers came from a throwaway workspace: a shared `viewcore` crate, a
+`guest` cdylib for wasm32, and a wasmtime `host` that drove the guest and the
+same code natively and compared their output byte for byte. It was deleted
+once `examples/app-store` existed — the example is the maintained version of
+the same harness — and survives in this record and in git history.
 
 ### 1. The template path is not slower than the compiled path
 

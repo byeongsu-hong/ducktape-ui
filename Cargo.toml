@@ -26,9 +26,10 @@ resolver = "3"
 exclude = ["vendor/iced_tiny_skia"]
 
 # `vendor/iced_tiny_skia` is the published 0.14.0 source with two renderer
-# defects fixed. Both reach every software render, which is what every
-# headless capture, `cargo ice inspect` and any `tiny-skia` window draws with.
-# Drop the directory and this patch when a release carries both.
+# defects fixed and one module opened. Both defects reach every software
+# render, which is what every headless capture, `cargo ice inspect` and any
+# `tiny-skia` window draws with. Drop the directory and this patch when a
+# release carries both fixes and exposes `layer`.
 #
 # 1. It translates a canvas group's clip rectangle by the group's own
 # transformation twice — once when the layer records it and again when the
@@ -46,6 +47,10 @@ exclude = ["vendor/iced_tiny_skia"]
 # asks the same mask its own question. Not upstream; `crates/ui-lang-runtime`
 # pins both behaviours (`tests/canvas_offset_clip.rs`,
 # `tests/shadow_layer_clip.rs`).
+#
+# 3. `mod layer` is `pub`, so a renderer that records instead of presenting can
+# walk the `Item` list it produced. `examples/app-store` draws a wasm guest's
+# frame that way; nothing in this workspace reads it.
 [patch.crates-io]
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 
