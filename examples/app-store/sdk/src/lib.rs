@@ -5,23 +5,29 @@
 //! The module's ABI is four C exports — `init`, `input_ptr`, `tick`,
 //! `output_ptr` — plus an `ice.manifest` custom section carrying the name and
 //! description, so a catalog can list an app without instantiating it.
+//!
+//! An app's `task`s run: the driver polls them on every tick, and anything
+//! they need from outside goes through [`host::request`] and comes back as a
+//! response event. There is no executor thread and no clock inside the
+//! module — only what the host sends in.
 
 pub use app_store_frame as frame;
 pub use driver::Driver;
 
 mod driver;
+pub mod host;
 
 pub type Element<'a, Message> = iced::Element<'a, Message, iced::Theme, iced::Renderer>;
 
 /// The generated application, seen from the driver.
 pub trait WasmApp: Sized + 'static {
-    type Message: Clone + 'static;
+    type Message: Clone + iced_runtime::futures::MaybeSend + 'static;
     const NAME: &'static str;
     const DESCRIPTION: &'static str;
 
-    fn boot() -> Self;
+    fn boot() -> (Self, iced::Task<Self::Message>);
     fn view(&self) -> Element<'_, Self::Message>;
-    fn update(&mut self, message: Self::Message);
+    fn update(&mut self, message: Self::Message) -> iced::Task<Self::Message>;
     fn theme(&self) -> iced::Theme;
 }
 
@@ -53,18 +59,17 @@ macro_rules! export_app {
             const NAME: &'static str = $name;
             const DESCRIPTION: &'static str = $description;
 
-            fn boot() -> Self {
-                let (app, _boot) = <$app>::__boot();
-                Self(app)
+            fn boot() -> (Self, ::iced::Task<Self::Message>) {
+                let (app, boot) = <$app>::__boot();
+                (Self(app), boot)
             }
 
             fn view(&self) -> $crate::Element<'_, Self::Message> {
                 self.0.__view()
             }
 
-            fn update(&mut self, message: Self::Message) {
-                // The guest is synchronous: a handler's task has nowhere to run.
-                let _task = self.0.__update(message);
+            fn update(&mut self, message: Self::Message) -> ::iced::Task<Self::Message> {
+                self.0.__update(message)
             }
 
             fn theme(&self) -> ::iced::Theme {

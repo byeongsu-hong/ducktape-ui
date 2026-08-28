@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
+
+use iced::time::Instant;
 
 use app_store_frame as wire;
 use iced::advanced::text::{self as core_text, LineHeight, Shaping, Wrapping};
@@ -179,6 +182,8 @@ pub struct Guest {
     size: Size,
     pending: Vec<wire::Event>,
     frame: wire::Frame,
+    /// Answers the guest is owed, each with the moment it becomes due.
+    due: Vec<(Instant, wire::Event)>,
 }
 
 impl std::fmt::Debug for Guest {
@@ -246,7 +251,57 @@ impl Guest {
             size: Size::ZERO,
             pending: Vec::new(),
             frame: wire::Frame::default(),
+            due: Vec::new(),
         })
+    }
+
+    /// Moves every answer that is due into the next event batch and returns
+    /// when the earliest remaining one is due.
+    fn deliver_due(&mut self, now: Instant) -> Option<Instant> {
+        let (ready, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.due)
+            .into_iter()
+            .partition(|(at, _)| *at <= now);
+        self.pending
+            .extend(ready.into_iter().map(|(_, event)| event));
+        self.due = later;
+        self.due.iter().map(|(at, _)| *at).min()
+    }
+
+    /// What the host does with a request. This host knows two kinds; a store
+    /// with real capabilities would route `query`/`submit` here and deliver
+    /// the answers through a subscription.
+    fn answer(&mut self, now: Instant, request: wire::Request) {
+        let (delay, payload) = match request.kind.as_str() {
+            "echo" => (
+                Duration::ZERO,
+                format!(
+                    "The store says: {}",
+                    String::from_utf8_lossy(&request.payload)
+                )
+                .into_bytes(),
+            ),
+            "sleep" => {
+                let ms = request
+                    .payload
+                    .as_slice()
+                    .try_into()
+                    .map(i64::from_le_bytes)
+                    .unwrap_or(0)
+                    .max(0) as u64;
+                (Duration::from_millis(ms), Vec::new())
+            }
+            other => (
+                Duration::ZERO,
+                format!("unknown request `{other}`").into_bytes(),
+            ),
+        };
+        self.due.push((
+            now + delay,
+            wire::Event::Response {
+                id: request.id,
+                payload,
+            },
+        ));
     }
 
     fn tick(&mut self) {
@@ -267,6 +322,18 @@ impl Guest {
             .expect("output_ptr") as usize;
         let frame = &self.memory.data(&self.store)[ptr..ptr + len];
         self.frame = wire::decode(frame).expect("guest frame");
+    }
+
+    /// One redraw: deliver what is due, tick, take the new requests, and say
+    /// when the widget must be woken next.
+    fn redraw(&mut self, now: Instant) -> Option<Instant> {
+        let _ = self.deliver_due(now);
+        self.pending.push(wire::Event::Redraw);
+        self.tick();
+        for request in std::mem::take(&mut self.frame.requests) {
+            self.answer(now, request);
+        }
+        self.due.iter().map(|(at, _)| *at).min()
     }
 }
 
@@ -374,9 +441,10 @@ where
                 guest.pending.push(translated);
                 shell.request_redraw();
             }
-            Event::Window(iced::window::Event::RedrawRequested(_)) => {
-                guest.pending.push(wire::Event::Redraw);
-                guest.tick();
+            Event::Window(iced::window::Event::RedrawRequested(now)) => {
+                if let Some(at) = guest.redraw(*now) {
+                    shell.request_redraw_at(at);
+                }
             }
             _ => {}
         }

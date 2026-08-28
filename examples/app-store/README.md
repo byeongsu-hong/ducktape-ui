@@ -11,7 +11,7 @@ sdk/            what an app needs to run in wasm: a headless Driver around the
                 generated application and `export_app!`, which adds the four C
                 exports and an `ice.manifest` custom section
 apps/todo/      an Ice todo list  (src/ui/app.ice + one `export_app!` line)
-apps/counter/   an Ice counter    (the smallest installable app)
+apps/counter/   an Ice counter    (plus a timer and a question, both asked of the host)
 host/           the store: catalog from manifests, install as an async task,
                 one `extern wasm_view(surface)` component per running app
 ```
@@ -44,7 +44,7 @@ a window or a runtime.
 
 ```rust
 ui_lang::include_app!("src/ui/app.ice");
-app_store_sdk::export_app!(Counter, __CounterMessage, "Counter", "Three buttons and a number.");
+app_store_sdk::export_app!(Counter, __CounterMessage, "Counter", "Three buttons, a number, and a host it talks to.");
 ```
 
 That is the whole crate. `export_app!` implements the sdk's `WasmApp` trait
@@ -72,6 +72,34 @@ Both sides pin the default font by name (`Fira Sans`, embedded via iced's
 system font list, in wasm only the embedded family exists, and a mismatch
 shows up as every button a few pixels wide of where the app put it.
 
+## How a task runs
+
+An app's handlers return `Task`s as usual — `run every ask_host(...) ->
+answered _ | host_failed _` compiles to the same `Task::perform` it would on
+the desktop. There is no executor thread in wasm, so the driver is the
+executor: on every tick it polls every live task (re-polling one that wakes
+itself, which every `Task::stream` does once), routes each `Action::Output`
+through `update`, and keeps going until nothing is ready. A tick happens on
+every host event and every redraw.
+
+The only thing a task can wait on from outside is the host, through one
+channel: `app_store_sdk::host::request(kind, payload)` returns a future,
+queues a `Request` into the next `Frame`, and resolves when the host sends
+`Event::Response` with the same id. The counter uses two kinds:
+
+```rust
+pub async fn wait(ms: i64) -> Result<bool, HostError> {
+    host::request("sleep", &ms.to_le_bytes()).await;
+    Ok(true)
+}
+```
+
+"Auto" is `wait(1000)` chained from its own completion; "Ask host" is an
+`echo`. The store answers `echo` on the next redraw and `sleep` at its
+deadline via `request_redraw_at`, so an idle guest costs no frames. A host
+with real capabilities routes `query`/`submit` through the same channel and
+answers from a subscription instead of a timer.
+
 ## What is deliberately not here yet
 
 - Images, SVG, gradients and canvas geometry do not cross (gradients flatten
@@ -81,7 +109,11 @@ shows up as every button a few pixels wide of where the app put it.
 - `Instant::now()` inside an app answers zero (web_time's wasm-bindgen shims
   are stubbed), so time-driven animation is frozen. A `now` field on
   `Event::Redraw` fixes it when something needs it.
-- Apps are synchronous: `Task`s returned by handlers are dropped.
+- Tasks run, but only `Action::Output` is honoured: widget operations
+  (focus, scroll-to), clipboard and window actions a task emits are dropped.
+- No streams or subscriptions from the host: every answer is one response
+  to one request. A `Subscription` needs a host-side channel that pushes
+  `Event::Response`s repeatedly under one id.
 - No sandboxing policy beyond wasm's own: no fuel, no memory cap, no
   per-call timeout. A store that takes untrusted apps sets all three on the
   `Store`.

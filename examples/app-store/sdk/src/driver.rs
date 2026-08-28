@@ -1,13 +1,25 @@
 //! Drives a generated application headlessly — the loop a window would run,
-//! minus the window: translate the host's events, build the widget tree, lay
-//! it out, draw into iced's recording layers, and flatten those into a
-//! [`wire::Frame`].
+//! minus the window: translate the host's events, poll the app's tasks, build
+//! the widget tree, lay it out, draw into iced's recording layers, and
+//! flatten those into a [`wire::Frame`].
+//!
+//! The task executor is the simplest one that is correct here: every task is
+//! polled on every tick, and re-polled while it keeps waking itself. A tick
+//! happens on every host event and every redraw, and the only thing a task
+//! can wait on from outside is a host response — which arrives as an event —
+//! so nothing is ever ready without a tick to notice it.
 
 use iced::advanced::graphics::text::cosmic_text;
 use iced::advanced::graphics::text::{Text as GraphicsText, font_system};
 use iced::advanced::renderer::Style;
 use iced::{Background, Font, Pixels, Point, Rectangle, Size, Transformation, keyboard, mouse};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll, Wake, Waker};
+
+use iced_runtime::futures::BoxStream;
 use iced_runtime::user_interface::{self, UserInterface};
+use iced_runtime::{Action, task};
 use iced_tiny_skia::layer::Item;
 
 use crate::WasmApp;
@@ -17,12 +29,15 @@ use crate::frame as wire;
 /// walks the system font list, in wasm only the embedded family exists.
 pub const DEFAULT_FONT: &str = "Fira Sans";
 
+type Tasks<M> = Vec<BoxStream<Action<M>>>;
+
 pub struct Driver<A: WasmApp> {
     app: A,
     cache: user_interface::Cache,
     renderer: iced::Renderer,
     size: Size,
     cursor: mouse::Cursor,
+    tasks: Tasks<A::Message>,
 }
 
 impl<A: WasmApp> Default for Driver<A> {
@@ -33,12 +48,16 @@ impl<A: WasmApp> Default for Driver<A> {
 
 impl<A: WasmApp> Driver<A> {
     pub fn new() -> Self {
+        let (app, boot) = A::boot();
+        let mut tasks = Vec::new();
+        spawn(&mut tasks, boot);
         Self {
-            app: A::boot(),
+            app,
             cache: user_interface::Cache::default(),
             renderer: iced::Renderer::new(Font::with_name(DEFAULT_FONT), Pixels(16.0)),
             size: Size::new(640.0, 480.0),
             cursor: mouse::Cursor::Unavailable,
+            tasks,
         }
     }
 
@@ -51,7 +70,10 @@ impl<A: WasmApp> Driver<A> {
             renderer,
             size,
             cursor,
+            tasks,
         } = self;
+        // Answers that arrived with this batch may have completed a task.
+        run_tasks(app, tasks);
         let mut ui = UserInterface::build(app.view(), *size, std::mem::take(cache), renderer);
         let mut messages = Vec::new();
         if !events.is_empty() {
@@ -63,13 +85,14 @@ impl<A: WasmApp> Driver<A> {
                 &mut messages,
             );
         }
-        // A message rewrites state the tree was built from; drop the tree,
-        // apply, rebuild. Tasks cannot run here — the guest is synchronous.
+        // A message rewrites state the tree was built from: drop the tree,
+        // apply, run whatever the handlers started, rebuild.
         if !messages.is_empty() {
             *cache = ui.into_cache();
             for message in messages {
-                app.update(message);
+                spawn(tasks, app.update(message));
             }
+            run_tasks(app, tasks);
             ui = UserInterface::build(app.view(), *size, std::mem::take(cache), renderer);
         }
         let theme = app.theme();
@@ -81,8 +104,9 @@ impl<A: WasmApp> Driver<A> {
             },
             *cursor,
         );
-        let frame = flatten(renderer);
+        let mut frame = flatten(renderer);
         *cache = ui.into_cache();
+        frame.requests = crate::host::drain_outbox();
         frame
     }
 
@@ -153,10 +177,70 @@ impl<A: WasmApp> Driver<A> {
                 wire::Event::Redraw => out.push(iced::Event::Window(
                     iced::window::Event::RedrawRequested(iced::time::Instant::now()),
                 )),
+                wire::Event::Response { id, payload } => crate::host::fulfill(id, payload),
             }
         }
         out
     }
+}
+
+fn spawn<M: iced_runtime::futures::MaybeSend + 'static>(tasks: &mut Tasks<M>, task: iced::Task<M>) {
+    if let Some(stream) = task::into_stream(task) {
+        tasks.push(stream);
+    }
+}
+
+/// Polls every task; a message it produced goes through `update`, whose own
+/// task joins the pool, until a pass produces nothing. Bounded so a handler
+/// that re-emits synchronously forever cannot pin the frame.
+fn run_tasks<A: WasmApp>(app: &mut A, tasks: &mut Tasks<A::Message>) {
+    for _ in 0..8 {
+        let messages = poll_tasks(tasks);
+        if messages.is_empty() {
+            return;
+        }
+        for message in messages {
+            spawn(tasks, app.update(message));
+        }
+    }
+}
+
+/// Remembers that something asked to be polled again.
+struct Woken(AtomicBool);
+
+impl Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+fn poll_tasks<M>(tasks: &mut Tasks<M>) -> Vec<M> {
+    let woken = Arc::new(Woken(AtomicBool::new(false)));
+    let waker = Waker::from(woken.clone());
+    let mut context = Context::from_waker(&waker);
+    let mut messages = Vec::new();
+    tasks.retain_mut(|stream| {
+        // A task that yields (every `Task::stream` starts with one) wakes
+        // itself; poll it again until it is waiting on something real.
+        for _ in 0..64 {
+            woken.0.store(false, Ordering::SeqCst);
+            match stream.as_mut().poll_next(&mut context) {
+                Poll::Ready(Some(Action::Output(message))) => messages.push(message),
+                // Widget operations, clipboard, window and system actions
+                // have no host to act on them yet.
+                Poll::Ready(Some(_)) => {}
+                Poll::Ready(None) => return false,
+                Poll::Pending if woken.0.load(Ordering::SeqCst) => {}
+                Poll::Pending => return true,
+            }
+        }
+        true
+    });
+    messages
 }
 
 fn mouse_button(button: wire::Button) -> mouse::Button {

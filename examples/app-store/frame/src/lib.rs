@@ -53,6 +53,22 @@ pub enum Event {
     },
     /// Runs the guest's redraw-time work (animations, caret blink).
     Redraw,
+    /// The host's answer to a [`Request`] the guest sent in an earlier frame.
+    Response {
+        id: u64,
+        payload: Vec<u8>,
+    },
+}
+
+/// Something the guest asked the host for. The guest never blocks on it: a
+/// future inside the guest waits for the matching [`Event::Response`], which
+/// the host delivers on its own schedule — the next frame for an echo, a
+/// second later for a timer, whenever the network answers for a query.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Request {
+    pub id: u64,
+    pub kind: String,
+    pub payload: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -92,6 +108,8 @@ pub struct Frame {
     pub layers: Vec<Layer>,
     /// The guest's mouse interaction (0 = idle, 1 = pointer, 2 = text, 3 = grab).
     pub interaction: u8,
+    /// What the guest asked for while producing this frame.
+    pub requests: Vec<Request>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -217,6 +235,11 @@ mod tests {
                 }],
             }],
             interaction: 1,
+            requests: vec![Request {
+                id: 7,
+                kind: "echo".into(),
+                payload: b"hi".to_vec(),
+            }],
         };
         let back: Frame = decode(&encode(&frame)).unwrap();
         assert_eq!(back, frame);
