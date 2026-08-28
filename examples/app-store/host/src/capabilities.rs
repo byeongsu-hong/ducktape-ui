@@ -1,7 +1,7 @@
 //! What the host lets an app do, one module per capability. Every function
 //! here is reached through [`crate::store::Guest::answer`], which has already
 //! checked that the app's manifest declares the capability and that the
-//! payload is within [`crate::store::MAX_PAYLOAD_BYTES`].
+//! payload is within [`crate::limits::MAX_PAYLOAD_BYTES`].
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use app_store_frame as wire;
 
-use crate::store::{MAX_INBOX, MAX_INBOX_BYTES};
+use crate::limits::{MAX_INBOX, MAX_INBOX_BYTES};
 
 /// A guest's bus deliveries, filled by other guests' publishes and drained
 /// into its event batch on its next redraw.
@@ -73,7 +73,7 @@ pub mod host {
 
     use std::io::Write;
 
-    use crate::store::{MAX_LOG_BYTES, MAX_RANDOM_BYTES};
+    use crate::limits::{MAX_LOG_BYTES, MAX_RANDOM_BYTES};
 
     /// A module has no stdout — `println!` inside one goes nowhere — so its
     /// lines come out of the store's stderr, tagged with who wrote them.
@@ -114,7 +114,7 @@ pub mod storage {
 
     use std::path::{Path, PathBuf};
 
-    use crate::store::{MAX_APP_KEYS, MAX_APP_STORAGE, MAX_VALUE_BYTES};
+    use crate::limits::{MAX_APP_KEYS, MAX_APP_STORAGE, MAX_VALUE_BYTES};
 
     /// What one key costs even when its value is empty: a directory entry and
     /// a block. Without it a quota counted in bytes never moves.

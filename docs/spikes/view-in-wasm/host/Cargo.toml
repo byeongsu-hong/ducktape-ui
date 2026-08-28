@@ -1,9 +1,0 @@
-[package]
-name = "host"
-version = "0.0.0"
-edition = "2024"
-
-[dependencies]
-viewcore = { path = "../viewcore" }
-wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime"] }
-bincode = "1.3"

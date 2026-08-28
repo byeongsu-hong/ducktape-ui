@@ -1,9 +1,12 @@
-//! The store: a catalog read from wasm manifests, installs that instantiate a
-//! module inside a fuel and memory budget, uninstalls that drop it, and the
-//! guest's side of every request an app makes.
+//! One installed app: a wasm instance inside a fuel and memory budget, the
+//! frame it draws every tick, and the guest's side of every request it makes.
+//!
+//! Everything the view calls is reachable here — `extern crate::store` in
+//! `app.ice` binds one module — so the catalog and the installed list are
+//! re-exported rather than named twice.
 
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -14,213 +17,20 @@ use wasmtime::{
     Config, Engine, Linker, Module, OptLevel, Store, StoreLimits, StoreLimitsBuilder, TypedFunc,
 };
 
+pub use crate::catalog::{Capability, CatalogEntry, StoreError, scan_catalog};
 pub use crate::guest_view::wasm_view;
+pub use crate::installed::{
+    InstalledApp, Restored, add_installed, installing_label, is_installed, live_label,
+    merge_installed, none_installed, remove_installed, restore_installed, restoring_label,
+};
 
 use crate::capabilities::{Inbox, bus, clock, host, storage};
-
-/// Where the catalog looks for modules. Build the apps first:
-/// `cargo build -p app-store-todo -p app-store-counter -p app-store-clock -p app-store-activity -p app-store-chaos --release --target wasm32-unknown-unknown`.
-const DEFAULT_CATALOG_DIR: &str = "target/wasm32-unknown-unknown/release";
-
-/// The custom section `export_app!` writes: `name\ndescription\ncap,cap,`.
-const MANIFEST_SECTION: &str = "ice.manifest";
-
-/// What one tick may burn before the host ends the app. Roughly one fuel
-/// per wasm instruction; a busy frame of a list app is a few million.
-const FUEL_PER_TICK: u64 = 200_000_000;
-
-/// The most linear memory an app may grow to.
-const MEMORY_LIMIT: usize = 64 << 20;
-
-// ---------- what a hostile guest may not do ----------
-//
-// Fuel and memory bound what a module does to itself. These bound what it can
-// make the host do: everything below is copied out of the guest, kept in the
-// host's memory, or turned into a host wake-up.
-
-/// The frame is copied out of guest memory every tick; past this the guest is
-/// ended rather than followed into an allocation it chose.
-const MAX_FRAME_BYTES: usize = 8 << 20;
-
-/// Every request is answered before the next tick, so a module that asks in a
-/// loop would otherwise queue answers faster than it drains them.
-const MAX_REQUESTS_PER_TICK: usize = 256;
-
-/// A payload crosses into the host and, on the bus, into other guests.
-pub(crate) const MAX_PAYLOAD_BYTES: usize = 1 << 20;
-
-/// Every ticker is a host wake-up; sixteen timers is already a busy app.
-const MAX_TICKERS: usize = 16;
-
-/// A guest that stops draining must not grow the host's memory; the oldest
-/// deliveries go and the count of them is shown in the guest's status line.
-pub(crate) const MAX_INBOX: usize = 1024;
-
-/// One value. Bigger than this belongs in a file the app names, not in a
-/// key/value store the host copies through wasm memory twice.
-pub(crate) const MAX_VALUE_BYTES: u64 = 1 << 20;
-
-/// Everything one app may store, summed over its directory on every write.
-pub(crate) const MAX_APP_STORAGE: u64 = 64 << 20;
-
-/// One `host.random` answer. Entropy is cheap; a 4 GB request is not.
-pub(crate) const MAX_RANDOM_BYTES: usize = 4096;
-
-/// One bus message. Smaller than a payload the host only reads, because this
-/// one is copied into every subscriber's inbox and decoded inside every
-/// subscriber's memory limit.
-pub(crate) const MAX_BUS_BYTES: usize = 64 << 10;
-
-/// What one guest's undrained inbox may hold, in bytes as well as events: a
-/// thousand deliveries is only a bound if a delivery is bounded too.
-pub(crate) const MAX_INBOX_BYTES: usize = 1 << 20;
-
-/// Everything the host is still holding for one guest — mostly sleeps it was
-/// asked to wake up for. Walked and re-partitioned on every redraw.
-const MAX_DUE: usize = 1024;
-
-/// Bus subscriptions per guest: every publish by anyone walks all of them.
-const MAX_SUBSCRIPTIONS: usize = 64;
-
-/// One subscription's topic. Held for as long as the guest runs and compared
-/// against on every publish by anyone, so the payload cap alone would let
-/// sixty-four subscriptions pin sixty-four megabytes of the host's memory for
-/// nothing.
-const MAX_TOPIC_BYTES: usize = 256;
-
-/// A cancel is cheap to send and not cheap to serve — each one walks the due
-/// list, the tickers and the process-wide subscriber list. There is nothing
-/// left to cancel past everything the host holds for one guest.
-const MAX_CANCELS: usize = MAX_DUE + MAX_TICKERS + MAX_SUBSCRIPTIONS + MAX_REQUESTS_PER_TICK;
-
-/// What one tick may carry in either direction: the answers, the payloads the
-/// requests came with, and what a publish copied into every subscriber's
-/// inbox. [`MAX_DUE`] counts answers, not their size, and an operation that
-/// answers nothing — a `storage.set`, a publish — is not free for having said
-/// nothing back.
-const MAX_REPLY_BYTES_PER_TICK: usize = 4 << 20;
-
-/// One `host.log` line, on the store's own stderr.
-pub(crate) const MAX_LOG_BYTES: usize = 1024;
-
-/// The panic message read out of a faulted guest and shaped in its window on
-/// every frame, so bounded like the log line rather than by the memory limit.
-const MAX_FAULT_BYTES: usize = 1024;
-
-/// Keys per app, and how long the one directory scan behind a guest's
-/// `storage_used` takes.
-pub(crate) const MAX_APP_KEYS: usize = 1024;
-
-// ---------- catalog ----------
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Capability {
-    pub name: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct CatalogEntry {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub capabilities: Vec<Capability>,
-    pub path: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct StoreError {
-    pub message: String,
-}
-
-/// Lists every wasm module in the catalog directory that carries a manifest.
-/// Reading the section needs no compilation, so a catalog of a hundred apps
-/// costs a hundred file reads, not a hundred cranelift runs.
-pub fn scan_catalog() -> Vec<CatalogEntry> {
-    let dir =
-        std::env::var("APP_STORE_CATALOG").unwrap_or_else(|_| DEFAULT_CATALOG_DIR.to_string());
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut catalog: Vec<CatalogEntry> = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "wasm"))
-        .filter_map(|path| {
-            let bytes = std::fs::read(&path).ok()?;
-            let manifest = read_manifest(&bytes)?;
-            Some(CatalogEntry {
-                id: path.file_stem()?.to_string_lossy().into_owned(),
-                name: manifest.name,
-                description: manifest.description,
-                capabilities: manifest
-                    .capabilities
-                    .iter()
-                    .map(|name| Capability { name: name.clone() })
-                    .collect(),
-                path: path.to_string_lossy().into_owned(),
-            })
-        })
-        .collect();
-    catalog.sort_by(|a, b| a.name.cmp(&b.name));
-    catalog
-}
-
-struct Manifest {
-    name: String,
-    description: String,
-    capabilities: Vec<String>,
-}
-
-/// What a manifest may say about itself. The catalog is read before anything
-/// is installed, and the sidebar shapes every field of every entry on every
-/// relayout — outside the sandbox, with no fuel and no memory limit — so a
-/// module whose manifest is a megabyte of capability names is left out of the
-/// catalog rather than laid out.
-const MAX_NAME_BYTES: usize = 64;
-const MAX_DESCRIPTION_BYTES: usize = 256;
-const MAX_CAPABILITIES: usize = 16;
-const MAX_CAPABILITY_BYTES: usize = 32;
-
-fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
-    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
-        if let Ok(wasmparser::Payload::CustomSection(section)) = payload
-            && section.name() == MANIFEST_SECTION
-        {
-            let text = std::str::from_utf8(section.data()).ok()?;
-            let mut lines = text.lines();
-            let name = lines.next()?.to_string();
-            let description = lines.next()?.to_string();
-            let capabilities = lines
-                .next()
-                .unwrap_or_default()
-                .split(',')
-                .filter(|capability| !capability.is_empty())
-                .map(str::to_string)
-                .collect();
-            let manifest = Manifest {
-                name,
-                description,
-                capabilities,
-            };
-            return manifest.within_bounds().then_some(manifest);
-        }
-    }
-    None
-}
-
-impl Manifest {
-    fn within_bounds(&self) -> bool {
-        self.name.len() <= MAX_NAME_BYTES
-            && self.description.len() <= MAX_DESCRIPTION_BYTES
-            && self.capabilities.len() <= MAX_CAPABILITIES
-            && self
-                .capabilities
-                .iter()
-                .all(|capability| capability.len() <= MAX_CAPABILITY_BYTES)
-    }
-}
-
-// ---------- installed apps ----------
+use crate::installed::{FAULTED, LIVE_INSTANCES};
+use crate::limits::{
+    FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE, MAX_FAULT_BYTES, MAX_FRAME_BYTES,
+    MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK, MAX_SUBSCRIPTIONS,
+    MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT,
+};
 
 /// The host-side handle the view holds. Identity is the instance: two
 /// surfaces compare equal only when they are the same guest.
@@ -239,13 +49,6 @@ impl Hash for Surface {
     fn hash<H: Hasher>(&self, state: &mut H) {
         (Arc::as_ptr(&self.0) as usize).hash(state);
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct InstalledApp {
-    pub id: String,
-    pub name: String,
-    pub surface: Surface,
 }
 
 /// Reloads a faulted guest's module and swaps the fresh instance into the
@@ -296,143 +99,6 @@ pub async fn install_app(entry: CatalogEntry) -> Result<InstalledApp, StoreError
         name: entry.name,
         surface: Surface(Arc::new(Mutex::new(guest))),
     })
-}
-
-/// What one restore brought back, and what it could not: a module that no
-/// longer loads must not take the apps beside it down with it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Restored {
-    pub apps: Vec<InstalledApp>,
-    /// Empty when everything came back — the status line's "nothing to say".
-    pub failed: String,
-}
-
-/// Reinstalls whatever was installed when the host last exited, in the order
-/// the file lists. Sequential on purpose: every install is a cranelift run,
-/// and three at once would stall the first window for as long as the slowest.
-/// An id the catalog no longer has is skipped — the module was deleted, which
-/// is not an error the user can do anything about — and one that fails to
-/// load is reported without stopping the rest.
-pub async fn restore_installed(catalog: Vec<CatalogEntry>) -> Restored {
-    let mut apps = Vec::new();
-    let mut failed = Vec::new();
-    for entry in remembered(&catalog) {
-        match install_app(entry).await {
-            Ok(app) => apps.push(app),
-            Err(error) => failed.push(error.message),
-        }
-    }
-    Restored {
-        apps,
-        failed: failed.join("; "),
-    }
-}
-
-/// The restore takes seconds and the Install buttons stay live through it, so
-/// what came back is merged into what the user has, never written over it.
-/// One id is one app: the instance the user just installed is the newer one,
-/// and one the user uninstalled meanwhile is gone from the file and must not
-/// come back with the restore.
-pub fn merge_installed(
-    restored: Vec<InstalledApp>,
-    current: Vec<InstalledApp>,
-) -> Vec<InstalledApp> {
-    let remembered = remembered_ids();
-    let mut apps = restored;
-    apps.retain(|app| {
-        remembered.contains(&app.id) && !current.iter().any(|installed| installed.id == app.id)
-    });
-    apps.extend(current);
-    apps
-}
-
-pub fn add_installed(mut apps: Vec<InstalledApp>, app: InstalledApp) -> Vec<InstalledApp> {
-    remember(|ids| {
-        ids.retain(|id| *id != app.id);
-        ids.push(app.id.clone());
-    });
-    apps.retain(|installed| installed.id != app.id);
-    apps.push(app);
-    apps
-}
-
-/// Dropping the last handle drops the wasmtime store — the instance, its
-/// memory and its compiled code go with it. That is the whole uninstall.
-pub fn remove_installed(mut apps: Vec<InstalledApp>, id: String) -> Vec<InstalledApp> {
-    remember(|ids| ids.retain(|remembered| *remembered != id));
-    apps.retain(|installed| installed.id != id);
-    apps
-}
-
-/// The ids to bring back at boot, one per line.
-const INSTALLED_FILE: &str = "installed";
-
-/// Edits the file, never rewrites it from the installed list: the list is
-/// still missing whatever [`restore_installed`] is compiling, and an install
-/// made meanwhile would otherwise leave a one-line file behind. Through a temp
-/// file and a rename, like every other write here, so a crash loses at most
-/// the last change and never the list.
-fn remember(edit: impl FnOnce(&mut Vec<String>)) {
-    let mut ids = remembered_ids();
-    edit(&mut ids);
-    let dir = storage::data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let _ = storage::write_atomic(&dir.join(INSTALLED_FILE), ids.join("\n").as_bytes());
-}
-
-fn remembered_ids() -> Vec<String> {
-    std::fs::read_to_string(storage::data_dir().join(INSTALLED_FILE))
-        .unwrap_or_default()
-        .lines()
-        .map(str::to_string)
-        .collect()
-}
-
-fn remembered(catalog: &[CatalogEntry]) -> Vec<CatalogEntry> {
-    remembered_ids()
-        .iter()
-        .filter_map(|id| catalog.iter().find(|entry| entry.id == *id))
-        .cloned()
-        .collect()
-}
-
-/// What the status line says while [`restore_installed`] runs; empty when
-/// there is nothing to restore, which is the status line's "nothing to say".
-pub fn restoring_label(catalog: Vec<CatalogEntry>) -> String {
-    match remembered(&catalog).len() {
-        0 => String::new(),
-        1 => "Restoring 1 app…".to_string(),
-        count => format!("Restoring {count} apps…"),
-    }
-}
-
-pub fn is_installed(apps: Vec<InstalledApp>, id: String) -> bool {
-    apps.iter().any(|installed| installed.id == id)
-}
-
-pub fn none_installed(apps: Vec<InstalledApp>) -> bool {
-    apps.is_empty()
-}
-
-pub fn installing_label(entry: CatalogEntry) -> String {
-    format!("Installing {}…", entry.name)
-}
-
-static LIVE_INSTANCES: AtomicUsize = AtomicUsize::new(0);
-/// How many of those the host had to end. They still hold a window (and its
-/// Restart button) but no longer run, so they are not live.
-static FAULTED: AtomicUsize = AtomicUsize::new(0);
-
-/// Takes the installed list and the lifecycle generation so it is recomputed
-/// exactly when either changes — a trap or a restart moves the counts without
-/// installing anything; the count itself is the number of `Guest`s alive.
-pub fn live_label(_apps: Vec<InstalledApp>, _generation: i64) -> String {
-    let ended = FAULTED.load(Ordering::Relaxed);
-    let live = LIVE_INSTANCES.load(Ordering::Relaxed).saturating_sub(ended);
-    match ended {
-        0 => format!("live wasm instances: {live}"),
-        ended => format!("live wasm instances: {live} ({ended} ended)"),
-    }
 }
 
 // ---------- the guest ----------
