@@ -120,18 +120,139 @@ instance — its window shows the reason — and nothing else notices: the
 other guests keep ticking, the store keeps answering. The status line in
 every window is what the last tick cost.
 
-## What is deliberately not here yet
+## What is not here yet
 
-- Images, SVG, gradients and canvas geometry do not cross (gradients flatten
-  to their first stop). Add primitives when an app needs them.
-- No accessibility tree, clipboard, input method or cursor shape crosses the
-  boundary. Each is a second small channel next to `Frame`.
-- Only `Action::Output` of a task is honoured: widget operations (focus,
-  scroll-to), clipboard and window actions a task emits are dropped.
-- A subscription lives until its guest is dropped; an app that drops its
-  stream keeps receiving into the void until then. A `Frame.cancels` list
-  fixes that when an app needs to unsubscribe while alive.
-- No CPU limit across ticks: an app may burn its full budget every frame.
-  A per-second allowance is one counter in the host.
+An honest inventory, grouped by where the work would land. Items marked
+**bug** are wrong today rather than merely absent.
+
+### Wire and rendering
+
+- Images, SVG, canvas geometry (paths, strokes, meshes) and shaders do not
+  cross; gradients flatten to their first stop. Images and SVG need a
+  host-side handle cache keyed by app so bytes cross once, not per frame.
+- Layer transformations apply to text only; a scaled or rotated layer's
+  quads are replayed untransformed. **bug**
+- Rich text loses per-span colour, underline and strikethrough: a paragraph
+  crosses with one colour per line.
+- Every redraw re-encodes and re-sends the whole frame; there is no
+  "nothing changed" short-circuit, no delta, no dirty rectangles. Text is
+  laid out in the guest and shaped again on the host, per line.
+- Overlays (pick_list menus, tooltips, combo boxes) are clipped to the app's
+  window; they cannot float over the desk.
+- `Frame.interaction` is filled by the guest and ignored by the host: the
+  cursor never changes shape over a guest's text input or link.
+- No scale factor, theme (`ThemeChanged`) or locale reaches the guest; an
+  app cannot follow the host's dark mode.
+
+### Events and input
+
+- Keyboard events go to **every** guest at once: two apps with focused
+  inputs both receive the typing. There is no focus model between windows.
+  **bug**
+- Only a subset of named keys cross; physical key and location are always
+  `Unidentified`; `ModifiersChanged` is dropped, so a guest's modifier
+  state can go stale. `CursorEntered`, mouse Back/Forward, touch, IME
+  composition, window focus/unfocus, file drops and close requests do not
+  cross at all.
+- Clipboard is `clipboard::Null`: copy and paste inside an app silently do
+  nothing. A `clipboard` capability (`read` request, `write` in the frame)
+  is the shape.
+- No accessibility tree leaves the guest, although the runtime still
+  builds its snapshot machinery into every module (dead weight).
+
+### Tasks and runtime
+
+- Only `Action::Output` of a task is honoured. Widget operations (focus,
+  scroll-to), clipboard, window, font and exit actions are dropped.
+- Ice `subscribe` blocks never run: the driver never calls
+  `__subscription`, and iced's timers (`every`) have no executor in wasm.
+  Host streams (`clock.ticks`, `bus.subscribe`) are the only long-lived
+  sources.
+- A dropped or aborted stream is not told to the host; a `clock.ticks`
+  ticker or bus subscription lives until the guest is dropped. A one-shot
+  `sleep` cannot be cancelled either. A `Frame.cancels` list fixes both.
+- Task fairness is fixed: 8 rounds of messages per tick, 64 self-wakes per
+  stream. A task that produces more waits for the next tick.
+- No cooperative long computation: work heavier than one fuel budget
+  cannot be spread over ticks except by chaining host sleeps. No
+  preemption short of the trap that ends the app.
+- A guest panic is an `unreachable` trap with no message: no panic hook
+  writes the text somewhere the host can read.
+- No guest logging: `println!` and `tracing` inside a module go nowhere.
+  A `host.log` operation is one line.
+- No wall-clock time (`SystemTime::now()` aborts on
+  `wasm32-unknown-unknown`), no randomness (`getrandom` does not build
+  without `js`), no locale, timezone or environment. `clock.now` and
+  `host.random` are missing.
+- A trapped app cannot be restarted in place; only uninstall and
+  reinstall. Its inbox keeps filling until then. `live wasm instances`
+  still counts it.
+
+### Capabilities and security
+
+- The manifest is self-declared and unsigned: any module can claim
+  `storage`. No signature or hash check on modules, no consent prompt at
+  install, no per-operation prompt, no runtime revocation, no policy file.
+- Storage: no quota, no value size limit, no atomic or fsync'd writes (a
+  crash mid-write tears the file), no `list` / `delete`, no sharing
+  between apps, no migration on app upgrade. A value larger than the
+  guest's memory limit traps the guest on delivery.
+- Bus: no sender identity in a message and no topic ownership — any app
+  with `bus` can publish `counter\n999`. No size or rate limit, no replay
+  for late subscribers, no request/reply between apps, no wildcard beyond
+  `*`. A subscriber that never drains (faulted) grows its inbox without
+  bound.
+- Clock: any number of tickers per app; each is a host wake-up.
+- Limits stop at fuel per tick and memory: no cumulative CPU budget (an
+  app may burn 200M every frame), no wall-clock timeout, no cap on frame
+  size, request count or payload size (a guest can hand the host a 100 MB
+  frame or a million requests per tick), no table or instance limits.
+- `define_unknown_imports_as_default_values` stubs every import a module
+  declares; a module built against JS glue loads and misbehaves instead of
+  failing at install.
+
+### Store and lifecycle
+
+- The installed set is not persisted: restarting the host forgets it.
+  App state is not persisted or suspended either — only what an app
+  writes to storage survives.
+- Windows are fixed at 500×380: no resize, move, z-order, minimise or
+  maximise; the app's own `window size` is ignored. One instance per
+  module.
+- The manifest has no icon, version, author or preferred size.
+- The catalog is one directory scanned once at boot: no rescan, no remote
+  catalog, no download, no upgrade path, no data migration. Each install
+  compiles from scratch (about 1.7 s) — no `Module::serialize` cache, no
+  sharing between installs of the same module. Scanning reads every module
+  in full just for its manifest.
+- Uninstall keeps the app's storage with no way to remove it, and asks no
+  confirmation.
+- Every guest ticks on every window redraw, visible or not, so one app's
+  timer wakes all of them. No visibility gating, no per-window redraw.
+
+### SDK and developer experience
+
+- `export_app!` needs the generated message enum's name (`__XMessage`), a
+  coupling to codegen internals.
+- Capability payloads are ad-hoc bytes (`key\nvalue`, little-endian
+  integers) with no schema, no generated bindings, no versioning and no
+  `host.capabilities` introspection; every app declares its own
+  `HostError`.
+- Building needs the manual `cargo build --target wasm32-unknown-unknown`;
+  no `cargo ice bundle` / `dev` integration, no `wasm-opt`, and every module
+  embeds Fira Sans and the full widget set (about 2.9 MB).
+- Native tests drive the app by clicking on text positions; the Ice test
+  harness (`agent_inspect`) is not available inside a module
+  (`test = false`). No frame snapshot tests, no request-log or fuel
+  profiler for debugging.
+
+### What a ducktape host would add
+
+- The real capabilities — `query`, `submit`, pages, identity, `duck://`
+  navigation, signing prompts — and the permissions UI around them.
+- Modules from the network: content-addressed ids, signatures, version
+  pinning, upgrade with migration, precompiled artifacts.
+- Typed intents between apps instead of a broadcast bus, notifications,
+  badges, detached windows, background (daemon) apps, suspend when hidden.
 
 Numbers behind the design are in `docs/decisions/0010-view-in-wasm-spike.md`.
