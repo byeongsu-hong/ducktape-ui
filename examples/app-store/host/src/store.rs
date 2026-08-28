@@ -82,14 +82,22 @@ const MAX_DUE: usize = 1024;
 /// Bus subscriptions per guest: every publish by anyone walks all of them.
 const MAX_SUBSCRIPTIONS: usize = 64;
 
+/// One subscription's topic. Held for as long as the guest runs and compared
+/// against on every publish by anyone, so the payload cap alone would let
+/// sixty-four subscriptions pin sixty-four megabytes of the host's memory for
+/// nothing.
+const MAX_TOPIC_BYTES: usize = 256;
+
 /// A cancel is cheap to send and not cheap to serve — each one walks the due
 /// list, the tickers and the process-wide subscriber list. There is nothing
 /// left to cancel past everything the host holds for one guest.
 const MAX_CANCELS: usize = MAX_DUE + MAX_TICKERS + MAX_SUBSCRIPTIONS;
 
-/// What one tick's answers may carry back. [`MAX_DUE`] counts answers, not
-/// their size: 256 one-megabyte `storage.get`s in a tick is a quarter
-/// gigabyte the host holds and then encodes into the guest's input buffer.
+/// What one tick may carry in either direction: the answers, the payloads the
+/// requests came with, and what a publish copied into every subscriber's
+/// inbox. [`MAX_DUE`] counts answers, not their size, and an operation that
+/// answers nothing — a `storage.set`, a publish — is not free for having said
+/// nothing back.
 const MAX_REPLY_BYTES_PER_TICK: usize = 4 << 20;
 
 /// One `host.log` line, on the store's own stderr.
@@ -99,8 +107,8 @@ pub(crate) const MAX_LOG_BYTES: usize = 1024;
 /// every frame, so bounded like the log line rather than by the memory limit.
 const MAX_FAULT_BYTES: usize = 1024;
 
-/// Keys per app. Every `storage.set` stats the app's directory, so this is
-/// also what bounds how long one write takes.
+/// Keys per app, and how long the one directory scan behind a guest's
+/// `storage_used` takes.
 pub(crate) const MAX_APP_KEYS: usize = 1024;
 
 // ---------- catalog ----------
@@ -163,6 +171,16 @@ struct Manifest {
     capabilities: Vec<String>,
 }
 
+/// What a manifest may say about itself. The catalog is read before anything
+/// is installed, and the sidebar shapes every field of every entry on every
+/// relayout — outside the sandbox, with no fuel and no memory limit — so a
+/// module whose manifest is a megabyte of capability names is left out of the
+/// catalog rather than laid out.
+const MAX_NAME_BYTES: usize = 64;
+const MAX_DESCRIPTION_BYTES: usize = 256;
+const MAX_CAPABILITIES: usize = 16;
+const MAX_CAPABILITY_BYTES: usize = 32;
+
 fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
     for payload in wasmparser::Parser::new(0).parse_all(bytes) {
         if let Ok(wasmparser::Payload::CustomSection(section)) = payload
@@ -179,14 +197,27 @@ fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
                 .filter(|capability| !capability.is_empty())
                 .map(str::to_string)
                 .collect();
-            return Some(Manifest {
+            let manifest = Manifest {
                 name,
                 description,
                 capabilities,
-            });
+            };
+            return manifest.within_bounds().then_some(manifest);
         }
     }
     None
+}
+
+impl Manifest {
+    fn within_bounds(&self) -> bool {
+        self.name.len() <= MAX_NAME_BYTES
+            && self.description.len() <= MAX_DESCRIPTION_BYTES
+            && self.capabilities.len() <= MAX_CAPABILITIES
+            && self
+                .capabilities
+                .iter()
+                .all(|capability| capability.len() <= MAX_CAPABILITY_BYTES)
+    }
 }
 
 // ---------- installed apps ----------
@@ -228,6 +259,15 @@ pub async fn restart_guest(surface: Surface) -> Result<Surface, StoreError> {
     let entry = surface.0.lock().expect("guest lock").entry.clone();
     let fresh = Guest::load(&entry);
     let mut guest = surface.0.lock().expect("guest lock");
+    // The Restart button stays live through the compile, so a second press
+    // arrives here after the first has already installed a fresh instance.
+    // Swapping again would drop a *running* guest's tickers, subscriptions and
+    // state, and the `Err` arm would mark it faulted although `FAULTED` never
+    // counted it — which underflows the count when the app is uninstalled.
+    if guest.fault.is_none() {
+        drop(guest);
+        return Ok(surface);
+    }
     match fresh {
         Ok(mut fresh) => {
             fresh.size = guest.size;
@@ -290,51 +330,68 @@ pub async fn restore_installed(catalog: Vec<CatalogEntry>) -> Restored {
 
 /// The restore takes seconds and the Install buttons stay live through it, so
 /// what came back is merged into what the user has, never written over it.
-/// One id is one app: the instance the user just installed is the newer one.
+/// One id is one app: the instance the user just installed is the newer one,
+/// and one the user uninstalled meanwhile is gone from the file and must not
+/// come back with the restore.
 pub fn merge_installed(
     restored: Vec<InstalledApp>,
     current: Vec<InstalledApp>,
 ) -> Vec<InstalledApp> {
+    let remembered = remembered_ids();
     let mut apps = restored;
-    apps.retain(|app| !current.iter().any(|installed| installed.id == app.id));
+    apps.retain(|app| {
+        remembered.contains(&app.id) && !current.iter().any(|installed| installed.id == app.id)
+    });
     apps.extend(current);
-    remember(&apps);
     apps
 }
 
 pub fn add_installed(mut apps: Vec<InstalledApp>, app: InstalledApp) -> Vec<InstalledApp> {
+    remember(|ids| {
+        ids.retain(|id| *id != app.id);
+        ids.push(app.id.clone());
+    });
     apps.retain(|installed| installed.id != app.id);
     apps.push(app);
-    remember(&apps);
     apps
 }
 
 /// Dropping the last handle drops the wasmtime store — the instance, its
 /// memory and its compiled code go with it. That is the whole uninstall.
 pub fn remove_installed(mut apps: Vec<InstalledApp>, id: String) -> Vec<InstalledApp> {
+    remember(|ids| ids.retain(|remembered| *remembered != id));
     apps.retain(|installed| installed.id != id);
-    remember(&apps);
     apps
 }
 
-/// The ids to bring back at boot, one per line. Rewritten from the whole list
-/// after every install and uninstall — through a temp file and a rename, like
-/// every other write here, so a crash loses at most the last change and never
-/// the list.
+/// The ids to bring back at boot, one per line.
 const INSTALLED_FILE: &str = "installed";
 
-fn remember(apps: &[InstalledApp]) {
+/// Edits the file, never rewrites it from the installed list: the list is
+/// still missing whatever [`restore_installed`] is compiling, and an install
+/// made meanwhile would otherwise leave a one-line file behind. Through a temp
+/// file and a rename, like every other write here, so a crash loses at most
+/// the last change and never the list.
+fn remember(edit: impl FnOnce(&mut Vec<String>)) {
+    let mut ids = remembered_ids();
+    edit(&mut ids);
     let dir = storage::data_dir();
-    let ids: Vec<&str> = apps.iter().map(|app| app.id.as_str()).collect();
     let _ = std::fs::create_dir_all(&dir);
     let _ = storage::write_atomic(&dir.join(INSTALLED_FILE), ids.join("\n").as_bytes());
 }
 
-fn remembered(catalog: &[CatalogEntry]) -> Vec<CatalogEntry> {
+fn remembered_ids() -> Vec<String> {
     std::fs::read_to_string(storage::data_dir().join(INSTALLED_FILE))
         .unwrap_or_default()
         .lines()
-        .filter_map(|id| catalog.iter().find(|entry| entry.id == id))
+        .map(str::to_string)
+        .collect()
+}
+
+fn remembered(catalog: &[CatalogEntry]) -> Vec<CatalogEntry> {
+    remembered_ids()
+        .iter()
+        .filter_map(|id| catalog.iter().find(|entry| entry.id == *id))
         .cloned()
         .collect()
 }
@@ -426,9 +483,13 @@ pub struct Guest {
     /// publishes a message when a guest ends, so the sidebar's counts would
     /// stay at what the last install left them.
     pub(crate) announced_fault: bool,
-    /// What this tick's answers already carry, against
-    /// [`MAX_REPLY_BYTES_PER_TICK`].
+    /// What this tick already carries, against [`MAX_REPLY_BYTES_PER_TICK`].
     reply_bytes: usize,
+    /// What the app's storage directory holds — bytes and keys — once it has
+    /// been scanned. The host is its only writer, so one walk stays true;
+    /// walking it per write is what makes 256 `storage.set`s in a tick a
+    /// quarter of a million `stat`s on the window thread.
+    storage_used: Option<(u64, usize)>,
     /// What the last tick cost, for the status line.
     pub(crate) fuel_used: u64,
     pub(crate) tick_time: Duration,
@@ -550,6 +611,7 @@ impl Guest {
             fault: None,
             announced_fault: false,
             reply_bytes: 0,
+            storage_used: None,
             fuel_used: 0,
             tick_time: Duration::ZERO,
         })
@@ -664,6 +726,15 @@ impl Guest {
             self.reply(now, id, Err(message));
             return;
         }
+        // Charged before the work, not after it: a `storage.set` writes its
+        // payload to disk and a `bus.publish` copies it into every
+        // subscriber's inbox, and both answer nothing at all, so the answers
+        // alone never see what the tick cost.
+        self.reply_bytes += payload.len();
+        if let Some(message) = self.over_budget() {
+            self.reply(now, id, Err(message));
+            return;
+        }
         let app = self.entry.id.clone();
         let (capability, operation) = kind.split_once('.').unwrap_or((kind.as_str(), ""));
         let declared = capability == "host"
@@ -725,11 +796,13 @@ impl Guest {
                 self.reply(now, id, result);
             }
             ("storage", "set") => {
-                let result = storage::set(&app, &payload);
+                let result = storage::set(&app, &payload, &mut self.storage_used);
                 self.reply(now, id, result);
             }
             ("storage", "delete") => {
                 let result = storage::delete(&app, &payload);
+                // One key lighter, by an amount only the directory knows.
+                self.storage_used = None;
                 self.reply(now, id, result);
             }
             ("storage", "list") => {
@@ -741,9 +814,16 @@ impl Guest {
                 self.reply(now, id, Err(message));
             }
             ("bus", "publish") => {
-                let delivered = bus::publish(&app, &payload) as u64;
+                let delivered = bus::publish(&app, &payload);
+                // The host copied the message once per subscriber. That is
+                // what the publish cost, not the eight bytes it answers with.
+                self.reply_bytes += payload.len().saturating_mul(delivered);
                 self.published = true;
-                self.reply(now, id, Ok(delivered.to_le_bytes().to_vec()));
+                self.reply(now, id, Ok((delivered as u64).to_le_bytes().to_vec()));
+            }
+            ("bus", "subscribe") if payload.len() > MAX_TOPIC_BYTES => {
+                let message = format!("a topic longer than {MAX_TOPIC_BYTES} bytes");
+                self.reply(now, id, Err(message));
             }
             ("bus", "subscribe") if self.subscriptions >= MAX_SUBSCRIPTIONS => {
                 let message = format!("more than {MAX_SUBSCRIPTIONS} bus subscriptions");
@@ -757,20 +837,23 @@ impl Guest {
         }
     }
 
+    /// What this tick has spent, once it is more than it may. The bytes are
+    /// the host's to hold and then to encode, and a count of requests does not
+    /// bound them.
+    fn over_budget(&self) -> Option<String> {
+        (self.reply_bytes > MAX_REPLY_BYTES_PER_TICK)
+            .then(|| format!("more than {MAX_REPLY_BYTES_PER_TICK} bytes this tick"))
+    }
+
     /// Answers on the next redraw, which `redraw` schedules for right now.
-    /// Once this tick's answers have carried [`MAX_REPLY_BYTES_PER_TICK`],
-    /// the rest of them say so instead: the bytes are the host's to hold and
-    /// then to encode, and a count of answers does not bound them.
     fn reply(&mut self, now: Instant, id: u64, result: Result<Vec<u8>, String>) {
         self.reply_bytes += match &result {
             Ok(bytes) => bytes.len(),
             Err(message) => message.len(),
         };
-        let result = match self.reply_bytes > MAX_REPLY_BYTES_PER_TICK {
-            true => Err(format!(
-                "more than {MAX_REPLY_BYTES_PER_TICK} bytes of answers this tick"
-            )),
-            false => result,
+        let result = match self.over_budget() {
+            Some(message) => Err(message),
+            None => result,
         };
         self.due.push((now, one_shot(id, result)));
     }

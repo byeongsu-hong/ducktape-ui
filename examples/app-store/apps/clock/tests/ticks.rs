@@ -42,9 +42,11 @@ fn ticks_arrive_as_a_stream_and_move_the_display() {
     let mut when = NOW_MS.to_le_bytes().to_vec();
     when.extend_from_slice(&UPTIME_AT_ANSWER_MS.to_le_bytes());
     let frame = tick_native(vec![answer(now.id, &when), redraw()]);
-    // No tick yet, so the app's own uptime is still zero: five minutes before
-    // the wall clock the host just read.
-    assert!(has_text(&frame, "13:40:00 UTC"), "{:?}", texts(&frame));
+    // The first tick is a whole second away, so until it lands the uptime the
+    // answer carried is the app's own: the wall clock reads what the host just
+    // read, not what it read five minutes ago.
+    assert!(has_text(&frame, "13:45:00 UTC"), "{:?}", texts(&frame));
+    assert!(has_text(&frame, "05:00"), "{:?}", texts(&frame));
 
     let frame = tick_native(vec![item(subscribe.id, &5_000_u64.to_le_bytes()), redraw()]);
     assert!(has_text(&frame, "00:05"), "{:?}", texts(&frame));

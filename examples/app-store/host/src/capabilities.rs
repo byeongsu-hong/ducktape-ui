@@ -187,8 +187,15 @@ pub mod storage {
         }
     }
 
-    /// `key\nvalue`.
-    pub fn set(app: &str, payload: &[u8]) -> Result<Vec<u8>, String> {
+    /// `key\nvalue`. `held` is what the app's directory was last known to
+    /// hold, scanned on first use and kept from there: the host is its only
+    /// writer, and a walk per write is what makes a tick of 256 sets a
+    /// quarter of a million `stat`s.
+    pub fn set(
+        app: &str,
+        payload: &[u8],
+        held: &mut Option<(u64, usize)>,
+    ) -> Result<Vec<u8>, String> {
         let split = payload
             .iter()
             .position(|byte| *byte == b'\n')
@@ -200,16 +207,27 @@ pub mod storage {
         }
         let dir = path.parent().expect("a key path has a directory");
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
-        let (used, keys) = used(dir, &path);
-        // `keys` leaves out the key being written, so this is what the app
-        // would hold afterwards whether the key is new or replaced.
+        let (used, keys) = *held.get_or_insert_with(|| scan(dir));
+        // What this key holds today, which the write replaces: one `stat`,
+        // not the directory again. Both totals are then what the app would
+        // hold afterwards whether the key is new or replaced.
+        let (replaced, replacing) = std::fs::metadata(&path)
+            .ok()
+            .filter(std::fs::Metadata::is_file)
+            .map_or((0, 0), |metadata| (metadata.len().max(BLOCK_BYTES), 1));
+        let (used, keys) = (
+            used.saturating_sub(replaced),
+            keys.saturating_sub(replacing),
+        );
         if keys + 1 > MAX_APP_KEYS {
             return Err(format!("more than {MAX_APP_KEYS} storage keys"));
         }
-        if used + (value.len() as u64).max(BLOCK_BYTES) > MAX_APP_STORAGE {
+        let cost = (value.len() as u64).max(BLOCK_BYTES);
+        if used + cost > MAX_APP_STORAGE {
             return Err(format!("more than {MAX_APP_STORAGE} bytes of storage"));
         }
         write_atomic(&path, value).map_err(|error| error.to_string())?;
+        *held = Some((used + cost, keys + 1));
         Ok(Vec::new())
     }
 
@@ -232,13 +250,11 @@ pub mod storage {
         Ok(keys.join("\n").into_bytes())
     }
 
-    /// What the app's directory already holds and how many keys that is,
-    /// ignoring the key about to be overwritten. One `stat` per key on every
-    /// `set`: a quota that is always right beats a counter that drifts from
-    /// the disk, and `MAX_APP_KEYS` is what keeps the scan short.
-    fn used(dir: &Path, replacing: &Path) -> (u64, usize) {
+    /// What the app's directory holds and how many keys that is. One `stat`
+    /// per key, so `MAX_APP_KEYS` is what keeps it short — and the caller
+    /// keeps the answer rather than asking again on the next write.
+    fn scan(dir: &Path) -> (u64, usize) {
         read_dir(dir)
-            .filter(|entry| entry.path() != replacing)
             .filter_map(|entry| entry.metadata().ok())
             .filter(std::fs::Metadata::is_file)
             .fold((0, 0), |(bytes, keys), metadata| {

@@ -22,14 +22,25 @@ pub fn ticks(every_ms: i64) -> impl Stream<Item = Result<i64, ClockError>> + Sen
     })
 }
 
-/// The unix millisecond the host stood at zero uptime, asked once. Asking
-/// every tick would spend a request on what arithmetic already knows: the
-/// uptime the ticks carry moves the wall clock by exactly as much.
+/// What one `clock.now` says: the epoch millisecond the host stood at zero
+/// uptime, and the uptime it was read at.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Now {
+    pub at_boot: i64,
+    /// The app's own uptime until its first tick lands, which the host
+    /// schedules one whole period after the subscription — without it every
+    /// label would show the wall clock as it was when the store started.
+    pub uptime: i64,
+}
+
+/// The wall clock, asked once. Asking every tick would spend a request on
+/// what arithmetic already knows: the uptime the ticks carry moves the wall
+/// clock by exactly as much.
 ///
 /// The answer is two `u64`s — the wall clock and the uptime it was read at —
 /// because the app cannot know how long the host had been up when it was
 /// installed, and its ticks are measured from the host's start, not its own.
-pub async fn now() -> Result<i64, ClockError> {
+pub async fn now() -> Result<Now, ClockError> {
     let bytes = host::request("clock.now", &[])
         .await
         .map_err(|message| ClockError { message })?;
@@ -40,7 +51,10 @@ pub async fn now() -> Result<i64, ClockError> {
             message: "a time that is not two u64s".into(),
         });
     };
-    Ok(unix as i64 - uptime as i64)
+    Ok(Now {
+        at_boot: unix as i64 - uptime as i64,
+        uptime: uptime as i64,
+    })
 }
 
 /// The wall clock, from the epoch millisecond the host stood at zero uptime

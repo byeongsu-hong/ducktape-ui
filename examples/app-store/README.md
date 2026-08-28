@@ -151,7 +151,7 @@ store keeps answering. The status line in every window is what the last
 tick cost, plus the bus deliveries the guest was not there to take.
 
 Fuel and memory bound what a module does to itself. What it can make the
-*host* do is bounded by the constants at the top of `store.rs`:
+*host* do is bounded by the constants in `store.rs`:
 
 | limit | value | what a guest past it gets |
 |---|---|---|
@@ -161,8 +161,9 @@ Fuel and memory bound what a module does to itself. What it can make the
 | `MAX_TICKERS` | 16 per guest | `Err` from `clock.ticks` |
 | `MAX_DUE` | 1024 answers the host still holds | `Err` from `clock.sleep` |
 | `MAX_SUBSCRIPTIONS` | 64 per guest | `Err` from `bus.subscribe` |
+| `MAX_TOPIC_BYTES` | 256 per subscription | `Err` from `bus.subscribe` |
 | `MAX_CANCELS` | one tick's worth of everything the host holds | the rest of that frame's cancels ignored |
-| `MAX_REPLY_BYTES_PER_TICK` | 4 MiB | `Err` for every later answer that tick |
+| `MAX_REPLY_BYTES_PER_TICK` | 4 MiB | `Err` for the rest of that tick, checked before the work: it counts the payloads the requests carried in and the copies a publish made, not only the answers |
 | `MAX_BUS_BYTES` | 64 KiB per message | `Err` from `bus.publish` |
 | `MAX_INBOX` / `MAX_INBOX_BYTES` | 1024 events, 1 MiB | its oldest bus deliveries dropped, and counted in its status line |
 | `MAX_VALUE_BYTES` | 1 MiB | `Err` from `storage.set` |
@@ -171,6 +172,7 @@ Fuel and memory bound what a module does to itself. What it can make the
 | `MAX_RANDOM_BYTES` | 4096 per answer | `Err` from `host.random` |
 | `MAX_LOG_BYTES` | 1024 per line | the rest is cut, and the line is escaped before it reaches a terminal |
 | `MAX_FAULT_BYTES` | 1024 | its window shows the first line of that |
+| `MAX_NAME_BYTES` · `MAX_DESCRIPTION_BYTES` · `MAX_CAPABILITIES` | 64 B · 256 B · 16 of 32 B | its module is left out of the catalog — the sidebar shapes every manifest field of every entry, before anything is installed |
 
 The numbers *inside* a frame are the other half of the same boundary: the
 guest chooses every one, and the host's renderer panics on some (a colour
@@ -256,14 +258,16 @@ An honest inventory, grouped by where the work would land. Items marked
   fsync'd, so a power cut can still lose the last one. Keys are compared
   byte for byte, so on a case-insensitive filesystem (the default on macOS
   and Windows) `Items` and `items` are one file that the quota and
-  `storage.list` count as two. Every `set` stats the
-  whole app directory to check the quota, so `MAX_APP_KEYS` is what keeps
-  that scan short — there is no counter the host maintains. No sharing
-  between apps, no migration on app upgrade, and nothing outside the app can
-  read or list what it stored.
+  `storage.list` count as two. The quota is one scan of the app's directory,
+  kept on the instance and moved by every write — one `stat` for the key a
+  `set` replaces, another scan after a `delete` — so it is only as true as the
+  host being the sole writer, and a reinstall or a restart scans again. No
+  sharing between apps, no migration on app upgrade, and nothing outside the
+  app can read or list what it stored.
 - Bus: no topic ownership — any app with `bus` can publish `counter\n999`
-  under its own name. No rate limit, no replay for late subscribers, no
-  request/reply between apps, no wildcard beyond `*`.
+  under its own name. No rate limit beyond the per-tick byte budget the
+  fan-out is charged to, no replay for late subscribers, no request/reply
+  between apps, no wildcard beyond `*`.
 - Beyond the sandbox table: no cumulative CPU budget (an app may burn its
   200M every frame) and no wall-clock timeout. A request answered this tick
   wakes the window at once, so an app that asks in a loop pins the whole

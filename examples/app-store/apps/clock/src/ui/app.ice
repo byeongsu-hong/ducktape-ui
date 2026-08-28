@@ -9,8 +9,9 @@ use "theme.ice"
 
 extern crate::host
   ClockError(message:str)
+  Now(at_boot:i64, uptime:i64)
   stream ticks(every_ms:i64) -> i64 ! ClockError
-  now() -> i64 ! ClockError
+  now() -> Now ! ClockError
   pure uptime_label(ms:i64) -> str
   pure wall_label(now_at_boot_ms:i64, uptime_ms:i64) -> str
   pure dots_label(ticks:i64) -> str
@@ -34,8 +35,11 @@ on ticked(ms)
   uptime_ms = ms
   ticks = ticks + 1
 
-on timed(ms)
-  now_at_boot_ms = ms
+// The uptime the host read the wall clock at is this app's own uptime until
+// its first tick, which is a whole period away.
+on timed(clock)
+  now_at_boot_ms = clock.at_boot
+  uptime_ms = clock.uptime
 
 on clock_failed(error)
   status = error.message
