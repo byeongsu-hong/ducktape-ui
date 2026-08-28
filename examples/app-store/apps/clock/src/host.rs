@@ -22,6 +22,37 @@ pub fn ticks(every_ms: i64) -> impl Stream<Item = Result<i64, ClockError>> + Sen
     })
 }
 
+/// Unix milliseconds, asked once. Asking every tick would spend a request on
+/// what arithmetic already knows: the host's uptime moves the wall clock by
+/// exactly as much.
+pub async fn now() -> Result<i64, ClockError> {
+    let bytes = host::request("clock.now", &[])
+        .await
+        .map_err(|message| ClockError { message })?;
+    let ms = bytes
+        .try_into()
+        .map(u64::from_le_bytes)
+        .map_err(|_| ClockError {
+            message: "a time that is not a u64".into(),
+        })?;
+    Ok(ms as i64)
+}
+
+/// The wall clock, from the epoch millisecond the host stood at zero uptime
+/// plus the uptime since. The host offers no timezone, so the label says UTC
+/// and means it.
+pub fn wall_label(now_at_boot_ms: i64, uptime_ms: i64) -> String {
+    let second = (now_at_boot_ms + uptime_ms)
+        .div_euclid(1000)
+        .rem_euclid(86_400);
+    format!(
+        "{:02}:{:02}:{:02} UTC",
+        second / 3600,
+        second / 60 % 60,
+        second % 60
+    )
+}
+
 pub fn uptime_label(ms: i64) -> String {
     let seconds = ms / 1000;
     format!("{:02}:{:02}", seconds / 60, seconds % 60)

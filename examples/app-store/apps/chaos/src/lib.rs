@@ -9,6 +9,6 @@ app_store_sdk::export_app!(
     Chaos,
     __ChaosMessage,
     "Chaos",
-    "Spins forever or eats memory — the host ends it, nothing else notices.",
+    "Spins, eats memory, panics, floods — the host ends it, nothing else notices.",
     []
 );

@@ -9,9 +9,10 @@ use "theme.ice"
 
 extern crate::host
   BusError(message:str)
-  Entry(topic:str, text:str)
+  Entry(from:str, topic:str, text:str)
   stream events(topic:str) -> Entry ! BusError
   pure push_entry(log:[Entry], entry:Entry) -> [Entry]
+  pure origin_label(entry:Entry) -> str
   pure count_label(log:[Entry]) -> str
 
 state
@@ -62,11 +63,11 @@ view
                   w=fill
                   gap=12.0
                   align=center
-                text entry.topic
+                text origin_label(entry)
                   with
-                    w=80.0
+                    w=170.0
                     size=12.0
-                    @text-primary
+                    @text-muted
                 text entry.text
                   with
                     w=fill

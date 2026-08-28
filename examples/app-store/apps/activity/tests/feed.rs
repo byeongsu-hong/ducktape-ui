@@ -1,4 +1,5 @@
-//! The feed subscribes to every topic at boot and shows messages newest first.
+//! The feed subscribes to every topic at boot and shows messages newest
+//! first, each with who published it and under what topic.
 
 use app_store_activity::{boot_native, tick_native};
 use app_store_sdk::frame::Event;
@@ -21,13 +22,16 @@ fn bus_messages_become_rows_newest_first() {
     assert_eq!(subscribe.payload, b"*");
     assert!(has_text(&frame, "0 events"), "{:?}", texts(&frame));
 
+    // `from\ntopic\ntext`: the host fills in `from` itself.
     let frame = tick_native(vec![
-        item(subscribe.id, b"counter\n3"),
-        item(subscribe.id, b"todo\n2 items, 1 left"),
+        item(subscribe.id, b"app_store_counter\ncounter\n3"),
+        item(subscribe.id, b"app_store_todo\ntodo\n2 items, 1 left"),
         redraw(),
     ]);
     let rows = texts(&frame);
     assert!(has_text(&frame, "2 events"), "{rows:?}");
+    assert!(has_text(&frame, "app_store_counter · counter"), "{rows:?}");
+    assert!(has_text(&frame, "app_store_todo · todo"), "{rows:?}");
     let todo = rows
         .iter()
         .position(|t| t == "2 items, 1 left")

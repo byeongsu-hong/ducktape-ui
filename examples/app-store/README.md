@@ -14,11 +14,14 @@ frame/          the wire: events in, a Frame of quads and laid-out text lines ou
 sdk/            what an app needs to run in wasm: a headless Driver (layout, draw,
                 task executor), `host::request` / `host::subscribe`, and
                 `export_app!`, which adds the four C exports and the manifest
-apps/counter/   three buttons; Auto is a chain of host timers, changes go on the bus
+apps/counter/   three buttons; Auto is a chain of host timers, every change goes
+                on the bus and into the store's log
 apps/todo/      a list kept in the host's storage — it survives uninstall/reinstall
-apps/clock/     shows host uptime from a subscription; the module has no clock
-apps/activity/  a live feed of everything the other apps publish on the bus
-apps/chaos/     spins forever, eats memory, asks for an undeclared capability
+apps/clock/     host uptime from a subscription, UTC from one `clock.now` plus
+                arithmetic; the module has no clock
+apps/activity/  a live feed of what the other apps publish, and who published it
+apps/chaos/     spins, eats memory, panics, floods the host, asks for an
+                undeclared capability
 host/           the store: catalog, windows, capabilities (clock, storage, bus),
                 the fuel/memory sandbox, and the widget that shows a guest
 ```
@@ -43,10 +46,14 @@ requested only on Linux, so a macOS or Windows build resolves without them —
 only Linux is exercised here.
 
 Install everything: every app gets a window, all of them live at once.
-Press `+` on the counter and watch Activity; toggle a todo, uninstall it,
-reinstall it. Then open Chaos, and restart it from its own window. What you
-leave installed comes back: the store writes the ids to `<data dir>/installed`
-and reinstalls them, one compile at a time, at the next start.
+Press `+` on the counter and watch Activity — and the store's own stderr,
+where the counter's log lines come out. Toggle a todo, uninstall it,
+reinstall it. Then open Chaos: Spin forever and Eat 1 GB end it on a fuel or
+memory trap, Panic ends it with the module's own message, Flood shows what a
+guest hears past the per-tick request cap. Restart it from its own window.
+What you leave installed comes back: the store writes the ids to
+`<data dir>/installed` and reinstalls them, one compile at a time, at the
+next start.
 
 ## Writing an app
 
@@ -83,7 +90,8 @@ pub fn ticks(every_ms: i64) -> impl Stream<Item = Result<i64, ClockError>> + Sen
 A request's kind is `<capability>.<operation>`. The host answers only what
 the manifest declares; a request for anything else comes back as the `Err`
 of the task, which the app's handler routes like any other error (Chaos's
-"Use the clock" shows the refusal text).
+"Use the clock" shows the refusal text, and its "Flood" the refusal past the
+per-tick request cap).
 
 | capability | operations | answer |
 |---|---|---|

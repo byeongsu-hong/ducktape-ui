@@ -11,8 +11,10 @@ extern crate::chaos
   HostError(message:str)
   pure spin() -> i64
   pure hog() -> i64
+  pure boom() -> i64
   pure result_label(result:i64) -> str
   borrow_clock() -> bool ! HostError
+  flood() -> bool ! HostError
 
 state
   result = 0
@@ -24,9 +26,16 @@ on spin
 on hog
   result = hog()
 
-// A request for a capability the manifest never declared.
+on boom
+  result = boom()
+
+// A request for a capability the manifest never declared, and a thousand
+// requests in the tick the host allows 256 of. Both come back as refusals.
 on ask
   run every borrow_clock() -> allowed _ | refused _
+
+on flood
+  run every flood() -> allowed _ | refused _
 
 on allowed(ok)
   verdict = "the host let it through?!"
@@ -51,7 +60,12 @@ view
           active bg=danger text=primary_fg r=8.0
         button "Eat 1 GB" #hog -> hog
           active bg=danger text=primary_fg r=8.0
+        button "Panic" #boom -> boom
+          active bg=danger text=primary_fg r=8.0
+      row gap=12.0 align=center
         button "Use the clock" #ask -> ask
+          active bg=surface text=fg r=8.0
+        button "Flood" #flood -> flood
           active bg=surface text=fg r=8.0
       text result_label(result) #result size=12.0 @text-muted
       text verdict #verdict size=12.0 @text-muted

@@ -26,8 +26,11 @@ pub async fn wait(ms: i64) -> Result<bool, HostError> {
     Ok(true)
 }
 
-/// Tells every app listening on the bus what the count is now.
+/// Tells every app listening on the bus what the count is now, and leaves a
+/// line in the store's log on the way out: a module has no stdout, so
+/// `host::log` is the only `println!` it has. Nobody waits for the answer.
 pub async fn publish_count(count: i64) -> Result<bool, HostError> {
+    host::log(format!("count is now {count}"));
     host::request("bus.publish", format!("counter\n{count}").as_bytes()).await?;
     Ok(true)
 }

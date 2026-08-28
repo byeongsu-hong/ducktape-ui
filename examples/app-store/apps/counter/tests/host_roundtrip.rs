@@ -51,12 +51,14 @@ fn a_question_goes_out_as_a_request_and_the_answer_comes_back_into_the_view() {
 }
 
 #[test]
-fn a_change_is_published_on_the_bus() {
+fn a_change_is_published_on_the_bus_and_logged() {
     let frame = boot();
     let frame = tick_native(click(&frame, "+"));
-    let [publish] = frame.requests.as_slice() else {
-        panic!("one publish after +, got {:?}", frame.requests);
+    let [log, publish] = frame.requests.as_slice() else {
+        panic!("a log and a publish after +, got {:?}", frame.requests);
     };
+    assert_eq!(log.kind, "host.log");
+    assert_eq!(log.payload, b"count is now 1");
     assert_eq!(publish.kind, "bus.publish");
     assert_eq!(publish.payload, b"counter\n1");
 }
@@ -79,7 +81,7 @@ fn auto_mode_is_a_chain_of_timer_requests_that_stops_when_switched_off() {
     expected.sort();
     assert_eq!(
         expected,
-        ["bus.publish", "clock.sleep"],
+        ["bus.publish", "clock.sleep", "host.log"],
         "{:?}",
         frame.requests
     );
