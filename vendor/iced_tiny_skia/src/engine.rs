@@ -42,8 +42,11 @@ impl Engine {
             return;
         }
 
-        let clip_mask = (!physical_bounds.is_within(&clip_bounds))
-            .then_some(clip_mask as &_);
+        // Kept whole: the shadow reaches past the quad, so the two passes
+        // ask the same mask different questions.
+        let mask = &*clip_mask;
+        let clip_mask =
+            (!physical_bounds.is_within(&clip_bounds)).then_some(mask);
 
         let transform = into_transform(transformation);
 
@@ -139,7 +142,10 @@ impl Engine {
                     pixmap.as_ref(),
                     &tiny_skia::PixmapPaint::default(),
                     tiny_skia::Transform::default(),
-                    None,
+                    // The shadow is its own rectangle: a quad inside the clip
+                    // can carry one that reaches outside it, and drawing that
+                    // unmasked paints over whatever owns those pixels.
+                    (!shadow_bounds.is_within(&clip_bounds)).then_some(mask),
                 );
             }
         }
