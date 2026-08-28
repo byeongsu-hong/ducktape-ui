@@ -54,10 +54,23 @@ where
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, ()>,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
         let mut guest = self.guest.lock().expect("guest lock");
+        if guest.fault.is_some() {
+            // An app the host ended receives nothing more; the only live
+            // thing left in its window is Restart.
+            if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) {
+                focus(&self.guest, cursor.is_over(bounds));
+                if cursor.is_over(restart_button(bounds)) {
+                    guest.restart();
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+            }
+            return;
+        }
         if guest.size != bounds.size() {
             guest.size = bounds.size();
             guest.pending.push(wire::Event::Resized {
@@ -79,7 +92,7 @@ where
                         })
                     }
                     mouse::Event::CursorLeft => Some(wire::Event::CursorLeft),
-                    mouse::Event::CursorEntered => None,
+                    mouse::Event::CursorEntered => Some(wire::Event::CursorEntered),
                     mouse::Event::ButtonPressed(button) => {
                         wire_button(*button).map(wire::Event::ButtonPressed)
                     }
@@ -95,16 +108,26 @@ where
                         }
                     }),
                 };
-                if let Some(translated) = translated {
-                    // A press that lands on the guest is the guest's.
-                    if cursor.is_over(bounds) && matches!(event, mouse::Event::ButtonPressed(_)) {
+                // A press that lands on the guest is the guest's, and takes
+                // the keyboard with it.
+                if matches!(event, mouse::Event::ButtonPressed(_)) {
+                    let over = cursor.is_over(bounds);
+                    focus(&self.guest, over);
+                    if over {
                         shell.capture_event();
                     }
+                }
+                if let Some(translated) = translated {
                     guest.pending.push(translated);
                     shell.request_redraw();
                 }
             }
             Event::Keyboard(event) => {
+                // One focused guest per host. Without this every app with an
+                // input receives the same typing.
+                if !focused(&self.guest) {
+                    return;
+                }
                 let translated = match event {
                     keyboard::Event::KeyPressed {
                         key,
@@ -122,17 +145,45 @@ where
                             modifiers: modifiers.bits(),
                         }
                     }
-                    keyboard::Event::ModifiersChanged(_) => return,
+                    keyboard::Event::ModifiersChanged(modifiers) => {
+                        wire::Event::ModifiersChanged(modifiers.bits())
+                    }
                 };
                 guest.pending.push(translated);
                 shell.request_redraw();
             }
             Event::Window(iced::window::Event::RedrawRequested(now)) => {
-                if let Some(at) = guest.redraw(*now) {
+                // Scrolled out of the desk's viewport: a guest with nothing to
+                // do skips the tick, one with work to do does not.
+                if let Some(at) = guest.redraw(*now, viewport.intersects(&bounds)) {
                     shell.request_redraw_at(at);
                 }
             }
             _ => {}
+        }
+    }
+
+    /// The cursor the guest asked for, while it is the cursor's guest.
+    fn mouse_interaction(
+        &self,
+        _tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &Renderer,
+    ) -> mouse::Interaction {
+        if !cursor.is_over(layout.bounds()) {
+            return mouse::Interaction::None;
+        }
+        let guest = self.guest.lock().expect("guest lock");
+        if guest.fault.is_some() {
+            return mouse::Interaction::None;
+        }
+        match guest.frame.interaction {
+            1 => mouse::Interaction::Pointer,
+            2 => mouse::Interaction::Text,
+            3 => mouse::Interaction::Grab,
+            _ => mouse::Interaction::Idle,
         }
     }
 
@@ -162,11 +213,16 @@ where
         });
         // Its own layer, pushed after the frame's: anything added to a parent
         // layer after a child was pushed is drawn beneath that child.
-        let status = format!(
+        let mut status = format!(
             "{:.0}k fuel · {:.2} ms",
             guest.fuel_used as f64 / 1000.0,
             guest.tick_time.as_secs_f64() * 1000.0
         );
+        // Only when there is something to admit: the guest was not draining
+        // its inbox and the host threw the oldest deliveries away.
+        if guest.dropped() > 0 {
+            status = format!("{status} · {} dropped", guest.dropped());
+        }
         renderer.with_layer(bounds, |renderer| {
             small_text(
                 renderer,
@@ -211,6 +267,59 @@ where
         Color::from_rgba(0.40, 0.44, 0.52, 0.9),
         bounds,
     );
+    let button = restart_button(bounds);
+    renderer.fill_quad(
+        renderer::Quad {
+            bounds: button,
+            border: Border {
+                color: Color::from_rgb(0.79, 0.20, 0.27),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..renderer::Quad::default()
+        },
+        Color::TRANSPARENT,
+    );
+    small_text(
+        renderer,
+        "Restart".to_string(),
+        Point::new(button.x + 14.0, button.center_y()),
+        iced::alignment::Vertical::Center,
+        Color::from_rgb(0.79, 0.20, 0.27),
+        bounds,
+    );
+}
+
+/// Where the fault overlay's Restart button is. Drawn there, hit-tested there:
+/// the host draws this window, so it also has to do its own hit-testing.
+fn restart_button(bounds: Rectangle) -> Rectangle {
+    Rectangle {
+        x: bounds.x + 24.0,
+        y: bounds.y + bounds.height / 2.0 + 28.0,
+        width: 84.0,
+        height: 26.0,
+    }
+}
+
+/// The one guest the keyboard goes to, by the address of its `Arc` — the same
+/// identity a `Surface` compares by.
+static FOCUS: Mutex<Option<usize>> = Mutex::new(None);
+
+/// A press inside a guest focuses it; a press anywhere else clears the focus
+/// it held. Every widget sees every press, but each touches only its own key,
+/// so the order they run in does not matter.
+fn focus(guest: &Arc<Mutex<Guest>>, over: bool) {
+    let key = Arc::as_ptr(guest) as usize;
+    let mut focus = FOCUS.lock().expect("focus");
+    match over {
+        true => *focus = Some(key),
+        false if *focus == Some(key) => *focus = None,
+        false => {}
+    }
+}
+
+fn focused(guest: &Arc<Mutex<Guest>>) -> bool {
+    *FOCUS.lock().expect("focus") == Some(Arc::as_ptr(guest) as usize)
 }
 
 fn small_text<Renderer>(

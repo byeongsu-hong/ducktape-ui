@@ -33,11 +33,20 @@ cargo build -p app-store-todo -p app-store-counter -p app-store-clock \
 cargo run -p app-store-host --release
 ```
 
-The catalog is `target/wasm32-unknown-unknown/release` (override with
-`APP_STORE_CATALOG`); storage lands in `target/app-store-data/<app>/<key>`
-(override with `APP_STORE_DATA`). Install everything: every app gets a
-window, all of them live at once. Press `+` on the counter and watch
-Activity; toggle a todo, uninstall it, reinstall it. Then open Chaos.
+| variable | default | what it names |
+|---|---|---|
+| `APP_STORE_CATALOG` | `target/wasm32-unknown-unknown/release` | the directory scanned for modules |
+| `APP_STORE_DATA` | `target/app-store-data` | app storage (`<app>/<key>`) and the store's own `installed` list |
+
+The windowing backends the host asks iced for (`x11`, `wayland`) are
+requested only on Linux, so a macOS or Windows build resolves without them —
+only Linux is exercised here.
+
+Install everything: every app gets a window, all of them live at once.
+Press `+` on the counter and watch Activity; toggle a todo, uninstall it,
+reinstall it. Then open Chaos, and restart it from its own window. What you
+leave installed comes back: the store writes the ids to `<data dir>/installed`
+and reinstalls them, one compile at a time, at the next start.
 
 ## Writing an app
 
@@ -78,13 +87,15 @@ of the task, which the app's handler routes like any other error (Chaos's
 
 | capability | operations | answer |
 |---|---|---|
-| `host` (always) | `echo` | the text back |
-| `clock` | `sleep` (ms) · `ticks` (every ms, stream) | nothing at the deadline · host uptime per tick |
-| `storage` | `get` (key) · `set` (`key\nvalue`) | the value or empty · nothing; one file per key per app |
-| `bus` | `publish` (`topic\ntext`) · `subscribe` (topic or `*`, stream) | how many heard it · every matching message |
+| `host` (always) | `echo` · `log` · `random` (`u32` LE count) | the text back · nothing, the line goes to the store's stderr as `[<app>] …` · that many bytes |
+| `clock` | `sleep` (ms) · `ticks` (every ms, stream) · `now` | nothing at the deadline · host uptime per tick · unix milliseconds, `u64` LE |
+| `storage` | `get` (key) · `set` (`key\nvalue`) · `delete` (key) · `list` | the value or empty · nothing · nothing · every key, newline-separated; one file per key per app |
+| `bus` | `publish` (`topic\ntext`) · `subscribe` (topic or `*`, stream) | how many heard it · every matching message, as `from\ntopic\ntext` |
 
-A real host would route `query` / `submit` / `page` through the same
-table and answer from its own subscriptions.
+Publishing does not need the topic: any app with `bus` may publish under
+any name, and `from` — the publisher's app id, which the host fills in — is
+what says who did. A real host would route `query` / `submit` / `page`
+through the same table and answer from its own subscriptions.
 
 ## How a frame crosses
 
@@ -98,9 +109,11 @@ table and answer from its own subscriptions.
    be any iced renderer. The frame also carries the requests the tasks made.
 3. The host widget translates iced events into the app's coordinates, ticks
    it once per redraw with a fresh fuel budget, answers its requests, and
-   replays the frame inside `with_layer` / `with_translation`. Answers are
-   delivered as events: an echo on the next redraw, a timer at its deadline
-   via `request_redraw_at`, a bus message when another guest publishes.
+   replays the frame inside `with_layer` / `with_translation`. A press inside
+   a guest's bounds focuses it and a press anywhere else clears that focus, so
+   only one guest at a time receives the keyboard. Answers are delivered as
+   events: an echo on the next redraw, a timer at its deadline via
+   `request_redraw_at`, a bus message when another guest publishes.
 
 There is no executor thread and no clock inside a module. `Instant::now()`
 is a stub that answers zero; the host's uptime rides on every `Redraw`, and
@@ -116,9 +129,26 @@ shows up as every button a few pixels wide of where the app put it.
 Every tick runs with `FUEL_PER_TICK` (200M, roughly one per instruction)
 and a 64 MB memory limit. An app that spins burns its budget and traps; an
 app that allocates past the limit traps on the grow. A trap ends that
-instance — its window shows the reason — and nothing else notices: the
-other guests keep ticking, the store keeps answering. The status line in
-every window is what the last tick cost.
+instance — its window shows the reason (the module's own panic message when
+the sdk's hook left one) and a Restart button that reloads the module in
+place, keeping the window and everything the app wrote to storage — and
+nothing else notices: the other guests keep ticking, the store keeps
+answering. The status line in every window is what the last tick cost, plus
+the bus deliveries the guest was not there to take.
+
+Fuel and memory bound what a module does to itself. What it can make the
+*host* do is bounded by the constants at the top of `store.rs`:
+
+| limit | value | what a guest past it gets |
+|---|---|---|
+| `MAX_FRAME_BYTES` | 8 MiB | the instance ends, "frame too large" |
+| `MAX_REQUESTS_PER_TICK` | 256 | `Err "too many requests this tick"` for the rest |
+| `MAX_PAYLOAD_BYTES` | 1 MiB | `Err`, whatever the request was |
+| `MAX_TICKERS` | 16 per guest | `Err` from `clock.ticks` |
+| `MAX_INBOX` | 1024 events | its oldest bus delivery dropped, and counted in its status line |
+| `MAX_VALUE_BYTES` | 1 MiB | `Err` from `storage.set` |
+| `MAX_APP_STORAGE` | 64 MiB per app | `Err` from `storage.set`, summed over the app's directory |
+| `MAX_RANDOM_BYTES` | 4096 per answer | `Err` from `host.random` |
 
 ## What is not here yet
 
@@ -137,21 +167,20 @@ An honest inventory, grouped by where the work would land. Items marked
   laid out in the guest and shaped again on the host, per line.
 - Overlays (pick_list menus, tooltips, combo boxes) are clipped to the app's
   window; they cannot float over the desk.
-- `Frame.interaction` is filled by the guest and ignored by the host: the
-  cursor never changes shape over a guest's text input or link.
+- The host sets the cursor from `Frame.interaction`, but the sdk's driver
+  never fills the field in: it is always 0, so the cursor still does not
+  change shape over a guest's text input or link. **bug**
 - No scale factor, theme (`ThemeChanged`) or locale reaches the guest; an
   app cannot follow the host's dark mode.
 
 ### Events and input
 
-- Keyboard events go to **every** guest at once: two apps with focused
-  inputs both receive the typing. There is no focus model between windows.
-  **bug**
 - Only a subset of named keys cross and physical key and location are always
-  `Unidentified`. `ModifiersChanged` and `CursorEntered` cross the wire and
-  reach the guest's iced, but the host widget still drops both, so a guest's
-  modifier state can go stale. Mouse Back/Forward, touch, IME composition,
-  window focus/unfocus, file drops and close requests do not cross at all.
+  `Unidentified`. Mouse Back/Forward, touch, IME composition, window
+  focus/unfocus, file drops and close requests do not cross at all.
+- Focus is the host's, not the guest's: clicking a guest gives it every key,
+  and `Tab` inside one never leaves it. No focus ring, no keyboard-only way
+  to reach a window.
 - Clipboard is `clipboard::Null`: copy and paste inside an app silently do
   nothing. A `clipboard` capability (`read` request, `write` in the frame)
   is the shape.
@@ -166,56 +195,41 @@ An honest inventory, grouped by where the work would land. Items marked
   `__subscription`, and iced's timers (`every`) have no executor in wasm.
   Host streams (`clock.ticks`, `bus.subscribe`) are the only long-lived
   sources.
-- A dropped request or stream reaches the host as an id in `Frame.cancels`,
-  but the host ignores the list: a `clock.ticks` ticker or bus subscription
-  still lives until the guest is dropped, and a one-shot `sleep` still fires.
 - Task fairness is fixed: 8 rounds of messages per tick, 64 self-wakes per
   stream. A task that produces more waits for the next tick.
 - No cooperative long computation: work heavier than one fuel budget
   cannot be spread over ticks except by chaining host sleeps. No
   preemption short of the trap that ends the app.
-- A guest panic still traps on `unreachable`, but the module's panic hook
-  now leaves `<payload> at <file>:<line>` behind `panic_ptr` / `panic_len`;
-  the host does not read them yet, so the window shows the bare trap.
-- `println!` and `tracing` inside a module go nowhere. `host::log` sends a
-  `host.log` request whose answer is dropped, but no capability answers it,
-  so nothing is printed yet.
-- No wall-clock time (`SystemTime::now()` aborts on
-  `wasm32-unknown-unknown`), no randomness (`getrandom` does not build
-  without `js`), no locale, timezone or environment. `clock.now` and
-  `host.random` are missing.
-- A trapped app cannot be restarted in place; only uninstall and
-  reinstall. Its inbox keeps filling until then. `live wasm instances`
-  still counts it.
+- `println!` and `tracing` inside a module still go nowhere; `host::log` is
+  the way out and the host prints it on its own stderr. Nothing shows the
+  lines inside the app store itself.
+- Inside a module `SystemTime::now()` still aborts and `getrandom` still
+  needs JS glue; `clock.now` and `host.random` are how an app gets the time
+  and entropy. No locale, timezone or environment.
 
 ### Capabilities and security
 
 - The manifest is self-declared and unsigned: any module can claim
   `storage`. No signature or hash check on modules, no consent prompt at
   install, no per-operation prompt, no runtime revocation, no policy file.
-- Storage: no quota, no value size limit, no atomic or fsync'd writes (a
-  crash mid-write tears the file), no `list` / `delete`, no sharing
-  between apps, no migration on app upgrade. A value larger than the
-  guest's memory limit traps the guest on delivery.
-- Bus: no sender identity in a message and no topic ownership — any app
-  with `bus` can publish `counter\n999`. No size or rate limit, no replay
-  for late subscribers, no request/reply between apps, no wildcard beyond
-  `*`. A subscriber that never drains (faulted) grows its inbox without
-  bound.
-- Clock: any number of tickers per app; each is a host wake-up.
-- Limits stop at fuel per tick and memory: no cumulative CPU budget (an
-  app may burn 200M every frame), no wall-clock timeout, no cap on frame
-  size, request count or payload size (a guest can hand the host a 100 MB
-  frame or a million requests per tick), no table or instance limits.
+- Storage: a write is atomic (a sibling temp file, then a rename) but not
+  fsync'd, so a power cut can still lose the last one. No sharing between
+  apps, no migration on app upgrade, and nothing outside the app can read
+  or list what it stored.
+- Bus: no topic ownership — any app with `bus` can publish `counter\n999`
+  under its own name. No rate limit, no replay for late subscribers, no
+  request/reply between apps, no wildcard beyond `*`.
+- Beyond the sandbox table: no cumulative CPU budget (an app may burn its
+  200M every frame), no wall-clock timeout, no table or instance limits.
 - `define_unknown_imports_as_default_values` stubs every import a module
   declares; a module built against JS glue loads and misbehaves instead of
   failing at install.
 
 ### Store and lifecycle
 
-- The installed set is not persisted: restarting the host forgets it.
-  App state is not persisted or suspended either — only what an app
-  writes to storage survives.
+- Only the installed set comes back. App state is not persisted or
+  suspended — a restart, like a restart-in-place after a trap, leaves an app
+  with nothing but what it wrote to storage.
 - Windows are fixed at 500×380: no resize, move, z-order, minimise or
   maximise; the app's own `window size` is ignored. One instance per
   module.
@@ -225,10 +239,11 @@ An honest inventory, grouped by where the work would land. Items marked
   compiles from scratch (about 1.7 s) — no `Module::serialize` cache, no
   sharing between installs of the same module. Scanning reads every module
   in full just for its manifest.
-- Uninstall keeps the app's storage with no way to remove it, and asks no
-  confirmation.
-- Every guest ticks on every window redraw, visible or not, so one app's
-  timer wakes all of them. No visibility gating, no per-window redraw.
+- Uninstall keeps the app's storage — an app can delete its own keys, the
+  store cannot — and asks no confirmation.
+- A guest scrolled out of the desk skips its tick only while it has nothing
+  to do; every other guest still ticks on every window redraw, and one app's
+  timer or publish still wakes the whole window. No per-window redraw.
 
 ### SDK and developer experience
 

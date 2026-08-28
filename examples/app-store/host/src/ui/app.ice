@@ -16,17 +16,29 @@ extern crate::store
   StoreError(message:str)
   pure scan_catalog() -> [CatalogEntry]
   install_app(entry:CatalogEntry) -> InstalledApp ! StoreError
+  restore_installed(catalog:[CatalogEntry]) -> [InstalledApp] ! StoreError
   pure add_installed(apps:[InstalledApp], app:InstalledApp) -> [InstalledApp]
   pure remove_installed(apps:[InstalledApp], id:str) -> [InstalledApp]
   pure is_installed(apps:[InstalledApp], id:str) -> bool
   pure none_installed(apps:[InstalledApp]) -> bool
   pure installing_label(entry:CatalogEntry) -> str
   pure live_label(apps:[InstalledApp]) -> str
+  pure restoring_label(catalog:[CatalogEntry]) -> str
   component wasm_view(surface:&Surface) -> unit
 
 state
   catalog:[CatalogEntry] = scan_catalog()
   installed:[InstalledApp] = []
+  status = ""
+
+// What was installed when the host last exited comes back, one compile at a
+// time; nothing else is remembered across a restart.
+on mount
+  status = restoring_label(catalog)
+  run every restore_installed(catalog) -> restored _ | install_failed _
+
+on restored(apps)
+  installed = apps
   status = ""
 
 on install(entry)
