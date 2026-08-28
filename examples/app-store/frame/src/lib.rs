@@ -220,7 +220,26 @@ const MAX_BLUR: f32 = 64.0;
 /// glyph cache; zero is an assertion inside cosmic-text.
 const MAX_TEXT: f32 = 128.0;
 
-/// Pulls every number in a frame into the range the host's renderer survives.
+/// What one frame may cost the host to *draw*, which the byte cap does not
+/// bound: 8 MiB holds about 90 000 quads, and filling that many window-sized
+/// ones is minutes of pixel writes per redraw.
+const MAX_QUADS: usize = 16_384;
+
+/// Every line is shaped by cosmic-text on the host's own thread.
+const MAX_TEXTS: usize = 4_096;
+
+/// One 8 MB line is 8 M glyphs to shape; a window holds a few thousand
+/// characters. Counted over the frame, so neither one long line nor many
+/// medium ones gets through.
+const MAX_TEXT_BYTES: usize = 64 << 10;
+
+/// A shadow is an SDF buffer the size of the quad plus its blur on every
+/// side, built in full before anything is clipped. Spent over the frame: a
+/// quad past the budget still draws, without its shadow.
+const MAX_SHADOW_PIXELS: f32 = 4.0 * 1024.0 * 1024.0;
+
+/// Pulls every number in a frame into the range the host's renderer survives,
+/// and every count into what it can afford to draw.
 ///
 /// The host draws values the guest chose: tiny-skia `expect`s colours in
 /// `0..=1` and finite rectangles, panics on a zero-sized pixmap, cosmic-text
@@ -233,8 +252,23 @@ pub fn sanitize(frame: &mut Frame, window: [f32; 2]) {
     // plain floats: clamp it too rather than trust it.
     let side = bounded(window[0], f32::MAX).max(bounded(window[1], f32::MAX));
     let reach = side.clamp(1.0, 8192.0) * REACH;
+    let mut quads_left = MAX_QUADS;
+    let mut texts_left = MAX_TEXTS;
+    let mut text_bytes_left = MAX_TEXT_BYTES;
+    let mut shadow_left = MAX_SHADOW_PIXELS;
     for layer in &mut frame.layers {
         clamp_rect(&mut layer.bounds, reach);
+        layer.quads.truncate(quads_left);
+        quads_left -= layer.quads.len();
+        layer.texts.truncate(texts_left);
+        texts_left -= layer.texts.len();
+        layer.texts.retain(|text| {
+            let fits = text.content.len() <= text_bytes_left;
+            if fits {
+                text_bytes_left -= text.content.len();
+            }
+            fits
+        });
         for quad in &mut layer.quads {
             clamp_rect(&mut quad.bounds, reach);
             clamp_rgba(&mut quad.background);
@@ -254,6 +288,16 @@ pub fn sanitize(frame: &mut Frame, window: [f32; 2]) {
                 *offset = bounded(*offset, reach);
             }
             quad.shadow_blur = bounded(quad.shadow_blur, MAX_BLUR).max(0.0);
+            // What the shadow pass would allocate for this one quad.
+            let pixels = (quad.bounds[2] + 2.0 * quad.shadow_blur)
+                * (quad.bounds[3] + 2.0 * quad.shadow_blur);
+            if quad.shadow_color[3] > 0.0 {
+                match pixels <= shadow_left {
+                    true => shadow_left -= pixels,
+                    // Transparent is how the renderer skips the pass.
+                    false => quad.shadow_color = [0.0; 4],
+                }
+            }
         }
         for text in &mut layer.texts {
             text.x = bounded(text.x, reach);
@@ -403,6 +447,69 @@ mod tests {
         assert_eq!(text.size, 1.0);
         assert_eq!(text.line_height, MAX_TEXT);
         assert!(text.color.iter().all(|c| (0.0..=1.0).contains(c)));
+    }
+
+    /// The byte cap bounds what the host copies, not what drawing it costs:
+    /// quads and lines are counted, long lines are dropped, and the shadow
+    /// budget is spent in order — the first quads keep their shadow, the rest
+    /// keep only their shape.
+    #[test]
+    fn a_frame_past_what_the_host_can_draw_is_cut_down() {
+        let shadowed = Quad {
+            bounds: [0.0, 0.0, 1000.0, 1000.0],
+            shadow_color: [0.0, 0.0, 0.0, 1.0],
+            shadow_blur: 0.0,
+            ..ordinary_frame().layers[0].quads[0].clone()
+        };
+        let line = |content: &str| Text {
+            content: content.to_string(),
+            ..ordinary_frame().layers[0].texts[0].clone()
+        };
+        let mut frame = Frame {
+            layers: vec![
+                Layer {
+                    bounds: [0.0, 0.0, 500.0, 380.0],
+                    quads: vec![shadowed.clone(); MAX_QUADS],
+                    texts: vec![line("hi"); MAX_TEXTS],
+                },
+                Layer {
+                    bounds: [0.0, 0.0, 500.0, 380.0],
+                    quads: vec![shadowed.clone()],
+                    texts: vec![line("still here")],
+                },
+            ],
+            ..Frame::default()
+        };
+        sanitize(&mut frame, [500.0, 380.0]);
+        // The second layer is past both counts, so nothing of it is left.
+        assert_eq!(frame.layers[1].quads.len(), 0);
+        assert_eq!(frame.layers[1].texts.len(), 0);
+        // Four million pixels buys four one-megapixel shadows.
+        let with_shadow = frame.layers[0]
+            .quads
+            .iter()
+            .filter(|quad| quad.shadow_color[3] > 0.0)
+            .count();
+        assert_eq!(with_shadow, 4);
+        assert_eq!(frame.layers[0].quads.len(), MAX_QUADS, "the quads remain");
+
+        // One line longer than the whole frame's budget is dropped, and the
+        // lines before it are not.
+        let mut frame = Frame {
+            layers: vec![Layer {
+                bounds: [0.0, 0.0, 500.0, 380.0],
+                quads: Vec::new(),
+                texts: vec![line("hi"), line(&"a".repeat(MAX_TEXT_BYTES + 1)), line("!")],
+            }],
+            ..Frame::default()
+        };
+        sanitize(&mut frame, [500.0, 380.0]);
+        let kept: Vec<&str> = frame.layers[0]
+            .texts
+            .iter()
+            .map(|text| text.content.as_str())
+            .collect();
+        assert_eq!(kept, ["hi", "!"]);
     }
 
     /// A frame an ordinary app draws inside its window is not touched — the

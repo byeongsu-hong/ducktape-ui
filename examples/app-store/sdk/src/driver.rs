@@ -38,6 +38,10 @@ pub struct Driver<A: WasmApp> {
     size: Size,
     cursor: mouse::Cursor,
     tasks: Tasks<A::Message>,
+    /// The cursor shape the last laid-out tree asked for. Remembered rather
+    /// than recomputed: iced hands it back from `update`, and a tick that
+    /// produced a message rebuilds the tree without one.
+    interaction: u8,
 }
 
 impl<A: WasmApp> Default for Driver<A> {
@@ -58,6 +62,7 @@ impl<A: WasmApp> Driver<A> {
             size: Size::new(640.0, 480.0),
             cursor: mouse::Cursor::Unavailable,
             tasks,
+            interaction: 0,
         }
     }
 
@@ -71,19 +76,26 @@ impl<A: WasmApp> Driver<A> {
             size,
             cursor,
             tasks,
+            interaction,
         } = self;
         // Answers that arrived with this batch may have completed a task.
         run_tasks(app, tasks);
         let mut ui = UserInterface::build(app.view(), *size, std::mem::take(cache), renderer);
         let mut messages = Vec::new();
         if !events.is_empty() {
-            let _ = ui.update(
+            let (state, _) = ui.update(
                 &events,
                 *cursor,
                 renderer,
                 &mut iced::advanced::clipboard::Null,
                 &mut messages,
             );
+            if let user_interface::State::Updated {
+                mouse_interaction, ..
+            } = state
+            {
+                *interaction = wire_interaction(mouse_interaction);
+            }
         }
         // A message rewrites state the tree was built from: drop the tree,
         // apply, run whatever the handlers started, rebuild.
@@ -106,6 +118,7 @@ impl<A: WasmApp> Driver<A> {
         );
         let mut frame = flatten(renderer);
         *cache = ui.into_cache();
+        frame.interaction = *interaction;
         frame.requests = crate::host::drain_outbox();
         frame.cancels = crate::host::drain_cancels();
         frame
@@ -258,6 +271,17 @@ fn poll_tasks<M>(tasks: &mut Tasks<M>) -> Vec<M> {
         true
     });
     messages
+}
+
+/// The shapes the host can set. Everything else is the host's own idle
+/// cursor: a guest names a cursor, it does not get to install one.
+fn wire_interaction(interaction: mouse::Interaction) -> u8 {
+    match interaction {
+        mouse::Interaction::Pointer => 1,
+        mouse::Interaction::Text => 2,
+        mouse::Interaction::Grab | mouse::Interaction::Grabbing => 3,
+        _ => 0,
+    }
 }
 
 fn mouse_button(button: wire::Button) -> mouse::Button {

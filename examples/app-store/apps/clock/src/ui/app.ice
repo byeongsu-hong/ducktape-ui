@@ -23,7 +23,8 @@ state
   status = "Subscribed to the host's clock."
 
 // The module has no clock: every second here is one item of a host stream,
-// and the wall clock is one request plus the uptime since it was answered.
+// and the wall clock is one request — answered with the uptime it was read
+// at, so the app can anchor it — plus the uptime since.
 on mount
   parallel
     stream every ticks(1000) -> ticked _ | clock_failed _
@@ -34,7 +35,7 @@ on ticked(ms)
   ticks = ticks + 1
 
 on timed(ms)
-  now_at_boot_ms = ms - uptime_ms
+  now_at_boot_ms = ms
 
 on clock_failed(error)
   status = error.message

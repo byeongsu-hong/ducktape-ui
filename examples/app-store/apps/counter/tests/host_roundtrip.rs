@@ -3,7 +3,7 @@
 
 use app_store_counter::{boot_native, tick_native};
 use app_store_sdk::frame::{Event, Request};
-use app_store_sdk::testing::{answer, click, has_text, redraw, texts};
+use app_store_sdk::testing::{answer, click, find, has_text, redraw, texts};
 
 fn boot() -> app_store_sdk::frame::Frame {
     boot_native();
@@ -109,4 +109,19 @@ fn auto_mode_is_a_chain_of_timer_requests_that_stops_when_switched_off() {
         "chain ended: {:?}",
         frame.requests
     );
+}
+
+/// The cursor shape belongs to the guest's widgets, and the host can only set
+/// it if the frame carries it.
+#[test]
+fn a_hovered_button_asks_the_host_for_the_pointer_cursor() {
+    let frame = boot();
+    assert_eq!(frame.interaction, 0, "nothing is hovered at boot");
+
+    let (x, y) = find(&frame, "+");
+    let frame = tick_native(vec![Event::CursorMoved { x, y }, redraw()]);
+    assert_eq!(frame.interaction, 1, "a button asks for the pointer");
+
+    let frame = tick_native(vec![Event::CursorMoved { x: 0.0, y: 0.0 }, redraw()]);
+    assert_eq!(frame.interaction, 0, "the background asks for nothing");
 }

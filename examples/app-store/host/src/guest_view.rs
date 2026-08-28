@@ -18,7 +18,11 @@ use iced::{
 
 use crate::store::{Guest, Surface};
 
-pub fn wasm_view(surface: &Surface) -> Element<'_, ()> {
+/// The guest's window. It emits `true` when the user asks for a restart and
+/// `false` when the instance ended on its own — both are the store's business
+/// and neither can be done here: reloading the module is a cranelift run, and
+/// the sidebar's counts are only recomputed when the app has a message.
+pub fn wasm_view(surface: &Surface) -> Element<'_, bool> {
     Element::new(WasmView {
         guest: surface.0.clone(),
     })
@@ -28,7 +32,7 @@ struct WasmView {
     guest: Arc<Mutex<Guest>>,
 }
 
-impl<Theme, Renderer> Widget<(), Theme, Renderer> for WasmView
+impl<Theme, Renderer> Widget<bool, Theme, Renderer> for WasmView
 where
     Renderer: core_text::Renderer<Font = iced::Font>,
 {
@@ -53,20 +57,20 @@ where
         cursor: mouse::Cursor,
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, ()>,
+        shell: &mut Shell<'_, bool>,
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
         let mut guest = self.guest.lock().expect("guest lock");
         if guest.fault.is_some() {
             // An app the host ended receives nothing more; the only live
-            // thing left in its window is Restart.
+            // thing left in its window is Restart, and the store is the one
+            // that can run it off this thread.
             if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) {
-                focus(&self.guest, cursor.is_over(bounds));
+                focus(guest.serial, cursor.is_over(bounds));
                 if cursor.is_over(restart_button(bounds)) {
-                    guest.restart();
+                    shell.publish(true);
                     shell.capture_event();
-                    shell.request_redraw();
                 }
             }
             return;
@@ -112,7 +116,7 @@ where
                 // the keyboard with it.
                 if matches!(event, mouse::Event::ButtonPressed(_)) {
                     let over = cursor.is_over(bounds);
-                    focus(&self.guest, over);
+                    focus(guest.serial, over);
                     if over {
                         shell.capture_event();
                     }
@@ -123,12 +127,17 @@ where
                 }
             }
             Event::Keyboard(event) => {
-                // One focused guest per host. Without this every app with an
-                // input receives the same typing.
-                if !focused(&self.guest) {
-                    return;
-                }
                 let translated = match event {
+                    // State, not input: a guest that loses focus while Shift
+                    // is down would never hear it come up, and iced's
+                    // text_input reads its own modifier state — so every
+                    // later click inside it would select instead of place.
+                    keyboard::Event::ModifiersChanged(modifiers) => {
+                        wire::Event::ModifiersChanged(modifiers.bits())
+                    }
+                    // One focused guest per host. Without this every app with
+                    // an input receives the same typing.
+                    _ if !focused(guest.serial) => return,
                     keyboard::Event::KeyPressed {
                         key,
                         modifiers,
@@ -145,9 +154,6 @@ where
                             modifiers: modifiers.bits(),
                         }
                     }
-                    keyboard::Event::ModifiersChanged(modifiers) => {
-                        wire::Event::ModifiersChanged(modifiers.bits())
-                    }
                 };
                 guest.pending.push(translated);
                 shell.request_redraw();
@@ -157,6 +163,12 @@ where
                 // do skips the tick, one with work to do does not.
                 if let Some(at) = guest.redraw(*now, viewport.intersects(&bounds)) {
                     shell.request_redraw_at(at);
+                }
+                // A trap in that tick changed what the sidebar counts, and a
+                // trap publishes nothing by itself.
+                if guest.fault.is_some() && !guest.announced_fault {
+                    guest.announced_fault = true;
+                    shell.publish(false);
                 }
             }
             _ => {}
@@ -301,25 +313,31 @@ fn restart_button(bounds: Rectangle) -> Rectangle {
     }
 }
 
-/// The one guest the keyboard goes to, by the address of its `Arc` — the same
-/// identity a `Surface` compares by.
-static FOCUS: Mutex<Option<usize>> = Mutex::new(None);
+/// The one guest the keyboard goes to, by its serial — an instance's identity
+/// for as long as the host runs, unlike an address, which the allocator hands
+/// to the next guest as soon as this one is dropped.
+static FOCUS: Mutex<Option<u64>> = Mutex::new(None);
 
 /// A press inside a guest focuses it; a press anywhere else clears the focus
 /// it held. Every widget sees every press, but each touches only its own key,
 /// so the order they run in does not matter.
-fn focus(guest: &Arc<Mutex<Guest>>, over: bool) {
-    let key = Arc::as_ptr(guest) as usize;
+fn focus(serial: u64, over: bool) {
     let mut focus = FOCUS.lock().expect("focus");
     match over {
-        true => *focus = Some(key),
-        false if *focus == Some(key) => *focus = None,
+        true => *focus = Some(serial),
+        false if *focus == Some(serial) => *focus = None,
         false => {}
     }
 }
 
-fn focused(guest: &Arc<Mutex<Guest>>) -> bool {
-    *FOCUS.lock().expect("focus") == Some(Arc::as_ptr(guest) as usize)
+fn focused(serial: u64) -> bool {
+    *FOCUS.lock().expect("focus") == Some(serial)
+}
+
+/// An uninstalled or restarted instance takes its focus with it, so no later
+/// guest inherits a keyboard nobody gave it.
+pub(crate) fn release_focus(serial: u64) {
+    focus(serial, false);
 }
 
 fn small_text<Renderer>(

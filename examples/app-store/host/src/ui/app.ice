@@ -14,32 +14,48 @@ extern crate::store
   Surface()
   InstalledApp(id:str, name:str, surface:Surface)
   StoreError(message:str)
+  Restored(apps:[InstalledApp], failed:str)
   pure scan_catalog() -> [CatalogEntry]
   install_app(entry:CatalogEntry) -> InstalledApp ! StoreError
-  restore_installed(catalog:[CatalogEntry]) -> [InstalledApp] ! StoreError
+  restore_installed(catalog:[CatalogEntry]) -> Restored
+  restart_guest(surface:Surface) -> Surface ! StoreError
   pure add_installed(apps:[InstalledApp], app:InstalledApp) -> [InstalledApp]
+  pure merge_installed(restored:[InstalledApp], current:[InstalledApp]) -> [InstalledApp]
   pure remove_installed(apps:[InstalledApp], id:str) -> [InstalledApp]
   pure is_installed(apps:[InstalledApp], id:str) -> bool
   pure none_installed(apps:[InstalledApp]) -> bool
   pure installing_label(entry:CatalogEntry) -> str
-  pure live_label(apps:[InstalledApp]) -> str
+  pure live_label(apps:[InstalledApp], generation:i64) -> str
   pure restoring_label(catalog:[CatalogEntry]) -> str
-  component wasm_view(surface:&Surface) -> unit
+  component wasm_view(surface:&Surface) -> bool
 
 state
   catalog:[CatalogEntry] = scan_catalog()
   installed:[InstalledApp] = []
   status = ""
+  // Bumped whenever a guest ends or comes back, which changes the live count
+  // without changing the installed list.
+  generation = 0
 
 // What was installed when the host last exited comes back, one compile at a
 // time; nothing else is remembered across a restart.
 on mount
   status = restoring_label(catalog)
-  run every restore_installed(catalog) -> restored _ | install_failed _
+  run every restore_installed(catalog) -> restored _
 
-on restored(apps)
-  installed = apps
-  status = ""
+// Merged, not assigned: the Install buttons stay live through the seconds the
+// restore takes, and an app installed meanwhile is the newer one.
+on restored(result)
+  installed = merge_installed(result.apps, installed)
+  status = result.failed
+
+// A window said something about its guest: it ended, or the user pressed its
+// Restart. Reloading the module is a compile, so it goes on the executor like
+// an install and comes back through here.
+on guest_changed(surface, restart)
+  generation = generation + 1
+  return if !restart
+  run every restart_guest(surface) -> guest_changed _ false | install_failed _
 
 on install(entry)
   status = installing_label(entry)
@@ -98,7 +114,7 @@ view
                   button "Install" -> install entry
                     active bg=primary text=primary_fg r=6.0
           text status #status size=12.0 @text-muted
-          text live_label(installed) #live size=12.0 @text-muted
+          text live_label(installed, generation) #live size=12.0 @text-muted
       col #desk
         with
           w=fill
@@ -142,4 +158,4 @@ view
                           @text-fg
                       button "×" -> uninstall app.id
                         active bg=surface text=muted r=6.0
-                  extern wasm_view(app.surface)
+                  extern wasm_view(app.surface) -> guest_changed app.surface _

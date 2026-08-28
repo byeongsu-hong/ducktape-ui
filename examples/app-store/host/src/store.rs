@@ -3,7 +3,7 @@
 //! guest's side of every request an app makes.
 
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -81,6 +81,16 @@ const MAX_DUE: usize = 1024;
 
 /// Bus subscriptions per guest: every publish by anyone walks all of them.
 const MAX_SUBSCRIPTIONS: usize = 64;
+
+/// A cancel is cheap to send and not cheap to serve — each one walks the due
+/// list, the tickers and the process-wide subscriber list. There is nothing
+/// left to cancel past everything the host holds for one guest.
+const MAX_CANCELS: usize = MAX_DUE + MAX_TICKERS + MAX_SUBSCRIPTIONS;
+
+/// What one tick's answers may carry back. [`MAX_DUE`] counts answers, not
+/// their size: 256 one-megabyte `storage.get`s in a tick is a quarter
+/// gigabyte the host holds and then encodes into the guest's input buffer.
+const MAX_REPLY_BYTES_PER_TICK: usize = 4 << 20;
 
 /// One `host.log` line, on the store's own stderr.
 pub(crate) const MAX_LOG_BYTES: usize = 1024;
@@ -207,6 +217,36 @@ pub struct InstalledApp {
     pub surface: Surface,
 }
 
+/// Reloads a faulted guest's module and swaps the fresh instance into the
+/// handle the view already holds: the window, the widget and everything the
+/// app wrote to storage stay, the instance and its bus subscriptions do not.
+///
+/// Async for the same reason [`install_app`] is — the compile is a cranelift
+/// run, and the widget's `update` runs on the window thread, where a second
+/// of it freezes every other guest as well.
+pub async fn restart_guest(surface: Surface) -> Result<Surface, StoreError> {
+    let entry = surface.0.lock().expect("guest lock").entry.clone();
+    let fresh = Guest::load(&entry);
+    let mut guest = surface.0.lock().expect("guest lock");
+    match fresh {
+        Ok(mut fresh) => {
+            fresh.size = guest.size;
+            fresh.pending.push(wire::Event::Resized {
+                width: guest.size.width,
+                height: guest.size.height,
+            });
+            *guest = fresh;
+            drop(guest);
+            Ok(surface)
+        }
+        // Still faulted, with the reason it could not come back.
+        Err(message) => {
+            guest.fault = Some(message.clone());
+            Err(StoreError { message })
+        }
+    }
+}
+
 /// Compiles and instantiates the module. Runs on iced's executor, so the
 /// second or so cranelift takes never stalls the window.
 pub async fn install_app(entry: CatalogEntry) -> Result<InstalledApp, StoreError> {
@@ -218,19 +258,48 @@ pub async fn install_app(entry: CatalogEntry) -> Result<InstalledApp, StoreError
     })
 }
 
+/// What one restore brought back, and what it could not: a module that no
+/// longer loads must not take the apps beside it down with it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Restored {
+    pub apps: Vec<InstalledApp>,
+    /// Empty when everything came back — the status line's "nothing to say".
+    pub failed: String,
+}
+
 /// Reinstalls whatever was installed when the host last exited, in the order
 /// the file lists. Sequential on purpose: every install is a cranelift run,
 /// and three at once would stall the first window for as long as the slowest.
 /// An id the catalog no longer has is skipped — the module was deleted, which
-/// is not an error the user can do anything about.
-pub async fn restore_installed(
-    catalog: Vec<CatalogEntry>,
-) -> Result<Vec<InstalledApp>, StoreError> {
+/// is not an error the user can do anything about — and one that fails to
+/// load is reported without stopping the rest.
+pub async fn restore_installed(catalog: Vec<CatalogEntry>) -> Restored {
     let mut apps = Vec::new();
+    let mut failed = Vec::new();
     for entry in remembered(&catalog) {
-        apps.push(install_app(entry).await?);
+        match install_app(entry).await {
+            Ok(app) => apps.push(app),
+            Err(error) => failed.push(error.message),
+        }
     }
-    Ok(apps)
+    Restored {
+        apps,
+        failed: failed.join("; "),
+    }
+}
+
+/// The restore takes seconds and the Install buttons stay live through it, so
+/// what came back is merged into what the user has, never written over it.
+/// One id is one app: the instance the user just installed is the newer one.
+pub fn merge_installed(
+    restored: Vec<InstalledApp>,
+    current: Vec<InstalledApp>,
+) -> Vec<InstalledApp> {
+    let mut apps = restored;
+    apps.retain(|app| !current.iter().any(|installed| installed.id == app.id));
+    apps.extend(current);
+    remember(&apps);
+    apps
 }
 
 pub fn add_installed(mut apps: Vec<InstalledApp>, app: InstalledApp) -> Vec<InstalledApp> {
@@ -249,14 +318,16 @@ pub fn remove_installed(mut apps: Vec<InstalledApp>, id: String) -> Vec<Installe
 }
 
 /// The ids to bring back at boot, one per line. Rewritten from the whole list
-/// after every install and uninstall, so a crash loses at most the last change.
+/// after every install and uninstall — through a temp file and a rename, like
+/// every other write here, so a crash loses at most the last change and never
+/// the list.
 const INSTALLED_FILE: &str = "installed";
 
 fn remember(apps: &[InstalledApp]) {
     let dir = storage::data_dir();
     let ids: Vec<&str> = apps.iter().map(|app| app.id.as_str()).collect();
     let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(dir.join(INSTALLED_FILE), ids.join("\n"));
+    let _ = storage::write_atomic(&dir.join(INSTALLED_FILE), ids.join("\n").as_bytes());
 }
 
 fn remembered(catalog: &[CatalogEntry]) -> Vec<CatalogEntry> {
@@ -295,9 +366,10 @@ static LIVE_INSTANCES: AtomicUsize = AtomicUsize::new(0);
 /// Restart button) but no longer run, so they are not live.
 static FAULTED: AtomicUsize = AtomicUsize::new(0);
 
-/// Takes the installed list so it is recomputed exactly when that list
-/// changes; the count itself is the number of `Guest`s alive.
-pub fn live_label(_apps: Vec<InstalledApp>) -> String {
+/// Takes the installed list and the lifecycle generation so it is recomputed
+/// exactly when either changes — a trap or a restart moves the counts without
+/// installing anything; the count itself is the number of `Guest`s alive.
+pub fn live_label(_apps: Vec<InstalledApp>, _generation: i64) -> String {
     let ended = FAULTED.load(Ordering::Relaxed);
     let live = LIVE_INSTANCES.load(Ordering::Relaxed).saturating_sub(ended);
     match ended {
@@ -307,6 +379,10 @@ pub fn live_label(_apps: Vec<InstalledApp>) -> String {
 }
 
 // ---------- the guest ----------
+
+/// Where the sdk's panic hook left its message, and how long it is. `None`
+/// for a module built without the hook.
+type PanicText = Option<(TypedFunc<(), u32>, TypedFunc<(), u32>)>;
 
 /// A clock subscription: one answer per period, forever.
 struct Ticker {
@@ -318,13 +394,18 @@ struct Ticker {
 pub struct Guest {
     /// Kept whole so a faulted instance can be reloaded in place.
     entry: CatalogEntry,
+    /// Identity for anything the host remembers about one instance across
+    /// calls — the keyboard focus. Never the `Arc`'s address: that is reused
+    /// by the next allocation of the same size, which would hand a freshly
+    /// installed guest the keyboard nobody gave it.
+    pub(crate) serial: u64,
     store: Store<StoreLimits>,
     memory: wasmtime::Memory,
     input_ptr: TypedFunc<u32, u32>,
     tick: TypedFunc<u32, u32>,
     output_ptr: TypedFunc<(), u32>,
     /// The module's last panic message, if it was built with the sdk's hook.
-    panic_text: Option<(TypedFunc<(), u32>, TypedFunc<(), u32>)>,
+    panic_text: PanicText,
     /// Cleared when this instance faults or drops, which is what prunes its
     /// bus subscriptions without locking the guest from inside a publish.
     alive: Arc<AtomicBool>,
@@ -341,6 +422,13 @@ pub struct Guest {
     published: bool,
     /// The trap that ended the app, if one did. A faulted guest never ticks again.
     pub(crate) fault: Option<String>,
+    /// Whether the widget has told the store about that fault. Nothing else
+    /// publishes a message when a guest ends, so the sidebar's counts would
+    /// stay at what the last install left them.
+    pub(crate) announced_fault: bool,
+    /// What this tick's answers already carry, against
+    /// [`MAX_REPLY_BYTES_PER_TICK`].
+    reply_bytes: usize,
     /// What the last tick cost, for the status line.
     pub(crate) fuel_used: u64,
     pub(crate) tick_time: Duration,
@@ -363,6 +451,7 @@ impl Drop for Guest {
             FAULTED.fetch_sub(1, Ordering::Relaxed);
         }
         self.alive.store(false, Ordering::Relaxed);
+        crate::guest_view::release_focus(self.serial);
     }
 }
 
@@ -381,8 +470,15 @@ impl Guest {
         let path = &entry.path;
         let engine = engine();
         let module = Module::from_file(engine, path).map_err(|error| format!("{path}: {error}"))?;
+        // Tables are allocated eagerly at their declared minimum, before any
+        // fuel or memory limit is consulted, so a module declaring a hundred
+        // ten-million-element tables would be gigabytes at Install.
         let limits = StoreLimitsBuilder::new()
             .memory_size(MEMORY_LIMIT)
+            .memories(1)
+            .instances(1)
+            .tables(4)
+            .table_elements(1 << 20)
             .trap_on_grow_failure(true)
             .build();
         let mut store = Store::new(engine, limits);
@@ -425,11 +521,17 @@ impl Guest {
                     .get_typed_func::<(), u32>(&mut store, "panic_len")
                     .ok(),
             );
-        init.call(&mut store, ())
-            .map_err(|error| format!("{path}: init trapped: {}", first_line(&error)))?;
+        // `on mount` runs in here, so a panic in the app's boot has the same
+        // message parked as a panic in any later tick.
+        if let Err(error) = init.call(&mut store, ()) {
+            let trap = format!("{path}: init trapped: {}", first_line(&error));
+            return Err(panic_message(&mut store, &memory, &panic_text).unwrap_or(trap));
+        }
         LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
+        static SERIAL: AtomicU64 = AtomicU64::new(0);
         Ok(Self {
             entry: entry.clone(),
+            serial: SERIAL.fetch_add(1, Ordering::Relaxed),
             store,
             memory,
             input_ptr,
@@ -446,6 +548,8 @@ impl Guest {
             subscriptions: 0,
             published: false,
             fault: None,
+            announced_fault: false,
+            reply_bytes: 0,
             fuel_used: 0,
             tick_time: Duration::ZERO,
         })
@@ -467,9 +571,7 @@ impl Guest {
             elapsed_ms: clock::uptime_ms(now),
         });
         self.tick();
-        for id in std::mem::take(&mut self.frame.cancels) {
-            self.cancel(id);
-        }
+        self.reply_bytes = 0;
         for (nth, request) in std::mem::take(&mut self.frame.requests)
             .into_iter()
             .enumerate()
@@ -478,6 +580,15 @@ impl Guest {
                 true => self.answer(now, request),
                 false => self.reply(now, request.id, Err("too many requests this tick".into())),
             }
+        }
+        // After the requests, never before: the sdk puts a request made and
+        // dropped inside one tick into both lists of the same frame, and a
+        // cancel that runs first finds nothing to cancel — leaving a ticker or
+        // a subscription the guest can no longer name.
+        let mut cancels = std::mem::take(&mut self.frame.cancels);
+        cancels.truncate(MAX_CANCELS);
+        for id in cancels {
+            self.cancel(id);
         }
         if std::mem::take(&mut self.published) {
             // Wake the whole window now, so the subscribers tick too.
@@ -513,24 +624,6 @@ impl Guest {
         // address, which a dropped instance can leave behind for the next one.
         if bus::cancel(id, &self.inbox) {
             self.subscriptions = self.subscriptions.saturating_sub(1);
-        }
-    }
-
-    /// Reloads the module in place: the window, the handle the view holds and
-    /// the storage all stay, the instance and everything in it do not — the
-    /// dead instance's bus subscriptions go with its alive flag.
-    pub(crate) fn restart(&mut self) {
-        match Self::load(&self.entry) {
-            Ok(mut fresh) => {
-                fresh.size = self.size;
-                fresh.pending.push(wire::Event::Resized {
-                    width: self.size.width,
-                    height: self.size.height,
-                });
-                *self = fresh;
-            }
-            // Still faulted, with the reason it could not come back.
-            Err(message) => self.fault = Some(message),
         }
     }
 
@@ -599,8 +692,13 @@ impl Guest {
                 let result = host::random(&payload);
                 self.reply(now, id, result);
             }
+            // Both halves in one answer: an app installed while the store has
+            // been up for an hour cannot know that, and the uptime its ticks
+            // carry is measured from the store's start, not from its own.
             ("clock", "now") => {
-                self.reply(now, id, Ok(clock::unix_ms().to_le_bytes().to_vec()));
+                let mut answer = clock::unix_ms().to_le_bytes().to_vec();
+                answer.extend_from_slice(&clock::uptime_ms(now).to_le_bytes());
+                self.reply(now, id, Ok(answer));
             }
             ("clock", "sleep") if self.due.len() >= MAX_DUE => {
                 let message = format!("more than {MAX_DUE} answers the host is still holding");
@@ -660,7 +758,20 @@ impl Guest {
     }
 
     /// Answers on the next redraw, which `redraw` schedules for right now.
+    /// Once this tick's answers have carried [`MAX_REPLY_BYTES_PER_TICK`],
+    /// the rest of them say so instead: the bytes are the host's to hold and
+    /// then to encode, and a count of answers does not bound them.
     fn reply(&mut self, now: Instant, id: u64, result: Result<Vec<u8>, String>) {
+        self.reply_bytes += match &result {
+            Ok(bytes) => bytes.len(),
+            Err(message) => message.len(),
+        };
+        let result = match self.reply_bytes > MAX_REPLY_BYTES_PER_TICK {
+            true => Err(format!(
+                "more than {MAX_REPLY_BYTES_PER_TICK} bytes of answers this tick"
+            )),
+            false => result,
+        };
         self.due.push((now, one_shot(id, result)));
     }
 
@@ -680,7 +791,8 @@ impl Guest {
                 // With `panic = "abort"` a panic is a bare `unreachable`, so
                 // the reason is in the module's buffer or nowhere.
                 let trap = first_line(&error);
-                let reason = self.panic_message().unwrap_or(trap);
+                let reason =
+                    panic_message(&mut self.store, &self.memory, &self.panic_text).unwrap_or(trap);
                 self.fault = Some(reason);
                 self.alive.store(false, Ordering::Relaxed);
                 FAULTED.fetch_add(1, Ordering::Relaxed);
@@ -706,20 +818,26 @@ impl Guest {
         wire::sanitize(&mut frame, [self.size.width, self.size.height]);
         Ok(frame)
     }
+}
 
-    /// The message the sdk's panic hook parked, if the module has the exports
-    /// and something to say. Runs after a trap, so it buys its own fuel.
-    fn panic_message(&mut self) -> Option<String> {
-        let (ptr, len) = self.panic_text.clone()?;
-        let _ = self.store.set_fuel(FUEL_PER_TICK);
-        let ptr = ptr.call(&mut self.store, ()).ok()? as usize;
-        let len = (len.call(&mut self.store, ()).ok()? as usize).min(MAX_FAULT_BYTES);
-        let text = window(self.memory.data(&self.store), ptr, len).ok()?;
-        let text = String::from_utf8_lossy(text);
-        // One line, like a trap's: the window shows it on every frame.
-        let text = text.lines().next().unwrap_or_default().to_string();
-        (!text.is_empty()).then_some(text)
-    }
+/// The message the sdk's panic hook parked, if the module has the exports and
+/// something to say. Runs after a trap, so it buys its own fuel. A free
+/// function because `load` needs it before there is a `Guest`: a panic in the
+/// app's boot is a trap out of `init`.
+fn panic_message(
+    store: &mut Store<StoreLimits>,
+    memory: &wasmtime::Memory,
+    panic_text: &PanicText,
+) -> Option<String> {
+    let (ptr, len) = panic_text.clone()?;
+    let _ = store.set_fuel(FUEL_PER_TICK);
+    let ptr = ptr.call(&mut *store, ()).ok()? as usize;
+    let len = (len.call(&mut *store, ()).ok()? as usize).min(MAX_FAULT_BYTES);
+    let text = window(memory.data(&*store), ptr, len).ok()?;
+    let text = String::from_utf8_lossy(text);
+    // One line, like a trap's: the window shows it on every frame.
+    let text = text.lines().next().unwrap_or_default().to_string();
+    (!text.is_empty()).then_some(text)
 }
 
 fn window(memory: &[u8], ptr: usize, len: usize) -> wasmtime::Result<&[u8]> {

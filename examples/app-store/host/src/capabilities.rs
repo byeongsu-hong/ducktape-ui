@@ -91,9 +91,14 @@ pub mod host {
     }
 
     /// A `u32` count of bytes, little-endian; the only entropy in a module,
-    /// which cannot link `getrandom` without JS glue.
+    /// which cannot link `getrandom` without JS glue. A payload of any other
+    /// width is refused rather than read as zero: an app that sent a `u64`
+    /// would otherwise seed itself from an empty `Ok`.
     pub fn random(payload: &[u8]) -> Result<Vec<u8>, String> {
-        let count = payload.try_into().map(u32::from_le_bytes).unwrap_or(0) as usize;
+        let count = payload
+            .try_into()
+            .map(u32::from_le_bytes)
+            .map_err(|_| "a count that is not a `u32`".to_string())? as usize;
         if count > MAX_RANDOM_BYTES {
             return Err(format!("more than {MAX_RANDOM_BYTES} random bytes at once"));
         }
@@ -127,10 +132,29 @@ pub mod storage {
         PathBuf::from(std::env::var("APP_STORE_DATA").unwrap_or_else(|_| DEFAULT_DIR.to_string()))
     }
 
+    /// Names Windows resolves to a device in every directory, with or without
+    /// an extension and in any case. A key is a file name, so the host must
+    /// refuse them here rather than discover them on the one platform where
+    /// `storage.set "nul\n…"` writes to the null device.
+    const DEVICES: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+
     fn path(app: &str, key: &[u8]) -> Result<PathBuf, String> {
         let key = std::str::from_utf8(key).map_err(|_| "a key that is not UTF-8".to_string())?;
+        let stem = key
+            .split('.')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
         let plain = !key.is_empty()
             && !key.starts_with('.')
+            // Win32 strips a trailing dot or space, so `todo.` would land in
+            // `todo`; a space never passes the character set below anyway.
+            && !key.ends_with('.')
+            && !key.ends_with(' ')
+            && !DEVICES.contains(&stem.as_str())
             && key
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
@@ -138,6 +162,20 @@ pub mod storage {
             return Err(format!("`{key}` is not a storage key"));
         }
         Ok(data_dir().join(app).join(key))
+    }
+
+    /// A crash mid-write must leave a file holding either the old bytes or the
+    /// new ones, never half of each, so every write lands in a sibling temp
+    /// file and is renamed over its name. Not fsync'd: a power cut can still
+    /// lose the last write.
+    pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        let dir = path
+            .parent()
+            .ok_or(std::io::ErrorKind::InvalidInput)?
+            .to_path_buf();
+        let temp = dir.join(TEMP_NAME);
+        std::fs::write(&temp, bytes)?;
+        std::fs::rename(temp, path)
     }
 
     /// The value, or nothing if the key was never written.
@@ -171,11 +209,7 @@ pub mod storage {
         if used + (value.len() as u64).max(BLOCK_BYTES) > MAX_APP_STORAGE {
             return Err(format!("more than {MAX_APP_STORAGE} bytes of storage"));
         }
-        // Rename is the atomic write: a crash mid-`write` would otherwise
-        // leave the key holding neither the old value nor the new one.
-        let temp = dir.join(TEMP_NAME);
-        std::fs::write(&temp, value).map_err(|error| error.to_string())?;
-        std::fs::rename(&temp, &path).map_err(|error| error.to_string())?;
+        write_atomic(&path, value).map_err(|error| error.to_string())?;
         Ok(Vec::new())
     }
 

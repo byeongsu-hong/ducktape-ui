@@ -96,7 +96,7 @@ per-tick request cap).
 | capability | operations | answer |
 |---|---|---|
 | `host` (always) | `echo` · `log` · `random` (`u32` LE count) | the text back · nothing, the line goes to the store's stderr as `[<app>] …` · that many bytes |
-| `clock` | `sleep` (ms) · `ticks` (every ms, stream) · `now` | nothing at the deadline · host uptime per tick · unix milliseconds, `u64` LE |
+| `clock` | `sleep` (ms) · `ticks` (every ms, stream) · `now` | nothing at the deadline · host uptime per tick · the unix millisecond and the host uptime it was read at, two `u64` LE |
 | `storage` | `get` (key) · `set` (`key\nvalue`) · `delete` (key) · `list` | the value or empty · nothing · nothing · every key, newline-separated; one file per key per app |
 | `bus` | `publish` (`topic\ntext`) · `subscribe` (topic or `*`, stream) | how many heard it · every matching message, as `from\ntopic\ntext` |
 
@@ -119,7 +119,9 @@ through the same table and answer from its own subscriptions.
    it once per redraw with a fresh fuel budget, answers its requests, and
    replays the frame inside `with_layer` / `with_translation`. A press inside
    a guest's bounds focuses it and a press anywhere else clears that focus, so
-   only one guest at a time receives the keyboard. Answers are delivered as
+   only one guest at a time receives the keyboard — except the modifier state,
+   which is state rather than input and goes to every guest, so one that lost
+   focus with Shift down learns it came up. Answers are delivered as
    events: an echo on the next redraw, a timer at its deadline via
    `request_redraw_at`, a bus message when another guest publishes.
 
@@ -135,14 +137,18 @@ shows up as every button a few pixels wide of where the app put it.
 ## The sandbox
 
 Every tick runs with `FUEL_PER_TICK` (200M, roughly one per instruction)
-and a 64 MB memory limit. An app that spins burns its budget and traps; an
-app that allocates past the limit traps on the grow. A trap ends that
-instance — its window shows the reason (the module's own panic message when
-the sdk's hook left one) and a Restart button that reloads the module in
-place, keeping the window and everything the app wrote to storage — and
-nothing else notices: the other guests keep ticking, the store keeps
-answering. The status line in every window is what the last tick cost, plus
-the bus deliveries the guest was not there to take.
+and a 64 MB memory limit, in a store that allows one instance, one memory
+and four tables of at most a million elements — a table is allocated at its
+declared minimum when the module is instantiated, before any other limit is
+consulted. An app that spins burns its budget and traps; an app that
+allocates past the limit traps on the grow. A trap ends that instance — its
+window shows the reason (the module's own panic message when the sdk's hook
+left one) and a Restart button that asks the store to reload the module on
+its executor, where the compile does not stall the window, and swap it into
+the same handle, keeping the window and everything the app wrote to
+storage — and nothing else notices: the other guests keep ticking, the
+store keeps answering. The status line in every window is what the last
+tick cost, plus the bus deliveries the guest was not there to take.
 
 Fuel and memory bound what a module does to itself. What it can make the
 *host* do is bounded by the constants at the top of `store.rs`:
@@ -155,6 +161,8 @@ Fuel and memory bound what a module does to itself. What it can make the
 | `MAX_TICKERS` | 16 per guest | `Err` from `clock.ticks` |
 | `MAX_DUE` | 1024 answers the host still holds | `Err` from `clock.sleep` |
 | `MAX_SUBSCRIPTIONS` | 64 per guest | `Err` from `bus.subscribe` |
+| `MAX_CANCELS` | one tick's worth of everything the host holds | the rest of that frame's cancels ignored |
+| `MAX_REPLY_BYTES_PER_TICK` | 4 MiB | `Err` for every later answer that tick |
 | `MAX_BUS_BYTES` | 64 KiB per message | `Err` from `bus.publish` |
 | `MAX_INBOX` / `MAX_INBOX_BYTES` | 1024 events, 1 MiB | its oldest bus deliveries dropped, and counted in its status line |
 | `MAX_VALUE_BYTES` | 1 MiB | `Err` from `storage.set` |
@@ -172,7 +180,10 @@ allocates by others — a shadow is a buffer the size of the quad, so a
 in: positions and extents to twice the window in every direction, colours to
 `0..=1`, blur to 64 px, text size and line height to `1..=128` px. Clamped
 rather than refused, because "not finite" is not the same as "hostile" —
-every iced frame's base layer carries an infinite clip.
+every iced frame's base layer carries an infinite clip. The counts are the
+same boundary: a frame draws at most 16384 quads and 4096 lines carrying
+64 KiB of text between them, and spends a budget of four million shadow
+pixels in order — past it a quad keeps its shape and loses its shadow.
 
 ## What is not here yet
 
@@ -191,9 +202,12 @@ An honest inventory, grouped by where the work would land. Items marked
   laid out in the guest and shaped again on the host, per line.
 - Overlays (pick_list menus, tooltips, combo boxes) are clipped to the app's
   window; they cannot float over the desk.
-- The host sets the cursor from `Frame.interaction`, but the sdk's driver
-  never fills the field in: it is always 0, so the cursor still does not
-  change shape over a guest's text input or link. **bug**
+- A guest's quad shadow is drawn without the layer's clip mask (the shadow
+  pixmap goes to tiny-skia with `None`), so a shadow may paint outside the
+  guest's window — up to the two-window reach `sanitize` allows — over the
+  store column. Fixing it is a change in the vendored `iced_tiny_skia`, not
+  here: the mask the engine has is chosen from the quad's bounds, not the
+  shadow's. **bug**
 - No scale factor, theme (`ThemeChanged`) or locale reaches the guest; an
   app cannot follow the host's dark mode.
 
@@ -220,7 +234,9 @@ An honest inventory, grouped by where the work would land. Items marked
   Host streams (`clock.ticks`, `bus.subscribe`) are the only long-lived
   sources.
 - Task fairness is fixed: 8 rounds of messages per tick, 64 self-wakes per
-  stream. A task that produces more waits for the next tick.
+  stream. A task that produces more waits for the next tick — and nothing
+  schedules one for it: the frame cannot say it was cut short, so the rest
+  arrives whenever the next event, timer or foreign redraw ticks the guest.
 - No cooperative long computation: work heavier than one fuel budget
   cannot be spread over ticks except by chaining host sleeps. No
   preemption short of the trap that ends the app.
@@ -237,7 +253,10 @@ An honest inventory, grouped by where the work would land. Items marked
   `storage`. No signature or hash check on modules, no consent prompt at
   install, no per-operation prompt, no runtime revocation, no policy file.
 - Storage: a write is atomic (a sibling temp file, then a rename) but not
-  fsync'd, so a power cut can still lose the last one. Every `set` stats the
+  fsync'd, so a power cut can still lose the last one. Keys are compared
+  byte for byte, so on a case-insensitive filesystem (the default on macOS
+  and Windows) `Items` and `items` are one file that the quota and
+  `storage.list` count as two. Every `set` stats the
   whole app directory to check the quota, so `MAX_APP_KEYS` is what keeps
   that scan short — there is no counter the host maintains. No sharing
   between apps, no migration on app upgrade, and nothing outside the app can
@@ -246,7 +265,9 @@ An honest inventory, grouped by where the work would land. Items marked
   under its own name. No rate limit, no replay for late subscribers, no
   request/reply between apps, no wildcard beyond `*`.
 - Beyond the sandbox table: no cumulative CPU budget (an app may burn its
-  200M every frame), no wall-clock timeout, no table or instance limits.
+  200M every frame) and no wall-clock timeout. A request answered this tick
+  wakes the window at once, so an app that asks in a loop pins the whole
+  desk's redraw rate.
 - `define_unknown_imports_as_default_values` stubs every import a module
   declares; a module built against JS glue loads and misbehaves instead of
   failing at install.
@@ -261,8 +282,8 @@ An honest inventory, grouped by where the work would land. Items marked
   module.
 - The manifest has no icon, version, author or preferred size.
 - The catalog is one directory scanned once at boot: no rescan, no remote
-  catalog, no download, no upgrade path, no data migration. Each install
-  compiles from scratch (about 1.7 s) — no `Module::serialize` cache, no
+  catalog, no download, no upgrade path, no data migration. Each install —
+  and each Restart — compiles from scratch (about 1.7 s) — no `Module::serialize` cache, no
   sharing between installs of the same module. Scanning reads every module
   in full just for its manifest.
 - Uninstall keeps the app's storage — an app can delete its own keys, the
