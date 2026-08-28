@@ -43,6 +43,6 @@ pub fn origin_label(entry: Entry) -> String {
     format!("{} · {}", entry.from, entry.topic)
 }
 
-pub fn count_label(log: Vec<Entry>) -> String {
+pub fn count_label(log: &[Entry]) -> String {
     format!("{} events", log.len())
 }

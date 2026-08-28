@@ -39,6 +39,16 @@ pub fn question(count: i64) -> String {
     format!("The count is {count}. Still there?")
 }
 
+/// Whether the last count reached the bus — and so the Activity window, if
+/// its owner has it installed.
+pub fn shared_label(published: bool) -> String {
+    if published {
+        "Shared on the bus".into()
+    } else {
+        "Not shared yet".into()
+    }
+}
+
 pub fn auto_label(auto: bool) -> String {
     if auto {
         "Auto: on".into()

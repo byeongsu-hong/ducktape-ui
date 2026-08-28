@@ -54,7 +54,7 @@ pub fn item_mark(done: bool) -> String {
     if done { "✓".into() } else { "○".into() }
 }
 
-pub fn remaining(items: Vec<Item>) -> String {
+pub fn remaining(items: &[Item]) -> String {
     let left = items.iter().filter(|item| !item.done).count();
     format!("{left} left")
 }

@@ -22,10 +22,10 @@ extern crate::store
   pure add_installed(apps:[InstalledApp], app:InstalledApp) -> [InstalledApp]
   pure merge_installed(restored:[InstalledApp], current:[InstalledApp]) -> [InstalledApp]
   pure remove_installed(apps:[InstalledApp], id:str) -> [InstalledApp]
-  pure is_installed(apps:[InstalledApp], id:str) -> bool
-  pure none_installed(apps:[InstalledApp]) -> bool
+  pure is_installed(apps:&[InstalledApp], id:str) -> bool
+  pure none_installed(apps:&[InstalledApp]) -> bool
   pure installing_label(entry:CatalogEntry) -> str
-  pure live_label(apps:[InstalledApp], generation:i64) -> str
+  pure live_label(apps:&[InstalledApp], generation:i64) -> str
   pure restoring_label(catalog:[CatalogEntry]) -> str
   component wasm_view(surface:&Surface) -> bool
 
@@ -71,6 +71,12 @@ on install_failed(error)
 on uninstall(id)
   installed = remove_installed(installed, id)
 
+// A module dropped into the catalog directory while the store runs is only a
+// file read away, so the list is not fixed at start.
+on rescan
+  catalog = scan_catalog()
+  status = ""
+
 view
   box #app
     with
@@ -84,7 +90,18 @@ view
             w=fill
             p=16.0
             gap=12.0
-          text "App Store" size=22.0 @text-fg
+          row
+            with
+              w=fill
+              gap=8.0
+              align=center
+            text "App Store"
+              with
+                w=fill
+                size=22.0
+                @text-fg
+            button "Rescan" #rescan -> rescan
+              active bg=surface text=muted r=6.0
           text "Every entry is a wasm module found in the catalog directory, listed from its manifest. Install instantiates it inside a fuel and memory budget; uninstall drops the instance."
             with
               size=12.0

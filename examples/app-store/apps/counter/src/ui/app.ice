@@ -14,6 +14,7 @@ extern crate::host
   publish_count(count:i64) -> bool ! HostError
   pure question(count:i64) -> str
   pure auto_label(auto:bool) -> str
+  pure shared_label(published:bool) -> str
 
 state
   count = 0
@@ -39,7 +40,7 @@ on toggle_auto
   return if !auto
   run every wait(1000) -> elapsed _ | host_failed _
 
-on elapsed(done)
+on elapsed(_done)
   return if !auto
   count = count + 1
   parallel
@@ -84,3 +85,4 @@ view
         button "Ask host" #ask -> ask
           active bg=surface text=fg r=8.0
       text answer #answer size=12.0 @text-muted
+      text shared_label(published) #shared size=11.0 @text-muted

@@ -13,7 +13,7 @@ extern crate::host
   stream events(topic:str) -> Entry ! BusError
   pure push_entry(log:[Entry], entry:Entry) -> [Entry]
   pure origin_label(entry:Entry) -> str
-  pure count_label(log:[Entry]) -> str
+  pure count_label(log:&[Entry]) -> str
 
 state
   log:[Entry] = []

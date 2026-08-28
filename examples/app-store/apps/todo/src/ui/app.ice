@@ -14,7 +14,7 @@ extern crate::items
   pure toggle_item(items:[Item], id:i64) -> [Item]
   pure remove_item(items:[Item], id:i64) -> [Item]
   pure item_mark(done:bool) -> str
-  pure remaining(items:[Item]) -> str
+  pure remaining(items:&[Item]) -> str
   pure next_after(items:[Item]) -> i64
   load_items() -> [Item] ! StorageError
   save_items(items:[Item]) -> str ! StorageError

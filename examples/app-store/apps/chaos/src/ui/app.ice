@@ -37,7 +37,7 @@ on ask
 on flood
   run every flood() -> allowed _ | refused _
 
-on allowed(ok)
+on allowed(_ok)
   verdict = "the host let it through?!"
 
 on refused(error)
