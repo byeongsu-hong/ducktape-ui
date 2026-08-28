@@ -9,12 +9,13 @@ use iced::advanced::{
 };
 use iced::alignment;
 use iced::keyboard;
+use iced::time::Instant;
 use iced::widget::text_editor::{self, Binding, Content, Cursor, Edit, Position};
 use iced::{
     Element, Event, Font, Length, Padding, Pixels, Point, Rectangle, Size, Theme, Vector, window,
 };
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(test)]
 use iced::Color;
