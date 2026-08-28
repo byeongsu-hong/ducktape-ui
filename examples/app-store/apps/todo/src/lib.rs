@@ -1,5 +1,5 @@
-//! A todo list that runs inside wasm. `src/ui/app.ice` is an ordinary Ice
-//! app; `export_app!` gives it the store's ABI.
+//! A todo list that runs inside wasm and keeps its items in the host's
+//! storage, so they outlive the instance.
 
 pub mod items;
 
@@ -9,5 +9,6 @@ app_store_sdk::export_app!(
     Todo,
     __TodoMessage,
     "Todo",
-    "A list that remembers what needs doing."
+    "A list that remembers what needs doing — across reinstalls.",
+    ["storage", "bus"]
 );

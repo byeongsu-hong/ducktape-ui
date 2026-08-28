@@ -1,42 +1,50 @@
 //! The store: a catalog read from wasm manifests, installs that instantiate a
-//! module, uninstalls that drop it, and the widget that shows a running one.
-//!
-//! The widget forwards every event it sees into the guest in the guest's own
-//! coordinates, ticks it once per redraw, and replays the frame it gets back
-//! through the host's renderer — quads as quads, text as one shaped line each.
+//! module inside a fuel and memory budget, uninstalls that drop it, and the
+//! guest's side of every request an app makes.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use iced::time::Instant;
-
 use app_store_frame as wire;
-use iced::advanced::text::{self as core_text, LineHeight, Shaping, Wrapping};
-use iced::advanced::widget::Tree;
-use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
-use iced::{
-    Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Shadow, Size, Vector, keyboard,
+use iced::Size;
+use iced::time::Instant;
+use wasmtime::{
+    Config, Engine, Linker, Module, OptLevel, Store, StoreLimits, StoreLimitsBuilder, TypedFunc,
 };
-use wasmtime::{Config, Engine, Linker, Module, OptLevel, Store, TypedFunc};
+
+pub use crate::guest_view::wasm_view;
+
+use crate::capabilities::{Inbox, bus, clock, storage};
 
 /// Where the catalog looks for modules. Build the apps first:
-/// `cargo build -p app-store-todo -p app-store-counter --release --target wasm32-unknown-unknown`.
+/// `cargo build -p app-store-todo -p app-store-counter -p app-store-clock -p app-store-activity -p app-store-chaos --release --target wasm32-unknown-unknown`.
 const DEFAULT_CATALOG_DIR: &str = "target/wasm32-unknown-unknown/release";
 
-/// The custom section `export_app!` writes: `name\ndescription`.
+/// The custom section `export_app!` writes: `name\ndescription\ncap,cap,`.
 const MANIFEST_SECTION: &str = "ice.manifest";
 
+/// What one tick may burn before the host ends the app. Roughly one fuel
+/// per wasm instruction; a busy frame of a list app is a few million.
+const FUEL_PER_TICK: u64 = 200_000_000;
+
+/// The most linear memory an app may grow to.
+const MEMORY_LIMIT: usize = 64 << 20;
+
 // ---------- catalog ----------
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Capability {
+    pub name: String,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CatalogEntry {
     pub id: String,
     pub name: String,
     pub description: String,
+    pub capabilities: Vec<Capability>,
     pub path: String,
 }
 
@@ -60,11 +68,16 @@ pub fn scan_catalog() -> Vec<CatalogEntry> {
         .filter(|path| path.extension().is_some_and(|ext| ext == "wasm"))
         .filter_map(|path| {
             let bytes = std::fs::read(&path).ok()?;
-            let (name, description) = read_manifest(&bytes)?;
+            let manifest = read_manifest(&bytes)?;
             Some(CatalogEntry {
                 id: path.file_stem()?.to_string_lossy().into_owned(),
-                name,
-                description,
+                name: manifest.name,
+                description: manifest.description,
+                capabilities: manifest
+                    .capabilities
+                    .iter()
+                    .map(|name| Capability { name: name.clone() })
+                    .collect(),
                 path: path.to_string_lossy().into_owned(),
             })
         })
@@ -73,14 +86,33 @@ pub fn scan_catalog() -> Vec<CatalogEntry> {
     catalog
 }
 
-fn read_manifest(bytes: &[u8]) -> Option<(String, String)> {
+struct Manifest {
+    name: String,
+    description: String,
+    capabilities: Vec<String>,
+}
+
+fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
     for payload in wasmparser::Parser::new(0).parse_all(bytes) {
         if let Ok(wasmparser::Payload::CustomSection(section)) = payload
             && section.name() == MANIFEST_SECTION
         {
             let text = std::str::from_utf8(section.data()).ok()?;
-            let (name, description) = text.split_once('\n')?;
-            return Some((name.to_string(), description.to_string()));
+            let mut lines = text.lines();
+            let name = lines.next()?.to_string();
+            let description = lines.next()?.to_string();
+            let capabilities = lines
+                .next()
+                .unwrap_or_default()
+                .split(',')
+                .filter(|capability| !capability.is_empty())
+                .map(str::to_string)
+                .collect();
+            return Some(Manifest {
+                name,
+                description,
+                capabilities,
+            });
         }
     }
     None
@@ -91,7 +123,7 @@ fn read_manifest(bytes: &[u8]) -> Option<(String, String)> {
 /// The host-side handle the view holds. Identity is the instance: two
 /// surfaces compare equal only when they are the same guest.
 #[derive(Clone, Debug)]
-pub struct Surface(Arc<Mutex<Guest>>);
+pub struct Surface(pub(crate) Arc<Mutex<Guest>>);
 
 impl PartialEq for Surface {
     fn eq(&self, other: &Self) -> bool {
@@ -117,7 +149,7 @@ pub struct InstalledApp {
 /// Compiles and instantiates the module. Runs on iced's executor, so the
 /// second or so cranelift takes never stalls the window.
 pub async fn install_app(entry: CatalogEntry) -> Result<InstalledApp, StoreError> {
-    let guest = Guest::load(&entry.path).map_err(|message| StoreError { message })?;
+    let guest = Guest::load(&entry).map_err(|message| StoreError { message })?;
     Ok(InstalledApp {
         id: entry.id,
         name: entry.name,
@@ -142,12 +174,8 @@ pub fn is_installed(apps: Vec<InstalledApp>, id: String) -> bool {
     apps.iter().any(|installed| installed.id == id)
 }
 
-pub fn active_after_remove(active: String, removed: String) -> String {
-    if active == removed {
-        String::new()
-    } else {
-        active
-    }
+pub fn none_installed(apps: Vec<InstalledApp>) -> bool {
+    apps.is_empty()
 }
 
 pub fn installing_label(entry: CatalogEntry) -> String {
@@ -165,31 +193,45 @@ pub fn live_label(_apps: Vec<InstalledApp>) -> String {
     )
 }
 
-pub fn wasm_view(surface: &Surface) -> Element<'_, ()> {
-    Element::new(WasmView {
-        guest: surface.0.clone(),
-    })
-}
-
 // ---------- the guest ----------
 
+/// A clock subscription: one answer per period, forever.
+struct Ticker {
+    id: u64,
+    every: Duration,
+    next: Instant,
+}
+
 pub struct Guest {
-    store: Store<()>,
+    app: String,
+    capabilities: Vec<String>,
+    store: Store<StoreLimits>,
     memory: wasmtime::Memory,
     input_ptr: TypedFunc<u32, u32>,
     tick: TypedFunc<u32, u32>,
     output_ptr: TypedFunc<(), u32>,
-    size: Size,
-    pending: Vec<wire::Event>,
-    frame: wire::Frame,
-    /// Answers the guest is owed, each with the moment it becomes due.
+    pub(crate) size: Size,
+    pub(crate) pending: Vec<wire::Event>,
+    pub(crate) frame: wire::Frame,
+    /// One-shot answers, each with the moment it becomes due.
     due: Vec<(Instant, wire::Event)>,
+    tickers: Vec<Ticker>,
+    inbox: Inbox,
+    /// Something was published this redraw: the other guests must run.
+    published: bool,
+    /// The trap that ended the app, if one did. A faulted guest never ticks again.
+    pub(crate) fault: Option<String>,
+    /// What the last tick cost, for the status line.
+    pub(crate) fuel_used: u64,
+    pub(crate) tick_time: Duration,
 }
 
 impl std::fmt::Debug for Guest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Guest")
+            .field("app", &self.app)
             .field("size", &self.size)
+            .field("fault", &self.fault)
             .finish_non_exhaustive()
     }
 }
@@ -205,15 +247,25 @@ fn engine() -> &'static Engine {
     ENGINE.get_or_init(|| {
         let mut config = Config::new();
         config.cranelift_opt_level(OptLevel::Speed);
+        config.consume_fuel(true);
         Engine::new(&config).expect("wasmtime engine")
     })
 }
 
 impl Guest {
-    fn load(path: &str) -> Result<Self, String> {
+    fn load(entry: &CatalogEntry) -> Result<Self, String> {
+        let path = &entry.path;
         let engine = engine();
         let module = Module::from_file(engine, path).map_err(|error| format!("{path}: {error}"))?;
-        let mut store = Store::new(engine, ());
+        let limits = StoreLimitsBuilder::new()
+            .memory_size(MEMORY_LIMIT)
+            .trap_on_grow_failure(true)
+            .build();
+        let mut store = Store::new(engine, limits);
+        store.limiter(|limits| limits);
+        store
+            .set_fuel(FUEL_PER_TICK)
+            .map_err(|error| error.to_string())?;
         // The guest links web_time's wasm-bindgen shims for `Instant::now`;
         // nothing on the frame path calls them, so they answer zero.
         let mut linker = Linker::new(engine);
@@ -240,9 +292,15 @@ impl Guest {
             .get_memory(&mut store, "memory")
             .ok_or_else(|| export("memory"))?;
         init.call(&mut store, ())
-            .map_err(|error| format!("{path}: init trapped: {error}"))?;
+            .map_err(|error| format!("{path}: init trapped: {}", first_line(&error)))?;
         LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
+            app: entry.id.clone(),
+            capabilities: entry
+                .capabilities
+                .iter()
+                .map(|capability| capability.name.clone())
+                .collect(),
             store,
             memory,
             input_ptr,
@@ -252,376 +310,161 @@ impl Guest {
             pending: Vec::new(),
             frame: wire::Frame::default(),
             due: Vec::new(),
+            tickers: Vec::new(),
+            inbox: Inbox::default(),
+            published: false,
+            fault: None,
+            fuel_used: 0,
+            tick_time: Duration::ZERO,
         })
     }
 
-    /// Moves every answer that is due into the next event batch and returns
-    /// when the earliest remaining one is due.
-    fn deliver_due(&mut self, now: Instant) -> Option<Instant> {
+    /// One redraw: deliver what is due, tick, answer the new requests, and
+    /// say when the widget must be woken next.
+    pub(crate) fn redraw(&mut self, now: Instant) -> Option<Instant> {
+        if self.fault.is_some() {
+            return None;
+        }
+        self.deliver_due(now);
+        self.pending.push(wire::Event::Redraw {
+            elapsed_ms: clock::uptime_ms(now),
+        });
+        self.tick();
+        for request in std::mem::take(&mut self.frame.requests) {
+            self.answer(now, request);
+        }
+        let next = self
+            .due
+            .iter()
+            .map(|(at, _)| *at)
+            .chain(self.tickers.iter().map(|ticker| ticker.next))
+            .min();
+        if std::mem::take(&mut self.published) {
+            // Wake the whole window now, so the subscribers tick too.
+            return Some(now);
+        }
+        next
+    }
+
+    /// Moves every answer that is due — one-shots, ticker fires, bus
+    /// deliveries — into the next event batch.
+    fn deliver_due(&mut self, now: Instant) {
         let (ready, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.due)
             .into_iter()
             .partition(|(at, _)| *at <= now);
         self.pending
             .extend(ready.into_iter().map(|(_, event)| event));
         self.due = later;
-        self.due.iter().map(|(at, _)| *at).min()
-    }
-
-    /// What the host does with a request. This host knows two kinds; a store
-    /// with real capabilities would route `query`/`submit` here and deliver
-    /// the answers through a subscription.
-    fn answer(&mut self, now: Instant, request: wire::Request) {
-        let (delay, payload) = match request.kind.as_str() {
-            "echo" => (
-                Duration::ZERO,
-                format!(
-                    "The store says: {}",
-                    String::from_utf8_lossy(&request.payload)
-                )
-                .into_bytes(),
-            ),
-            "sleep" => {
-                let ms = request
-                    .payload
-                    .as_slice()
-                    .try_into()
-                    .map(i64::from_le_bytes)
-                    .unwrap_or(0)
-                    .max(0) as u64;
-                (Duration::from_millis(ms), Vec::new())
+        for ticker in &mut self.tickers {
+            if ticker.next <= now {
+                self.pending.push(wire::Event::Response {
+                    id: ticker.id,
+                    result: Ok(clock::uptime_ms(now).to_le_bytes().to_vec()),
+                    done: false,
+                });
+                ticker.next = now + ticker.every;
             }
-            other => (
-                Duration::ZERO,
-                format!("unknown request `{other}`").into_bytes(),
-            ),
-        };
-        self.due.push((
-            now + delay,
-            wire::Event::Response {
-                id: request.id,
-                payload,
-            },
-        ));
+        }
+        self.pending
+            .extend(self.inbox.lock().expect("inbox").drain(..));
     }
 
+    /// Routes one request to its capability — after checking the manifest
+    /// declared it. A refusal is an ordinary `Err` answer.
+    fn answer(&mut self, now: Instant, request: wire::Request) {
+        let wire::Request { id, kind, payload } = request;
+        let (capability, operation) = kind.split_once('.').unwrap_or((kind.as_str(), ""));
+        let declared = capability == "host" || self.capabilities.iter().any(|c| c == capability);
+        if !declared {
+            let message = format!(
+                "`{kind}` needs the `{capability}` capability, which {} does not declare",
+                self.app
+            );
+            self.reply(now, id, Err(message));
+            return;
+        }
+        match (capability, operation) {
+            ("host", "echo") => {
+                let text = format!("The store says: {}", String::from_utf8_lossy(&payload));
+                self.reply(now, id, Ok(text.into_bytes()));
+            }
+            ("clock", "sleep") => {
+                let at = now + Duration::from_millis(clock::millis(&payload));
+                self.due.push((at, one_shot(id, Ok(Vec::new()))));
+            }
+            ("clock", "ticks") => {
+                let every = Duration::from_millis(clock::millis(&payload));
+                self.tickers.push(Ticker {
+                    id,
+                    every,
+                    next: now + every,
+                });
+            }
+            ("storage", "get") => {
+                let result = storage::get(&self.app, &payload);
+                self.reply(now, id, result);
+            }
+            ("storage", "set") => {
+                let result = storage::set(&self.app, &payload);
+                self.reply(now, id, result);
+            }
+            ("bus", "publish") => {
+                let delivered = bus::publish(&payload) as u64;
+                self.published = true;
+                self.reply(now, id, Ok(delivered.to_le_bytes().to_vec()));
+            }
+            ("bus", "subscribe") => bus::subscribe(&payload, id, &self.inbox),
+            _ => self.reply(now, id, Err(format!("unknown request `{kind}`"))),
+        }
+    }
+
+    /// Answers on the next redraw, which `redraw` schedules for right now.
+    fn reply(&mut self, now: Instant, id: u64, result: Result<Vec<u8>, String>) {
+        self.due.push((now, one_shot(id, result)));
+    }
+
+    /// One call into the module with the pending events, inside the fuel
+    /// budget. A trap ends the app; the store keeps the message and moves on.
     fn tick(&mut self) {
         let events = std::mem::take(&mut self.pending);
         let bytes = wire::encode(&events);
-        let ptr = self
-            .input_ptr
-            .call(&mut self.store, bytes.len() as u32)
-            .expect("input_ptr") as usize;
-        self.memory.data_mut(&mut self.store)[ptr..ptr + bytes.len()].copy_from_slice(&bytes);
-        let len = self
-            .tick
-            .call(&mut self.store, bytes.len() as u32)
-            .expect("tick") as usize;
-        let ptr = self
-            .output_ptr
-            .call(&mut self.store, ())
-            .expect("output_ptr") as usize;
+        let started = Instant::now();
+        let _ = self.store.set_fuel(FUEL_PER_TICK);
+        let outcome = self.tick_inner(&bytes);
+        self.tick_time = started.elapsed();
+        self.fuel_used = FUEL_PER_TICK.saturating_sub(self.store.get_fuel().unwrap_or(0));
+        match outcome {
+            Ok(frame) => self.frame = frame,
+            Err(error) => self.fault = Some(first_line(&error)),
+        }
+    }
+
+    fn tick_inner(&mut self, bytes: &[u8]) -> wasmtime::Result<wire::Frame> {
+        let ptr = self.input_ptr.call(&mut self.store, bytes.len() as u32)? as usize;
+        self.memory.data_mut(&mut self.store)[ptr..ptr + bytes.len()].copy_from_slice(bytes);
+        let len = self.tick.call(&mut self.store, bytes.len() as u32)? as usize;
+        let ptr = self.output_ptr.call(&mut self.store, ())? as usize;
         let frame = &self.memory.data(&self.store)[ptr..ptr + len];
-        self.frame = wire::decode(frame).expect("guest frame");
-    }
-
-    /// One redraw: deliver what is due, tick, take the new requests, and say
-    /// when the widget must be woken next.
-    fn redraw(&mut self, now: Instant) -> Option<Instant> {
-        let _ = self.deliver_due(now);
-        self.pending.push(wire::Event::Redraw);
-        self.tick();
-        for request in std::mem::take(&mut self.frame.requests) {
-            self.answer(now, request);
-        }
-        self.due.iter().map(|(at, _)| *at).min()
+        wire::decode(frame).map_err(wasmtime::Error::msg)
     }
 }
 
-// ---------- the widget ----------
-
-struct WasmView {
-    guest: Arc<Mutex<Guest>>,
-}
-
-impl<Theme, Renderer> Widget<(), Theme, Renderer> for WasmView
-where
-    Renderer: core_text::Renderer<Font = iced::Font>,
-{
-    fn size(&self) -> Size<Length> {
-        Size::new(Length::Fill, Length::Fill)
-    }
-
-    fn layout(
-        &mut self,
-        _tree: &mut Tree,
-        _renderer: &Renderer,
-        limits: &layout::Limits,
-    ) -> layout::Node {
-        layout::Node::new(limits.max())
-    }
-
-    fn update(
-        &mut self,
-        _tree: &mut Tree,
-        event: &Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, ()>,
-        _viewport: &Rectangle,
-    ) {
-        let bounds = layout.bounds();
-        let mut guest = self.guest.lock().expect("guest lock");
-        if guest.size != bounds.size() {
-            guest.size = bounds.size();
-            guest.pending.push(wire::Event::Resized {
-                width: bounds.width,
-                height: bounds.height,
-            });
-        }
-        let origin = bounds.position();
-        let relative = |position: Point| Point::new(position.x - origin.x, position.y - origin.y);
-        match event {
-            Event::Mouse(event) => {
-                let translated = match event {
-                    mouse::Event::CursorMoved { position } => {
-                        let position = relative(*position);
-                        Some(wire::Event::CursorMoved {
-                            x: position.x,
-                            y: position.y,
-                        })
-                    }
-                    mouse::Event::CursorLeft => Some(wire::Event::CursorLeft),
-                    mouse::Event::CursorEntered => None,
-                    mouse::Event::ButtonPressed(button) => {
-                        wire_button(*button).map(wire::Event::ButtonPressed)
-                    }
-                    mouse::Event::ButtonReleased(button) => {
-                        wire_button(*button).map(wire::Event::ButtonReleased)
-                    }
-                    mouse::Event::WheelScrolled { delta } => Some(match delta {
-                        mouse::ScrollDelta::Lines { x, y } => {
-                            wire::Event::WheelLines { x: *x, y: *y }
-                        }
-                        mouse::ScrollDelta::Pixels { x, y } => {
-                            wire::Event::WheelPixels { x: *x, y: *y }
-                        }
-                    }),
-                };
-                if let Some(translated) = translated {
-                    // A press that lands on the guest is the guest's.
-                    if cursor.is_over(bounds) && matches!(event, mouse::Event::ButtonPressed(_)) {
-                        shell.capture_event();
-                    }
-                    guest.pending.push(translated);
-                    shell.request_redraw();
-                }
-            }
-            Event::Keyboard(event) => {
-                let translated = match event {
-                    keyboard::Event::KeyPressed {
-                        key,
-                        modifiers,
-                        text,
-                        ..
-                    } => wire::Event::KeyPressed {
-                        key: wire_key(key),
-                        modifiers: modifiers.bits(),
-                        text: text.as_ref().map(|text| text.to_string()),
-                    },
-                    keyboard::Event::KeyReleased { key, modifiers, .. } => {
-                        wire::Event::KeyReleased {
-                            key: wire_key(key),
-                            modifiers: modifiers.bits(),
-                        }
-                    }
-                    keyboard::Event::ModifiersChanged(_) => return,
-                };
-                guest.pending.push(translated);
-                shell.request_redraw();
-            }
-            Event::Window(iced::window::Event::RedrawRequested(now)) => {
-                if let Some(at) = guest.redraw(*now) {
-                    shell.request_redraw_at(at);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn draw(
-        &self,
-        _tree: &Tree,
-        renderer: &mut Renderer,
-        _theme: &Theme,
-        _style: &renderer::Style,
-        layout: Layout<'_>,
-        _cursor: mouse::Cursor,
-        _viewport: &Rectangle,
-    ) {
-        let bounds = layout.bounds();
-        let guest = self.guest.lock().expect("guest lock");
-        renderer.with_layer(bounds, |renderer| {
-            renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
-                for layer in &guest.frame.layers {
-                    renderer
-                        .with_layer(rect(layer.bounds), |renderer| replay_layer(renderer, layer));
-                }
-            });
-        });
+fn one_shot(id: u64, result: Result<Vec<u8>, String>) -> wire::Event {
+    wire::Event::Response {
+        id,
+        result,
+        done: true,
     }
 }
 
-fn replay_layer<Renderer>(renderer: &mut Renderer, layer: &wire::Layer)
-where
-    Renderer: core_text::Renderer<Font = iced::Font>,
-{
-    for quad in &layer.quads {
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: rect(quad.bounds),
-                border: Border {
-                    color: color(quad.border_color),
-                    width: quad.border_width,
-                    radius: iced::border::Radius {
-                        top_left: quad.radius[0],
-                        top_right: quad.radius[1],
-                        bottom_right: quad.radius[2],
-                        bottom_left: quad.radius[3],
-                    },
-                },
-                shadow: Shadow {
-                    color: color(quad.shadow_color),
-                    offset: Vector::new(quad.shadow_offset[0], quad.shadow_offset[1]),
-                    blur_radius: quad.shadow_blur,
-                },
-                snap: quad.snap,
-            },
-            color(quad.background),
-        );
-    }
-    for text in &layer.texts {
-        renderer.fill_text(
-            core_text::Text {
-                content: text.content.clone(),
-                bounds: Size::new(f32::INFINITY, text.line_height),
-                size: Pixels(text.size),
-                line_height: LineHeight::Absolute(Pixels(text.line_height)),
-                font: font(&text.font),
-                align_x: match text.anchor.x {
-                    wire::AlignX::Left => core_text::Alignment::Left,
-                    wire::AlignX::Center => core_text::Alignment::Center,
-                    wire::AlignX::Right => core_text::Alignment::Right,
-                },
-                align_y: match text.anchor.y {
-                    wire::AlignY::Top => iced::alignment::Vertical::Top,
-                    wire::AlignY::Center => iced::alignment::Vertical::Center,
-                    wire::AlignY::Bottom => iced::alignment::Vertical::Bottom,
-                },
-                shaping: Shaping::Advanced,
-                wrapping: Wrapping::None,
-            },
-            Point::new(text.x, text.y),
-            color(text.color),
-            rect(text.clip),
-        );
-    }
-}
-
-fn rect(r: wire::Rect) -> Rectangle {
-    Rectangle {
-        x: r[0],
-        y: r[1],
-        width: r[2],
-        height: r[3],
-    }
-}
-
-fn color(c: wire::Rgba) -> Color {
-    Color {
-        r: c[0],
-        g: c[1],
-        b: c[2],
-        a: c[3],
-    }
-}
-
-fn wire_button(button: mouse::Button) -> Option<wire::Button> {
-    match button {
-        mouse::Button::Left => Some(wire::Button::Left),
-        mouse::Button::Right => Some(wire::Button::Right),
-        mouse::Button::Middle => Some(wire::Button::Middle),
-        _ => None,
-    }
-}
-
-fn wire_key(key: &keyboard::Key) -> wire::Key {
-    use keyboard::key::Named;
-    match key {
-        keyboard::Key::Character(text) => wire::Key::Character(text.to_string()),
-        keyboard::Key::Named(named) => match named {
-            Named::Enter => wire::Key::Enter,
-            Named::Tab => wire::Key::Tab,
-            Named::Space => wire::Key::Space,
-            Named::Backspace => wire::Key::Backspace,
-            Named::Delete => wire::Key::Delete,
-            Named::Escape => wire::Key::Escape,
-            Named::ArrowUp => wire::Key::ArrowUp,
-            Named::ArrowDown => wire::Key::ArrowDown,
-            Named::ArrowLeft => wire::Key::ArrowLeft,
-            Named::ArrowRight => wire::Key::ArrowRight,
-            Named::Home => wire::Key::Home,
-            Named::End => wire::Key::End,
-            Named::PageUp => wire::Key::PageUp,
-            Named::PageDown => wire::Key::PageDown,
-            Named::Shift => wire::Key::Shift,
-            Named::Control => wire::Key::Control,
-            Named::Alt => wire::Key::Alt,
-            Named::Super => wire::Key::Super,
-            _ => wire::Key::Unidentified,
-        },
-        keyboard::Key::Unidentified => wire::Key::Unidentified,
-    }
-}
-
-thread_local! {
-    /// iced fonts name families by `&'static str`; each distinct family the
-    /// guest names is interned once rather than leaked per frame.
-    static FAMILIES: RefCell<HashMap<String, &'static str>> = RefCell::new(HashMap::new());
-}
-
-fn font(font: &wire::Font) -> iced::Font {
-    use iced::font::{Family, Style, Weight};
-    let family = match &font.family {
-        Some(name) => Family::Name(FAMILIES.with(|families| {
-            *families
-                .borrow_mut()
-                .entry(name.clone())
-                .or_insert_with(|| Box::leak(name.clone().into_boxed_str()))
-        })),
-        None if font.monospace => Family::Monospace,
-        None => Family::SansSerif,
-    };
-    let weight = match font.weight {
-        0..=149 => Weight::Thin,
-        150..=249 => Weight::ExtraLight,
-        250..=349 => Weight::Light,
-        350..=449 => Weight::Normal,
-        450..=549 => Weight::Medium,
-        550..=649 => Weight::Semibold,
-        650..=749 => Weight::Bold,
-        750..=849 => Weight::ExtraBold,
-        _ => Weight::Black,
-    };
-    iced::Font {
-        family,
-        weight,
-        style: if font.italic {
-            Style::Italic
-        } else {
-            Style::Normal
-        },
-        ..iced::Font::DEFAULT
-    }
+/// Why a call failed: the trap itself, not the "error while executing"
+/// wrapper and wasm backtrace wasmtime prints around it.
+fn first_line(error: &wasmtime::Error) -> String {
+    error
+        .root_cause()
+        .to_string()
+        .lines()
+        .next()
+        .unwrap_or("trap")
+        .to_string()
 }

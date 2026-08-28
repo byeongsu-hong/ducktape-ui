@@ -1,5 +1,5 @@
 //! What the counter asks the host for. Each is an ordinary Ice `task`: an
-//! async function whose future waits on a host response.
+//! async function whose future waits on a host answer.
 
 use app_store_sdk::host;
 
@@ -8,15 +8,27 @@ pub struct HostError {
     pub message: String,
 }
 
+impl From<String> for HostError {
+    fn from(message: String) -> Self {
+        Self { message }
+    }
+}
+
 pub async fn ask_host(question: String) -> Result<String, HostError> {
-    let answer = host::request("echo", question.as_bytes()).await;
+    let answer = host::request("host.echo", question.as_bytes()).await?;
     String::from_utf8(answer).map_err(|error| HostError {
         message: error.to_string(),
     })
 }
 
 pub async fn wait(ms: i64) -> Result<bool, HostError> {
-    host::request("sleep", &ms.to_le_bytes()).await;
+    host::request("clock.sleep", &ms.to_le_bytes()).await?;
+    Ok(true)
+}
+
+/// Tells every app listening on the bus what the count is now.
+pub async fn publish_count(count: i64) -> Result<bool, HostError> {
+    host::request("bus.publish", format!("counter\n{count}").as_bytes()).await?;
     Ok(true)
 }
 

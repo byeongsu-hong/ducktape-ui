@@ -3,19 +3,21 @@
 //! `include_app!` into a wasm module the store can install.
 //!
 //! The module's ABI is four C exports — `init`, `input_ptr`, `tick`,
-//! `output_ptr` — plus an `ice.manifest` custom section carrying the name and
-//! description, so a catalog can list an app without instantiating it.
+//! `output_ptr` — plus an `ice.manifest` custom section carrying the name,
+//! the description and the capabilities the app needs, so a catalog can
+//! list an app (and say what it will touch) without instantiating it.
 //!
 //! An app's `task`s run: the driver polls them on every tick, and anything
-//! they need from outside goes through [`host::request`] and comes back as a
-//! response event. There is no executor thread and no clock inside the
-//! module — only what the host sends in.
+//! they need from outside goes through [`host::request`] / [`host::subscribe`]
+//! and comes back as response events. There is no executor thread and no
+//! clock inside the module — only what the host sends in.
 
 pub use app_store_frame as frame;
 pub use driver::Driver;
 
 mod driver;
 pub mod host;
+pub mod testing;
 
 pub type Element<'a, Message> = iced::Element<'a, Message, iced::Theme, iced::Renderer>;
 
@@ -46,10 +48,12 @@ pub const fn manifest_bytes<const N: usize>(text: &str) -> [u8; N] {
 
 /// Implements [`WasmApp`] for an `include_app!` application and emits the
 /// wasm exports and manifest section. `$message` is the generated message
-/// enum (`__<App>Message`).
+/// enum (`__<App>Message`); the list names the capabilities the app's
+/// requests will use (`clock`, `storage`, `bus`), which the host shows in the
+/// catalog and enforces.
 #[macro_export]
 macro_rules! export_app {
-    ($app:ident, $message:ident, $name:expr, $description:expr) => {
+    ($app:ident, $message:ident, $name:expr, $description:expr, [$($capability:literal),* $(,)?]) => {
         /// A private newtype, so the generated message enum — private to the
         /// crate — never appears in a public interface.
         struct __IceApp($app);
@@ -77,7 +81,7 @@ macro_rules! export_app {
             }
         }
 
-        const __ICE_MANIFEST: &str = concat!($name, "\n", $description);
+        const __ICE_MANIFEST: &str = concat!($name, "\n", $description, "\n" $(, $capability, ",")*);
 
         #[unsafe(link_section = "ice.manifest")]
         #[used]

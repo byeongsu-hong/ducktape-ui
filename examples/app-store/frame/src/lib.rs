@@ -52,18 +52,27 @@ pub enum Event {
         modifiers: u32,
     },
     /// Runs the guest's redraw-time work (animations, caret blink).
-    Redraw,
-    /// The host's answer to a [`Request`] the guest sent in an earlier frame.
+    /// `elapsed_ms` is the host's uptime: the guest has no clock of its own.
+    Redraw {
+        elapsed_ms: u64,
+    },
+    /// One answer to a [`Request`]. A one-shot request gets exactly one with
+    /// `done`; a subscription gets many, the last one `done`.
     Response {
         id: u64,
-        payload: Vec<u8>,
+        result: Result<Vec<u8>, String>,
+        done: bool,
     },
 }
 
 /// Something the guest asked the host for. The guest never blocks on it: a
-/// future inside the guest waits for the matching [`Event::Response`], which
-/// the host delivers on its own schedule — the next frame for an echo, a
-/// second later for a timer, whenever the network answers for a query.
+/// future (or stream) inside the guest waits for the matching
+/// [`Event::Response`]s, which the host delivers on its own schedule — the
+/// next frame for an echo, a second later for a timer, whenever another app
+/// publishes for a bus subscription.
+///
+/// `kind` is `<capability>.<operation>`; the host refuses a capability the
+/// app's manifest did not declare.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
     pub id: u64,
@@ -202,6 +211,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn events_round_trip() {
+        let events = vec![
+            Event::Redraw { elapsed_ms: 1234 },
+            Event::Response {
+                id: 3,
+                result: Ok(vec![1, 2]),
+                done: false,
+            },
+            Event::Response {
+                id: 4,
+                result: Err("nope".into()),
+                done: true,
+            },
+        ];
+        assert_eq!(decode::<Vec<Event>>(&encode(&events)).unwrap(), events);
+    }
+
+    #[test]
     fn frame_round_trips() {
         let frame = Frame {
             layers: vec![Layer {
@@ -237,7 +264,7 @@ mod tests {
             interaction: 1,
             requests: vec![Request {
                 id: 7,
-                kind: "echo".into(),
+                kind: "host.echo".into(),
                 payload: b"hi".to_vec(),
             }],
         };

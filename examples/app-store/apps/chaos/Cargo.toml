@@ -1,0 +1,23 @@
+[package]
+name = "app-store-chaos"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# An ordinary Ice application, exported as a wasm module by `export_app!`.
+# `unsafe_code` is not forbidden only because the exports need
+# `#[unsafe(no_mangle)]`.
+[lib]
+crate-type = ["cdylib", "rlib"]
+# The generated `#[cfg(test)]` glue needs the runtime's test driver, which
+# pulls wgpu into the graph; the app's tests live in `tests/` instead.
+test = false
+
+[dependencies]
+iced.workspace = true
+ui-lang.workspace = true
+ui-lang-runtime = { workspace = true, features = ["full-runtime"] }
+app-store-sdk.workspace = true
+
+[build-dependencies]
+ui-lang-build.workspace = true

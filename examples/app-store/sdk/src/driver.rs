@@ -174,10 +174,17 @@ impl<A: WasmApp> Driver<A> {
                         modifiers: keyboard::Modifiers::from_bits_truncate(modifiers),
                     }));
                 }
-                wire::Event::Redraw => out.push(iced::Event::Window(
-                    iced::window::Event::RedrawRequested(iced::time::Instant::now()),
-                )),
-                wire::Event::Response { id, payload } => crate::host::fulfill(id, payload),
+                // In wasm `Instant::now()` is a stub that answers zero (the
+                // web_time shims are unlinked), so host uptime added to it is
+                // a monotonic clock — enough for iced's own animations.
+                wire::Event::Redraw { elapsed_ms } => {
+                    out.push(iced::Event::Window(iced::window::Event::RedrawRequested(
+                        iced::time::Instant::now() + std::time::Duration::from_millis(elapsed_ms),
+                    )))
+                }
+                wire::Event::Response { id, result, done } => {
+                    crate::host::fulfill(id, result, done)
+                }
             }
         }
         out
