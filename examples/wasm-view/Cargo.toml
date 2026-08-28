@@ -1,0 +1,21 @@
+# A separate workspace on purpose: the guest targets wasm32 and the host pulls
+# wasmtime, neither of which belongs in the root workspace's lockfile or CI.
+[workspace]
+resolver = "2"
+members = ["frame", "guest", "host"]
+
+[workspace.dependencies]
+ui-lang = { path = "../../crates/ui-lang" }
+ui-lang-build = { path = "../../crates/ui-lang-build" }
+ui-lang-runtime = { path = "../../crates/ui-lang-runtime", default-features = false }
+wasm-view-frame = { path = "frame" }
+
+[patch.crates-io]
+iced_tiny_skia = { path = "../../vendor/iced_tiny_skia" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

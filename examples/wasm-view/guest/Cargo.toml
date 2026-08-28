@@ -1,0 +1,32 @@
+[package]
+name = "wasm-view-guest"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The view runs inside wasm: an ordinary Ice application, compiled by the
+# ordinary code generator, driven headlessly by `src/driver.rs` instead of a
+# window. `unsafe_code` is not forbidden here only because the wasm exports
+# need `#[unsafe(no_mangle)]`.
+[lib]
+crate-type = ["cdylib", "rlib"]
+# The generated `#[cfg(test)]` glue needs the runtime's test driver, which
+# pulls wgpu into the graph; the guest's tests live in `tests/` instead.
+test = false
+
+[dependencies]
+iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tiny-skia", "fira-sans"] }
+iced_runtime = "=0.14.0"
+iced_tiny_skia = "=0.14.0"
+ui-lang.workspace = true
+ui-lang-runtime = { workspace = true, features = ["full-runtime"] }
+wasm-view-frame.workspace = true
+cosmic-text = "0.15"
+
+# winit and iced's executor check refuse a native Linux build with no
+# platform selected; the guest never opens a window either way.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+iced = { version = "=0.14.0", default-features = false, features = ["x11", "thread-pool"] }
+
+[build-dependencies]
+ui-lang-build.workspace = true

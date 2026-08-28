@@ -1,6 +1,6 @@
 # 0010: An Ice view can run inside wasm — measured
 
-- Status: Proposed (spike)
+- Status: Proposed (spike; shape (b) built as `examples/wasm-view`)
 - Date: 2026-08-28
 
 ## Context
@@ -110,7 +110,12 @@ frame, 1.4–1.8× when every paragraph reshapes, crosses the boundary with a
 viewport-bound primitive list that decodes in microseconds, and needs no
 change to the language, the code generator or the template vocabulary.
 
-What it does need, and none of it is started:
+`examples/wasm-view` is shape (b) end to end: an Ice todo app compiled to
+wasm32, driven headlessly, and drawn — clicks, typing and all — by a native
+Ice host through a wasmtime instance behind one `extern` component. Its
+README lists what does not cross the boundary yet.
+
+What it does need beyond that example:
 
 1. a recording `iced_core::Renderer` — `iced_tiny_skia` minus rasterization,
    its `Layer` serialized with a fixed-tag codec (not serde's internally
