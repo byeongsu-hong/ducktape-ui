@@ -91,7 +91,7 @@ const MAX_TOPIC_BYTES: usize = 256;
 /// A cancel is cheap to send and not cheap to serve — each one walks the due
 /// list, the tickers and the process-wide subscriber list. There is nothing
 /// left to cancel past everything the host holds for one guest.
-const MAX_CANCELS: usize = MAX_DUE + MAX_TICKERS + MAX_SUBSCRIPTIONS;
+const MAX_CANCELS: usize = MAX_DUE + MAX_TICKERS + MAX_SUBSCRIPTIONS + MAX_REQUESTS_PER_TICK;
 
 /// What one tick may carry in either direction: the answers, the payloads the
 /// requests came with, and what a publish copied into every subscriber's
@@ -896,6 +896,10 @@ impl Guest {
         let ptr = self.output_ptr.call(&mut self.store, ())? as usize;
         let frame = window(self.memory.data(&self.store), ptr, len)?;
         let mut frame: wire::Frame = wire::decode(frame).map_err(wasmtime::Error::msg)?;
+        // The requests past the cap exist only so the guest learns it went
+        // over; a million of them would be a million refusal strings, so the
+        // host keeps enough to say so and drops the rest unanswered.
+        frame.requests.truncate(2 * MAX_REQUESTS_PER_TICK);
         // The host's renderer panics on values a frame may carry and
         // allocates by the sizes it is given; the guest chose every one.
         wire::sanitize(&mut frame, [self.size.width, self.size.height]);

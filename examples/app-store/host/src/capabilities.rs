@@ -348,9 +348,17 @@ pub mod clock {
 
     use iced::time::Instant;
 
+    static START: OnceLock<Instant> = OnceLock::new();
+
+    /// Starts the clock the guests read. Called before the window opens: the
+    /// origin is otherwise whenever the first guest happened to tick, so
+    /// "host uptime" would mean "since the first app was installed".
+    pub fn start() {
+        let _ = START.set(Instant::now());
+    }
+
     /// Milliseconds since the store started.
     pub fn uptime_ms(now: Instant) -> u64 {
-        static START: OnceLock<Instant> = OnceLock::new();
         let start = *START.get_or_init(|| now);
         now.saturating_duration_since(start).as_millis() as u64
     }

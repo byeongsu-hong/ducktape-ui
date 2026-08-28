@@ -128,6 +128,11 @@ through the same table and answer from its own subscriptions.
 There is no executor thread and no clock inside a module. `Instant::now()`
 is a stub that answers zero; the host's uptime rides on every `Redraw`, and
 added to zero it is a monotonic clock — enough for iced's own animations.
+That uptime is measured from the moment the store starts, not from the first
+guest, so an app installed an hour in reads an hour, and `clock.now` answers
+the wall clock together with the uptime it was read at — which is what lets
+an app anchor one to the other instead of drifting by however long the store
+had been running when it was installed.
 
 Both sides pin the default font by name (`Fira Sans`, embedded via iced's
 `fira-sans` feature): natively fontdb resolves `Font::DEFAULT` through the
@@ -182,10 +187,19 @@ allocates by others — a shadow is a buffer the size of the quad, so a
 in: positions and extents to twice the window in every direction, colours to
 `0..=1`, blur to 64 px, text size and line height to `1..=128` px. Clamped
 rather than refused, because "not finite" is not the same as "hostile" —
-every iced frame's base layer carries an infinite clip. The counts are the
-same boundary: a frame draws at most 16384 quads and 4096 lines carrying
-64 KiB of text between them, and spends a budget of four million shadow
-pixels in order — past it a quad keeps its shape and loses its shadow.
+every iced frame's base layer carries an infinite clip.
+
+Counting is not enough on its own, because a frame that fits in 8 MiB can
+still be minutes of drawing. `sanitize` therefore also clips and budgets:
+
+| bounded | to | why |
+|---|---|---|
+| every layer's rectangle | the guest's own window | a layer *is* a clip, and iced's `push_clip` replaces the clip instead of intersecting it — without this a guest paints over the sidebar and its neighbours |
+| layers · quads · lines | 256 · 16384 · 4096 | each layer rebuilds a window-sized clip mask per redraw |
+| text bytes | 64 KiB per frame | every line is shaped by cosmic-text on the window thread |
+| filled pixels | 8 M per frame, charged for the part inside the window | 16000 window-sized quads is billions of pixel writes; a quad past the budget is dropped |
+| rasterised glyph pixels | 4 M per frame (characters × size²) | a glyph is rasterised and cached at its size, so 64 KiB of distinct 128 px text is gigabytes of cache |
+| shadow pixels | 1 M per frame | the shadow pass builds an SDF buffer the size of the quad plus its blur, before any clipping — past the budget a quad keeps its shape and loses its shadow |
 
 ## What is not here yet
 
@@ -205,11 +219,12 @@ An honest inventory, grouped by where the work would land. Items marked
 - Overlays (pick_list menus, tooltips, combo boxes) are clipped to the app's
   window; they cannot float over the desk.
 - A guest's quad shadow is drawn without the layer's clip mask (the shadow
-  pixmap goes to tiny-skia with `None`), so a shadow may paint outside the
-  guest's window — up to the two-window reach `sanitize` allows — over the
-  store column. Fixing it is a change in the vendored `iced_tiny_skia`, not
-  here: the mask the engine has is chosen from the quad's bounds, not the
-  shadow's. **bug**
+  pixmap goes to tiny-skia with `None`), so a shadow still paints outside the
+  guest's window — up to the two-window reach `sanitize` allows for a quad —
+  over the store column. Everything else a guest draws is clipped to its
+  window. Fixing this one is a change in the vendored `iced_tiny_skia`, which
+  the whole repository renders through, not here: the mask the engine has is
+  chosen from the quad's bounds, not the shadow's. **bug**
 - No scale factor, theme (`ThemeChanged`) or locale reaches the guest; an
   app cannot follow the host's dark mode.
 
