@@ -130,8 +130,6 @@ An honest inventory, grouped by where the work would land. Items marked
 - Images, SVG, canvas geometry (paths, strokes, meshes) and shaders do not
   cross; gradients flatten to their first stop. Images and SVG need a
   host-side handle cache keyed by app so bytes cross once, not per frame.
-- Layer transformations apply to text only; a scaled or rotated layer's
-  quads are replayed untransformed. **bug**
 - Rich text loses per-span colour, underline and strikethrough: a paragraph
   crosses with one colour per line.
 - Every redraw re-encodes and re-sends the whole frame; there is no
@@ -149,11 +147,11 @@ An honest inventory, grouped by where the work would land. Items marked
 - Keyboard events go to **every** guest at once: two apps with focused
   inputs both receive the typing. There is no focus model between windows.
   **bug**
-- Only a subset of named keys cross; physical key and location are always
-  `Unidentified`; `ModifiersChanged` is dropped, so a guest's modifier
-  state can go stale. `CursorEntered`, mouse Back/Forward, touch, IME
-  composition, window focus/unfocus, file drops and close requests do not
-  cross at all.
+- Only a subset of named keys cross and physical key and location are always
+  `Unidentified`. `ModifiersChanged` and `CursorEntered` cross the wire and
+  reach the guest's iced, but the host widget still drops both, so a guest's
+  modifier state can go stale. Mouse Back/Forward, touch, IME composition,
+  window focus/unfocus, file drops and close requests do not cross at all.
 - Clipboard is `clipboard::Null`: copy and paste inside an app silently do
   nothing. A `clipboard` capability (`read` request, `write` in the frame)
   is the shape.
@@ -168,18 +166,20 @@ An honest inventory, grouped by where the work would land. Items marked
   `__subscription`, and iced's timers (`every`) have no executor in wasm.
   Host streams (`clock.ticks`, `bus.subscribe`) are the only long-lived
   sources.
-- A dropped or aborted stream is not told to the host; a `clock.ticks`
-  ticker or bus subscription lives until the guest is dropped. A one-shot
-  `sleep` cannot be cancelled either. A `Frame.cancels` list fixes both.
+- A dropped request or stream reaches the host as an id in `Frame.cancels`,
+  but the host ignores the list: a `clock.ticks` ticker or bus subscription
+  still lives until the guest is dropped, and a one-shot `sleep` still fires.
 - Task fairness is fixed: 8 rounds of messages per tick, 64 self-wakes per
   stream. A task that produces more waits for the next tick.
 - No cooperative long computation: work heavier than one fuel budget
   cannot be spread over ticks except by chaining host sleeps. No
   preemption short of the trap that ends the app.
-- A guest panic is an `unreachable` trap with no message: no panic hook
-  writes the text somewhere the host can read.
-- No guest logging: `println!` and `tracing` inside a module go nowhere.
-  A `host.log` operation is one line.
+- A guest panic still traps on `unreachable`, but the module's panic hook
+  now leaves `<payload> at <file>:<line>` behind `panic_ptr` / `panic_len`;
+  the host does not read them yet, so the window shows the bare trap.
+- `println!` and `tracing` inside a module go nowhere. `host::log` sends a
+  `host.log` request whose answer is dropped, but no capability answers it,
+  so nothing is printed yet.
 - No wall-clock time (`SystemTime::now()` aborts on
   `wasm32-unknown-unknown`), no randomness (`getrandom` does not build
   without `js`), no locale, timezone or environment. `clock.now` and

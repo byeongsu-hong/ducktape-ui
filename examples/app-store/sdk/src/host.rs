@@ -6,6 +6,9 @@
 //! blocks: the driver polls the app's tasks on every tick, so a task waiting
 //! on the host simply stays pending until a response event arrives.
 //!
+//! [`notify`] is the third shape: it asks and never listens, for things whose
+//! answer nobody wants ([`log`]).
+//!
 //! A request's `kind` is `<capability>.<operation>`. The host refuses a
 //! capability the app's manifest did not declare, and the refusal arrives
 //! as the `Err` of the answer — an ordinary error the app's handler routes.
@@ -36,6 +39,20 @@ struct Registry {
     next_id: u64,
     outbox: Vec<Request>,
     pending: HashMap<u64, Arc<Mutex<Slot>>>,
+    cancels: Vec<u64>,
+}
+
+impl Registry {
+    fn ask(&mut self, kind: &str, payload: &[u8]) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.outbox.push(Request {
+            id,
+            kind: kind.to_string(),
+            payload: payload.to_vec(),
+        });
+        id
+    }
 }
 
 thread_local! {
@@ -44,38 +61,61 @@ thread_local! {
     static REGISTRY: RefCell<Registry> = RefCell::default();
 }
 
-fn open(kind: &str, payload: &[u8]) -> Arc<Mutex<Slot>> {
+fn open(kind: &str, payload: &[u8]) -> (u64, Arc<Mutex<Slot>>) {
     let slot = Arc::new(Mutex::new(Slot::default()));
-    REGISTRY.with_borrow_mut(|registry| {
-        let id = registry.next_id;
-        registry.next_id += 1;
+    let id = REGISTRY.with_borrow_mut(|registry| {
+        let id = registry.ask(kind, payload);
         registry.pending.insert(id, slot.clone());
-        registry.outbox.push(Request {
-            id,
-            kind: kind.to_string(),
-            payload: payload.to_vec(),
-        });
+        id
     });
-    slot
+    (id, slot)
+}
+
+/// Stops waiting for `id`. Still pending means the host is still working on
+/// it and has to be told; already fulfilled means there is nothing to cancel.
+/// Runs from a `Drop`, so a thread tearing down its registry is not an error.
+fn close(id: u64) {
+    let _ = REGISTRY.try_with(|registry| {
+        let mut registry = registry.borrow_mut();
+        if registry.pending.remove(&id).is_some() {
+            registry.cancels.push(id);
+        }
+    });
 }
 
 /// Asks the host for one thing.
 pub fn request(kind: &str, payload: &[u8]) -> Response {
-    Response {
-        slot: open(kind, payload),
-    }
+    let (id, slot) = open(kind, payload);
+    Response { id, slot }
 }
 
 /// Asks the host for a stream of things — timer ticks, bus messages.
 pub fn subscribe(kind: &str, payload: &[u8]) -> Subscription {
-    Subscription {
-        slot: open(kind, payload),
-    }
+    let (id, slot) = open(kind, payload);
+    Subscription { id, slot }
+}
+
+/// Tells the host something and keeps no slot for the answer, which is
+/// therefore dropped when it comes.
+pub fn notify(kind: &str, payload: &[u8]) {
+    REGISTRY.with_borrow_mut(|registry| registry.ask(kind, payload));
+}
+
+/// Prints from inside a module: `println!` has nowhere to go in wasm.
+pub fn log(message: impl AsRef<str>) {
+    notify("host.log", message.as_ref().as_bytes());
 }
 
 /// The host's eventual answer to a [`request`].
 pub struct Response {
+    id: u64,
     slot: Arc<Mutex<Slot>>,
+}
+
+impl Drop for Response {
+    fn drop(&mut self) {
+        close(self.id);
+    }
 }
 
 impl Future for Response {
@@ -96,7 +136,14 @@ impl Future for Response {
 
 /// Every answer the host sends to a [`subscribe`], until it closes.
 pub struct Subscription {
+    id: u64,
     slot: Arc<Mutex<Slot>>,
+}
+
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        close(self.id);
+    }
 }
 
 impl Stream for Subscription {
@@ -120,6 +167,11 @@ pub(crate) fn drain_outbox() -> Vec<Request> {
     REGISTRY.with_borrow_mut(|registry| std::mem::take(&mut registry.outbox))
 }
 
+/// Everything abandoned since the last frame.
+pub(crate) fn drain_cancels() -> Vec<u64> {
+    REGISTRY.with_borrow_mut(|registry| std::mem::take(&mut registry.cancels))
+}
+
 /// Delivers one answer; an id nobody waits for is dropped.
 pub(crate) fn fulfill(id: u64, answer: Answer, done: bool) {
     let slot = REGISTRY.with_borrow_mut(|registry| {
@@ -136,5 +188,42 @@ pub(crate) fn fulfill(id: u64, answer: Answer, done: bool) {
         if let Some(waker) = slot.waker.take() {
             waker.wake();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dropped_request_is_cancelled_once() {
+        let response = request("host.echo", b"hi");
+        let id = drain_outbox()[0].id;
+        assert!(drain_cancels().is_empty());
+
+        drop(response);
+        assert_eq!(drain_cancels(), vec![id]);
+        assert!(drain_cancels().is_empty());
+    }
+
+    #[test]
+    fn an_answered_request_cancels_nothing() {
+        let response = request("host.echo", b"hi");
+        let id = drain_outbox()[0].id;
+        fulfill(id, Ok(Vec::new()), true);
+
+        drop(response);
+        assert!(drain_cancels().is_empty());
+    }
+
+    #[test]
+    fn notify_asks_and_keeps_no_slot() {
+        notify("host.log", b"hello");
+        let sent = drain_outbox();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].kind, "host.log");
+        // Nothing waits for it: the answer is dropped, not a panic.
+        fulfill(sent[0].id, Ok(Vec::new()), true);
+        assert!(drain_cancels().is_empty());
     }
 }

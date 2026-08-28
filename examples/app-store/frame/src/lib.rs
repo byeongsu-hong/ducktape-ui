@@ -32,6 +32,7 @@ pub enum Event {
         y: f32,
     },
     CursorLeft,
+    CursorEntered,
     ButtonPressed(Button),
     ButtonReleased(Button),
     WheelLines {
@@ -51,6 +52,9 @@ pub enum Event {
         key: Key,
         modifiers: u32,
     },
+    /// The host's modifier state, so a guest that missed a key release does
+    /// not keep thinking Shift is down.
+    ModifiersChanged(u32),
     /// Runs the guest's redraw-time work (animations, caret blink).
     /// `elapsed_ms` is the host's uptime: the guest has no clock of its own.
     Redraw {
@@ -119,6 +123,9 @@ pub struct Frame {
     pub interaction: u8,
     /// What the guest asked for while producing this frame.
     pub requests: Vec<Request>,
+    /// Requests the guest stopped waiting on — a dropped future or stream.
+    /// The host frees whatever it kept for them and sends no more answers.
+    pub cancels: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -267,14 +274,19 @@ mod tests {
                 kind: "host.echo".into(),
                 payload: b"hi".to_vec(),
             }],
+            cancels: vec![9],
         };
         let back: Frame = decode(&encode(&frame)).unwrap();
         assert_eq!(back, frame);
-        let events = vec![Event::KeyPressed {
-            key: Key::Character("a".into()),
-            modifiers: 0,
-            text: Some("a".into()),
-        }];
+        let events = vec![
+            Event::KeyPressed {
+                key: Key::Character("a".into()),
+                modifiers: 0,
+                text: Some("a".into()),
+            },
+            Event::ModifiersChanged(4),
+            Event::CursorEntered,
+        ];
         let back: Vec<Event> = decode(&encode(&events)).unwrap();
         assert_eq!(back, events);
     }

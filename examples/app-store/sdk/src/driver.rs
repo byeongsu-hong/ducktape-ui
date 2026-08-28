@@ -107,6 +107,7 @@ impl<A: WasmApp> Driver<A> {
         let mut frame = flatten(renderer);
         *cache = ui.into_cache();
         frame.requests = crate::host::drain_outbox();
+        frame.cancels = crate::host::drain_cancels();
         frame
     }
 
@@ -123,6 +124,10 @@ impl<A: WasmApp> Driver<A> {
                 wire::Event::CursorLeft => {
                     self.cursor = mouse::Cursor::Unavailable;
                     out.push(iced::Event::Mouse(mouse::Event::CursorLeft));
+                }
+                // No position comes with it; the move that follows sets one.
+                wire::Event::CursorEntered => {
+                    out.push(iced::Event::Mouse(mouse::Event::CursorEntered));
                 }
                 wire::Event::ButtonPressed(button) => {
                     out.push(iced::Event::Mouse(mouse::Event::ButtonPressed(
@@ -173,6 +178,11 @@ impl<A: WasmApp> Driver<A> {
                         location: keyboard::Location::Standard,
                         modifiers: keyboard::Modifiers::from_bits_truncate(modifiers),
                     }));
+                }
+                wire::Event::ModifiersChanged(modifiers) => {
+                    out.push(iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+                        keyboard::Modifiers::from_bits_truncate(modifiers),
+                    )))
                 }
                 // In wasm `Instant::now()` is a stub that answers zero (the
                 // web_time shims are unlinked), so host uptime added to it is

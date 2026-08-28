@@ -7,6 +7,11 @@
 //! the description and the capabilities the app needs, so a catalog can
 //! list an app (and say what it will touch) without instantiating it.
 //!
+//! Two more exports exist only in wasm: `panic_ptr` and `panic_len` bound
+//! the module's last panic message (`<payload> at <file>:<line>`, empty
+//! until one happens). With `panic = "abort"` the trap the host sees is a
+//! bare `unreachable`, so after a trap it reads that buffer for the reason.
+//!
 //! An app's `task`s run: the driver polls them on every tick, and anything
 //! they need from outside goes through [`host::request`] / [`host::subscribe`]
 //! and comes back as response events. There is no executor thread and no
@@ -105,8 +110,43 @@ macro_rules! export_app {
             __ICE_DRIVER.with(|driver| driver.borrow_mut().as_mut().expect("boot first").tick(events))
         }
 
+        /// The last panic message, for a host holding a trapped instance.
+        #[cfg(target_arch = "wasm32")]
+        thread_local! {
+            static __ICE_PANIC: ::std::cell::RefCell<::std::string::String> =
+                const { ::std::cell::RefCell::new(::std::string::String::new()) };
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn panic_ptr() -> u32 {
+            __ICE_PANIC.with(|text| text.borrow().as_ptr() as u32)
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn panic_len() -> u32 {
+            __ICE_PANIC.with(|text| text.borrow().len() as u32)
+        }
+
         #[unsafe(no_mangle)]
         pub extern "C" fn init() {
+            // Only in wasm: natively this would hijack the test harness's
+            // own hook, which is what reports a failing test.
+            #[cfg(target_arch = "wasm32")]
+            ::std::panic::set_hook(::std::boxed::Box::new(|info| {
+                let payload = info.payload();
+                let message = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<::std::string::String>().map(|text| text.as_str()))
+                    .unwrap_or("panicked");
+                let at = info
+                    .location()
+                    .map(|location| ::std::format!("{}:{}", location.file(), location.line()))
+                    .unwrap_or_else(|| "unknown".into());
+                __ICE_PANIC.with(|text| *text.borrow_mut() = ::std::format!("{message} at {at}"));
+            }));
             boot_native();
         }
 
@@ -125,6 +165,8 @@ macro_rules! export_app {
         /// into the output buffer, and returns the frame's length.
         #[unsafe(no_mangle)]
         pub extern "C" fn tick(len: u32) -> u32 {
+            // A batch that does not decode becomes no events: the host is
+            // trusted to write the buffer it just asked for.
             let events: Vec<$crate::frame::Event> = __ICE_INPUT
                 .with(|input| $crate::frame::decode(&input.borrow()[..len as usize]))
                 .unwrap_or_default();
