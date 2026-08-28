@@ -154,7 +154,11 @@ pub(in crate::codegen) fn generate_theme(
         source_marker_origin(program, theme.app_theme_origin)
     )
     .unwrap();
-    writeln!(out, "fn __theme(&self{callback_arg}) -> ::iced::Theme {{").unwrap();
+    writeln!(
+        out,
+        "pub(crate) fn __theme(&self{callback_arg}) -> ::iced::Theme {{"
+    )
+    .unwrap();
     match &theme.app_theme {
         ResolvedAppThemeSelection::App => {
             writeln!(out, "Self::__app_theme(self.__palette({callback_value}))").unwrap();
@@ -416,7 +420,7 @@ pub(in crate::codegen) fn generate_boot(
     if program.settings().kind == ProgramKind::Daemon {
         writeln!(
             out,
-            "fn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}let task = state.__boot_task();\n{tray_sync}(state, task)\n}}"
+            "pub(crate) fn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}let task = state.__boot_task();\n{tray_sync}(state, task)\n}}"
         )
         .unwrap();
     } else {
