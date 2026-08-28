@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 
 use app_store_frame as wire;
 
-use crate::store::MAX_INBOX;
+use crate::store::{MAX_INBOX, MAX_INBOX_BYTES};
 
 /// A guest's bus deliveries, filled by other guests' publishes and drained
 /// into its event batch on its next redraw.
@@ -18,23 +18,34 @@ pub type Inbox = Arc<Mutex<Mailbox>>;
 #[derive(Default)]
 pub struct Mailbox {
     events: VecDeque<wire::Event>,
+    /// What those events carry. Counting them is not enough: a thousand
+    /// deliveries of a megabyte is a gigabyte of the host's memory, and the
+    /// whole inbox crosses into the subscriber's own on its next tick.
+    bytes: usize,
     /// Deliveries this guest never got because it was not draining — faulted,
     /// or slower than whoever publishes. Shown in its status line.
     pub dropped: u64,
 }
 
 impl Mailbox {
-    /// Keeps the newest [`MAX_INBOX`] deliveries: a full inbox loses its
-    /// oldest message, never the host's memory.
+    /// Keeps the newest deliveries that fit in [`MAX_INBOX`] events and
+    /// [`MAX_INBOX_BYTES`]: a full inbox loses its oldest message, never the
+    /// host's memory.
     fn deliver(&mut self, event: wire::Event) {
-        if self.events.len() >= MAX_INBOX {
-            self.events.pop_front();
+        let bytes = payload_len(&event);
+        while self.events.len() >= MAX_INBOX || self.bytes + bytes > MAX_INBOX_BYTES {
+            let Some(dropped) = self.events.pop_front() else {
+                break;
+            };
+            self.bytes -= payload_len(&dropped);
             self.dropped += 1;
         }
+        self.bytes += bytes;
         self.events.push_back(event);
     }
 
     pub fn take(&mut self) -> Vec<wire::Event> {
+        self.bytes = 0;
         self.events.drain(..).collect()
     }
 
@@ -43,15 +54,40 @@ impl Mailbox {
     }
 }
 
+/// What one delivery costs the host to hold and the guest to decode.
+fn payload_len(event: &wire::Event) -> usize {
+    match event {
+        wire::Event::Response {
+            result: Ok(bytes), ..
+        } => bytes.len(),
+        wire::Event::Response {
+            result: Err(message),
+            ..
+        } => message.len(),
+        _ => 0,
+    }
+}
+
 pub mod host {
     //! The two things every app may ask for, capability or not.
 
-    use crate::store::MAX_RANDOM_BYTES;
+    use std::io::Write;
+
+    use crate::store::{MAX_LOG_BYTES, MAX_RANDOM_BYTES};
 
     /// A module has no stdout — `println!` inside one goes nowhere — so its
     /// lines come out of the store's stderr, tagged with who wrote them.
+    ///
+    /// Not `eprintln!`: that panics when the write fails, which would let a
+    /// guest end the whole host by logging into a closed stderr. The line is
+    /// the guest's, so it is truncated and escaped as well — otherwise it
+    /// could forge another app's tag or drive the operator's terminal.
     pub fn log(app: &str, message: &[u8]) {
-        eprintln!("[{app}] {}", String::from_utf8_lossy(message));
+        let end = message.len().min(MAX_LOG_BYTES);
+        let text: String = String::from_utf8_lossy(&message[..end])
+            .escape_debug()
+            .collect();
+        let _ = writeln!(std::io::stderr().lock(), "[{app}] {text}");
     }
 
     /// A `u32` count of bytes, little-endian; the only entropy in a module,
@@ -73,7 +109,11 @@ pub mod storage {
 
     use std::path::{Path, PathBuf};
 
-    use crate::store::{MAX_APP_STORAGE, MAX_VALUE_BYTES};
+    use crate::store::{MAX_APP_KEYS, MAX_APP_STORAGE, MAX_VALUE_BYTES};
+
+    /// What one key costs even when its value is empty: a directory entry and
+    /// a block. Without it a quota counted in bytes never moves.
+    const BLOCK_BYTES: u64 = 4096;
 
     const DEFAULT_DIR: &str = "target/app-store-data";
 
@@ -122,7 +162,13 @@ pub mod storage {
         }
         let dir = path.parent().expect("a key path has a directory");
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
-        if used_bytes(dir, &path) + value.len() as u64 > MAX_APP_STORAGE {
+        let (used, keys) = used(dir, &path);
+        // `keys` leaves out the key being written, so this is what the app
+        // would hold afterwards whether the key is new or replaced.
+        if keys + 1 > MAX_APP_KEYS {
+            return Err(format!("more than {MAX_APP_KEYS} storage keys"));
+        }
+        if used + (value.len() as u64).max(BLOCK_BYTES) > MAX_APP_STORAGE {
             return Err(format!("more than {MAX_APP_STORAGE} bytes of storage"));
         }
         // Rename is the atomic write: a crash mid-`write` would otherwise
@@ -152,16 +198,18 @@ pub mod storage {
         Ok(keys.join("\n").into_bytes())
     }
 
-    /// What the app's directory already holds, ignoring the key about to be
-    /// overwritten. One `stat` per key on every `set`: a quota that is always
-    /// right beats a counter that drifts from the disk.
-    fn used_bytes(dir: &Path, replacing: &Path) -> u64 {
+    /// What the app's directory already holds and how many keys that is,
+    /// ignoring the key about to be overwritten. One `stat` per key on every
+    /// `set`: a quota that is always right beats a counter that drifts from
+    /// the disk, and `MAX_APP_KEYS` is what keeps the scan short.
+    fn used(dir: &Path, replacing: &Path) -> (u64, usize) {
         read_dir(dir)
             .filter(|entry| entry.path() != replacing)
             .filter_map(|entry| entry.metadata().ok())
             .filter(std::fs::Metadata::is_file)
-            .map(|metadata| metadata.len())
-            .sum()
+            .fold((0, 0), |(bytes, keys), metadata| {
+                (bytes + metadata.len().max(BLOCK_BYTES), keys + 1)
+            })
     }
 
     /// A directory that is missing or unreadable simply has no entries: an
@@ -199,12 +247,16 @@ pub mod bus {
         });
     }
 
-    /// Drops one subscription. Request ids are per guest — every module
-    /// counts its own from zero — so the inbox is the other half of the key.
-    pub fn cancel(id: u64, inbox: &Inbox) {
-        SUBSCRIBERS.lock().expect("bus").retain(|subscriber| {
+    /// Drops one subscription and says whether there was one. Request ids are
+    /// per guest — every module counts its own from zero — so the inbox is the
+    /// other half of the key.
+    pub fn cancel(id: u64, inbox: &Inbox) -> bool {
+        let mut subscribers = SUBSCRIBERS.lock().expect("bus");
+        let before = subscribers.len();
+        subscribers.retain(|subscriber| {
             subscriber.id != id || !std::ptr::eq(subscriber.inbox.as_ptr(), Arc::as_ptr(inbox))
         });
+        before != subscribers.len()
     }
 
     /// Delivers `from\n` + the message to every live subscriber of the topic;

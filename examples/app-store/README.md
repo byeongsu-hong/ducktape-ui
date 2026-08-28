@@ -153,10 +153,26 @@ Fuel and memory bound what a module does to itself. What it can make the
 | `MAX_REQUESTS_PER_TICK` | 256 | `Err "too many requests this tick"` for the rest |
 | `MAX_PAYLOAD_BYTES` | 1 MiB | `Err`, whatever the request was |
 | `MAX_TICKERS` | 16 per guest | `Err` from `clock.ticks` |
-| `MAX_INBOX` | 1024 events | its oldest bus delivery dropped, and counted in its status line |
+| `MAX_DUE` | 1024 answers the host still holds | `Err` from `clock.sleep` |
+| `MAX_SUBSCRIPTIONS` | 64 per guest | `Err` from `bus.subscribe` |
+| `MAX_BUS_BYTES` | 64 KiB per message | `Err` from `bus.publish` |
+| `MAX_INBOX` / `MAX_INBOX_BYTES` | 1024 events, 1 MiB | its oldest bus deliveries dropped, and counted in its status line |
 | `MAX_VALUE_BYTES` | 1 MiB | `Err` from `storage.set` |
-| `MAX_APP_STORAGE` | 64 MiB per app | `Err` from `storage.set`, summed over the app's directory |
+| `MAX_APP_KEYS` | 1024 per app | `Err` from `storage.set` |
+| `MAX_APP_STORAGE` | 64 MiB per app | `Err` from `storage.set`, summed over the app's directory, a block per key |
 | `MAX_RANDOM_BYTES` | 4096 per answer | `Err` from `host.random` |
+| `MAX_LOG_BYTES` | 1024 per line | the rest is cut, and the line is escaped before it reaches a terminal |
+| `MAX_FAULT_BYTES` | 1024 | its window shows the first line of that |
+
+The numbers *inside* a frame are the other half of the same boundary: the
+guest chooses every one, and the host's renderer panics on some (a colour
+past 1, a font size of 0, a bordered quad narrower than a pixel) and
+allocates by others — a shadow is a buffer the size of the quad, so a
+100000-pixel one is 40 GB. `wire::sanitize` pulls them into range on the way
+in: positions and extents to twice the window in every direction, colours to
+`0..=1`, blur to 64 px, text size and line height to `1..=128` px. Clamped
+rather than refused, because "not finite" is not the same as "hostile" —
+every iced frame's base layer carries an infinite clip.
 
 ## What is not here yet
 
@@ -221,9 +237,11 @@ An honest inventory, grouped by where the work would land. Items marked
   `storage`. No signature or hash check on modules, no consent prompt at
   install, no per-operation prompt, no runtime revocation, no policy file.
 - Storage: a write is atomic (a sibling temp file, then a rename) but not
-  fsync'd, so a power cut can still lose the last one. No sharing between
-  apps, no migration on app upgrade, and nothing outside the app can read
-  or list what it stored.
+  fsync'd, so a power cut can still lose the last one. Every `set` stats the
+  whole app directory to check the quota, so `MAX_APP_KEYS` is what keeps
+  that scan short — there is no counter the host maintains. No sharing
+  between apps, no migration on app upgrade, and nothing outside the app can
+  read or list what it stored.
 - Bus: no topic ownership — any app with `bus` can publish `counter\n999`
   under its own name. No rate limit, no replay for late subscribers, no
   request/reply between apps, no wildcard beyond `*`.

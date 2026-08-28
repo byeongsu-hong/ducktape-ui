@@ -205,6 +205,97 @@ pub struct Font {
     pub monospace: bool,
 }
 
+// ---------- what the host may draw ----------
+
+/// How far outside its window a guest's drawing may reach, as a multiple of
+/// the window's longest side. A scrolled row or a shadow legitimately hangs
+/// off the window; a quad a thousand windows wide is a buffer the host would
+/// have to allocate for nothing anyone can see.
+const REACH: f32 = 2.0;
+
+/// A shadow costs a buffer the size of the quad plus this on every side.
+const MAX_BLUR: f32 = 64.0;
+
+/// Text is rasterised glyph by glyph at this size and kept in the host's
+/// glyph cache; zero is an assertion inside cosmic-text.
+const MAX_TEXT: f32 = 128.0;
+
+/// Pulls every number in a frame into the range the host's renderer survives.
+///
+/// The host draws values the guest chose: tiny-skia `expect`s colours in
+/// `0..=1` and finite rectangles, panics on a zero-sized pixmap, cosmic-text
+/// asserts a non-zero font size, and both allocate by the sizes they are
+/// given — the shadow pass builds a buffer the size of the quad. Clamped
+/// rather than refused, because "not finite" is not the same as "hostile":
+/// the base layer's clip is `Rectangle::INFINITE` in every iced frame.
+pub fn sanitize(frame: &mut Frame, window: [f32; 2]) {
+    // The window is the host's own, never the guest's, but it arrives as
+    // plain floats: clamp it too rather than trust it.
+    let side = bounded(window[0], f32::MAX).max(bounded(window[1], f32::MAX));
+    let reach = side.clamp(1.0, 8192.0) * REACH;
+    for layer in &mut frame.layers {
+        clamp_rect(&mut layer.bounds, reach);
+        for quad in &mut layer.quads {
+            clamp_rect(&mut quad.bounds, reach);
+            clamp_rgba(&mut quad.background);
+            clamp_rgba(&mut quad.border_color);
+            clamp_rgba(&mut quad.shadow_color);
+            quad.border_width = bounded(quad.border_width, reach).max(0.0);
+            // A border on a sub-pixel quad is the one shape tiny-skia draws
+            // through a pixmap of the quad's size, and a zero-sized pixmap is
+            // an `unwrap` on `None`.
+            if quad.bounds[2] < 1.0 || quad.bounds[3] < 1.0 {
+                quad.border_width = 0.0;
+            }
+            for radius in &mut quad.radius {
+                *radius = bounded(*radius, reach).max(0.0);
+            }
+            for offset in &mut quad.shadow_offset {
+                *offset = bounded(*offset, reach);
+            }
+            quad.shadow_blur = bounded(quad.shadow_blur, MAX_BLUR).max(0.0);
+        }
+        for text in &mut layer.texts {
+            text.x = bounded(text.x, reach);
+            text.y = bounded(text.y, reach);
+            clamp_rect(&mut text.clip, reach);
+            clamp_rgba(&mut text.color);
+            text.size = text_size(text.size);
+            text.line_height = text_size(text.line_height);
+        }
+    }
+}
+
+/// Clamps the rectangle's edges rather than its width: a quad wider than the
+/// reach keeps the part of it that lies inside.
+fn clamp_rect(rect: &mut Rect, reach: f32) {
+    let left = bounded(rect[0], reach);
+    let top = bounded(rect[1], reach);
+    let right = bounded(rect[0] + rect[2], reach).max(left);
+    let bottom = bounded(rect[1] + rect[3], reach).max(top);
+    *rect = [left, top, right - left, bottom - top];
+}
+
+fn clamp_rgba(color: &mut Rgba) {
+    for channel in color {
+        *channel = bounded(*channel, 1.0).max(0.0);
+    }
+}
+
+fn bounded(value: f32, limit: f32) -> f32 {
+    match value.is_nan() {
+        true => 0.0,
+        false => value.clamp(-limit, limit),
+    }
+}
+
+fn text_size(value: f32) -> f32 {
+    match value.is_nan() {
+        true => 1.0,
+        false => value.clamp(1.0, MAX_TEXT),
+    }
+}
+
 pub fn encode<T: Serialize>(value: &T) -> Vec<u8> {
     bincode::serialize(value).expect("wire types are plain data")
 }
@@ -235,9 +326,119 @@ mod tests {
         assert_eq!(decode::<Vec<Event>>(&encode(&events)).unwrap(), events);
     }
 
+    /// One quad and one text of everything the renderer would panic or
+    /// allocate the host to death on: colours past 1, an infinite width, a
+    /// sub-pixel bordered quad (a zero-sized pixmap inside tiny-skia), a
+    /// 100000-pixel shadow, a zero font size (an assertion inside
+    /// cosmic-text) and NaN.
     #[test]
-    fn frame_round_trips() {
-        let frame = Frame {
+    fn a_hostile_frame_is_pulled_into_range() {
+        let mut frame = Frame {
+            layers: vec![Layer {
+                bounds: [
+                    f32::NEG_INFINITY,
+                    f32::NEG_INFINITY,
+                    f32::INFINITY,
+                    f32::INFINITY,
+                ],
+                quads: vec![
+                    Quad {
+                        bounds: [0.0, 0.0, f32::INFINITY, 100_000.0],
+                        background: [1.5, -0.5, f32::NAN, 1.0],
+                        border_color: [0.0; 4],
+                        border_width: 0.0,
+                        radius: [f32::NAN; 4],
+                        shadow_color: [0.0, 0.0, 0.0, 1.0],
+                        shadow_offset: [f32::INFINITY; 2],
+                        shadow_blur: 100_000.0,
+                        snap: false,
+                    },
+                    Quad {
+                        bounds: [0.0, 0.0, 0.5, 0.5],
+                        background: [0.0; 4],
+                        border_color: [0.0; 4],
+                        border_width: 1.0,
+                        radius: [0.1; 4],
+                        shadow_color: [0.0; 4],
+                        shadow_offset: [0.0; 2],
+                        shadow_blur: 0.0,
+                        snap: false,
+                    },
+                ],
+                texts: vec![Text {
+                    content: "hi".into(),
+                    x: f32::NAN,
+                    y: 1e30,
+                    anchor: Anchor::TOP_LEFT,
+                    size: 0.0,
+                    line_height: 20_000.0,
+                    font: Font {
+                        family: None,
+                        weight: 400,
+                        italic: false,
+                        monospace: false,
+                    },
+                    color: [2.0, 0.5, 0.5, f32::NAN],
+                    clip: [0.0, 0.0, f32::INFINITY, f32::INFINITY],
+                }],
+            }],
+            ..Frame::default()
+        };
+        sanitize(&mut frame, [500.0, 380.0]);
+
+        let reach = 1000.0;
+        let layer = &frame.layers[0];
+        for value in numbers(layer) {
+            assert!(value.is_finite(), "{value} left in {layer:?}");
+            assert!(value.abs() <= 2.0 * reach, "{value} left in {layer:?}");
+        }
+        let wide = &layer.quads[0];
+        assert_eq!(wide.bounds, [0.0, 0.0, reach, reach]);
+        assert!(wide.background.iter().all(|c| (0.0..=1.0).contains(c)));
+        assert_eq!(wide.shadow_blur, MAX_BLUR);
+        // A sub-pixel quad is drawn without its border: the pixmap tiny-skia
+        // would build for it has no pixels.
+        assert_eq!(layer.quads[1].border_width, 0.0);
+        let text = &layer.texts[0];
+        assert_eq!(text.size, 1.0);
+        assert_eq!(text.line_height, MAX_TEXT);
+        assert!(text.color.iter().all(|c| (0.0..=1.0).contains(c)));
+    }
+
+    /// A frame an ordinary app draws inside its window is not touched — the
+    /// one thing every iced frame carries is the base layer's infinite clip.
+    #[test]
+    fn an_ordinary_frame_survives_untouched() {
+        let mut frame = ordinary_frame();
+        let before = frame.clone();
+        sanitize(&mut frame, [500.0, 380.0]);
+        assert_eq!(frame.layers[0].quads, before.layers[0].quads);
+        assert_eq!(frame.layers[0].texts, before.layers[0].texts);
+    }
+
+    fn numbers(layer: &Layer) -> Vec<f32> {
+        let mut values: Vec<f32> = layer.bounds.to_vec();
+        for quad in &layer.quads {
+            values.extend(quad.bounds);
+            values.extend(quad.background);
+            values.extend(quad.border_color);
+            values.extend(quad.radius);
+            values.extend(quad.shadow_color);
+            values.extend(quad.shadow_offset);
+            values.push(quad.border_width);
+            values.push(quad.shadow_blur);
+        }
+        for text in &layer.texts {
+            values.extend([text.x, text.y, text.size, text.line_height]);
+            values.extend(text.color);
+            values.extend(text.clip);
+        }
+        values
+    }
+
+    /// One layer of one quad and one line, all inside a 500x380 window.
+    fn ordinary_frame() -> Frame {
+        Frame {
             layers: vec![Layer {
                 bounds: [0.0, 0.0, 10.0, 10.0],
                 quads: vec![Quad {
@@ -275,7 +476,12 @@ mod tests {
                 payload: b"hi".to_vec(),
             }],
             cancels: vec![9],
-        };
+        }
+    }
+
+    #[test]
+    fn frame_round_trips() {
+        let frame = ordinary_frame();
         let back: Frame = decode(&encode(&frame)).unwrap();
         assert_eq!(back, frame);
         let events = vec![

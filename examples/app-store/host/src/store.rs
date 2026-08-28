@@ -66,6 +66,33 @@ pub(crate) const MAX_APP_STORAGE: u64 = 64 << 20;
 /// One `host.random` answer. Entropy is cheap; a 4 GB request is not.
 pub(crate) const MAX_RANDOM_BYTES: usize = 4096;
 
+/// One bus message. Smaller than a payload the host only reads, because this
+/// one is copied into every subscriber's inbox and decoded inside every
+/// subscriber's memory limit.
+pub(crate) const MAX_BUS_BYTES: usize = 64 << 10;
+
+/// What one guest's undrained inbox may hold, in bytes as well as events: a
+/// thousand deliveries is only a bound if a delivery is bounded too.
+pub(crate) const MAX_INBOX_BYTES: usize = 1 << 20;
+
+/// Everything the host is still holding for one guest — mostly sleeps it was
+/// asked to wake up for. Walked and re-partitioned on every redraw.
+const MAX_DUE: usize = 1024;
+
+/// Bus subscriptions per guest: every publish by anyone walks all of them.
+const MAX_SUBSCRIPTIONS: usize = 64;
+
+/// One `host.log` line, on the store's own stderr.
+pub(crate) const MAX_LOG_BYTES: usize = 1024;
+
+/// The panic message read out of a faulted guest and shaped in its window on
+/// every frame, so bounded like the log line rather than by the memory limit.
+const MAX_FAULT_BYTES: usize = 1024;
+
+/// Keys per app. Every `storage.set` stats the app's directory, so this is
+/// also what bounds how long one write takes.
+pub(crate) const MAX_APP_KEYS: usize = 1024;
+
 // ---------- catalog ----------
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -308,6 +335,8 @@ pub struct Guest {
     due: Vec<(Instant, wire::Event)>,
     tickers: Vec<Ticker>,
     inbox: Inbox,
+    /// How many entries this guest has in the process-wide subscriber list.
+    subscriptions: usize,
     /// Something was published this redraw: the other guests must run.
     published: bool,
     /// The trap that ended the app, if one did. A faulted guest never ticks again.
@@ -414,6 +443,7 @@ impl Guest {
             due: Vec::new(),
             tickers: Vec::new(),
             inbox: Inbox::default(),
+            subscriptions: 0,
             published: false,
             fault: None,
             fuel_used: 0,
@@ -479,7 +509,11 @@ impl Guest {
             |(_, event)| !matches!(event, wire::Event::Response { id: due, .. } if *due == id),
         );
         self.tickers.retain(|ticker| ticker.id != id);
-        bus::cancel(id, &self.inbox);
+        // Saturating because the subscriber list is keyed by the inbox's
+        // address, which a dropped instance can leave behind for the next one.
+        if bus::cancel(id, &self.inbox) {
+            self.subscriptions = self.subscriptions.saturating_sub(1);
+        }
     }
 
     /// Reloads the module in place: the window, the handle the view holds and
@@ -568,6 +602,10 @@ impl Guest {
             ("clock", "now") => {
                 self.reply(now, id, Ok(clock::unix_ms().to_le_bytes().to_vec()));
             }
+            ("clock", "sleep") if self.due.len() >= MAX_DUE => {
+                let message = format!("more than {MAX_DUE} answers the host is still holding");
+                self.reply(now, id, Err(message));
+            }
             ("clock", "sleep") => {
                 let at = now + Duration::from_millis(clock::millis(&payload));
                 self.due.push((at, one_shot(id, Ok(Vec::new()))));
@@ -600,12 +638,23 @@ impl Guest {
                 let result = storage::list(&app);
                 self.reply(now, id, result);
             }
+            ("bus", "publish") if payload.len() > MAX_BUS_BYTES => {
+                let message = format!("a bus message larger than {MAX_BUS_BYTES} bytes");
+                self.reply(now, id, Err(message));
+            }
             ("bus", "publish") => {
                 let delivered = bus::publish(&app, &payload) as u64;
                 self.published = true;
                 self.reply(now, id, Ok(delivered.to_le_bytes().to_vec()));
             }
-            ("bus", "subscribe") => bus::subscribe(&payload, id, &self.inbox, &self.alive),
+            ("bus", "subscribe") if self.subscriptions >= MAX_SUBSCRIPTIONS => {
+                let message = format!("more than {MAX_SUBSCRIPTIONS} bus subscriptions");
+                self.reply(now, id, Err(message));
+            }
+            ("bus", "subscribe") => {
+                bus::subscribe(&payload, id, &self.inbox, &self.alive);
+                self.subscriptions += 1;
+            }
             _ => self.reply(now, id, Err(format!("unknown request `{kind}`"))),
         }
     }
@@ -651,7 +700,11 @@ impl Guest {
         }
         let ptr = self.output_ptr.call(&mut self.store, ())? as usize;
         let frame = window(self.memory.data(&self.store), ptr, len)?;
-        wire::decode(frame).map_err(wasmtime::Error::msg)
+        let mut frame: wire::Frame = wire::decode(frame).map_err(wasmtime::Error::msg)?;
+        // The host's renderer panics on values a frame may carry and
+        // allocates by the sizes it is given; the guest chose every one.
+        wire::sanitize(&mut frame, [self.size.width, self.size.height]);
+        Ok(frame)
     }
 
     /// The message the sdk's panic hook parked, if the module has the exports
@@ -660,9 +713,11 @@ impl Guest {
         let (ptr, len) = self.panic_text.clone()?;
         let _ = self.store.set_fuel(FUEL_PER_TICK);
         let ptr = ptr.call(&mut self.store, ()).ok()? as usize;
-        let len = len.call(&mut self.store, ()).ok()? as usize;
+        let len = (len.call(&mut self.store, ()).ok()? as usize).min(MAX_FAULT_BYTES);
         let text = window(self.memory.data(&self.store), ptr, len).ok()?;
-        let text = String::from_utf8_lossy(text).into_owned();
+        let text = String::from_utf8_lossy(text);
+        // One line, like a trap's: the window shows it on every frame.
+        let text = text.lines().next().unwrap_or_default().to_string();
         (!text.is_empty()).then_some(text)
     }
 }

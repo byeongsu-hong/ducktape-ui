@@ -468,15 +468,25 @@ thread_local! {
     static FAMILIES: RefCell<HashMap<String, &'static str>> = RefCell::new(HashMap::new());
 }
 
+/// Interning leaks, so the guest may not name families forever: only the
+/// families the host has fonts for are worth a name, and there are a handful.
+const MAX_FAMILIES: usize = 64;
+
 fn font(font: &wire::Font) -> iced::Font {
     use iced::font::{Family, Style, Weight};
     let family = match &font.family {
-        Some(name) => Family::Name(FAMILIES.with(|families| {
-            *families
-                .borrow_mut()
-                .entry(name.clone())
-                .or_insert_with(|| Box::leak(name.clone().into_boxed_str()))
-        })),
+        Some(name) => FAMILIES.with(|families| {
+            let mut families = families.borrow_mut();
+            if let Some(interned) = families.get(name.as_str()) {
+                return Family::Name(interned);
+            }
+            if families.len() >= MAX_FAMILIES {
+                return Family::SansSerif;
+            }
+            let interned: &'static str = Box::leak(name.clone().into_boxed_str());
+            families.insert(name.clone(), interned);
+            Family::Name(interned)
+        }),
         None if font.monospace => Family::Monospace,
         None => Family::SansSerif,
     };
