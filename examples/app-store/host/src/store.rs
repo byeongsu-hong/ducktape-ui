@@ -1,4 +1,5 @@
-//! The host side of the boundary: a wasmtime instance behind an iced widget.
+//! The store: a catalog read from wasm manifests, installs that instantiate a
+//! module, uninstalls that drop it, and the widget that shows a running one.
 //!
 //! The widget forwards every event it sees into the guest in the guest's own
 //! coordinates, ticks it once per redraw, and replays the frame it gets back
@@ -7,29 +8,91 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
+use app_store_frame as wire;
 use iced::advanced::text::{self as core_text, LineHeight, Shaping, Wrapping};
 use iced::advanced::widget::Tree;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::{
     Border, Color, Element, Event, Length, Pixels, Point, Rectangle, Shadow, Size, Vector, keyboard,
 };
-use wasm_view_frame as wire;
 use wasmtime::{Config, Engine, Linker, Module, OptLevel, Store, TypedFunc};
 
-/// Where the guest's bytes come from. Build them first:
-/// `cargo build -p wasm-view-guest --release --target wasm32-unknown-unknown`.
-const DEFAULT_GUEST: &str = "target/wasm32-unknown-unknown/release/wasm_view_guest.wasm";
+/// Where the catalog looks for modules. Build the apps first:
+/// `cargo build -p app-store-todo -p app-store-counter --release --target wasm32-unknown-unknown`.
+const DEFAULT_CATALOG_DIR: &str = "target/wasm32-unknown-unknown/release";
+
+/// The custom section `export_app!` writes: `name\ndescription`.
+const MANIFEST_SECTION: &str = "ice.manifest";
+
+// ---------- catalog ----------
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CatalogEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StoreError {
+    pub message: String,
+}
+
+/// Lists every wasm module in the catalog directory that carries a manifest.
+/// Reading the section needs no compilation, so a catalog of a hundred apps
+/// costs a hundred file reads, not a hundred cranelift runs.
+pub fn scan_catalog() -> Vec<CatalogEntry> {
+    let dir =
+        std::env::var("APP_STORE_CATALOG").unwrap_or_else(|_| DEFAULT_CATALOG_DIR.to_string());
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut catalog: Vec<CatalogEntry> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "wasm"))
+        .filter_map(|path| {
+            let bytes = std::fs::read(&path).ok()?;
+            let (name, description) = read_manifest(&bytes)?;
+            Some(CatalogEntry {
+                id: path.file_stem()?.to_string_lossy().into_owned(),
+                name,
+                description,
+                path: path.to_string_lossy().into_owned(),
+            })
+        })
+        .collect();
+    catalog.sort_by(|a, b| a.name.cmp(&b.name));
+    catalog
+}
+
+fn read_manifest(bytes: &[u8]) -> Option<(String, String)> {
+    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+        if let Ok(wasmparser::Payload::CustomSection(section)) = payload
+            && section.name() == MANIFEST_SECTION
+        {
+            let text = std::str::from_utf8(section.data()).ok()?;
+            let (name, description) = text.split_once('\n')?;
+            return Some((name.to_string(), description.to_string()));
+        }
+    }
+    None
+}
+
+// ---------- installed apps ----------
 
 /// The host-side handle the view holds. Identity is the instance: two
 /// surfaces compare equal only when they are the same guest.
 #[derive(Clone, Debug)]
-pub struct Surface(Rc<RefCell<Guest>>);
+pub struct Surface(Arc<Mutex<Guest>>);
 
 impl PartialEq for Surface {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
+        Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -37,13 +100,66 @@ impl Eq for Surface {}
 
 impl Hash for Surface {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        (Rc::as_ptr(&self.0) as usize).hash(state);
+        (Arc::as_ptr(&self.0) as usize).hash(state);
     }
 }
 
-pub fn load_surface() -> Surface {
-    let path = std::env::var("WASM_VIEW_GUEST").unwrap_or_else(|_| DEFAULT_GUEST.to_string());
-    Surface(Rc::new(RefCell::new(Guest::load(&path))))
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct InstalledApp {
+    pub id: String,
+    pub name: String,
+    pub surface: Surface,
+}
+
+/// Compiles and instantiates the module. Runs on iced's executor, so the
+/// second or so cranelift takes never stalls the window.
+pub async fn install_app(entry: CatalogEntry) -> Result<InstalledApp, StoreError> {
+    let guest = Guest::load(&entry.path).map_err(|message| StoreError { message })?;
+    Ok(InstalledApp {
+        id: entry.id,
+        name: entry.name,
+        surface: Surface(Arc::new(Mutex::new(guest))),
+    })
+}
+
+pub fn add_installed(mut apps: Vec<InstalledApp>, app: InstalledApp) -> Vec<InstalledApp> {
+    apps.retain(|installed| installed.id != app.id);
+    apps.push(app);
+    apps
+}
+
+/// Dropping the last handle drops the wasmtime store — the instance, its
+/// memory and its compiled code go with it. That is the whole uninstall.
+pub fn remove_installed(mut apps: Vec<InstalledApp>, id: String) -> Vec<InstalledApp> {
+    apps.retain(|installed| installed.id != id);
+    apps
+}
+
+pub fn is_installed(apps: Vec<InstalledApp>, id: String) -> bool {
+    apps.iter().any(|installed| installed.id == id)
+}
+
+pub fn active_after_remove(active: String, removed: String) -> String {
+    if active == removed {
+        String::new()
+    } else {
+        active
+    }
+}
+
+pub fn installing_label(entry: CatalogEntry) -> String {
+    format!("Installing {}…", entry.name)
+}
+
+static LIVE_INSTANCES: AtomicUsize = AtomicUsize::new(0);
+
+/// Takes the installed list so it is recomputed exactly when that list
+/// changes; the count itself is the number of `Guest`s alive.
+pub fn live_label(_apps: Vec<InstalledApp>) -> String {
+    format!(
+        "live wasm instances: {}",
+        LIVE_INSTANCES.load(Ordering::Relaxed)
+    )
 }
 
 pub fn wasm_view(surface: &Surface) -> Element<'_, ()> {
@@ -73,40 +189,55 @@ impl std::fmt::Debug for Guest {
     }
 }
 
-impl Guest {
-    fn load(path: &str) -> Self {
+impl Drop for Guest {
+    fn drop(&mut self) {
+        LIVE_INSTANCES.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+fn engine() -> &'static Engine {
+    static ENGINE: OnceLock<Engine> = OnceLock::new();
+    ENGINE.get_or_init(|| {
         let mut config = Config::new();
         config.cranelift_opt_level(OptLevel::Speed);
-        let engine = Engine::new(&config).expect("wasmtime engine");
-        let module = Module::from_file(&engine, path)
-            .unwrap_or_else(|error| panic!("load guest wasm from {path}: {error}"));
-        let mut store = Store::new(&engine, ());
+        Engine::new(&config).expect("wasmtime engine")
+    })
+}
+
+impl Guest {
+    fn load(path: &str) -> Result<Self, String> {
+        let engine = engine();
+        let module = Module::from_file(engine, path).map_err(|error| format!("{path}: {error}"))?;
+        let mut store = Store::new(engine, ());
         // The guest links web_time's wasm-bindgen shims for `Instant::now`;
         // nothing on the frame path calls them, so they answer zero.
-        let mut linker = Linker::new(&engine);
+        let mut linker = Linker::new(engine);
         linker
             .define_unknown_imports_as_default_values(&mut store, &module)
-            .expect("stub guest imports");
+            .map_err(|error| error.to_string())?;
         let instance = linker
             .instantiate(&mut store, &module)
-            .expect("instantiate guest");
+            .map_err(|error| error.to_string())?;
+        let export = |name: &str| format!("{path}: missing export `{name}`");
         let init = instance
             .get_typed_func::<(), ()>(&mut store, "init")
-            .expect("init");
+            .map_err(|_| export("init"))?;
         let input_ptr = instance
             .get_typed_func::<u32, u32>(&mut store, "input_ptr")
-            .expect("input_ptr");
+            .map_err(|_| export("input_ptr"))?;
         let tick = instance
             .get_typed_func::<u32, u32>(&mut store, "tick")
-            .expect("tick");
+            .map_err(|_| export("tick"))?;
         let output_ptr = instance
             .get_typed_func::<(), u32>(&mut store, "output_ptr")
-            .expect("output_ptr");
+            .map_err(|_| export("output_ptr"))?;
         let memory = instance
             .get_memory(&mut store, "memory")
-            .expect("guest memory");
-        init.call(&mut store, ()).expect("guest init");
-        Self {
+            .ok_or_else(|| export("memory"))?;
+        init.call(&mut store, ())
+            .map_err(|error| format!("{path}: init trapped: {error}"))?;
+        LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
+        Ok(Self {
             store,
             memory,
             input_ptr,
@@ -115,7 +246,7 @@ impl Guest {
             size: Size::ZERO,
             pending: Vec::new(),
             frame: wire::Frame::default(),
-        }
+        })
     }
 
     fn tick(&mut self) {
@@ -142,7 +273,7 @@ impl Guest {
 // ---------- the widget ----------
 
 struct WasmView {
-    guest: Rc<RefCell<Guest>>,
+    guest: Arc<Mutex<Guest>>,
 }
 
 impl<Theme, Renderer> Widget<(), Theme, Renderer> for WasmView
@@ -174,7 +305,7 @@ where
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let mut guest = self.guest.borrow_mut();
+        let mut guest = self.guest.lock().expect("guest lock");
         if guest.size != bounds.size() {
             guest.size = bounds.size();
             guest.pending.push(wire::Event::Resized {
@@ -262,7 +393,7 @@ where
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let guest = self.guest.borrow();
+        let guest = self.guest.lock().expect("guest lock");
         renderer.with_layer(bounds, |renderer| {
             renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
                 for layer in &guest.frame.layers {

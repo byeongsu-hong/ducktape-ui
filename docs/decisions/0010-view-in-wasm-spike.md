@@ -1,6 +1,6 @@
 # 0010: An Ice view can run inside wasm — measured
 
-- Status: Proposed (spike; shape (b) built as `examples/wasm-view`)
+- Status: Proposed (spike; shape (b) built as `examples/app-store`)
 - Date: 2026-08-28
 
 ## Context
@@ -110,9 +110,10 @@ frame, 1.4–1.8× when every paragraph reshapes, crosses the boundary with a
 viewport-bound primitive list that decodes in microseconds, and needs no
 change to the language, the code generator or the template vocabulary.
 
-`examples/wasm-view` is shape (b) end to end: an Ice todo app compiled to
-wasm32, driven headlessly, and drawn — clicks, typing and all — by a native
-Ice host through a wasmtime instance behind one `extern` component. Its
+`examples/app-store` is shape (b) end to end: Ice apps compiled to wasm32
+and driven headlessly, a native Ice host that lists them from a manifest
+section, installs one as a wasmtime instance behind one `extern` component,
+shows it — clicks, typing and all — and drops it again on uninstall. Its
 README lists what does not cross the boundary yet.
 
 What it does need beyond that example:

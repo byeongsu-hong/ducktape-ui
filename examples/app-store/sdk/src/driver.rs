@@ -1,40 +1,40 @@
-//! Drives the generated application headlessly — the loop a window would run,
+//! Drives a generated application headlessly — the loop a window would run,
 //! minus the window: translate the host's events, build the widget tree, lay
 //! it out, draw into iced's recording layers, and flatten those into a
 //! [`wire::Frame`].
 
+use iced::advanced::graphics::text::cosmic_text;
 use iced::advanced::graphics::text::{Text as GraphicsText, font_system};
 use iced::advanced::renderer::Style;
 use iced::{Background, Font, Pixels, Point, Rectangle, Size, Transformation, keyboard, mouse};
 use iced_runtime::user_interface::{self, UserInterface};
 use iced_tiny_skia::layer::Item;
-use wasm_view_frame as wire;
 
-use crate::Todo;
+use crate::WasmApp;
+use crate::frame as wire;
 
 /// Both sides must resolve the default font to the same bytes: natively fontdb
 /// walks the system font list, in wasm only the embedded family exists.
 pub const DEFAULT_FONT: &str = "Fira Sans";
 
-pub struct Driver {
-    app: Todo,
+pub struct Driver<A: WasmApp> {
+    app: A,
     cache: user_interface::Cache,
     renderer: iced::Renderer,
     size: Size,
     cursor: mouse::Cursor,
 }
 
-impl Default for Driver {
+impl<A: WasmApp> Default for Driver<A> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Driver {
+impl<A: WasmApp> Driver<A> {
     pub fn new() -> Self {
-        let (app, _boot) = Todo::__boot();
         Self {
-            app,
+            app: A::boot(),
             cache: user_interface::Cache::default(),
             renderer: iced::Renderer::new(Font::with_name(DEFAULT_FONT), Pixels(16.0)),
             size: Size::new(640.0, 480.0),
@@ -52,7 +52,7 @@ impl Driver {
             size,
             cursor,
         } = self;
-        let mut ui = UserInterface::build(app.__view(), *size, std::mem::take(cache), renderer);
+        let mut ui = UserInterface::build(app.view(), *size, std::mem::take(cache), renderer);
         let mut messages = Vec::new();
         if !events.is_empty() {
             let _ = ui.update(
@@ -68,11 +68,11 @@ impl Driver {
         if !messages.is_empty() {
             *cache = ui.into_cache();
             for message in messages {
-                let _task = app.__update(message);
+                app.update(message);
             }
-            ui = UserInterface::build(app.__view(), *size, std::mem::take(cache), renderer);
+            ui = UserInterface::build(app.view(), *size, std::mem::take(cache), renderer);
         }
-        let theme = app.__theme();
+        let theme = app.theme();
         ui.draw(
             renderer,
             &theme,

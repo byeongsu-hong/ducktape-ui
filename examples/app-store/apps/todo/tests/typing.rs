@@ -1,9 +1,9 @@
-//! Drives the guest natively, the way the host drives it in wasm: the same
+//! Drives the app natively, the way the host drives it in wasm: the same
 //! events in, the same frame out. Proves the loop without a window or a
 //! wasm runtime, so a broken key path fails here first.
 
-use wasm_view_frame::{Button, Event, Frame, Key};
-use wasm_view_guest::driver::Driver;
+use app_store_sdk::frame::{Button, Event, Frame, Key};
+use app_store_todo::{boot_native, tick_native};
 
 fn texts(frame: &Frame) -> Vec<String> {
     frame
@@ -33,8 +33,8 @@ fn typed(text: &str) -> Vec<Event> {
 
 #[test]
 fn typing_into_the_input_and_adding_appends_a_row() {
-    let mut driver = Driver::new();
-    let frame = driver.tick(vec![
+    boot_native();
+    let frame = tick_native(vec![
         Event::Resized {
             width: 760.0,
             height: 500.0,
@@ -55,7 +55,7 @@ fn typing_into_the_input_and_adding_appends_a_row() {
     let mut events = click(200.0, 116.0);
     events.extend(typed("Hello"));
     events.push(Event::Redraw);
-    let frame = driver.tick(events);
+    let frame = tick_native(events);
     let after_typing = texts(&frame);
     assert!(
         after_typing.iter().any(|t| t == "Hello"),
@@ -64,7 +64,7 @@ fn typing_into_the_input_and_adding_appends_a_row() {
 
     let mut events = click(715.0, 102.0);
     events.push(Event::Redraw);
-    let frame = driver.tick(events);
+    let frame = tick_native(events);
     let after_add = texts(&frame);
     assert_eq!(
         after_add.iter().filter(|t| *t == "Hello").count(),

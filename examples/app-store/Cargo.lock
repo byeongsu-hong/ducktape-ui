@@ -165,6 +165,60 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "app-store-counter"
+version = "0.1.0"
+dependencies = [
+ "app-store-sdk",
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+]
+
+[[package]]
+name = "app-store-frame"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+]
+
+[[package]]
+name = "app-store-host"
+version = "0.1.0"
+dependencies = [
+ "app-store-frame",
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+ "wasmparser",
+ "wasmtime",
+]
+
+[[package]]
+name = "app-store-sdk"
+version = "0.1.0"
+dependencies = [
+ "app-store-frame",
+ "iced",
+ "iced_runtime",
+ "iced_tiny_skia",
+ "ui-lang-runtime",
+]
+
+[[package]]
+name = "app-store-todo"
+version = "0.1.0"
+dependencies = [
+ "app-store-sdk",
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "ar_archive_writer"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3887,40 +3941,6 @@ checksum = "5a879a421bd17c528b74721b2abf4c62e8f1d1889c2ba8c3c50d02deaf2ce395"
 dependencies = [
  "leb128fmt",
  "wasmparser",
-]
-
-[[package]]
-name = "wasm-view-frame"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "serde",
-]
-
-[[package]]
-name = "wasm-view-guest"
-version = "0.1.0"
-dependencies = [
- "cosmic-text",
- "iced",
- "iced_runtime",
- "iced_tiny_skia",
- "ui-lang",
- "ui-lang-build",
- "ui-lang-runtime",
- "wasm-view-frame",
-]
-
-[[package]]
-name = "wasm-view-host"
-version = "0.1.0"
-dependencies = [
- "iced",
- "ui-lang",
- "ui-lang-build",
- "ui-lang-runtime",
- "wasm-view-frame",
- "wasmtime",
 ]
 
 [[package]]

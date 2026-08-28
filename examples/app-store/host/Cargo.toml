@@ -1,23 +1,21 @@
 [package]
-name = "wasm-view-host"
+name = "app-store-host"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
-# Software rendering only, on purpose: enabling wgpu anywhere in this
-# workspace turns `iced::Renderer` into the wgpu/tiny-skia fallback enum for
-# the guest too, and the guest records through `iced_tiny_skia`'s layers.
 [dependencies]
-iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "smol", "x11", "wayland", "fira-sans"] }
+iced = { workspace = true, features = ["smol", "x11", "wayland"] }
 ui-lang.workspace = true
 ui-lang-runtime = { workspace = true, features = ["full-runtime", "x11"] }
-wasm-view-frame.workspace = true
+app-store-frame.workspace = true
 wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime"] }
+wasmparser = "0.251"
 
 # Ice's generated `#[cfg(test)]` glue needs the runtime's test driver, which
 # pulls wgpu; the host has no tests of its own.
 [[bin]]
-name = "wasm-view-host"
+name = "app-store-host"
 path = "src/main.rs"
 test = false
 
