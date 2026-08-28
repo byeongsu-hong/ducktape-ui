@@ -1,0 +1,26 @@
+# A separate workspace on purpose: the apps target wasm32 and the host pulls
+# wasmtime, neither of which belongs in the root workspace's lockfile or CI.
+[workspace]
+resolver = "2"
+members = ["frame", "sdk", "apps/todo", "apps/counter", "apps/clock", "apps/activity", "apps/chaos", "host"]
+
+[workspace.dependencies]
+ui-lang = { path = "../../crates/ui-lang" }
+ui-lang-build = { path = "../../crates/ui-lang-build" }
+ui-lang-runtime = { path = "../../crates/ui-lang-runtime", default-features = false }
+app-store-frame = { path = "frame" }
+app-store-sdk = { path = "sdk" }
+# Software rendering only, on purpose: enabling wgpu anywhere in this
+# workspace turns `iced::Renderer` into the wgpu/tiny-skia fallback enum for
+# the apps too, and the sdk records through `iced_tiny_skia`'s layers.
+iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tiny-skia", "fira-sans"] }
+
+[patch.crates-io]
+iced_tiny_skia = { path = "../../vendor/iced_tiny_skia" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

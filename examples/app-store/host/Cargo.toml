@@ -1,0 +1,33 @@
+[package]
+name = "app-store-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+iced = { workspace = true, features = ["smol"] }
+ui-lang.workspace = true
+ui-lang-runtime = { workspace = true, features = ["full-runtime"] }
+app-store-frame.workspace = true
+wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime"] }
+wasmparser = "0.251"
+getrandom = "0.3"
+
+# The windowing backends are Linux's; asking for them anywhere else fails the
+# build before it starts.
+[target.'cfg(target_os = "linux")'.dependencies]
+iced = { workspace = true, features = ["x11", "wayland"] }
+ui-lang-runtime = { workspace = true, features = ["x11"] }
+
+# Ice's generated `#[cfg(test)]` glue needs the runtime's test driver, which
+# pulls wgpu; the host has no tests of its own.
+[[bin]]
+name = "app-store-host"
+path = "src/main.rs"
+test = false
+
+[build-dependencies]
+ui-lang-build.workspace = true
+
+[lints.rust]
+unsafe_code = "forbid"
