@@ -25,16 +25,27 @@ resolver = "3"
 # it is a patch over a published crate, not a crate of this workspace.
 exclude = ["vendor/iced_tiny_skia"]
 
-# `iced_tiny_skia 0.14.0` translates a canvas group's clip rectangle by the
-# group's own transformation twice — once when the layer records it and again
-# when the renderer draws it — so any `canvas` geometry drawn at an offset is
-# clipped to a rectangle displaced by that offset. The software renderer is the
-# one every headless capture and `cargo ice inspect` draws with, so a chart in a
-# scrolled page drew nothing and the terminal's candle chart lost its left
-# third in every capture. Upstream fixed it in iced-rs/iced@76b32d4906 ("Fix
+# `vendor/iced_tiny_skia` is the published 0.14.0 source with two renderer
+# defects fixed. Both reach every software render, which is what every
+# headless capture, `cargo ice inspect` and any `tiny-skia` window draws with.
+# Drop the directory and this patch when a release carries both.
+#
+# 1. It translates a canvas group's clip rectangle by the group's own
+# transformation twice — once when the layer records it and again when the
+# renderer draws it — so any `canvas` geometry drawn at an offset is clipped to
+# a rectangle displaced by that offset: a chart in a scrolled page drew
+# nothing, and the terminal's candle chart lost its left third in every
+# capture. Upstream fixed it in iced-rs/iced@76b32d4906 ("Fix
 # transformation of `canvas` primitives in `tiny_skia`"), which no 0.14 release
-# carries; `vendor/iced_tiny_skia` is the published 0.14.0 source with exactly
-# that commit applied. Drop the directory and this patch when a release has it.
+# carries; it is applied here as that commit.
+#
+# 2. It chooses a quad's clip mask from the quad's own bounds and then draws
+# the shadow — a separate, larger rectangle — with no mask at all, so a quad
+# well inside its clip paints outside it through an offset or a wide blur:
+# over a neighbouring pane, a sidebar, or another app's window. The shadow now
+# asks the same mask its own question. Not upstream; `crates/ui-lang-runtime`
+# pins both behaviours (`tests/canvas_offset_clip.rs`,
+# `tests/shadow_layer_clip.rs`).
 [patch.crates-io]
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 
