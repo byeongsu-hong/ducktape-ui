@@ -68,7 +68,9 @@ pub use accesskit::SortDirection as AccessibilitySortDirection;
 pub use accesskit::{Action, ActionRequest, Node, NodeId, Role, Toggled, TreeUpdate};
 
 use accesskit::{Rect, Tree, TreeId};
-use iced::advanced::widget::operation::{Focusable, Operation, Outcome, Scrollable, TextInput};
+use iced::advanced::widget::operation::{
+    Focusable, Operation, Outcome, Scrollable, TextInput, focusable,
+};
 use iced::advanced::widget::{self, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::keyboard::{self, key};
@@ -886,6 +888,7 @@ where
     content: Element<'a, Message, Theme, Renderer>,
     next: Message,
     previous: Message,
+    window: Option<iced::window::Id>,
 }
 
 pub fn navigation<'a, Message, Theme, Renderer>(
@@ -900,6 +903,153 @@ where
         content: content.into(),
         next,
         previous,
+        window: None,
+    }
+}
+
+impl<'a, Message, Theme, Renderer> Navigation<'a, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    /// Names the window this root draws in, so a focus operation scoped to
+    /// a window knows where its subtree begins. A daemon runs every widget
+    /// operation through every window's tree in turn; without the name,
+    /// Tab would count the controls of all of them as one ring.
+    pub fn in_window(mut self, window: iced::window::Id) -> Self {
+        self.window = Some(window);
+        self
+    }
+}
+
+/// What a [`Navigation`] root tells a scoped focus operation before its
+/// content: the window the subtree that follows belongs to.
+struct WindowScope(iced::window::Id);
+
+/// Focuses the next enabled semantic/native focus target of one window in
+/// view-tree order; `None` traverses the whole tree, as an app has one.
+pub fn focus_next_in<Message>(window: Option<iced::window::Id>) -> Task<Message>
+where
+    Message: Send + 'static,
+{
+    match window {
+        Some(window) => {
+            iced::advanced::widget::operate(ScopedTraversal::counting(window, Direction::Next))
+        }
+        None => focus_next(),
+    }
+}
+
+/// Focuses the previous enabled semantic/native focus target of one window
+/// in view-tree order; `None` traverses the whole tree, as an app has one.
+pub fn focus_previous_in<Message>(window: Option<iced::window::Id>) -> Task<Message>
+where
+    Message: Send + 'static,
+{
+    match window {
+        Some(window) => {
+            iced::advanced::widget::operate(ScopedTraversal::counting(window, Direction::Previous))
+        }
+        None => focus_previous(),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Direction {
+    Next,
+    Previous,
+}
+
+/// iced's focus traversal, counted and applied only inside the subtree a
+/// [`WindowScope`] marker opened for the target window. The marker of any
+/// other window closes it again, so the windows a daemon runs the operation
+/// through in turn never share one ring.
+struct ScopedTraversal<T> {
+    window: iced::window::Id,
+    direction: Direction,
+    inside: bool,
+    count: focusable::Count,
+    /// `None` while counting; the index to focus once the count is known.
+    target: Option<usize>,
+    seen: usize,
+    _outcome: std::marker::PhantomData<T>,
+}
+
+impl<T> ScopedTraversal<T> {
+    fn counting(window: iced::window::Id, direction: Direction) -> Self {
+        Self {
+            window,
+            direction,
+            inside: false,
+            count: focusable::Count::default(),
+            target: None,
+            seen: 0,
+            _outcome: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<T> Operation<T> for ScopedTraversal<T>
+where
+    T: Send + 'static,
+{
+    fn custom(&mut self, _id: Option<&widget::Id>, _bounds: Rectangle, state: &mut dyn Any) {
+        if let Some(WindowScope(window)) = state.downcast_ref::<WindowScope>() {
+            self.inside = *window == self.window;
+        }
+    }
+
+    fn focusable(
+        &mut self,
+        _id: Option<&widget::Id>,
+        _bounds: Rectangle,
+        state: &mut dyn Focusable,
+    ) {
+        if !self.inside {
+            return;
+        }
+        match self.target {
+            None => {
+                if state.is_focused() {
+                    self.count.focused = Some(self.count.total);
+                }
+                self.count.total += 1;
+            }
+            Some(target) => {
+                if self.seen == target {
+                    state.focus();
+                } else {
+                    state.unfocus();
+                }
+                self.seen += 1;
+            }
+        }
+    }
+
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
+        operate(self);
+    }
+
+    fn finish(&self) -> Outcome<T> {
+        if self.target.is_some() || self.count.total == 0 {
+            return Outcome::None;
+        }
+        let last = self.count.total - 1;
+        let target = match (self.direction, self.count.focused) {
+            (Direction::Next, None) => 0,
+            (Direction::Next, Some(focused)) if focused == last => 0,
+            (Direction::Next, Some(focused)) => focused + 1,
+            (Direction::Previous, None | Some(0)) => last,
+            (Direction::Previous, Some(focused)) => focused - 1,
+        };
+        Outcome::Chain(Box::new(ScopedTraversal {
+            window: self.window,
+            direction: self.direction,
+            inside: false,
+            count: focusable::Count::default(),
+            target: Some(target),
+            seen: 0,
+            _outcome: std::marker::PhantomData::<T>,
+        }))
     }
 }
 
@@ -943,6 +1093,9 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
+        if let Some(window) = self.window {
+            operation.custom(None, layout.bounds(), &mut WindowScope(window));
+        }
         operation.traverse(&mut |operation| {
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
@@ -3327,6 +3480,93 @@ mod tests {
         assert_eq!(renderer.quads.len(), 1);
         assert_eq!(renderer.quads[0].border.width, 2.0);
         assert_eq!(renderer.quads[0].border.color, iced::Color::WHITE);
+    }
+
+    /// Runs a focus operation the way a daemon does: through every window's
+    /// tree in turn, then the chained operation the same way.
+    fn traverse_windows(
+        mut operation: Box<dyn Operation<()>>,
+        windows: &mut [(Element<'_, Message, (), RecordingRenderer>, WidgetTree)],
+        renderer: &RecordingRenderer,
+    ) {
+        let viewport = Rectangle::with_size(Size::new(100.0, 100.0));
+        loop {
+            for (element, tree) in windows.iter_mut() {
+                let node = element.as_widget_mut().layout(
+                    tree,
+                    renderer,
+                    &layout::Limits::new(Size::ZERO, viewport.size()),
+                );
+                element.as_widget_mut().operate(
+                    tree,
+                    Layout::new(&node),
+                    renderer,
+                    operation.as_mut(),
+                );
+            }
+            match operation.finish() {
+                Outcome::Chain(next) => operation = next,
+                Outcome::None | Outcome::Some(()) => return,
+            }
+        }
+    }
+
+    fn window_button_focus(tree: &WidgetTree) -> (bool, bool) {
+        let state = tree.children[0]
+            .state
+            .downcast_ref::<SemanticState<Message>>();
+        (state.semantics.focused, state.focus_visible)
+    }
+
+    #[test]
+    fn scoped_traversal_stays_inside_its_window() {
+        let first = iced::window::Id::unique();
+        let second = iced::window::Id::unique();
+        let renderer = RecordingRenderer::default();
+        let mut windows: Vec<(Element<'_, Message, (), RecordingRenderer>, WidgetTree)> =
+            [first, second]
+                .into_iter()
+                .map(|window| {
+                    let leaf: Element<'_, Message, (), RecordingRenderer> = Element::new(Leaf);
+                    let button: Element<'_, Message, (), RecordingRenderer> =
+                        accessible(leaf, StableId::new("go"), Role::Button)
+                            .label("Go")
+                            .into();
+                    let root: Element<'_, Message, (), RecordingRenderer> = Element::new(
+                        navigation(button, Message::Next, Message::Previous).in_window(window),
+                    );
+                    let tree = WidgetTree::new(&root);
+                    (root, tree)
+                })
+                .collect();
+
+        // Tab in the second window focuses its control and leaves the first
+        // window's alone, although the first window's tree ran first.
+        traverse_windows(
+            Box::new(ScopedTraversal::<()>::counting(second, Direction::Next)),
+            &mut windows,
+            &renderer,
+        );
+        assert_eq!(window_button_focus(&windows[0].1), (false, false));
+        assert_eq!(window_button_focus(&windows[1].1), (true, true));
+
+        // Each window keeps a focus of its own: Tab in the first window does
+        // not take the second's away.
+        traverse_windows(
+            Box::new(ScopedTraversal::<()>::counting(first, Direction::Next)),
+            &mut windows,
+            &renderer,
+        );
+        assert_eq!(window_button_focus(&windows[0].1), (true, true));
+        assert_eq!(window_button_focus(&windows[1].1), (true, true));
+
+        // Shift+Tab wraps within the window: one control stays focused.
+        traverse_windows(
+            Box::new(ScopedTraversal::<()>::counting(first, Direction::Previous)),
+            &mut windows,
+            &renderer,
+        );
+        assert_eq!(window_button_focus(&windows[0].1), (true, true));
     }
 
     #[test]

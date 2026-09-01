@@ -74,6 +74,39 @@ view
 }
 
 #[test]
+fn wraps_each_daemon_window_view_for_keyboard_traversal() {
+    let source = r#"daemon Agent
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 0
+on go
+  count = count + 1
+view
+  button "Go" -> go
+"#;
+    let generated = compile(source, "traversal_daemon.ice").unwrap();
+
+    // A daemon's window is a root of its own: Tab traverses the controls of
+    // the window it was pressed in, so the wrapper names its window and the
+    // focus messages carry it.
+    assert!(generated.contains(
+        "::ui_lang_runtime::navigation(__ice_content, __AgentMessage::__AccessibilityFocusNext(::std::option::Option::Some(window)), __AgentMessage::__AccessibilityFocusPrevious(::std::option::Option::Some(window))).in_window(window)"
+    ));
+    assert!(generated.contains(
+        "__AgentMessage::__AccessibilityFocusNext(__window) => { return ::ui_lang_runtime::focus_next_in::<__AgentMessage>(__window)"
+    ));
+}
+
+#[test]
 fn lowers_dynamic_palettes_into_runtime_theme_and_style_selection() {
     let source = r#"app Demo
   theme native_theme(dark)
