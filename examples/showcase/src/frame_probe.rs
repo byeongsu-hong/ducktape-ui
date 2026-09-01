@@ -92,6 +92,25 @@ fn frame_cost() {
     let mut scroll = Phase::new("scroll (2 builds)");
     let mut click = Phase::new("click + redraw (4 builds)");
 
+    let _ = ui_lang_runtime::take_rev_memo_counts();
+    driver.redraw(here());
+    let (hits, misses) = ui_lang_runtime::take_rev_memo_counts();
+    eprintln!("component layout memos per idle frame: {hits} hits, {misses} misses");
+    // One idle frame split by phase: what the compiler emits, what iced
+    // diffs and lays out, and the event walk.
+    let mut view_phase = Phase::new("idle frame: view");
+    let mut layout_phase = Phase::new("idle frame: diff + layout");
+    let mut update_phase = Phase::new("idle frame: event walk");
+    for _ in 0..FRAMES {
+        let phases = driver.redraw_phases(here());
+        view_phase.elapsed_us.push(phases.view.as_micros());
+        layout_phase.elapsed_us.push(phases.layout.as_micros());
+        update_phase.elapsed_us.push(phases.update.as_micros());
+    }
+    view_phase.report();
+    layout_phase.report();
+    update_phase.report();
+
     for frame in 0..FRAMES {
         idle.sample(|| driver.redraw(here()));
 

@@ -295,7 +295,7 @@ struct Internal<Message: 'static, Theme: 'static, Renderer: 'static> {
 /// The subtree stays in the memo and is lent out by [`child_layout`], which is
 /// what makes a cache hit cost one node instead of a deep clone of every node
 /// under this `lazy` — and spares the parent freeing them all again.
-fn shallow(node: &layout::Node) -> layout::Node {
+pub(crate) fn shallow(node: &layout::Node) -> layout::Node {
     layout::Node::new(node.size()).move_to(node.bounds().position())
 }
 
@@ -303,7 +303,7 @@ fn shallow(node: &layout::Node) -> layout::Node {
 /// it. Every phase after `layout` receives the parent's `Layout`, which
 /// describes only that box; the child needs its own nodes, positioned exactly
 /// as if they had been returned along with it.
-fn child_layout<'a>(memo: &'a MemoLayout, layout: Layout<'_>) -> Layout<'a> {
+pub(crate) fn child_layout<'a>(memo: &'a MemoLayout, layout: Layout<'_>) -> Layout<'a> {
     let node = memo
         .current()
         .expect("`layout` runs before any phase that walks the tree");

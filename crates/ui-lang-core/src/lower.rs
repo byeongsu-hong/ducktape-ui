@@ -1648,6 +1648,12 @@ pub(crate) struct LoweredProgram {
     pane_grids: HashMap<ViewId, ResolvedPaneGrid>,
     interaction_widgets: HashMap<ViewId, ResolvedInteractionWidget>,
     views: Vec<ResolvedView>,
+    /// `(owning view, use)` pairs sorted by view — a flat index rather than
+    /// a map of vectors, so lowering allocates three times, not once per
+    /// view (`performance_contract_overlay_routes_avoid_temporary_heap_storage`).
+    view_expression_uses: Vec<(ViewId, CheckedExprUseId)>,
+    /// The declaring view of each local, indexed by local id.
+    view_locals: Vec<Option<ViewId>>,
     test_mounts: HashMap<TestId, ViewId>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
@@ -3305,6 +3311,27 @@ impl LoweredProgram {
         self.app_view
     }
 
+    /// Every expression the build of `view` evaluates: its options, text,
+    /// conditions, keys, and interaction payloads.
+    pub(crate) fn expression_uses_of_view(
+        &self,
+        view: ViewId,
+    ) -> impl Iterator<Item = CheckedExprUseId> + '_ {
+        let start = self
+            .view_expression_uses
+            .partition_point(|(owner, _)| owner.0 < view.0);
+        self.view_expression_uses[start..]
+            .iter()
+            .take_while(move |(owner, _)| *owner == view)
+            .map(|(_, expression)| *expression)
+    }
+
+    /// The view that declares `local` — a row, a match payload, a key, a
+    /// lazy alias, a canvas dimension — when a view does.
+    pub(crate) fn local_view(&self, local: ResolvedLocalId) -> Option<ViewId> {
+        self.view_locals.get(local.0 as usize).copied().flatten()
+    }
+
     pub(crate) fn resolved_view(&self, id: ViewId) -> Result<&ResolvedView, Error> {
         self.views
             .get(id.0 as usize)
@@ -4862,6 +4889,29 @@ impl Lowerer {
             .map(|preset| preset.name.clone())
             .collect();
         let expressions = ResolvedExpressionProgram::from_checked(&self.facts, &self.declarations);
+        let expression_uses = self.facts.expression_uses();
+        let mut view_expression_uses: Vec<(ViewId, CheckedExprUseId)> =
+            Vec::with_capacity(expression_uses.len());
+        view_expression_uses.extend(expression_uses.iter().enumerate().filter_map(
+            |(index, expression_use)| {
+                expression_use
+                    .owner
+                    .view()
+                    .map(|view| (view, CheckedExprUseId(index as u32)))
+            },
+        ));
+        view_expression_uses.sort_unstable_by_key(|(view, expression)| (view.0, expression.0));
+        let view_locals = self
+            .facts
+            .locals()
+            .iter()
+            .map(|local| match local.owner {
+                CheckedLocalOwner::View { view, .. }
+                | CheckedLocalOwner::CanvasWidth(view)
+                | CheckedLocalOwner::CanvasHeight(view) => Some(view),
+                _ => None,
+            })
+            .collect();
         Ok(LoweredProgram {
             #[cfg(test)]
             document: self.document,
@@ -4913,6 +4963,8 @@ impl Lowerer {
             pane_grids: self.pane_grids,
             interaction_widgets: self.interaction_widgets,
             views: self.views,
+            view_expression_uses,
+            view_locals,
             test_mounts,
             preset_names,
             named_type_rust_paths,
@@ -18177,9 +18229,12 @@ view
             "{OVERLAYS} overlay routes lowered: {} allocations / {} reallocations / {} allocated bytes",
             stats.allocations, stats.reallocations, stats.bytes_allocated
         );
-        assert!(stats.allocations <= 217_187, "{stats:?}");
+        // The view index the component memo fold reads is one pre-sized
+        // vector of `(view, use)` pairs: one allocation and 8 bytes per
+        // expression use (16,384 here) over the previous pins.
+        assert!(stats.allocations <= 217_188, "{stats:?}");
         assert!(stats.reallocations <= 8_227, "{stats:?}");
-        assert!(stats.bytes_allocated <= 53_408_896, "{stats:?}");
+        assert!(stats.bytes_allocated <= 53_539_968, "{stats:?}");
     }
 
     #[test]

@@ -908,8 +908,7 @@ impl LoweredProgram {
         Ok(())
     }
 
-    #[cfg(test)]
-    fn resolved_view_children(&self, view: &ResolvedView) -> Result<Vec<ViewId>, Error> {
+    pub(crate) fn resolved_view_children(&self, view: &ResolvedView) -> Result<Vec<ViewId>, Error> {
         Ok(match &view.kind {
             ResolvedViewKind::Layout { children }
             | ResolvedViewKind::If { children }

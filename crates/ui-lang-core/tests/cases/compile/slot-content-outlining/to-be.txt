@@ -1,3 +1,4 @@
-self.__ice_component_use_0(__ice_palette, format!("{}/Frame@20", __ice_use_scope))
+let __ice_component_frame_scope_20 = format!("{}/Frame@20", __ice_use_scope); ::ui_lang_runtime::rev_memo(
+self.__ice_component_use_0(__ice_palette, __ice_component_frame_scope_20)
 pub(super) fn __ice_component_use_0(&self, __ice_palette: __IcePalette, __ice_use_scope: ::std::string::String)
 let __ice_component_frame_scope_23 = format!("{}/Frame@23", __for_scope);

@@ -161,11 +161,24 @@ pub(in crate::codegen) fn revision_reads(
     expression_use: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
 ) -> Option<BTreeSet<String>> {
+    revision_reads_within(program, expression_use, env, &|_| false)
+}
+
+/// `revision_reads` for an expression inside a subtree whose own locals
+/// (`internal`) derive from reads the subtree already keys on: a row of a
+/// list the key covers, a match payload, a lazy alias.
+pub(in crate::codegen) fn revision_reads_within(
+    program: &LoweredProgram,
+    expression_use: ResolvedExpressionId,
+    env: &dyn BindingEnvironment,
+    internal: &dyn Fn(ResolvedLocalId) -> bool,
+) -> Option<BTreeSet<String>> {
     let mut reads = BTreeSet::new();
     let mut walk = RevisionWalk {
         program,
         env,
         bound: HashSet::new(),
+        internal,
     };
     let root = program.expressions().expression_use(expression_use).root;
     walk.node(root, &mut reads).then_some(reads)
@@ -204,6 +217,8 @@ struct RevisionWalk<'a> {
     env: &'a dyn BindingEnvironment,
     /// Locals a builtin body binds inside the expression itself.
     bound: HashSet<ResolvedLocalId>,
+    /// Locals the enclosing subtree declares from reads it already keys on.
+    internal: &'a dyn Fn(ResolvedLocalId) -> bool,
 }
 
 impl RevisionWalk<'_> {
@@ -221,7 +236,9 @@ impl RevisionWalk<'_> {
             ResolvedExpressionKind::List(items) => items.iter().all(|item| self.node(*item, reads)),
             ResolvedExpressionKind::Path { root, .. } => match root {
                 ResolvedPathRoot::Value(value) => self.value(*value, reads),
-                ResolvedPathRoot::Local(local) => self.bound.contains(local),
+                ResolvedPathRoot::Local(local) => {
+                    self.bound.contains(local) || (self.internal)(*local)
+                }
                 ResolvedPathRoot::EnumVariant { .. } | ResolvedPathRoot::Palette(_) => true,
             },
             ResolvedExpressionKind::Call { target, arguments } => {

@@ -350,7 +350,7 @@ viewport holds a fraction of the same catalog — 8.4x less area — and costs
 not what it shows.** Every widget below the fold is laid out on every frame.
 
 That is the fact to design against. What moves it is a boundary the layout walk
-can stop at, and the repo has two:
+can stop at, and the repo has three:
 
 - **`lazy`** lowers to `ui_lang_runtime::memo_lazy`, which is iced's `Lazy`
   plus a memoized layout node — while the dependency hash and the incoming
@@ -373,6 +373,25 @@ can stop at, and the repo has two:
 - **`virtual_list`** mounts only the rows a viewport can hold, so nothing
   off-screen exists to lay out. `tests/virtual_list_performance.rs` covers 1000
   rows in ~1.0ms where a plain lazy column needs 13.1ms for 150.
+- **A component use** is a boundary the compiler inserts on its own: when
+  every read below the use is revision-keyed and every widget below it lays
+  out from its element and `Limits` alone (SPEC, "Components"), the generated
+  code wraps it in `ui_lang_runtime::rev_memo`, which keeps the layout node
+  and skips the walk while the key holds. The element is still built every
+  pass, so nothing about borrowing changes. `frame_cost` prints the memo hits
+  per idle frame (`take_rev_memo_counts`) and a phase split from
+  `Driver::redraw_phases` — the generated `view`, iced's diff and layout, and
+  the event walk; `ICE_MEMO_DEBUG=1` at build time prints why a use was
+  refused. On showcase, 81 uses hit and 0 miss on an idle frame, and diff +
+  layout goes from ~1080us to ~570us — the probe's `idle redraw` from 2.9ms
+  to 2.5ms and `scroll` from 5.6ms to 4.3ms in the same session. On
+  trading's dense terminal, 68 chrome uses hit and diff + layout barely moves
+  (1300us → 1277us): the 400 row `lazy` boundaries and the columns and
+  scrollables that hold them own that walk, and a memo above a memo saves
+  nothing. Read the probes' end-to-end numbers with the split in hand — on
+  trading `idle redraw, END TO END` is 2.8ms, of which the frame proper
+  (view 56us, diff + layout 1.28ms, event walk 124us) is half; the rest is
+  the driver broadcasting the redraw to every subscription and settling.
 
 A boundary only pays while its dependency is stable, which is why showcase is
 the worst case rather than a bug: the catalog is a demo of interactive widgets,
