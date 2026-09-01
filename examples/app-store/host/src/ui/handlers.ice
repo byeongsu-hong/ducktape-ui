@@ -142,9 +142,25 @@ on tick
   return if !placements_dirty
   placements_dirty = save_placements(placements)
 
+// The store's keys. Both come with the window they were pressed in, and only
+// the store window's count: a guest's window keeps its own keyboard.
+on escape(id)
+  return if !is_window(store_window, id)
+  return if page != "detail" && empty(query)
+  page = escape_page(page, query)
+  removing = ""
+  query = ""
+  rows = build_rows(catalog, query, library, running, generation)
+
+on focus_search(id)
+  return if !is_window(store_window, id)
+  task widget focus #root/store/topbar/search
+
 subscribe
   system theme -> system_theme _
   window closed with-id -> window_closed _
   window moved with-id -> guest_moved _ _ _
   window resized with-id -> guest_resized _ _ _
+  event with-id filter=escape_press status=any -> escape _
+  event with-id filter=search_press status=any -> focus_search _
   every 1s when running_count(running) > 0 -> tick

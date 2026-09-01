@@ -311,6 +311,52 @@ pub fn is_window(store: Option<iced::window::Id>, window: iced::window::Id) -> b
     store == Some(window)
 }
 
+/// The store's two keys, as filters on the window event stream rather than a
+/// keyboard subscription: the window arrives with the event, so an Escape in
+/// a guest's window stays the guest's, whether or not it captured it.
+fn press_of(event: &iced::Event) -> Option<(&iced::keyboard::Key, iced::keyboard::Modifiers)> {
+    match event {
+        iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+            Some((key, *modifiers))
+        }
+        _ => None,
+    }
+}
+
+pub fn escape_press(id: iced::window::Id, event: iced::Event) -> Option<iced::window::Id> {
+    let (key, _) = press_of(&event)?;
+    matches!(
+        key,
+        iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape)
+    )
+    .then_some(id)
+}
+
+pub fn search_press(id: iced::window::Id, event: iced::Event) -> Option<iced::window::Id> {
+    let (key, modifiers) = press_of(&event)?;
+    (modifiers.command() && matches!(key, iced::keyboard::Key::Character(c) if c == "f"))
+        .then_some(id)
+}
+
+/// Escape steps back one layer: a search in progress goes first, then the
+/// detail page, and on a list page there is nothing to leave.
+pub fn escape_page(page: &str, query: &str) -> String {
+    if page == "detail" && query.is_empty() {
+        "discover".to_string()
+    } else {
+        page.to_string()
+    }
+}
+
+pub fn search_hint() -> String {
+    if cfg!(target_os = "macos") {
+        "Search apps   ⌘F"
+    } else {
+        "Search apps   Ctrl+F"
+    }
+    .to_string()
+}
+
 pub fn is_running(running: &[Running], id: String) -> bool {
     running.iter().any(|app| app.id == id)
 }

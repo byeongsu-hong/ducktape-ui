@@ -84,6 +84,11 @@ its compiled code go with the last handle. Closing the store window ends the
 store. What had a window at exit reopens at the next start, one load at a
 time; the library comes back as it was.
 
+Two keys are the store's, in its own window only: `Ctrl+F` (`⌘F` on macOS)
+puts the cursor in the search box, and `Escape` steps back one layer — a
+search in progress is cleared first, then an app's page returns to Discover.
+A guest's window keeps its keyboard; what it does with Escape is its own.
+
 The colour mode is the store's: Auto follows the system, Light and Dark are
 the user's word. Every guest subscribes to `host.theme` in its `on mount`
 and switches its own palette on each answer, so the windows change together.

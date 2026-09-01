@@ -47,4 +47,8 @@ extern crate::store
   pure placement_at(placements:&[Placement], running:&[Running], window:window-id) -> Placement
   pure moved(placements:[Placement], running:&[Running], window:window-id, x:f64, y:f64) -> [Placement]
   pure resized(placements:[Placement], running:&[Running], window:window-id, w:f64, h:f64) -> [Placement]
+  pure escape_press(id:window-id, value:event) -> window-id?
+  pure search_press(id:window-id, value:event) -> window-id?
+  pure escape_page(page:&str, query:&str) -> str
+  pure search_hint() -> str
   component wasm_view(surface:Surface, dark:bool) -> bool
