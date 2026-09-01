@@ -304,7 +304,8 @@ view
                 text "No recent chats" @field_label
                 text "Start a new chat to see it here." @caption
             for chat in chats
-              PastChat #chat(chat.path) chat=chat open=(chat.path == open_path) -> pick_chat _
+              lazy chat, open_path as past
+                PastChat #chat(past.path) chat=past open=(past.path == open_path) -> pick_chat _
     rule vertical thickness=1.0 color=border
     col #app
       with

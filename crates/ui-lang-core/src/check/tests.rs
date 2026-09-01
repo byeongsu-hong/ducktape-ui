@@ -1358,13 +1358,14 @@ fn w017_skips_keyed_lazy_and_lazy_outside_loops() {
 
 #[test]
 fn w019_skips_leaf_rows_virtual_columns_and_lazy_rows() {
-    // Line 30: `for fill in fills` mounting a component per row; 32: the
+    // Line 35: `for fill in fills` mounting a component per row; 37: the
     // keyed column doing the same. Silent: the `for` over `tabs` whose rows
     // are leaf text, the `for` under a `virtual-row` column, the keyed
-    // column with `virtual-row`, and the `for` whose every row is a `lazy`.
+    // column with `virtual-row`, the `for` whose every row is a `lazy`, and
+    // the `for` reached through `if` and `match` under a `virtual-row` column.
     assert_eq!(
         perf_warning_sites("perf-unbounded-repetition", "W019"),
-        vec![30, 32]
+        vec![35, 37]
     );
 }
 

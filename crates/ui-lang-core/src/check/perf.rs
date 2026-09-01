@@ -394,10 +394,13 @@ fn content_walk(
         _ => {}
     }
     let was_virtual_rows = scope.virtual_rows;
-    scope.virtual_rows = matches!(
-        node,
-        ViewNode::Layout { options, .. } if options.virtual_row.is_some()
-    );
+    // Control flow flattens into the enclosing column's child list, so rows
+    // under an `if`, `match`, or outer `for` keep the column's window.
+    scope.virtual_rows = match node {
+        ViewNode::Layout { options, .. } => options.virtual_row.is_some(),
+        ViewNode::If { .. } | ViewNode::Match { .. } | ViewNode::For { .. } => was_virtual_rows,
+        _ => false,
+    };
     for child in view_children(node) {
         content_walk(
             child,

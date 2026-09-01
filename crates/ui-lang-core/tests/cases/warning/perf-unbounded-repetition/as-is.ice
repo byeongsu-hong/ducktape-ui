@@ -1,6 +1,7 @@
 app PerfUnboundedRepetition
 extern crate::backend
   Fill(tid:i64, coin:str, size:f64)
+  Depth(asks:[Fill], bids:[Fill])
   pure fill_label(fill:&Fill) -> str
 theme contract AppTheme
   bg
@@ -15,10 +16,13 @@ palette app for AppTheme
 state
   fills:[Fill] = []
   tabs:[str] = []
+  book:Depth? = none
 on fills_loaded(next)
   fills = next
 on tabs_loaded(next)
   tabs = next
+on book_loaded(next)
+  book = next
 component FillRow(fill:Fill)
   row
     text fill.coin
@@ -27,6 +31,7 @@ view
   col
     button "Reload" -> fills_loaded []
     button "Tabs" -> tabs_loaded []
+    button "Book" -> book_loaded none
     for fill in fills
       FillRow fill=fill
     keyed fill in fills by=fill.tid
@@ -38,6 +43,17 @@ view
         FillRow fill=fill
     keyed fill in fills by=fill.tid virtual-row=26.0
       FillRow fill=fill
+    col virtual-row=26.0
+      if len(fills) > 0
+        for fill in fills
+          FillRow fill=fill
     for fill in fills
       lazy fill by fill.tid as row
         FillRow fill=row
+    col virtual-row=26.0
+      match book
+        some(depth)
+          for fill in depth.asks
+            FillRow fill=fill
+        none
+          text "no book"
