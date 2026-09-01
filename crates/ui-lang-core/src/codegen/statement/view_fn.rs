@@ -141,16 +141,11 @@ pub(in crate::codegen) fn generate_view(
     let palette = format!(
         "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
     );
-    if mounted.is_empty() && daemon {
+    let navigation = navigation_code(message, daemon);
+    if mounted.is_empty() {
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root: __IceElement<'_, {message}> = {rendered_root}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
-        )
-        .unwrap();
-    } else if mounted.is_empty() {
-        writeln!(
-            out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into(); ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = {navigation}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     } else {
@@ -163,13 +158,7 @@ pub(in crate::codegen) fn generate_view(
             .iter()
             .map(|field| format!("self.{field}.finish_render(__ice_root_scope_ref);"))
             .collect::<String>();
-        let result = if daemon {
-            "__ice_content".into()
-        } else {
-            format!(
-                "::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into()"
-            )
-        };
+        let result = &navigation;
         let (boot_drain, boot_wrap) = boot_dispatch_code(program, message);
         writeln!(
             out,
@@ -179,6 +168,21 @@ pub(in crate::codegen) fn generate_view(
     }
     out.push_str(&slot_methods);
     Ok(())
+}
+
+/// The root wrapper that turns Tab into focus traversal. A daemon's window is
+/// a ring of its own: the wrapper names its window and the focus messages
+/// carry it, so traversal stays inside the window the key was pressed in.
+pub(crate) fn navigation_code(message: &str, daemon: bool) -> String {
+    let window = if daemon {
+        "::std::option::Option::Some(window)"
+    } else {
+        "::std::option::Option::None"
+    };
+    let mark = if daemon { ".in_window(window)" } else { "" };
+    format!(
+        "::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext({window}), {message}::__AccessibilityFocusPrevious({window})){mark}.into()"
+    )
 }
 
 /// Drain-and-wrap code for component `boot` delivery: the render collected

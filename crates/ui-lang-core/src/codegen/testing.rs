@@ -90,19 +90,12 @@ pub(in crate::codegen) fn generate_test_mounts(
                 "let __ice_content: __IceElement<'_, {message}> = ::ui_lang_runtime::boot_dispatch(__ice_content, __ice_boots);"
             )
         };
-        if daemon {
-            writeln!(
-                out,
-                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} {boot_drain} {boot_wrap} __ice_content }}"
-            )
-            .unwrap();
-        } else {
-            writeln!(
-                out,
-                "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} {boot_drain} {boot_wrap} ::ui_lang_runtime::navigation(__ice_content, {message}::__AccessibilityFocusNext, {message}::__AccessibilityFocusPrevious).into() }}"
-            )
-            .unwrap();
-        }
+        let navigation = crate::codegen::statement::view_fn::navigation_code(message, daemon);
+        writeln!(
+            out,
+            "#[cfg(test)]\nfn __ice_test_mount_{index}(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} {scope_prelude} let __ice_content: __IceElement<'_, {message}> = {root}; {scope_epilogue} {boot_drain} {boot_wrap} {navigation} }}"
+        )
+        .unwrap();
         let test_program =
             test_program_code(program, program.settings(), source_path, index, &presets);
         let program_ty = if daemon {

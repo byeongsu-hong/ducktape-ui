@@ -691,7 +691,7 @@ pub(in crate::codegen) fn generate_update(
     }
     writeln!(
         out,
-        "{message}::__AccessibilityFocusNext => {{ return ::ui_lang_runtime::focus_next::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__AccessibilityFocusPrevious => {{ return ::ui_lang_runtime::focus_previous::<{message}>().chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__TemplateChanged => {{ return ::iced::Task::none(); }},"
+        "{message}::__AccessibilityFocusNext(__window) => {{ return ::ui_lang_runtime::focus_next_in::<{message}>(__window).chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__AccessibilityFocusPrevious(__window) => {{ return ::ui_lang_runtime::focus_previous_in::<{message}>(__window).chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))); }},\n{message}::__TemplateChanged => {{ return ::iced::Task::none(); }},"
     )
     .unwrap();
     for (lane, kind, mode) in app_run_lanes(program) {

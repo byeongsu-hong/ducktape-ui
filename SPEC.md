@@ -122,7 +122,8 @@ retain their native focused rendering, which follows the web's text-entry
 heuristic instead: a control that accepts text is focus-visible whenever it is
 focused, so their `focused` status already carries `:focus-visible` meaning.
 The `focus-visible:border-*` button utility restyles the outline. There is no
-numeric focus-order syntax.
+numeric focus-order syntax. In a daemon, Tab traverses the controls of the
+window it was pressed in, and every window keeps a focus of its own.
 
 Tree construction, focus updates, duplicate-ID disambiguation, and action
 routing are deterministic across platforms. Native screen-reader export is a

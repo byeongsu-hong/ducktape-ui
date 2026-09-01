@@ -1023,7 +1023,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     writeln!(out, "#[derive(Clone)]\npub(crate) enum {message} {{").unwrap();
     writeln!(
         out,
-        "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext,\n__AccessibilityFocusPrevious,\n__TemplateChanged,"
+        "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext(::std::option::Option<::iced::window::Id>),\n__AccessibilityFocusPrevious(::std::option::Option<::iced::window::Id>),\n__TemplateChanged,"
     )
     .unwrap();
     for (lane, kind, mode) in app_run_lanes(program) {
