@@ -48,13 +48,16 @@ view
                     @text-fg
                     @font-bold
               space w=12.0
-              Tab #discover-tab label="Discover" active=(page == "discover" || page == "detail")
+              Tab #discover-tab
+                with
+                  label="Discover"
+                  active=(page == "discover" || page == "detail" || !empty(query))
                 events
                   choose -> navigate "discover"
-              Tab #library-tab label="Library" active=(page == "library")
+              Tab #library-tab label="Library" active=(page == "library" && empty(query))
                 events
                   choose -> navigate "library"
-              Tab #monitor-tab label="Monitor" active=(page == "monitor")
+              Tab #monitor-tab label="Monitor" active=(page == "monitor" && empty(query))
                 events
                   choose -> navigate "monitor"
               space w=fill
@@ -86,369 +89,375 @@ view
                     events
                       choose -> choose_theme "dark"
           rule horizontal thickness=1.0 color=border
-          match page
-            "discover"
-              scroll #discover w=fill h=fill
-                col
-                  with
-                    w=fill
-                    p=24.0
-                    gap=24.0
-                  if running_count(running) > 0
-                    col w=fill gap=10.0
-                      text "Running now"
-                        with
-                          size=11.5
-                          @text-muted
-                          @font-bold
-                      row gap=10.0 wrap
-                        for app in running
-                          RunningChip #chip(app.id)
-                            with
-                              name=app.name
-                              id=app.id
-                              gauge=gauge(app.surface, generation)
-                            events
-                              raise -> raise_app _
-                              quit -> quit _
-                  if running_count(running) == 0
-                    box #welcome
-                      with
-                        w=fill
-                        bg=surface
-                        border=border
-                        border-w=1.0
-                        r=14.0
-                        p=20.0
-                      col gap=6.0
-                        text "Every app here runs in a window of its own, inside a fuel and memory budget."
-                          with
-                            size=15.0
-                            @text-fg
-                            @font-bold
-                        text "Get one below. It opens beside this window, follows this window's colour mode, and only ever touches what its manifest declares."
-                          with
-                            size=12.5
-                            @text-muted
-                  row
-                    with
-                      w=fill
-                      gap=8.0
-                      align=center
-                    text "All apps"
+          if page == "discover" || !empty(query)
+            scroll #discover w=fill h=fill
+              col
+                with
+                  w=fill
+                  p=24.0
+                  gap=24.0
+                if running_count(running) > 0
+                  col w=fill gap=10.0
+                    text "Running now"
                       with
                         size=11.5
                         @text-muted
                         @font-bold
-                    space w=fill
-                    button "Rescan" #rescan -> rescan
-                      with
-                        @px-10px
-                        @py-5px
-                        @bg-raised
-                        @text-muted
-                        @rounded-6px
-                        @text-12px
-                        @hover:bg-border
-                  if empty(catalog)
-                    box #empty
-                      with
-                        w=fill
-                        bg=surface
-                        border=border
-                        border-w=1.0
-                        r=14.0
-                        p=20.0
-                      col gap=8.0
-                        text "The catalog directory has no modules yet."
+                    row gap=10.0 wrap
+                      for app in running
+                        RunningChip #chip(app.id)
                           with
-                            size=14.0
-                            @text-fg
-                            @font-bold
-                        text catalog_path
-                          with
-                            size=12.0
-                            font=figures
-                            @text-muted
-                        text "Build the apps, then Rescan:" size=12.5 @text-muted
-                        text "cargo build -p app-store-todo -p app-store-counter -p app-store-clock -p app-store-activity -p app-store-chaos --release --target wasm32-unknown-unknown"
-                          with
-                            size=11.5
-                            font=figures
-                            @text-fg
-                  if empty(visible) && !empty(catalog)
-                    text "No app matches that search." size=12.5 @text-muted
-                  row #cards w=fill gap=16.0 wrap wrap-gap=16.0
-                    for entry in visible
-                      Card #card(entry.id)
-                        with
-                          entry=entry
-                          installed=in_library(library, entry.id)
-                          running=is_running(running, entry.id)
-                          gauge=gauge_of(running, entry.id, generation)
-                        events
-                          details -> show_details entry.id
-                          install -> install entry
-                          launch -> launch entry
-                          quit -> quit entry.id
-            "library"
-              scroll #library w=fill h=fill
-                col
-                  with
-                    w=fill
-                    p=24.0
-                    gap=12.0
-                  text library_hint(library) size=12.5 @text-muted
-                  for id in library
-                    col #entry(id) w=fill
-                      match find_entry(catalog, id)
-                        some(entry)
-                          LibraryRow #row(id)
-                            with
-                              entry=entry
-                              running=is_running(running, id)
-                              gauge=gauge_of(running, id, generation)
-                            events
-                              details -> show_details entry.id
-                              launch -> launch entry
-                              quit -> quit entry.id
-                              uninstall -> uninstall entry.id
-                        none
-                          row gap=12.0 align=center
-                            text id size=13.0 @text-muted
-                            text "is not in the catalog any more" size=12.0 @text-muted
-                            button "Remove" -> uninstall id
-                              with
-                                @px-10px
-                                @py-5px
-                                @bg-transparent
-                                @text-danger
-                                @rounded-6px
-                                @text-12px
-                                @hover:bg-danger/10
-            "monitor"
-              scroll #monitor w=fill h=fill
-                col
-                  with
-                    w=fill
-                    p=24.0
-                    gap=16.0
-                  text running_label(running, generation)
-                    with
-                      size=15.0
-                      @text-fg
-                      @font-bold
-                  text "A guest is ticked only when the store has something to deliver or its widgets asked for a frame. A frame that changed nothing crosses as a flag, and a module loaded once is kept."
-                    with
-                      size=12.5
-                      @text-muted
-                  box #table
+                            name=app.name
+                            id=app.id
+                            gauge=gauge(app.surface, generation)
+                          events
+                            raise -> raise_app _
+                            quit -> quit _
+                if running_count(running) == 0
+                  box #welcome
                     with
                       w=fill
                       bg=surface
                       border=border
                       border-w=1.0
                       r=14.0
-                      p=0.0
-                    col w=fill
-                      row
+                      p=20.0
+                    col gap=6.0
+                      text "Every app here runs in a window of its own, inside a fuel and memory budget."
                         with
-                          w=fill
-                          px=16.0
-                          py=10.0
-                          gap=12.0
-                          align=center
-                        text "App"
-                          with
-                            w=160.0
-                            size=11.0
-                            @text-muted
-                            @font-bold
-                        text "Fuel / tick"
-                          with
-                            w=110.0
-                            size=11.0
-                            @text-muted
-                            @font-bold
-                        text "Tick"
-                          with
-                            w=80.0
-                            size=11.0
-                            @text-muted
-                            @font-bold
-                        text "Rate"
-                          with
-                            w=70.0
-                            size=11.0
-                            @text-muted
-                            @font-bold
-                        text "Frame"
-                          with
-                            w=170.0
-                            size=11.0
-                            @text-muted
-                            @font-bold
-                        text "Ticks · skipped"
-                          with
-                            w=150.0
-                            size=11.0
-                            @text-muted
-                            @font-bold
-                        text "Load"
-                          with
-                            w=fill
-                            size=11.0
-                            @text-muted
-                            @font-bold
-                      rule horizontal thickness=1.0 color=border
-                      for app in running
-                        MonitorRow #monitor-row(app.id)
-                          with
-                            name=app.name
-                            gauge=gauge(app.surface, generation)
-                      if running_count(running) == 0
-                        box p=16.0
-                          text "Nothing is running. Open an app to see what it costs."
-                            with
-                              size=12.5
-                              @text-muted
-            "detail"
-              col #detail-page w=fill h=fill
-                match find_entry(catalog, selected)
-                  some(entry)
-                    scroll #detail w=fill h=fill
-                      col
+                          size=15.0
+                          @text-fg
+                          @font-bold
+                      text "Get one below. It opens beside this window, follows this window's colour mode, and only ever touches what its manifest declares."
                         with
-                          w=fill
-                          p=24.0
-                          gap=20.0
-                        row
-                          button "Back to Discover" #back -> navigate "discover"
+                          size=12.5
+                          @text-muted
+                row
+                  with
+                    w=fill
+                    gap=8.0
+                    align=center
+                  if empty(query)
+                    text "All apps"
+                      with
+                        size=11.5
+                        @text-muted
+                        @font-bold
+                  if !empty(query)
+                    text "Matching apps"
+                      with
+                        size=11.5
+                        @text-muted
+                        @font-bold
+                  space w=fill
+                  button "Rescan" #rescan -> rescan
+                    with
+                      @px-10px
+                      @py-5px
+                      @bg-raised
+                      @text-muted
+                      @rounded-6px
+                      @text-12px
+                      @hover:bg-border
+                if empty(catalog)
+                  box #empty
+                    with
+                      w=fill
+                      bg=surface
+                      border=border
+                      border-w=1.0
+                      r=14.0
+                      p=20.0
+                    col gap=8.0
+                      text "The catalog directory has no modules yet."
+                        with
+                          size=14.0
+                          @text-fg
+                          @font-bold
+                      text catalog_path
+                        with
+                          size=12.0
+                          font=figures
+                          @text-muted
+                      text "Build the apps, then Rescan:" size=12.5 @text-muted
+                      text "cargo build -p app-store-todo -p app-store-counter -p app-store-clock -p app-store-activity -p app-store-chaos --release --target wasm32-unknown-unknown"
+                        with
+                          size=11.5
+                          font=figures
+                          @text-fg
+                if empty(visible) && !empty(catalog)
+                  text "No app matches that search." size=12.5 @text-muted
+                row #cards w=fill gap=16.0 wrap wrap-gap=16.0
+                  for entry in visible
+                    Card #card(entry.id)
+                      with
+                        entry=entry
+                        installed=in_library(library, entry.id)
+                        running=is_running(running, entry.id)
+                        gauge=gauge_of(running, entry.id, generation)
+                      events
+                        details -> show_details entry.id
+                        install -> install entry
+                        launch -> launch entry
+                        quit -> quit entry.id
+          if page == "library" && empty(query)
+            scroll #library w=fill h=fill
+              col
+                with
+                  w=fill
+                  p=24.0
+                  gap=12.0
+                text library_hint(library) size=12.5 @text-muted
+                for id in library
+                  col #entry(id) w=fill
+                    match find_entry(catalog, id)
+                      some(entry)
+                        LibraryRow #row(id)
+                          with
+                            entry=entry
+                            running=is_running(running, id)
+                            gauge=gauge_of(running, id, generation)
+                          events
+                            details -> show_details entry.id
+                            launch -> launch entry
+                            quit -> quit entry.id
+                            uninstall -> uninstall entry.id
+                      none
+                        row gap=12.0 align=center
+                          text id size=13.0 @text-muted
+                          text "is not in the catalog any more" size=12.0 @text-muted
+                          button "Remove" -> uninstall id
                             with
                               @px-10px
                               @py-5px
-                              @bg-raised
-                              @text-muted
+                              @bg-transparent
+                              @text-danger
                               @rounded-6px
                               @text-12px
-                              @hover:bg-border
-                        row
-                          with
-                            w=fill
-                            gap=18.0
-                            align=center
-                          Tile
-                            with
-                              mark=entry.mark
-                              side=72.0
-                              glyph=30.0
-                          col w=fill gap=6.0
-                            text entry.name
-                              with
-                                size=26.0
-                                @text-fg
-                                @font-bold
-                            text entry.description size=14.0 @text-muted
-                        row gap=8.0
-                          if !in_library(library, entry.id)
-                            button "Get" #get -> install entry
-                              with
-                                @px-16px
-                                @py-8px
-                                @bg-primary
-                                @text-primary_fg
-                                @rounded-8px
-                                @text-13px
-                                @font-bold
-                                @hover:bg-primary/90
-                          if in_library(library, entry.id) && !is_running(running, entry.id)
-                            button "Open" #open -> launch entry
-                              with
-                                @px-16px
-                                @py-8px
-                                @bg-primary
-                                @text-primary_fg
-                                @rounded-8px
-                                @text-13px
-                                @font-bold
-                                @hover:bg-primary/90
-                          if is_running(running, entry.id)
-                            button "Show window" #show -> raise_app entry.id
-                              with
-                                @px-16px
-                                @py-8px
-                                @bg-raised
-                                @text-fg
-                                @rounded-8px
-                                @text-13px
-                                @font-bold
-                                @hover:bg-border
-                            button "Quit" #quit -> quit entry.id
-                              with
-                                @px-16px
-                                @py-8px
-                                @bg-raised
-                                @text-fg
-                                @rounded-8px
-                                @text-13px
-                                @font-bold
-                                @hover:bg-border
-                          if in_library(library, entry.id)
-                            button "Uninstall" #uninstall -> uninstall entry.id
-                              with
-                                @px-16px
-                                @py-8px
-                                @bg-transparent
-                                @text-danger
-                                @rounded-8px
-                                @text-13px
-                                @font-bold
-                                @hover:bg-danger/10
-                        if is_running(running, entry.id)
-                          LiveCard gauge=gauge_of(running, entry.id, generation)
-                        col gap=10.0
-                          text "What it can touch"
-                            with
-                              size=11.0
-                              @text-muted
-                              @font-bold
-                          for capability in entry.capabilities
-                            row gap=12.0 align=center
-                              Chip capability=capability
-                              text capability_hint(capability.name) size=13.0 @text-fg
-                          if empty(entry.capabilities)
-                            text "Nothing beyond drawing its window. It can still write to the store's log and ask for random bytes."
-                              with
-                                size=13.0
-                                @text-fg
-                        col gap=10.0
-                          text "The box it runs in"
-                            with
-                              size=11.0
-                              @text-muted
-                              @font-bold
-                          text "200M fuel per tick · 64 MB of memory · 256 requests per tick · one instance"
-                            with
-                              size=13.0
-                              font=figures
-                              @text-fg
-                          text "Past any of those the store ends the instance and says why in its window. What the app wrote to storage stays."
-                            with
-                              size=12.5
-                              @text-muted
-                        text entry.path
-                          with
-                            size=11.5
-                            font=figures
-                            @text-muted
-                  none
-                    box
+                              @hover:bg-danger/10
+          if page == "monitor" && empty(query)
+            scroll #monitor w=fill h=fill
+              col
+                with
+                  w=fill
+                  p=24.0
+                  gap=16.0
+                text running_label(running, generation)
+                  with
+                    size=15.0
+                    @text-fg
+                    @font-bold
+                text "A guest is ticked only when the store has something to deliver or its widgets asked for a frame. A frame that changed nothing crosses as a flag, and a module loaded once is kept."
+                  with
+                    size=12.5
+                    @text-muted
+                box #table
+                  with
+                    w=fill
+                    bg=surface
+                    border=border
+                    border-w=1.0
+                    r=14.0
+                    p=0.0
+                  col w=fill
+                    row
                       with
                         w=fill
-                        h=fill
-                        align-x=center
-                        align-y=center
-                      text "That app is not in the catalog any more." size=13.0 @text-muted
+                        px=16.0
+                        py=10.0
+                        gap=12.0
+                        align=center
+                      text "App"
+                        with
+                          w=160.0
+                          size=11.0
+                          @text-muted
+                          @font-bold
+                      text "Fuel / tick"
+                        with
+                          w=100.0
+                          size=11.0
+                          @text-muted
+                          @font-bold
+                      text "Tick"
+                        with
+                          w=80.0
+                          size=11.0
+                          @text-muted
+                          @font-bold
+                      text "Rate"
+                        with
+                          w=60.0
+                          size=11.0
+                          @text-muted
+                          @font-bold
+                      text "Frame · unchanged"
+                        with
+                          w=130.0
+                          size=11.0
+                          @text-muted
+                          @font-bold
+                      text "Ticks · skipped"
+                        with
+                          w=110.0
+                          size=11.0
+                          @text-muted
+                          @font-bold
+                      text "Load"
+                        with
+                          w=fill
+                          size=11.0
+                          @text-muted
+                          @font-bold
+                    rule horizontal thickness=1.0 color=border
+                    for app in running
+                      MonitorRow #monitor-row(app.id)
+                        with
+                          name=app.name
+                          gauge=gauge(app.surface, generation)
+                    if running_count(running) == 0
+                      box p=16.0
+                        text "Nothing is running. Open an app to see what it costs."
+                          with
+                            size=12.5
+                            @text-muted
+          if page == "detail" && empty(query)
+            col #detail-page w=fill h=fill
+              match find_entry(catalog, selected)
+                some(entry)
+                  scroll #detail w=fill h=fill
+                    col
+                      with
+                        w=fill
+                        p=24.0
+                        gap=20.0
+                      row
+                        button "Back to Discover" #back -> navigate "discover"
+                          with
+                            @px-10px
+                            @py-5px
+                            @bg-raised
+                            @text-muted
+                            @rounded-6px
+                            @text-12px
+                            @hover:bg-border
+                      row
+                        with
+                          w=fill
+                          gap=18.0
+                          align=center
+                        Tile
+                          with
+                            mark=entry.mark
+                            side=72.0
+                            glyph=30.0
+                        col w=fill gap=6.0
+                          text entry.name
+                            with
+                              size=26.0
+                              @text-fg
+                              @font-bold
+                          text entry.description size=14.0 @text-muted
+                      row gap=8.0
+                        if !in_library(library, entry.id)
+                          button "Get" #get -> install entry
+                            with
+                              @px-16px
+                              @py-8px
+                              @bg-primary
+                              @text-primary_fg
+                              @rounded-8px
+                              @text-13px
+                              @font-bold
+                              @hover:bg-primary/90
+                        if in_library(library, entry.id) && !is_running(running, entry.id)
+                          button "Open" #open -> launch entry
+                            with
+                              @px-16px
+                              @py-8px
+                              @bg-primary
+                              @text-primary_fg
+                              @rounded-8px
+                              @text-13px
+                              @font-bold
+                              @hover:bg-primary/90
+                        if is_running(running, entry.id)
+                          button "Show window" #show -> raise_app entry.id
+                            with
+                              @px-16px
+                              @py-8px
+                              @bg-raised
+                              @text-fg
+                              @rounded-8px
+                              @text-13px
+                              @font-bold
+                              @hover:bg-border
+                          button "Quit" #quit -> quit entry.id
+                            with
+                              @px-16px
+                              @py-8px
+                              @bg-raised
+                              @text-fg
+                              @rounded-8px
+                              @text-13px
+                              @font-bold
+                              @hover:bg-border
+                        if in_library(library, entry.id)
+                          button "Uninstall" #uninstall -> uninstall entry.id
+                            with
+                              @px-16px
+                              @py-8px
+                              @bg-transparent
+                              @text-danger
+                              @rounded-8px
+                              @text-13px
+                              @font-bold
+                              @hover:bg-danger/10
+                      if is_running(running, entry.id)
+                        LiveCard gauge=gauge_of(running, entry.id, generation)
+                      col gap=10.0
+                        text "What it can touch"
+                          with
+                            size=11.0
+                            @text-muted
+                            @font-bold
+                        for capability in entry.capabilities
+                          row gap=12.0 align=center
+                            Chip capability=capability
+                            text capability_hint(capability.name) size=13.0 @text-fg
+                        if empty(entry.capabilities)
+                          text "Nothing beyond drawing its window. It can still write to the store's log and ask for random bytes."
+                            with
+                              size=13.0
+                              @text-fg
+                      col gap=10.0
+                        text "The box it runs in"
+                          with
+                            size=11.0
+                            @text-muted
+                            @font-bold
+                        text "200M fuel per tick · 64 MB of memory · 256 requests per tick · one instance"
+                          with
+                            size=13.0
+                            font=figures
+                            @text-fg
+                        text "Past any of those the store ends the instance and says why in its window. What the app wrote to storage stays."
+                          with
+                            size=12.5
+                            @text-muted
+                      text entry.path
+                        with
+                          size=11.5
+                          font=figures
+                          @text-muted
+                none
+                  box
+                    with
+                      w=fill
+                      h=fill
+                      align-x=center
+                      align-y=center
+                    text "That app is not in the catalog any more." size=13.0 @text-muted
           rule horizontal thickness=1.0 color=border
           box #statusbar
             with

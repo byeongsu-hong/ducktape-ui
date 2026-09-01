@@ -71,8 +71,8 @@ pub fn gauge(surface: &Surface, _generation: i64) -> Gauge {
         fuel: format!("{} fuel", thousands(guest.fuel_used)),
         tick: millis(guest.tick_time),
         rate: format!("{}/s", guest.rate(now)),
-        frame: format!("{} KB · {unchanged}% unchanged", guest.frame_bytes / 1024),
-        idle: format!("{} ticks · {} skipped", guest.ticks, guest.skipped),
+        frame: format!("{} · {unchanged}%", bytes(guest.frame_bytes)),
+        idle: format!("{} · {}", guest.ticks, guest.skipped),
         load,
         dropped: match guest.dropped() {
             0 => String::new(),
@@ -118,6 +118,13 @@ fn thousands(value: u64) -> String {
         0..=999 => value.to_string(),
         1_000..=999_999 => format!("{:.1}k", value as f64 / 1000.0),
         _ => format!("{:.1}M", value as f64 / 1_000_000.0),
+    }
+}
+
+fn bytes(value: usize) -> String {
+    match value {
+        0..=1023 => format!("{value} B"),
+        _ => format!("{:.1} KB", value as f64 / 1024.0),
     }
 }
 

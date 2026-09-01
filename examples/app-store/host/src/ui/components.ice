@@ -19,55 +19,54 @@ component Tile(mark:str, side:f64, glyph:f64)
 // A capability, coloured by what it reaches: the clock, the disk, the bus.
 component Chip(capability:Capability)
   col #root
-    match capability.name
-      "clock"
-        box #clock
+    if capability.name == "clock"
+      box #clock
+        with
+          bg=clock/15
+          r=6.0
+          px=8.0
+          py=3.0
+        text "clock"
           with
-            bg=clock/15
-            r=6.0
-            px=8.0
-            py=3.0
-          text "clock"
-            with
-              size=11.0
-              @text-clock
-              @font-bold
-      "storage"
-        box #storage
+            size=11.0
+            @text-clock
+            @font-bold
+    if capability.name == "storage"
+      box #storage
+        with
+          bg=storage/15
+          r=6.0
+          px=8.0
+          py=3.0
+        text "storage"
           with
-            bg=storage/15
-            r=6.0
-            px=8.0
-            py=3.0
-          text "storage"
-            with
-              size=11.0
-              @text-storage
-              @font-bold
-      "bus"
-        box #bus
+            size=11.0
+            @text-storage
+            @font-bold
+    if capability.name == "bus"
+      box #bus
+        with
+          bg=bus/15
+          r=6.0
+          px=8.0
+          py=3.0
+        text "bus"
           with
-            bg=bus/15
-            r=6.0
-            px=8.0
-            py=3.0
-          text "bus"
-            with
-              size=11.0
-              @text-bus
-              @font-bold
-      _
-        box #other
+            size=11.0
+            @text-bus
+            @font-bold
+    if capability.name != "clock" && capability.name != "storage" && capability.name != "bus"
+      box #other
+        with
+          bg=raised
+          r=6.0
+          px=8.0
+          py=3.0
+        text capability.name
           with
-            bg=raised
-            r=6.0
-            px=8.0
-            py=3.0
-          text capability.name
-            with
-              size=11.0
-              @text-muted
-              @font-bold
+            size=11.0
+            @text-muted
+            @font-bold
 
 component Dot(on:bool)
   col #root
@@ -428,7 +427,7 @@ component MonitorRow(name:str, gauge:Gauge)
             @font-bold
       text gauge.fuel
         with
-          w=110.0
+          w=100.0
           size=12.0
           font=figures
           @text-fg
@@ -440,19 +439,19 @@ component MonitorRow(name:str, gauge:Gauge)
           @text-fg
       text gauge.rate
         with
-          w=70.0
+          w=60.0
           size=12.0
           font=figures
           @text-fg
       text gauge.frame
         with
-          w=170.0
+          w=130.0
           size=12.0
           font=figures
           @text-fg
       text gauge.idle
         with
-          w=150.0
+          w=110.0
           size=12.0
           font=figures
           @text-fg
@@ -516,7 +515,7 @@ component LiveCard(gauge:Gauge)
             @font-bold
       Meter gauge=gauge
       row w=fill gap=16.0 wrap
-        Figure label="Frame" value=gauge.frame
+        Figure label="Frame · unchanged" value=gauge.frame
         Figure label="Ticks · skipped" value=gauge.idle
         Figure label="Load" value=gauge.load
       if !empty(gauge.fault)
