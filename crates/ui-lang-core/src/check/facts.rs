@@ -632,6 +632,23 @@ pub(crate) enum CheckedComponentEventDelivery {
     },
 }
 
+impl CheckedExprOwner {
+    /// The view whose build evaluates this expression, when one does: its
+    /// options, text, conditions, keys, and interaction payloads.
+    pub(crate) fn view(&self) -> Option<ViewId> {
+        match self {
+            Self::View { view, .. } => Some(*view),
+            Self::Canvas(id) => Some(id.canvas),
+            Self::Media(id) => Some(id.media),
+            Self::Tooltip(id) => Some(id.tooltip),
+            Self::Float(id) => Some(id.float),
+            Self::Pin(id) => Some(id.pin),
+            Self::Interaction(id) => Some(id.widget),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum CheckedViewExprRole {
     IdentityKey,

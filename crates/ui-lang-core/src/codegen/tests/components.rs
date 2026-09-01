@@ -1532,7 +1532,13 @@ view
         "the nested method must take the enclosing scope local as a positional parameter"
     );
     assert!(
-        generated.contains("self.__ice_component_use_0(__ice_palette, format!(\"{}/Inner@25\", __ice_use_scope), __ice_use_scope.clone())"),
+        generated.contains(
+            "let __ice_component_inner_scope_25 = format!(\"{}/Inner@25\", __ice_use_scope); ::ui_lang_runtime::rev_memo("
+        ),
+        "the nested use derives its scope from the outer's normalized scope: {generated}"
+    );
+    assert!(
+        generated.contains("self.__ice_component_use_0(__ice_palette, __ice_component_inner_scope_25, __ice_use_scope.clone())"),
         "the nested call inside the outer method passes the outer's normalized scope"
     );
 }
@@ -2114,5 +2120,162 @@ view
     assert!(
         sliced < guard,
         "the publication is made before the guard can return"
+    );
+}
+
+const MEMO_PRELUDE: &str = r#"theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+"#;
+
+fn memo_program(body: &str) -> String {
+    compile(&format!("app Memo\n{MEMO_PRELUDE}{body}"), "memo.ice").unwrap()
+}
+
+#[test]
+fn memo_keys_a_component_use_on_the_revisions_of_what_it_reads() {
+    let generated = memo_program(
+        r#"state
+  title = "hello"
+  count = 0
+component Card(title:str)
+  col
+    text title
+view
+  col
+    Card title=title
+    text count
+"#,
+    );
+    assert_eq!(generated.matches("::ui_lang_runtime::rev_memo(").count(), 1);
+    assert!(
+        generated.contains("(self.__ice_rev[0], __ice_palette.name)"),
+        "the key is the title's revision alone: {generated}"
+    );
+}
+
+#[test]
+fn memo_treats_a_row_the_body_declares_as_its_own_read() {
+    let generated = memo_program(
+        r#"state
+  items:[str] = []
+component List(items:[str])
+  col
+    for item in items
+      text item
+view
+  List items=items
+"#,
+    );
+    assert!(generated.contains("::ui_lang_runtime::rev_memo("));
+}
+
+#[test]
+fn memo_skips_a_use_whose_argument_is_a_row_local_from_outside() {
+    let generated = memo_program(
+        r#"state
+  items:[str] = []
+component Card(title:str)
+  text title
+view
+  col
+    for item in items
+      lazy item as row
+        Card title=row
+"#,
+    );
+    assert!(!generated.contains("rev_memo("), "{generated}");
+}
+
+#[test]
+fn memo_skips_a_use_whose_argument_is_a_match_payload() {
+    let generated = memo_program(
+        r#"state
+  book:str? = none
+component Card(title:str)
+  text title
+view
+  col
+    match book
+      some(depth)
+        Card title=depth
+      none
+        text "no book"
+"#,
+    );
+    assert!(!generated.contains("rev_memo("), "{generated}");
+}
+
+#[test]
+fn memo_skips_a_body_that_holds_an_extern_component() {
+    let generated = memo_program(
+        r#"extern crate::backend
+  component native_switch(checked:bool) -> bool
+state
+  checked = false
+on changed(next)
+  checked = next
+component Switch(checked:bool) -> bool
+  extern native_switch(checked) -> emit(_)
+view
+  Switch checked=checked -> changed _
+"#,
+    );
+    assert!(!generated.contains("rev_memo("), "{generated}");
+}
+
+#[test]
+fn memo_skips_a_body_that_holds_a_virtual_window() {
+    let generated = memo_program(
+        r#"state
+  items:[str] = []
+component List(items:[str])
+  col virtual-row=20.0
+    for item in items
+      text item
+view
+  List items=items
+"#,
+    );
+    assert!(!generated.contains("rev_memo("), "{generated}");
+}
+
+#[test]
+fn memo_keys_a_stateful_callee_on_its_instance_and_skips_the_use_around_it() {
+    let generated = memo_program(
+        r#"state
+  title = "hello"
+component Inner(label:str)
+  state
+    open = false
+  col
+    if open
+      text label
+component Outer(label:str)
+  col
+    Inner label=label
+view
+  Outer label=title
+"#,
+    );
+    assert_eq!(
+        generated.matches("::ui_lang_runtime::rev_memo(").count(),
+        1,
+        "only the Inner use is memoized: {generated}"
+    );
+    assert!(
+        generated.contains(
+            "rev_memo(4u64, (self.__ice_component_inner.get(&__ice_component_inner_scope_"
+        ) && generated.contains(
+            ").map_or(0, |__state| __state.__ice_rev[0]), self.__ice_rev[0], __ice_palette.name)"
+        ),
+        "the Inner key reads the title's revision and its own instance's: {generated}"
     );
 }

@@ -401,6 +401,21 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
+            let memo_reads = match memo::component_use_memo_reads(
+                document,
+                call,
+                component,
+                &component_env,
+                env,
+            ) {
+                Ok(reads) => Some(reads),
+                Err(reason) => {
+                    if std::env::var_os("ICE_MEMO_DEBUG").is_some() {
+                        eprintln!("memo refused: `{name}` use: {reason}");
+                    }
+                    None
+                }
+            };
             let render_scope = format!("{scope_binding}.clone()");
             let rendered = render_node(
                 component.root,
@@ -504,67 +519,87 @@ pub(in crate::codegen) fn render_content(
                         .map(|sig| (ident.clone(), sig.code.clone(), orig.clone()))
                 })
                 .collect();
-            Ok(
-                if outline::outlining_active()
-                    && !recording.site_capturing()
-                    && !recording.touched_local_values()
-                    && let Some(callback_params) = callback_params
-                {
-                    let mut scope_locals = recording.scope_locals();
-                    scope_locals.remove(&scope_binding);
-                    // Group by the component DEFINITION's fragment: the body
-                    // text derives from the definition, so its methods land in
-                    // one file that only changes when that fragment does.
-                    let group = origin_fragment_slug(
-                        document,
-                        document.resolved_view(component.root)?.origin,
-                    );
-                    let method = outline::push_outlined_method(
-                        message,
-                        &group,
-                        &scope_binding,
-                        &scope_locals,
-                        &callback_params,
-                        &value_params,
-                        &body,
-                    );
-                    let arguments = scope_locals
+            // Under a memo the wrapper binds the scope first (the key reads
+            // it), so the use moves that binding instead of formatting again.
+            let (scope_argument, inline_scope_let) = if memo_reads.is_some() {
+                (scope_binding.clone(), String::new())
+            } else {
+                (
+                    component_scope.clone(),
+                    format!("let {scope_binding} = {component_scope}; "),
+                )
+            };
+            let use_code = if outline::outlining_active()
+                && !recording.site_capturing()
+                && !recording.touched_local_values()
+                && let Some(callback_params) = callback_params
+            {
+                let mut scope_locals = recording.scope_locals();
+                scope_locals.remove(&scope_binding);
+                // Group by the component DEFINITION's fragment: the body
+                // text derives from the definition, so its methods land in
+                // one file that only changes when that fragment does.
+                let group =
+                    origin_fragment_slug(document, document.resolved_view(component.root)?.origin);
+                let method = outline::push_outlined_method(
+                    message,
+                    &group,
+                    &scope_binding,
+                    &scope_locals,
+                    &callback_params,
+                    &value_params,
+                    &body,
+                );
+                let arguments = scope_locals
+                    .iter()
+                    .map(|local| format!(", {local}.clone()"))
+                    .collect::<String>();
+                // Cloned, not moved: the original may itself be an
+                // enclosing method's callback parameter consumed inside
+                // a loop.
+                let callback_arguments = callback_params
+                    .iter()
+                    .map(|(_, _, orig)| format!(", ({orig}).clone()"))
+                    .collect::<String>();
+                let value_arguments = value_params
+                    .iter()
+                    .map(|(_, _, owned)| format!(", {owned}"))
+                    .collect::<String>();
+                // grow_stack keeps deep outlined chains from exhausting
+                // small thread stacks at debug opt levels — see
+                // ui_lang_runtime::stack_relief.
+                format!(
+                    "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {scope_argument}{arguments}{callback_arguments}{value_arguments}))"
+                )
+            } else {
+                let callback_lets = used_callbacks
+                    .iter()
+                    .map(|(ident, _, orig)| format!("let {ident} = ({orig}).clone(); "))
+                    .collect::<String>();
+                // The inline fallback still binds any value-parameterized
+                // argument idents the body was baked with.
+                let value_lets = value_params
+                    .iter()
+                    .map(|(ident, _, owned)| format!("let {ident} = {owned}; "))
+                    .collect::<String>();
+                format!("{{ {inline_scope_let}{callback_lets}{value_lets}{body} }}")
+            };
+            // The layout memo the compiler inserts at a component use whose
+            // every read is keyed (`memo`): the element is still built on
+            // every pass, the walk below it is skipped while the key holds.
+            Ok(match memo_reads {
+                Some(reads) => {
+                    let key = reads
                         .iter()
-                        .map(|local| format!(", {local}.clone()"))
+                        .map(|read| format!("{read}, "))
                         .collect::<String>();
-                    // Cloned, not moved: the original may itself be an
-                    // enclosing method's callback parameter consumed inside
-                    // a loop.
-                    let callback_arguments = callback_params
-                        .iter()
-                        .map(|(_, _, orig)| format!(", ({orig}).clone()"))
-                        .collect::<String>();
-                    let value_arguments = value_params
-                        .iter()
-                        .map(|(_, _, owned)| format!(", {owned}"))
-                        .collect::<String>();
-                    // grow_stack keeps deep outlined chains from exhausting
-                    // small thread stacks at debug opt levels — see
-                    // ui_lang_runtime::stack_relief.
                     format!(
-                        "::ui_lang_runtime::grow_stack(|| self.{method}(__ice_palette, {component_scope}{arguments}{callback_arguments}{value_arguments}))"
+                        "{{ let {scope_binding} = {component_scope}; ::ui_lang_runtime::rev_memo({site}u64, ({key}__ice_palette.name), {use_code}).into() }}",
+                        site = node.0
                     )
-                } else {
-                    let callback_lets = used_callbacks
-                        .iter()
-                        .map(|(ident, _, orig)| format!("let {ident} = ({orig}).clone(); "))
-                        .collect::<String>();
-                    // The inline fallback still binds any value-parameterized
-                    // argument idents the body was baked with.
-                    let value_lets = value_params
-                        .iter()
-                        .map(|(ident, _, owned)| format!("let {ident} = {owned}; "))
-                        .collect::<String>();
-                    format!(
-                        "{{ let {scope_binding} = {component_scope}; {callback_lets}{value_lets}{body} }}"
-                    )
-                },
-            )
+                }
+                None => use_code,
+            })
         }
         ResolvedViewKind::Slot {
             slot: slot_id,
