@@ -220,7 +220,6 @@ fn layout_pure(program: &LoweredProgram, view: &ResolvedView) -> bool {
         | ResolvedViewKind::If { .. }
         | ResolvedViewKind::Match { .. }
         | ResolvedViewKind::For { .. }
-        | ResolvedViewKind::Lazy { .. }
         | ResolvedViewKind::Markdown
         | ResolvedViewKind::Table { .. }
         | ResolvedViewKind::Component { .. }
@@ -230,6 +229,10 @@ fn layout_pure(program: &LoweredProgram, view: &ResolvedView) -> bool {
         | ResolvedViewKind::Canvas
         | ResolvedViewKind::Theme { .. }
         | ResolvedViewKind::Pin { .. } => true,
+        // A `lazy` hands its cached element to every new instance in
+        // `diff`, and a held key skips the diff below the memo; the lazy is
+        // its own boundary anyway.
+        ResolvedViewKind::Lazy { .. } => false,
         // An editor mutates highlighter state across frames; an extern,
         // a themer, a shader, and media are opaque to the compiler; a
         // sensor, a resize handle, a responsive size, a float, and a pane

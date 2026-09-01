@@ -2300,6 +2300,22 @@ view
 }
 
 #[test]
+fn memo_skips_a_body_that_holds_a_lazy() {
+    let generated = memo_program(
+        r#"state
+  title = "hello"
+component Card(title:str)
+  lazy title as cached
+    text cached
+view
+  col
+    Card title=title
+"#,
+    );
+    assert!(!generated.contains("rev_memo("), "{generated}");
+}
+
+#[test]
 fn memo_skips_a_body_that_holds_a_virtual_window() {
     let generated = memo_program(
         r#"state
