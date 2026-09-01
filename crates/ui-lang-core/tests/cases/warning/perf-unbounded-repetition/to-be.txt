@@ -1,0 +1,3 @@
+W019 `for fill in fills` builds a component for every row on every view pass; key each row with `lazy fill by <cheap keys> as <alias>` or mount the rows in a column with `virtual-row=<height>`
+W019 `keyed fill in fills` builds a component for every row on every view pass; key each row with `lazy fill by <cheap keys> as <alias>` or add `virtual-row=<height>` to the keyed column
+W019 `for fill in fills` builds an extern component for every row on every view pass; key each row with `lazy fill by <cheap keys> as <alias>` or mount the rows in a column with `virtual-row=<height>`

@@ -94,8 +94,12 @@ boundary would avoid: extern component content rebuilt from state outside
 `lazy` (`W016`), a plain `lazy` inside a repetition over a row-local
 list-owning value (`W017`), and a `str`, `bytes`, list, `editor`, or list-owning record state
 field cloned into a by-value `pure`/`sync` parameter from a view expression or
-subscription condition (`W018`); evidence is the three `perf-*` warning fixtures plus the
-`w016`/`w017`/`w018` checker unit tests pinning each fixture's exact site set,
+subscription condition (`W018`), a `for` or keyed column over a state-rooted list that
+mounts a component, an extern component, or a nested repetition per row with no per-row
+`lazy` and no `virtual-row` column (`W019`), and a plain `lazy` inside a repetition whose
+dependency is a call or operator over the row, evaluated per pass only to produce its key
+(`W020`); evidence is the five `perf-*` warning fixtures plus the
+`w016`-`w020` checker unit tests pinning each fixture's exact site set,
 and `cargo ice check` reporting zero warnings over the in-repo examples.
 Component and handler reachability is combined
 across all workspace or open-editor roots. `cargo ice` additionally reports

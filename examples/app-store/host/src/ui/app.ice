@@ -116,14 +116,15 @@ view
               col gap=8.0
                 text entry.name size=16.0 @text-fg
                 text entry.description size=12.0 @text-muted
-                row gap=6.0
-                  for capability in entry.capabilities
-                    box
-                      with
-                        bg=bg
-                        r=4.0
-                        p=4.0
-                      text capability.name size=11.0 @text-muted
+                lazy entry by entry.id as listed
+                  row gap=6.0
+                    for capability in listed.capabilities
+                      box
+                        with
+                          bg=bg
+                          r=4.0
+                          p=4.0
+                        text capability.name size=11.0 @text-muted
                 if is_installed(installed, entry.id)
                   button "Uninstall" -> uninstall entry.id
                     active bg=bg text=danger r=6.0

@@ -128,9 +128,16 @@ component Sidebar(bind query:str, notes:[Note], path:str, dark:bool, blocked:boo
                 font=body
                 @text-muted
         for note in notes
-          NoteRow #note(note.title) note=note selected=(note.path == path)
-            forward
-              select
+          if note.path == path
+            lazy note by note.path, note.stamp as row
+              NoteRow #note(row.title) note=row selected=true
+                forward
+                  select
+          if note.path != path
+            lazy note by note.path, note.stamp as row
+              NoteRow #note(row.title) note=row selected=false
+                forward
+                  select
     row #footer w=fill align=center
       if dark
         button "Light appearance" #light-theme disabled=blocked @ghost_action -> emit(toggle_theme)

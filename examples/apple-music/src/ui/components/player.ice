@@ -126,9 +126,10 @@ component QueuePanel(albums:[Album], current_title:str, current_artist:str, curr
             bar=hidden
           col w=fill gap=3.0
             for album in albums
-              QueueRow album=album selected=(album.title == current_title) #row(album.id)
-                forward
-                  play
+              lazy album, current_title as card
+                QueueRow album=card selected=(card.title == current_title) #row(card.id)
+                  forward
+                    play
 component LyricLineRow(line:LyricLine)
   emits
     seek(f64)
@@ -223,9 +224,10 @@ component LyricsPanel(title:str, artist:str, lines:[LyricLine])
             bar=hidden
           col w=fill gap=22.0
             for line in lines
-              LyricLineRow line=line #line(line.id)
-                forward
-                  seek
+              lazy line as row
+                LyricLineRow line=row #line(row.id)
+                  forward
+                    seek
 component PlayerBar(title:str, artist:str, cover:str, active:bool, playhead:f64, loudness:f64, lyrics_active:bool, queue_active:bool)
   emits
     shuffle
