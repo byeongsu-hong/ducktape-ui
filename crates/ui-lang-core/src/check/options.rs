@@ -32,6 +32,21 @@ pub(in crate::check) fn check_lazy_subtree(
             span,
             "a lazy subtree cannot borrow a slot from its enclosing component",
         )),
+        ViewNode::ExternComponent { function, span, .. }
+            if document.functions.iter().any(|item| {
+                item.name == *function
+                    && item.kind == ExternKind::Component
+                    && item.borrowed.iter().any(|borrowed| *borrowed)
+            }) =>
+        {
+            Err(Error::new(
+                "E139",
+                span,
+                format!(
+                    "extern component `{function}` cannot live in lazy because its borrowed parameter reads the value in place, and a cached element cannot hold that borrow"
+                ),
+            ))
+        }
         ViewNode::Layout { children, .. }
         | ViewNode::If { children, .. }
         | ViewNode::For { children, .. } => {

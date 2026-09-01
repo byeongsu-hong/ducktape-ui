@@ -3,6 +3,8 @@ extern crate::backend
   Fill(tid:i64, coin:str, size:f64)
   Depth(asks:[Fill], bids:[Fill])
   pure fill_label(fill:&Fill) -> str
+  component fill_chart(fill:&Fill) -> bool
+  component fill_badge(fill:Fill) -> bool
 theme contract AppTheme
   bg
   fg
@@ -23,6 +25,8 @@ on tabs_loaded(next)
   tabs = next
 on book_loaded(next)
   book = next
+on charted(flag)
+  book = none
 component FillRow(fill:Fill)
   row
     text fill.coin
@@ -57,3 +61,7 @@ view
             FillRow fill=fill
         none
           text "no book"
+    for fill in fills
+      extern fill_chart(fill) -> charted _
+    for fill in fills
+      extern fill_badge(fill) -> charted _

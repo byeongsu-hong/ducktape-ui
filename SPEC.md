@@ -2272,8 +2272,9 @@ iteration index and every row of a `lazy` list otherwise renders under one
 runtime id. A `lazy` inside a `for` therefore needs an `id` derived from the
 `lazy` alias rather than the loop one — `lazy fill as printed` carrying
 `#fill(printed.tid)` — or its rows are indistinguishable to targets, captures,
-and the accessibility tree. Input, combo, named QR data, and a slot from an
-enclosing component are rejected because those forms borrow app-owned data.
+and the accessibility tree. Input, combo, named QR data, a slot from an
+enclosing component, and an extern component with a `&` parameter are
+rejected because those forms borrow app-owned data (`E139`).
 Components and structured children remain usable when their complete expanded
 tree satisfies the same static rule. The enclosing
 component's routing context is preserved: routes inside the subtree resolve

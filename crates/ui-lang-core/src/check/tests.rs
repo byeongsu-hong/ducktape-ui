@@ -1358,14 +1358,16 @@ fn w017_skips_keyed_lazy_and_lazy_outside_loops() {
 
 #[test]
 fn w019_skips_leaf_rows_virtual_columns_and_lazy_rows() {
-    // Line 35: `for fill in fills` mounting a component per row; 37: the
-    // keyed column doing the same. Silent: the `for` over `tabs` whose rows
-    // are leaf text, the `for` under a `virtual-row` column, the keyed
-    // column with `virtual-row`, the `for` whose every row is a `lazy`, and
-    // the `for` reached through `if` and `match` under a `virtual-row` column.
+    // Line 39: `for fill in fills` mounting a component per row; 41: the
+    // keyed column doing the same; 66: an extern component taking the row by
+    // value. Silent: the `for` over `tabs` whose rows are leaf text, the
+    // `for` under a `virtual-row` column, the keyed column with
+    // `virtual-row`, the `for` whose every row is a `lazy`, the `for`
+    // reached through `if` and `match` under a `virtual-row` column, and the
+    // extern component that borrows the row (a live control, as for W016).
     assert_eq!(
         perf_warning_sites("perf-unbounded-repetition", "W019"),
-        vec![35, 37]
+        vec![39, 41, 66]
     );
 }
 

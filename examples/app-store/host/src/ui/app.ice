@@ -176,5 +176,4 @@ view
                           @text-fg
                       button "×" -> uninstall app.id
                         active bg=surface text=muted r=6.0
-                  lazy app by app.id, generation as live
-                    extern wasm_view(live.surface) -> guest_changed live.surface _
+                  extern wasm_view(app.surface) -> guest_changed app.surface _

@@ -1,0 +1,2 @@
+E139
+extern component `fill_chart` cannot live in lazy because its borrowed parameter reads the value in place, and a cached element cannot hold that borrow

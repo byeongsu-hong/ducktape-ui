@@ -155,6 +155,33 @@ pub struct PortfolioAsset {
     pub roe_pct: f64,
 }
 
+/// A portfolio row is a `lazy` row, so it hashes; every figure goes in by its
+/// bits, with `-0.0` folded onto `0.0` so rows that render alike cache alike.
+impl std::hash::Hash for PortfolioAsset {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let bits = |value: f64| (value + 0.0).to_bits();
+        self.coin.hash(state);
+        self.side.hash(state);
+        self.margin_mode.hash(state);
+        for value in [
+            self.size,
+            self.entry,
+            self.mark,
+            self.liq,
+            self.leverage,
+            self.margin,
+            self.funding,
+            self.value,
+            self.share,
+            self.bar,
+            self.pnl,
+            self.roe_pct,
+        ] {
+            bits(value).hash(state);
+        }
+    }
+}
+
 /// One window of the venue's portfolio answer: the account's value at each
 /// point, and the PnL it had booked by then, cumulative over the window.
 /// The venue reports the two as separate series and they are kept separate

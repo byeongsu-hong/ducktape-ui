@@ -1738,7 +1738,7 @@ view
                                 col #ladder-preview gap=10.0 w=fill
                                   for figure in ladder_shape(ticket_ladder)
                                     lazy figure, locale as rung
-                                      row w=fill align=center
+                                      row #rung(rung.label) w=fill align=center
                                         Label value=t(locale, rung.label)
                                         space w=fill
                                         text rung.value
@@ -2365,7 +2365,7 @@ view
                                       text t(locale, "No open exposure.") size=11.0 @text-faint
                                   for asset in portfolio_assets(positions)
                                     lazy asset as slice
-                                      PortfolioAllocation asset=slice
+                                      PortfolioAllocation #allocation(slice.coin) asset=slice
                         // What each step of the window booked, beside the
                         // fold over the fills. The bars are the venue's own
                         // cumulative PnL differenced, so a deposit that lifts
@@ -4076,7 +4076,7 @@ view
                   col #sweep-figures gap=9.0 w=fill
                     for figure in sweep_figures(sweep)
                       lazy figure, locale as line
-                        row w=fill align=center
+                        row #figure(line.label) w=fill align=center
                           Label value=t(locale, line.label)
                           space w=fill
                           text line.value

@@ -130,15 +130,25 @@ fn owns_collection(ty: &Type, document: &Document) -> bool {
 /// instantiated per item, or a nested repetition. Rows of leaf widgets are
 /// cheap enough that no boundary is worth the memo bookkeeping, and a `lazy`
 /// inside the row already bounds what it wraps.
-fn heavy_row_work(node: &ViewNode) -> Option<&'static str> {
+fn heavy_row_work(node: &ViewNode, document: &Document) -> Option<&'static str> {
     match node {
         ViewNode::Lazy { .. } => None,
         ViewNode::Component { .. } => Some("a component"),
-        ViewNode::ExternComponent { .. } => Some("an extern component"),
+        // A component that borrows a parameter is a live control over the
+        // row's data: it cannot sit behind a memo (W016 exempts it for the
+        // same reason), so no boundary is asked for.
+        ViewNode::ExternComponent { function, .. } => document
+            .functions
+            .iter()
+            .find(|item| item.name == *function && item.kind == ExternKind::Component)
+            .is_none_or(|declaration| !declaration.borrowed.iter().any(|borrowed| *borrowed))
+            .then_some("an extern component"),
         ViewNode::For { .. } | ViewNode::KeyedColumn { .. } | ViewNode::Table { .. } => {
             Some("a nested repetition")
         }
-        _ => view_children(node).into_iter().find_map(heavy_row_work),
+        _ => view_children(node)
+            .into_iter()
+            .find_map(|child| heavy_row_work(child, document)),
     }
 }
 
@@ -300,7 +310,9 @@ fn content_walk(
                 && !children
                     .iter()
                     .all(|child| matches!(child, ViewNode::Lazy { .. }))
-                && let Some(heavy) = children.iter().find_map(heavy_row_work)
+                && let Some(heavy) = children
+                    .iter()
+                    .find_map(|child| heavy_row_work(child, document))
             {
                 warnings.push(unbounded_repetition_warning(
                     "for", item, items, heavy, span, false,
@@ -320,7 +332,7 @@ fn content_walk(
             if options.virtual_row.is_none()
                 && !scope.roots(items, document).is_empty()
                 && !matches!(**child, ViewNode::Lazy { .. })
-                && let Some(heavy) = heavy_row_work(child)
+                && let Some(heavy) = heavy_row_work(child, document)
             {
                 warnings.push(unbounded_repetition_warning(
                     "keyed", item, items, heavy, span, true,

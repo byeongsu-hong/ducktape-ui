@@ -1438,7 +1438,7 @@ impl Act {
 /// Formatted here rather than in the view for the reason every figure on the
 /// confirmation is: the panel restates and computes nothing, so a number it
 /// shows has to arrive already written by whoever worked it out.
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Hash)]
 pub struct Figure {
     pub label: String,
     pub value: String,
