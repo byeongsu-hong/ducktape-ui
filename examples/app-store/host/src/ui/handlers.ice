@@ -127,14 +127,18 @@ on window_closed(id)
   return if !is_window(store_window, id)
   exit
 
-// A window said something about its guest: it ended, or the user pressed its
-// Restart. Reloading the module may be a compile, so it goes on the executor
-// like an install and comes back through here.
-on guest_changed(id, restart)
+// A window said something about its guest: it ended, the user pressed its
+// Restart, or it published on the bus. The last is only a wake — the update
+// is what redraws the other windows, so their subscribers tick — and it
+// changes nothing the store shows, so it must not rebuild the rows. Reloading
+// the module may be a compile, so it goes on the executor like an install and
+// comes back through here.
+on guest_changed(id, what)
+  return if what == "wake"
   generation = generation + 1
   rows = build_rows(catalog, query, library, running, generation)
-  return if !restart || !is_guest(running, id)
-  run every restart_guest(surface_at(running, id)) -> guest_changed id false | install_failed _
+  return if what != "restart" || !is_guest(running, id)
+  run every restart_guest(surface_at(running, id)) -> guest_changed id "restarted" | install_failed _
 
 on tick
   generation = generation + 1

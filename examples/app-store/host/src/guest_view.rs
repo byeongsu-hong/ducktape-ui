@@ -24,7 +24,7 @@ use crate::store::{Guest, Surface};
 /// run, and the store's counts are only recomputed when the app has a
 /// message. `dark` is the store's colour mode, which the guest hears about
 /// through its theme subscription.
-pub fn wasm_view(surface: Surface, dark: bool) -> Element<'static, bool> {
+pub fn wasm_view(surface: Surface, dark: bool) -> Element<'static, String> {
     Element::new(WasmView {
         guest: surface.0,
         dark,
@@ -36,7 +36,7 @@ struct WasmView {
     dark: bool,
 }
 
-impl<Theme, Renderer> Widget<bool, Theme, Renderer> for WasmView
+impl<Theme, Renderer> Widget<String, Theme, Renderer> for WasmView
 where
     Renderer: core_text::Renderer<Font = iced::Font>,
 {
@@ -61,7 +61,7 @@ where
         cursor: mouse::Cursor,
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, bool>,
+        shell: &mut Shell<'_, String>,
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
@@ -73,7 +73,7 @@ where
             if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_))) {
                 focus(guest.serial, cursor.is_over(bounds));
                 if cursor.is_over(restart_button(bounds)) {
-                    shell.publish(true);
+                    shell.publish("restart".to_string());
                     shell.capture_event();
                 }
             }
@@ -180,8 +180,13 @@ where
                 if faulted {
                     guest.announced_fault = true;
                 }
-                if faulted || wake.published {
-                    shell.publish(false);
+                // The two are not the same word: an end changes what the
+                // store shows, a publish changes nothing there — its update
+                // is only the wake, so it must not cost a rebuild of the rows.
+                if faulted {
+                    shell.publish("ended".to_string());
+                } else if wake.published {
+                    shell.publish("wake".to_string());
                 }
             }
             _ => {}
