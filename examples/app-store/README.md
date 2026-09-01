@@ -377,23 +377,26 @@ An honest inventory, grouped by where the work would land. Items marked
 
 ### Store and lifecycle
 
-- Only the installed set comes back. App state is not persisted or
-  suspended — a restart, like a restart-in-place after a trap, leaves an app
-  with nothing but what it wrote to storage.
-- Windows are fixed at 500×380: no resize, move, z-order, minimise or
-  maximise; the app's own `window size` is ignored. One instance per
-  module.
+- What comes back at start is the library and the list of apps that had a
+  window; app state is not persisted or suspended — a reopen, like a
+  Restart after a trap, leaves an app with nothing but what it wrote to
+  storage.
+- Every guest window opens at 560×420 (at least 320×240) wherever the
+  platform puts it; the app's own `window size` is ignored, and neither size
+  nor position is remembered between runs. One instance per module.
 - The manifest has no icon, version, author or preferred size.
 - The catalog is one local directory, rescanned only when the user presses
   Rescan: no watch, no remote catalog, no download, no upgrade path, no data
-  migration. Each install —
-  and each Restart — compiles from scratch (about 1.7 s) — no `Module::serialize` cache, no
-  sharing between installs of the same module. Scanning reads every module
-  in full just for its manifest.
+  migration. Scanning reads every module in full just for its manifest, and
+  the in-memory module cache notices a rebuilt module by its timestamp only
+  at the next load.
 - Uninstall keeps the app's storage — an app can delete its own keys, the
   store cannot — and asks no confirmation.
 - A guest that asks for `NextFrame` every frame ticks on every redraw of
-  its window; nothing rate-limits an app that animates forever.
+  its window, and one that publishes on every frame makes the store update
+  on every frame — that update is the wake that carries the message to the
+  other windows. Nothing rate-limits an app that animates or publishes
+  forever.
 
 ### SDK and developer experience
 
