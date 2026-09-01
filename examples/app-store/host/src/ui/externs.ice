@@ -9,6 +9,7 @@ extern crate::store
   CardModel(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
   ShelfModel(id:str, found:bool, entry:CatalogEntry, running:bool, gauge:Gauge)
   Rows(cards:[CardModel], shelf:[ShelfModel])
+  Placement(id:str, x:f64, y:f64, w:f64, h:f64, placed:bool)
   pure scan_catalog() -> [CatalogEntry]
   sync catalog_dir() -> str
   pure find_entry(catalog:&[CatalogEntry], id:&str) -> CatalogEntry?
@@ -40,4 +41,10 @@ extern crate::store
   pure installing_label(entry:CatalogEntry) -> str
   pure opening_label(entry:CatalogEntry) -> str
   pure library_hint(library:&[str]) -> str
+  sync remembered_placements() -> [Placement]
+  sync save_placements(placements:&[Placement]) -> bool
+  pure no_placement() -> Placement
+  pure placement_at(placements:&[Placement], running:&[Running], window:window-id) -> Placement
+  pure moved(placements:[Placement], running:&[Running], window:window-id, x:f64, y:f64) -> [Placement]
+  pure resized(placements:[Placement], running:&[Running], window:window-id, w:f64, h:f64) -> [Placement]
   component wasm_view(surface:Surface, dark:bool) -> bool

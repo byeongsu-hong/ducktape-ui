@@ -44,7 +44,7 @@ cargo run -p app-store-host --release
 | variable | default | what it names |
 |---|---|---|
 | `APP_STORE_CATALOG` | `target/wasm32-unknown-unknown/release` | the directory scanned for modules |
-| `APP_STORE_DATA` | `target/app-store-data` | app storage (`<app>/<key>`), the store's `installed` and `running` lists, and wasmtime's artifact `cache` |
+| `APP_STORE_DATA` | `target/app-store-data` | app storage (`<app>/<key>`), the store's `installed`, `running` and `windows` lists, and wasmtime's artifact `cache` |
 
 The windowing backends the host asks iced for (`x11`, `wayland`) are
 requested only on Linux, so a macOS or Windows build resolves without them —
@@ -382,8 +382,8 @@ An honest inventory, grouped by where the work would land. Items marked
   Restart after a trap, leaves an app with nothing but what it wrote to
   storage.
 - Every guest window opens at 560×420 (at least 320×240) wherever the
-  platform puts it; the app's own `window size` is ignored, and neither size
-  nor position is remembered between runs. One instance per module.
+  platform puts it the first time, and where it was last seen after that;
+  the app's own `window size` is ignored. One instance per module.
 - The manifest has no icon, version, author or preferred size.
 - The catalog is one local directory, rescanned only when the user presses
   Rescan: no watch, no remote catalog, no download, no upgrade path, no data
