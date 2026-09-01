@@ -341,7 +341,7 @@ component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
           with
             gap=12.0
             align=center
-            w=260.0
+            w=420.0
           Tile
             with
               mark=entry.mark
