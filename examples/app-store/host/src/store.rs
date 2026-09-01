@@ -25,11 +25,11 @@ pub use crate::catalog::{
 pub use crate::guest_view::wasm_view;
 pub use crate::library::{
     CardModel, Gauge, Loaded, Placement, Rows, Running, ShelfModel, add_to_library, attach_window,
-    build_rows, drop_first, drop_window, empty_rows, enqueue, gauge, gauge_of, in_library,
-    installing_label, is_guest, is_running, is_window, library_hint, meter, moved, no_placement,
-    opening_label, placement_at, remembered_library, remembered_placements, remove_from_library,
-    resized, restore_running, running_count, running_label, save_placements, surface_at, window_of,
-    window_title,
+    build_rows, drop_first, drop_window, empty_rows, enqueue, escape_page, escape_press, gauge,
+    gauge_of, in_library, installing_label, is_guest, is_running, is_window, library_hint, meter,
+    moved, no_placement, opening_label, placement_at, remembered_library, remembered_placements,
+    remove_from_library, resized, restore_running, running_count, running_label, save_placements,
+    search_hint, search_press, surface_at, window_of, window_title,
 };
 
 use crate::capabilities::{Inbox, bus, clock, host, storage};

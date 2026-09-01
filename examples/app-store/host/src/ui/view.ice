@@ -65,7 +65,7 @@ view
                 with
                   change=searched
                   label="Search apps"
-                  hint="Search apps"
+                  hint=search_hint()
                   w=220.0
                   text-size=13.0
                   p=8.0
