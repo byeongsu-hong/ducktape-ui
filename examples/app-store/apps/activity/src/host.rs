@@ -46,3 +46,13 @@ pub fn origin_label(entry: Entry) -> String {
 pub fn count_label(log: &[Entry]) -> String {
     format!("{} events", log.len())
 }
+
+/// The host's colour mode: `light` or `dark`, once on subscribing and again
+/// on every change.
+pub fn theme_changes() -> impl Stream<Item = Result<String, BusError>> + Send + 'static {
+    host::theme().map(|answer| {
+        answer
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map_err(|message| BusError { message })
+    })
+}

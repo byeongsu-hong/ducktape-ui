@@ -20,6 +20,8 @@ pub struct CatalogEntry {
     pub description: String,
     pub capabilities: Vec<Capability>,
     pub path: String,
+    /// What the app's tile shows: the first letter of its name.
+    pub mark: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -27,12 +29,16 @@ pub struct StoreError {
     pub message: String,
 }
 
+/// The directory the store scans, as the status bar names it.
+pub fn catalog_dir() -> String {
+    std::env::var("APP_STORE_CATALOG").unwrap_or_else(|_| DEFAULT_CATALOG_DIR.to_string())
+}
+
 /// Lists every wasm module in the catalog directory that carries a manifest.
 /// Reading the section needs no compilation, so a catalog of a hundred apps
 /// costs a hundred file reads, not a hundred cranelift runs.
 pub fn scan_catalog() -> Vec<CatalogEntry> {
-    let dir =
-        std::env::var("APP_STORE_CATALOG").unwrap_or_else(|_| DEFAULT_CATALOG_DIR.to_string());
+    let dir = catalog_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
@@ -43,6 +49,12 @@ pub fn scan_catalog() -> Vec<CatalogEntry> {
         .filter_map(|path| {
             let bytes = std::fs::read(&path).ok()?;
             let manifest = read_manifest(&bytes)?;
+            let mark = manifest
+                .name
+                .chars()
+                .next()
+                .map(|first| first.to_uppercase().to_string())
+                .unwrap_or_default();
             Some(CatalogEntry {
                 id: path.file_stem()?.to_string_lossy().into_owned(),
                 name: manifest.name,
@@ -53,11 +65,48 @@ pub fn scan_catalog() -> Vec<CatalogEntry> {
                     .map(|name| Capability { name: name.clone() })
                     .collect(),
                 path: path.to_string_lossy().into_owned(),
+                mark,
             })
         })
         .collect();
     catalog.sort_by(|a, b| a.name.cmp(&b.name));
     catalog
+}
+
+pub fn find_entry(catalog: &[CatalogEntry], id: &str) -> Option<CatalogEntry> {
+    catalog.iter().find(|entry| entry.id == id).cloned()
+}
+
+/// The entries whose name, description or capabilities mention the query,
+/// case-insensitively; all of them for an empty query.
+pub fn filter_catalog(catalog: &[CatalogEntry], query: String) -> Vec<CatalogEntry> {
+    let query = query.trim().to_lowercase();
+    catalog
+        .iter()
+        .filter(|entry| {
+            query.is_empty()
+                || entry.name.to_lowercase().contains(&query)
+                || entry.description.to_lowercase().contains(&query)
+                || entry
+                    .capabilities
+                    .iter()
+                    .any(|capability| capability.name.contains(&query))
+        })
+        .cloned()
+        .collect()
+}
+
+/// What granting a capability lets the app do, in the user's terms.
+pub fn capability_hint(name: String) -> String {
+    match name.as_str() {
+        "clock" => "Read the host's clock, sleep, and be woken every so often.",
+        "storage" => {
+            "Keep up to 64 MB of its own data in the host's storage; it survives a reinstall."
+        }
+        "bus" => "Publish to the app bus and listen to what other apps publish.",
+        _ => "A capability this store does not know; the host will refuse it.",
+    }
+    .to_string()
 }
 
 struct Manifest {
@@ -67,7 +116,7 @@ struct Manifest {
 }
 
 /// What a manifest may say about itself. The catalog is read before anything
-/// is installed, and the sidebar shapes every field of every entry on every
+/// is installed, and the store shapes every field of every entry on every
 /// relayout — outside the sandbox, with no fuel and no memory limit — so a
 /// module whose manifest is a megabyte of capability names is left out of the
 /// catalog rather than laid out.

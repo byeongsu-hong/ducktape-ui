@@ -126,6 +126,25 @@ pub struct Frame {
     /// Requests the guest stopped waiting on — a dropped future or stream.
     /// The host frees whatever it kept for them and sends no more answers.
     pub cancels: Vec<u64>,
+    /// When the guest's own widgets want to draw again — a caret blink, a
+    /// hover transition — independently of anything the host delivers. A
+    /// guest with nothing pending is ticked only when this says so.
+    pub redraw: Redraw,
+    /// `layers` is empty because nothing drawn changed since the last frame:
+    /// the host keeps the layers it already has instead of decoding them
+    /// again. Requests, cancels and the redraw request still cross.
+    pub unchanged: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Redraw {
+    /// Nothing until the host has something to deliver.
+    #[default]
+    Wait,
+    /// As soon as the host draws next.
+    NextFrame,
+    /// At this host uptime, in milliseconds.
+    At(u64),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -673,6 +692,8 @@ mod tests {
                 payload: b"hi".to_vec(),
             }],
             cancels: vec![9],
+            redraw: Redraw::At(1500),
+            unchanged: false,
         }
     }
 

@@ -57,6 +57,10 @@ pub(crate) const MAX_DUE: usize = 1024;
 /// Bus subscriptions per guest: every publish by anyone walks all of them.
 pub(crate) const MAX_SUBSCRIPTIONS: usize = 64;
 
+/// Theme subscriptions per guest: each one is an answer per mode change,
+/// and an app needs one.
+pub(crate) const MAX_THEME_SUBSCRIPTIONS: usize = 16;
+
 /// One subscription's topic. Held for as long as the guest runs and compared
 /// against on every publish by anyone, so the payload cap alone would let
 /// sixty-four subscriptions pin sixty-four megabytes of the host's memory for

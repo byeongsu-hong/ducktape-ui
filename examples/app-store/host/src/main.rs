@@ -1,10 +1,10 @@
-//! A native Ice application that installs, shows and uninstalls Ice
-//! applications compiled to wasm — and is the only thing they can talk to.
+//! A native Ice daemon that installs Ice applications compiled to wasm, gives
+//! each one a window of its own — and is the only thing they can talk to.
 
 mod capabilities;
 mod catalog;
 mod guest_view;
-mod installed;
+mod library;
 mod limits;
 mod store;
 
@@ -12,5 +12,5 @@ ui_lang::include_app!("src/ui/app.ice");
 
 fn main() -> iced::Result {
     capabilities::clock::start();
-    AppStore::run()
+    IceStore::run()
 }

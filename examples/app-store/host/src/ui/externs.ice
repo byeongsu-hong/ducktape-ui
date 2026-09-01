@@ -1,0 +1,39 @@
+extern crate::store
+  Capability(name:str)
+  CatalogEntry(id:str, name:str, description:str, capabilities:[Capability], path:str, mark:str)
+  Surface()
+  Loaded(id:str, name:str, surface:Surface)
+  Running(id:str, name:str, surface:Surface, window:window-id)
+  StoreError(message:str)
+  Gauge(live:bool, fault:str, fuel:str, tick:str, rate:str, frame:str, idle:str, load:str, dropped:str, level:i64)
+  pure scan_catalog() -> [CatalogEntry]
+  sync catalog_dir() -> str
+  pure find_entry(catalog:&[CatalogEntry], id:&str) -> CatalogEntry?
+  pure filter_catalog(catalog:&[CatalogEntry], query:str) -> [CatalogEntry]
+  pure capability_hint(name:str) -> str
+  install_app(entry:CatalogEntry) -> Loaded ! StoreError
+  stream restore_running(catalog:[CatalogEntry]) -> Loaded ! StoreError
+  restart_guest(surface:Surface) -> Surface ! StoreError
+  pure gauge(surface:&Surface, generation:i64) -> Gauge
+  pure gauge_of(running:&[Running], id:str, generation:i64) -> Gauge
+  pure meter(level:i64) -> f64
+  sync remembered_library() -> [str]
+  pure add_to_library(library:[str], id:str) -> [str]
+  pure remove_from_library(library:[str], id:str) -> [str]
+  pure in_library(library:&[str], id:str) -> bool
+  pure enqueue(opening:[Loaded], app:Loaded) -> [Loaded]
+  pure attach_window(running:[Running], opening:&[Loaded], window:window-id) -> [Running]
+  pure drop_first(opening:[Loaded]) -> [Loaded]
+  pure drop_window(running:[Running], window:window-id) -> [Running]
+  pure window_of(running:&[Running], id:str) -> window-id
+  pure is_guest(running:&[Running], window:window-id) -> bool
+  pure surface_at(running:&[Running], window:window-id) -> Surface
+  pure is_window(store:window-id?, window:window-id) -> bool
+  pure is_running(running:&[Running], id:str) -> bool
+  pure running_count(running:&[Running]) -> i64
+  pure running_label(running:&[Running], generation:i64) -> str
+  pure window_title(running:&[Running], window:window-id) -> str
+  pure installing_label(entry:CatalogEntry) -> str
+  pure opening_label(entry:CatalogEntry) -> str
+  pure library_hint(library:&[str]) -> str
+  component wasm_view(surface:Surface, dark:bool) -> bool

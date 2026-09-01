@@ -26,9 +26,10 @@ fn kinds(requests: &[Request]) -> Vec<&str> {
 #[test]
 fn a_question_goes_out_as_a_request_and_the_answer_comes_back_into_the_view() {
     let frame = boot();
-    assert!(
-        frame.requests.is_empty(),
-        "nothing asked at boot: {:?}",
+    assert_eq!(
+        kinds(&frame.requests),
+        ["host.theme"],
+        "only the colour mode at boot: {:?}",
         frame.requests
     );
 

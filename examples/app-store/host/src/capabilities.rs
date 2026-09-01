@@ -363,6 +363,13 @@ pub mod clock {
         now.saturating_duration_since(start).as_millis() as u64
     }
 
+    /// The instant an uptime names — how a guest's own redraw request, said
+    /// in its uptime, becomes a wake-up the window can schedule.
+    pub fn at_uptime_ms(ms: u64) -> Instant {
+        let start = *START.get_or_init(Instant::now);
+        start + std::time::Duration::from_millis(ms)
+    }
+
     /// Milliseconds since the unix epoch — the only wall clock a guest can
     /// get, `SystemTime::now()` being an abort inside the module.
     pub fn unix_ms() -> u64 {

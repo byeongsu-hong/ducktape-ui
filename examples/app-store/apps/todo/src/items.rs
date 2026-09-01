@@ -3,6 +3,7 @@
 //! list itself lives in the host's storage as one line per item.
 
 use app_store_sdk::host;
+use iced::futures::{Stream, StreamExt};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Item {
@@ -89,6 +90,16 @@ pub async fn save_items(items: Vec<Item>) -> Result<String, StorageError> {
     let news = format!("todo\n{} items, {left} left", items.len());
     host::request("bus.publish", news.as_bytes()).await?;
     Ok(format!("saved {} items", items.len()))
+}
+
+/// The host's colour mode: `light` or `dark`, once on subscribing and again
+/// on every change.
+pub fn theme_changes() -> impl Stream<Item = Result<String, StorageError>> + Send + 'static {
+    host::theme().map(|answer| {
+        answer
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map_err(|message| StorageError { message })
+    })
 }
 
 /// `id\tdone\ttext` per line; tabs and newlines in a text are folded to spaces.

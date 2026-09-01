@@ -88,3 +88,13 @@ pub fn dots_label(ticks: i64) -> String {
 pub fn ticks_label(ticks: i64) -> String {
     format!("{ticks} ticks received")
 }
+
+/// The host's colour mode: `light` or `dark`, once on subscribing and again
+/// on every change.
+pub fn theme_changes() -> impl Stream<Item = Result<String, ClockError>> + Send + 'static {
+    host::theme().map(|answer| {
+        answer
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map_err(|message| ClockError { message })
+    })
+}

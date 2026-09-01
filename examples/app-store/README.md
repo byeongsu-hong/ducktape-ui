@@ -1,19 +1,23 @@
 # app-store — an OS-shaped host for Ice apps compiled to wasm
 
-A native Ice application that reads a catalog of wasm modules, instantiates
-one on Install inside a fuel and memory budget, gives it a window, and drops
-the instance on Uninstall. Every app in the catalog is an ordinary Ice
-application; nothing in the language or the code generator changes to make
-it installable. What the host adds is everything an app cannot do alone —
-time, storage, other apps — and it adds them as capabilities the app's
-manifest has to declare.
+A native Ice daemon that reads a catalog of wasm modules, installs one on
+Get inside a fuel and memory budget, gives it a native window of its own, and
+drops the instance when that window closes. Every app in the catalog is an
+ordinary Ice application; nothing in the language or the code generator
+changes to make it installable. What the host adds is everything an app
+cannot do alone — time, storage, other apps, the colour mode — and it adds
+them as capabilities the app's manifest has to declare.
+
+![The store in light mode, with Clock, Activity and Counter open in windows of their own; three presses of Counter's + have just reached Activity over the bus](screenshots/store-light.png)
+
+![The same in dark mode: the guests follow the store's colour mode](screenshots/store-dark.png)
 
 ```
 frame/          the wire: events in, a Frame of quads and laid-out text lines out,
                 plus Request / Response for everything else
 sdk/            what an app needs to run in wasm: a headless Driver (layout, draw,
-                task executor), `host::request` / `host::subscribe`, and
-                `export_app!`, which adds the four C exports and the manifest
+                task executor), `host::request` / `host::subscribe` / `host::theme`,
+                and `export_app!`, which adds the four C exports and the manifest
 apps/counter/   three buttons; Auto is a chain of host timers, every change goes
                 on the bus and into the store's log
 apps/todo/      a list kept in the host's storage — it survives uninstall/reinstall
@@ -22,8 +26,9 @@ apps/clock/     host uptime from a subscription, UTC from one `clock.now` plus
 apps/activity/  a live feed of what the other apps publish, and who published it
 apps/chaos/     spins, eats memory, panics, floods the host, asks for an
                 undeclared capability
-host/           the store: catalog, windows, capabilities (clock, storage, bus),
-                the fuel/memory sandbox, and the widget that shows a guest
+host/           the store: catalog, library, windows, capabilities (clock,
+                storage, bus, theme), the fuel/memory sandbox, the module cache,
+                and the widget that shows a guest
 ```
 
 ## Run it
@@ -39,7 +44,7 @@ cargo run -p app-store-host --release
 | variable | default | what it names |
 |---|---|---|
 | `APP_STORE_CATALOG` | `target/wasm32-unknown-unknown/release` | the directory scanned for modules |
-| `APP_STORE_DATA` | `target/app-store-data` | app storage (`<app>/<key>`) and the store's own `installed` list |
+| `APP_STORE_DATA` | `target/app-store-data` | app storage (`<app>/<key>`), the store's `installed` and `running` lists, and wasmtime's artifact `cache` |
 
 The windowing backends the host asks iced for (`x11`, `wayland`) are
 requested only on Linux, so a macOS or Windows build resolves without them —
@@ -52,15 +57,36 @@ which pulls wgpu into a workspace built to stay on tiny-skia, so every crate
 here sets `test = false` and keeps its tests in `tests/`. `--all-targets`
 builds a test target anyway and fails on the missing driver.
 
-Install everything: every app gets a window, all of them live at once.
-Press `+` on the counter and watch Activity — and the store's own stderr,
-where the counter's log lines come out. Toggle a todo, uninstall it,
-reinstall it. Then open Chaos: Spin forever and Eat 1 GB end it on a fuel or
-memory trap, Panic ends it with the module's own message, Flood shows what a
-guest hears past the per-tick request cap. Restart it from its own window.
-What you leave installed comes back: the store writes the ids to
-`<data dir>/installed` and reinstalls them, one compile at a time, at the
-next start.
+## The store
+
+One daemon, two kinds of window. The store window has three pages and a
+segmented Auto / Light / Dark switch; every guest gets a native window of
+its own, titled with the app's name, resizable and movable like any other.
+
+- **Discover** lists every module the catalog directory holds, from its
+  manifest: name, description, and a chip per capability, coloured by what
+  it reaches. Get loads the module, adds it to the library and opens its
+  window. While an app runs its card carries a fuel bar — the last tick's
+  fuel against the 200M budget — and the figures under it. A strip at the
+  top shows what is running now; Show raises its window, Quit closes it.
+  Clicking a card opens the app's page: what each capability lets it do, the
+  box it runs in, and its live figures.
+- **Library** is what is installed, running or not. Open gives an installed
+  app a window again; Uninstall removes it from the library and closes its
+  window. What the app wrote to storage stays.
+- **Monitor** is the dogfooding page: one row per running guest with fuel
+  per tick, tick time, ticks per second, frame bytes and how many of the
+  last frames crossed as "unchanged", ticks run against redraws skipped, and
+  whether the module came from the cache or through cranelift.
+
+Closing a guest's window quits the app — the wasmtime store, its memory and
+its compiled code go with the last handle. Closing the store window ends the
+store. What had a window at exit reopens at the next start, one load at a
+time; the library comes back as it was.
+
+The colour mode is the store's: Auto follows the system, Light and Dark are
+the user's word. Every guest subscribes to `host.theme` in its `on mount`
+and switches its own palette on each answer, so the windows change together.
 
 ## Writing an app
 
@@ -81,14 +107,27 @@ An app talks to the host from ordinary Ice tasks. A one-shot ask is
 ```ice
 extern crate::host
   stream ticks(every_ms:i64) -> i64 ! ClockError
+  stream theme_changes() -> str ! ClockError
 
 on mount
-  stream every ticks(1000) -> ticked _ | clock_failed _
+  parallel
+    stream every ticks(1000) -> ticked _ | clock_failed _
+    stream every theme_changes() -> themed _ | theme_failed _
+
+on themed(mode)
+  dark = mode == "dark"
+  active_palette = ClockTheme.light
+  return if !dark
+  active_palette = ClockTheme.dark
 ```
 
 ```rust
 pub fn ticks(every_ms: i64) -> impl Stream<Item = Result<i64, ClockError>> + Send + 'static {
     host::subscribe("clock.ticks", &every_ms.to_le_bytes()).map(|answer| /* bytes → ms */)
+}
+
+pub fn theme_changes() -> impl Stream<Item = Result<String, ClockError>> + Send + 'static {
+    host::theme().map(|answer| /* bytes → "light" | "dark" */)
 }
 ```
 
@@ -102,7 +141,7 @@ per-tick request cap).
 
 | capability | operations | answer |
 |---|---|---|
-| `host` (always) | `echo` · `log` · `random` (`u32` LE count) | the text back · nothing, the line goes to the store's stderr as `[<app>] …` · that many bytes |
+| `host` (always) | `echo` · `log` · `random` (`u32` LE count) · `theme` (stream) | the text back · nothing, the line goes to the store's stderr as `[<app>] …` · that many bytes · `light` or `dark` at once and on every change |
 | `clock` | `sleep` (ms) · `ticks` (every ms, stream) · `now` | nothing at the deadline · host uptime per tick · the unix millisecond and the host uptime it was read at, two `u64` LE |
 | `storage` | `get` (key) · `set` (`key\nvalue`) · `delete` (key) · `list` | the value or empty · nothing · nothing · every key, newline-separated; one file per key per app |
 | `bus` | `publish` (`topic\ntext`) · `subscribe` (topic or `*`, stream) | how many heard it · every matching message, as `from\ntopic\ntext` |
@@ -121,8 +160,15 @@ through the same table and answer from its own subscriptions.
 2. Those layers are flattened into a `Frame`: quads verbatim; every paragraph
    as the lines cosmic-text already broke, each with its position, size, line
    height and font family. Text crosses as lines, not glyphs, so the host can
-   be any iced renderer. The frame also carries the requests the tasks made.
-3. The host widget translates iced events into the app's coordinates, ticks
+   be any iced renderer. The frame also carries the requests the tasks made,
+   the requests they dropped, and *when the tree wants to draw again* — the
+   `RedrawRequest` iced's widgets answer `update` with (a caret blink, a
+   hover transition), translated into host uptime.
+3. A frame whose layers are the same as the last one's crosses without them:
+   `unchanged` set and `layers` empty, a few bytes instead of every quad and
+   line again. The host keeps the layers it already has and takes only the
+   requests, the cancels and the redraw request.
+4. The host widget translates iced events into the app's coordinates, ticks
    it once per redraw with a fresh fuel budget, answers its requests, and
    replays the frame inside `with_layer` / `with_translation`. A press inside
    a guest's bounds focuses it and a press anywhere else clears that focus, so
@@ -131,6 +177,11 @@ through the same table and answer from its own subscriptions.
    focus with Shift down learns it came up. Answers are delivered as
    events: an echo on the next redraw, a timer at its deadline via
    `request_redraw_at`, a bus message when another guest publishes.
+5. Not every redraw of a window is a tick of its guest. A guest with no
+   event pending, no answer due, nothing in its inbox and no redraw request
+   of its own is left alone: the frame the host holds is the frame it would
+   draw. It still says when it next wants to run, and the widget schedules
+   that wake-up.
 
 There is no executor thread and no clock inside a module. `Instant::now()`
 is a stub that answers zero; the host's uptime rides on every `Redraw`, and
@@ -144,7 +195,39 @@ had been running when it was installed.
 Both sides pin the default font by name (`Fira Sans`, embedded via iced's
 `fira-sans` feature): natively fontdb resolves `Font::DEFAULT` through the
 system font list, in wasm only the embedded family exists, and a mismatch
-shows up as every button a few pixels wide of where the app put it.
+shows up as every button a few pixels wide of where the app put it. The
+store's own chrome is set in Geist and Geist Mono; a guest's lines name
+their family, so the store's default never reaches them.
+
+## What it costs
+
+Loading a module is cranelift's compile the first time and a file read the
+next: wasmtime's artifact cache lives under the data directory, and a module
+loaded once in a run is kept in memory, so Restart, Quit-then-Open and
+reinstall are an instantiation — under a millisecond. The Monitor's Load
+column says which it was.
+
+Measured against the store before this redesign, each run under Xvfb
+(software rendering, no GPU) with the same five apps restored at start,
+sampling the process's CPU time over 10 s of nobody touching anything and
+10 s of the pointer moving over a guest. Two runs of each, interleaved, on
+the same machine:
+
+| | idle | pointer moving over a guest | resident |
+| --- | --- | --- | --- |
+| before: one window, every guest ticked on every frame | 3.1–3.3 % of a core | 92–96 % | 145 MB |
+| after | 1.6–1.7 % | 12 % | 153 MB |
+
+What moved the numbers, in the order it mattered: a guest is ticked only
+when something is due for it or its own tree asked for a frame, so Counter
+sits at 0/s and Clock at 1/s; a mouse move reaches the window it happened
+in, so one guest ticks instead of five; a frame that changed nothing crosses
+as a flag instead of its layers. The 8 MB more comes with five native
+windows instead of one and the in-memory module cache. The moving figure is
+the software renderer's — it repaints the window, and the old store's was
+1400×900 for every mouse move — so a GPU-backed window shows a smaller gap.
+The Monitor page keeps the same counters per app: ticks against the redraws
+it slept through, and how many of its frames crossed without their layers.
 
 ## The sandbox
 
@@ -220,13 +303,14 @@ An honest inventory, grouped by where the work would land. Items marked
   host-side handle cache keyed by app so bytes cross once, not per frame.
 - Rich text loses per-span colour, underline and strikethrough: a paragraph
   crosses with one colour per line.
-- Every redraw re-encodes and re-sends the whole frame; there is no
-  "nothing changed" short-circuit, no delta, no dirty rectangles. Text is
-  laid out in the guest and shaped again on the host, per line.
+- A changed frame re-encodes and re-sends every layer; there is no delta
+  and no dirty rectangle, only the whole-frame "unchanged" short-circuit.
+  Text is laid out in the guest and shaped again on the host, per line.
 - Overlays (pick_list menus, tooltips, combo boxes) are clipped to the app's
-  window; they cannot float over the desk.
-- No scale factor, theme (`ThemeChanged`) or locale reaches the guest; an
-  app cannot follow the host's dark mode.
+  window; they cannot float outside it.
+- No scale factor or locale reaches the guest. The colour mode does, as a
+  `host.theme` stream the app has to subscribe to and act on itself; iced's
+  own theme is not switched for it.
 
 ### Events and input
 
@@ -286,7 +370,7 @@ An honest inventory, grouped by where the work would land. Items marked
 - Beyond the sandbox table: no cumulative CPU budget (an app may burn its
   200M every frame) and no wall-clock timeout. A request answered this tick
   wakes the window at once, so an app that asks in a loop pins the whole
-  desk's redraw rate.
+  window's redraw rate.
 - `define_unknown_imports_as_default_values` stubs every import a module
   declares; a module built against JS glue loads and misbehaves instead of
   failing at install.
@@ -308,9 +392,8 @@ An honest inventory, grouped by where the work would land. Items marked
   in full just for its manifest.
 - Uninstall keeps the app's storage — an app can delete its own keys, the
   store cannot — and asks no confirmation.
-- A guest scrolled out of the desk skips its tick only while it has nothing
-  to do; every other guest still ticks on every window redraw, and one app's
-  timer or publish still wakes the whole window. No per-window redraw.
+- A guest that asks for `NextFrame` every frame ticks on every redraw of
+  its window; nothing rate-limits an app that animates forever.
 
 ### SDK and developer experience
 
