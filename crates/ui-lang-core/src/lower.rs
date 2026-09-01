@@ -1653,7 +1653,9 @@ pub(crate) struct LoweredProgram {
     /// view (`performance_contract_overlay_routes_avoid_temporary_heap_storage`).
     view_expression_uses: Vec<(ViewId, CheckedExprUseId)>,
     /// The declaring view of each local, indexed by local id.
-    view_locals: Vec<Option<ViewId>>,
+    /// The view that declares each local and the role it plays there, by
+    /// local id; `None` for a local no view declares.
+    view_locals: Vec<Option<(ViewId, CheckedViewLocalRole)>>,
     test_mounts: HashMap<TestId, ViewId>,
     preset_names: Vec<String>,
     named_type_rust_paths: HashMap<NamedTypeId, String>,
@@ -3329,7 +3331,30 @@ impl LoweredProgram {
     /// The view that declares `local` — a row, a match payload, a key, a
     /// lazy alias, a canvas dimension — when a view does.
     pub(crate) fn local_view(&self, local: ResolvedLocalId) -> Option<ViewId> {
-        self.view_locals.get(local.0 as usize).copied().flatten()
+        self.view_locals
+            .get(local.0 as usize)
+            .copied()
+            .flatten()
+            .map(|(view, _)| view)
+    }
+
+    /// The expression a view-declared local is a function of: the list a
+    /// `for` or `keyed` row comes from, the value a match payload is taken
+    /// out of. `None` for a local that is not one of those — a lazy alias,
+    /// a table row, a responsive or canvas size.
+    pub(crate) fn local_source(&self, local: ResolvedLocalId) -> Option<CheckedExprUseId> {
+        let (view, role) = self.view_locals.get(local.0 as usize).copied().flatten()?;
+        match role {
+            CheckedViewLocalRole::ForItem => self.resolved_iteration(view).ok().map(|it| it.items),
+            CheckedViewLocalRole::KeyedItem => self
+                .resolved_keyed_column(view)
+                .ok()
+                .map(|keyed| keyed.items),
+            CheckedViewLocalRole::MatchPayload(_) => {
+                self.resolved_match(view).ok().map(|matched| matched.value)
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn resolved_view(&self, id: ViewId) -> Result<&ResolvedView, Error> {
@@ -4906,9 +4931,13 @@ impl Lowerer {
             .locals()
             .iter()
             .map(|local| match local.owner {
-                CheckedLocalOwner::View { view, .. }
-                | CheckedLocalOwner::CanvasWidth(view)
-                | CheckedLocalOwner::CanvasHeight(view) => Some(view),
+                CheckedLocalOwner::View { view, role } => Some((view, role)),
+                CheckedLocalOwner::CanvasWidth(view) => {
+                    Some((view, CheckedViewLocalRole::ResponsiveWidth))
+                }
+                CheckedLocalOwner::CanvasHeight(view) => {
+                    Some((view, CheckedViewLocalRole::ResponsiveHeight))
+                }
                 _ => None,
             })
             .collect();

@@ -161,12 +161,26 @@ pub(in crate::codegen) fn revision_reads(
     expression_use: ResolvedExpressionId,
     env: &dyn BindingEnvironment,
 ) -> Option<BTreeSet<String>> {
-    revision_reads_within(program, expression_use, env, &|_| false)
+    let mut reads = BTreeSet::new();
+    let mut walk = RevisionWalk {
+        program,
+        env,
+        bound: HashSet::new(),
+        internal: &|_| false,
+        sources: false,
+    };
+    let root = program.expressions().expression_use(expression_use).root;
+    walk.node(root, &mut reads).then_some(reads)
 }
 
-/// `revision_reads` for an expression inside a subtree whose own locals
-/// (`internal`) derive from reads the subtree already keys on: a row of a
-/// list the key covers, a match payload, a lazy alias.
+/// `revision_reads` for a layout memo over a subtree: locals the subtree
+/// itself declares (`internal`) derive from reads the key already covers,
+/// and a row or match payload from outside keys on the reads of the list or
+/// value its view takes it from. That is sound for a key the compiler
+/// inserts — the row is a function of the list, so the list's revisions
+/// bound it — and deliberately not what `revision_reads` offers a `lazy`,
+/// whose author chose to hash the row so a prepend rebuilds one row, not
+/// the list.
 pub(in crate::codegen) fn revision_reads_within(
     program: &LoweredProgram,
     expression_use: ResolvedExpressionId,
@@ -179,6 +193,7 @@ pub(in crate::codegen) fn revision_reads_within(
         env,
         bound: HashSet::new(),
         internal,
+        sources: true,
     };
     let root = program.expressions().expression_use(expression_use).root;
     walk.node(root, &mut reads).then_some(reads)
@@ -219,6 +234,9 @@ struct RevisionWalk<'a> {
     bound: HashSet<ResolvedLocalId>,
     /// Locals the enclosing subtree declares from reads it already keys on.
     internal: &'a dyn Fn(ResolvedLocalId) -> bool,
+    /// Whether a row or match payload from outside keys on its source
+    /// expression's reads instead of stopping the walk.
+    sources: bool,
 }
 
 impl RevisionWalk<'_> {
@@ -237,7 +255,9 @@ impl RevisionWalk<'_> {
             ResolvedExpressionKind::Path { root, .. } => match root {
                 ResolvedPathRoot::Value(value) => self.value(*value, reads),
                 ResolvedPathRoot::Local(local) => {
-                    self.bound.contains(local) || (self.internal)(*local)
+                    self.bound.contains(local)
+                        || (self.internal)(*local)
+                        || (self.sources && self.source(*local, reads))
                 }
                 ResolvedPathRoot::EnumVariant { .. } | ResolvedPathRoot::Palette(_) => true,
             },
@@ -264,6 +284,16 @@ impl RevisionWalk<'_> {
                 self.node(*left, reads) && self.node(*right, reads)
             }
         }
+    }
+
+    /// A `for` or `keyed` row and a match payload are each a function of the
+    /// expression their view takes them from, so they key on its reads; an
+    /// outer row's list may itself be an outer row, which chases on up.
+    fn source(&mut self, local: ResolvedLocalId, reads: &mut BTreeSet<String>) -> bool {
+        self.program.local_source(local).is_some_and(|source| {
+            let root = self.program.expressions().expression_use(source).root;
+            self.node(root, reads)
+        })
     }
 
     fn value(&mut self, value: ResolvedValueRef, reads: &mut BTreeSet<String>) -> bool {
