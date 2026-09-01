@@ -391,7 +391,7 @@ An honest inventory, grouped by where the work would land. Items marked
   the in-memory module cache notices a rebuilt module by its timestamp only
   at the next load.
 - Uninstall keeps the app's storage — an app can delete its own keys, the
-  store cannot — and asks no confirmation.
+  store cannot. It asks once, on the app's detail page, and nowhere else.
 - A guest that asks for `NextFrame` every frame ticks on every redraw of
   its window, and one that publishes on every frame makes the store update
   on every frame — that update is the wake that carries the message to the

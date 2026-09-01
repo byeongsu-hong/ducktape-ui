@@ -11,6 +11,8 @@ state
   store_window:window-id? = none
   page = "discover"
   selected = ""
+  // The app whose Uninstall is waiting for a second word, on its detail page.
+  removing = ""
   query = ""
   // `auto` follows the system; the other two are the user's word.
   theme_choice = "auto"

@@ -26,6 +26,7 @@ on choose_theme(choice)
 
 on navigate(next)
   page = next
+  removing = ""
 
 on show_details(id)
   selected = id
@@ -78,7 +79,18 @@ on quit(id)
   return if !is_running(running, id)
   task window close target=window_of(running, id)
 
+// Uninstall is asked twice: the first press opens the app's detail page
+// with the question on it, the second removes it. Keep withdraws the question.
+on ask_uninstall(id)
+  removing = id
+  selected = id
+  page = "detail"
+
+on keep
+  removing = ""
+
 on uninstall(id)
+  removing = ""
   library = remove_from_library(library, id)
   rows = build_rows(catalog, query, library, running, generation)
   return if !is_running(running, id)
