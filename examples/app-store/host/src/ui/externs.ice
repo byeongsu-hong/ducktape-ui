@@ -51,4 +51,4 @@ extern crate::store
   pure search_press(id:window-id, value:event) -> window-id?
   pure escape_page(page:&str, query:&str) -> str
   pure search_hint() -> str
-  component wasm_view(surface:Surface, dark:bool) -> bool
+  component wasm_view(surface:Surface, dark:bool) -> str
