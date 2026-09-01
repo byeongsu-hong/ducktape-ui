@@ -193,8 +193,15 @@ component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
         w=fill
         h=fill
         gap=12.0
-      mouse press=emit(details, entry.id) cursor=pointer
-        row #head
+      button #head -> emit(details, entry.id)
+        with
+          label=entry.name
+          description=entry.description
+          w=fill
+          p=0.0
+        active bg=transparent text=fg r=8.0
+        hovered bg=transparent text=fg r=8.0
+        row
           with
             w=fill
             gap=12.0
@@ -336,7 +343,13 @@ component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
         w=fill
         gap=14.0
         align=center
-      mouse press=emit(details, entry.id) cursor=pointer
+      button #head -> emit(details, entry.id)
+        with
+          label=entry.name
+          description=entry.description
+          p=0.0
+        active bg=transparent text=fg r=8.0
+        hovered bg=transparent text=fg r=8.0
         row
           with
             gap=12.0
