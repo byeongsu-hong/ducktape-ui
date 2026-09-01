@@ -175,10 +175,10 @@ component Seg(label:str, active:bool)
 // it runs, and the one thing to do with it next.
 component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
   emits
-    details
-    install
-    launch
-    quit
+    details(str)
+    install(CatalogEntry)
+    launch(CatalogEntry)
+    quit(str)
   box #root
     with
       w=370.0
@@ -193,7 +193,7 @@ component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
         w=fill
         h=fill
         gap=12.0
-      mouse press=emit(details) cursor=pointer
+      mouse press=emit(details, entry.id) cursor=pointer
         row #head
           with
             w=fill
@@ -213,7 +213,8 @@ component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
             text entry.description size=12.5 @text-muted
       row gap=6.0 wrap
         for capability in entry.capabilities
-          Chip capability=capability
+          lazy capability as granted
+            Chip capability=granted
         if empty(entry.capabilities)
           text "draws its window, nothing else" size=11.0 @text-muted
       space w=fill h=fill
@@ -232,7 +233,7 @@ component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
           text "Ended" size=12.0 @text-danger
         space w=fill
         if !installed
-          button "Get" #get -> emit(install)
+          button "Get" #get -> emit(install, entry)
             with
               @px-14px
               @py-7px
@@ -243,7 +244,7 @@ component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
               @font-bold
               @hover:bg-primary/90
         if installed && !running
-          button "Open" #open -> emit(launch)
+          button "Open" #open -> emit(launch, entry)
             with
               @px-14px
               @py-7px
@@ -254,7 +255,7 @@ component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
               @font-bold
               @hover:bg-primary/90
         if running
-          button "Quit" #quit -> emit(quit)
+          button "Quit" #quit -> emit(quit, entry.id)
             with
               @px-14px
               @py-7px
@@ -317,10 +318,10 @@ component RunningChip(name:str, id:str, gauge:Gauge)
 // One installed app in the Library.
 component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
   emits
-    details
-    launch
-    quit
-    uninstall
+    details(str)
+    launch(CatalogEntry)
+    quit(str)
+    uninstall(str)
   box #root
     with
       w=fill
@@ -335,7 +336,7 @@ component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
         w=fill
         gap=14.0
         align=center
-      mouse press=emit(details) cursor=pointer
+      mouse press=emit(details, entry.id) cursor=pointer
         row
           with
             gap=12.0
@@ -355,7 +356,8 @@ component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
             text entry.description size=12.0 @text-muted
       row gap=6.0
         for capability in entry.capabilities
-          Chip capability=capability
+          lazy capability as granted
+            Chip capability=granted
       space w=fill
       if running
         Dot on=gauge.live
@@ -372,7 +374,7 @@ component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
       if !running
         text "not running" size=12.0 @text-muted
       if !running
-        button "Open" #open -> emit(launch)
+        button "Open" #open -> emit(launch, entry)
           with
             @px-12px
             @py-6px
@@ -383,7 +385,7 @@ component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
             @font-bold
             @hover:bg-primary/90
       if running
-        button "Quit" #quit -> emit(quit)
+        button "Quit" #quit -> emit(quit, entry.id)
           with
             @px-12px
             @py-6px
@@ -393,7 +395,7 @@ component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
             @text-12px
             @font-bold
             @hover:bg-border
-      button "Uninstall" #uninstall -> emit(uninstall)
+      button "Uninstall" #uninstall -> emit(uninstall, entry.id)
         with
           @px-12px
           @py-6px

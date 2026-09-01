@@ -21,6 +21,6 @@ state
   // Bumped once a second while anything runs, and whenever a guest ends or
   // comes back: the gauges are read off the instances when this changes.
   generation = 0
-
-derived
-  visible = filter_catalog(catalog, query)
+  // The Discover cards and the Library rows, rebuilt by every handler that
+  // moves what they show: a keyed `lazy` row has to borrow a place in state.
+  rows:Rows = empty_rows()

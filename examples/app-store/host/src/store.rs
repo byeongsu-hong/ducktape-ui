@@ -20,15 +20,15 @@ use wasmtime::{
 };
 
 pub use crate::catalog::{
-    Capability, CatalogEntry, StoreError, capability_hint, catalog_dir, filter_catalog, find_entry,
-    scan_catalog,
+    Capability, CatalogEntry, StoreError, capability_hint, catalog_dir, find_entry, scan_catalog,
 };
 pub use crate::guest_view::wasm_view;
 pub use crate::library::{
-    Gauge, Loaded, Running, add_to_library, attach_window, drop_first, drop_window, enqueue, gauge,
-    gauge_of, in_library, installing_label, is_guest, is_running, is_window, library_hint, meter,
-    opening_label, remembered_library, remove_from_library, restore_running, running_count,
-    running_label, surface_at, window_of, window_title,
+    CardModel, Gauge, Loaded, Rows, Running, ShelfModel, add_to_library, attach_window, build_rows,
+    drop_first, drop_window, empty_rows, enqueue, gauge, gauge_of, in_library, installing_label,
+    is_guest, is_running, is_window, library_hint, meter, opening_label, remembered_library,
+    remove_from_library, restore_running, running_count, running_label, surface_at, window_of,
+    window_title,
 };
 
 use crate::capabilities::{Inbox, bus, clock, host, storage};

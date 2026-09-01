@@ -10,7 +10,7 @@ use iced::futures::{Stream, StreamExt};
 use iced::time::Instant;
 
 use crate::capabilities::storage;
-use crate::catalog::{CatalogEntry, StoreError};
+use crate::catalog::{CatalogEntry, StoreError, filter_catalog};
 use crate::limits::FUEL_PER_TICK;
 use crate::store::{Surface, install_app};
 
@@ -135,6 +135,83 @@ fn millis(duration: Duration) -> String {
         ms if ms >= 10.0 => format!("{ms:.0} ms"),
         ms => format!("{ms:.2} ms"),
     }
+}
+
+// ---------- row models ----------
+
+/// What the Discover cards and the Library rows show, shaped once per change
+/// by the handlers that move their inputs and kept in state, so every row is
+/// a keyed `lazy` over a place the view can borrow.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Rows {
+    pub cards: Vec<CardModel>,
+    pub shelf: Vec<ShelfModel>,
+}
+
+/// A Discover card: the entry and everything the store knows about it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct CardModel {
+    pub entry: CatalogEntry,
+    pub installed: bool,
+    pub running: bool,
+    pub gauge: Gauge,
+}
+
+/// A Library row: the installed id, and the catalog entry behind it when
+/// the module is still there.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ShelfModel {
+    pub id: String,
+    pub found: bool,
+    pub entry: CatalogEntry,
+    pub running: bool,
+    pub gauge: Gauge,
+}
+
+pub fn empty_rows() -> Rows {
+    Rows {
+        cards: Vec::new(),
+        shelf: Vec::new(),
+    }
+}
+
+pub fn build_rows(
+    catalog: &[CatalogEntry],
+    query: &str,
+    library: &[String],
+    running: &[Running],
+    generation: i64,
+) -> Rows {
+    let cards = filter_catalog(catalog, query.to_string())
+        .into_iter()
+        .map(|entry| CardModel {
+            installed: library.contains(&entry.id),
+            running: running.iter().any(|app| app.id == entry.id),
+            gauge: gauge_of(running, entry.id.clone(), generation),
+            entry,
+        })
+        .collect();
+    let shelf = library
+        .iter()
+        .map(|id| {
+            let entry = catalog.iter().find(|entry| entry.id == *id).cloned();
+            ShelfModel {
+                id: id.clone(),
+                found: entry.is_some(),
+                entry: entry.unwrap_or_else(|| CatalogEntry {
+                    id: id.clone(),
+                    name: String::new(),
+                    description: String::new(),
+                    capabilities: Vec::new(),
+                    path: String::new(),
+                    mark: String::new(),
+                }),
+                running: running.iter().any(|app| app.id == *id),
+                gauge: gauge_of(running, id.clone(), generation),
+            }
+        })
+        .collect();
+    Rows { cards, shelf }
 }
 
 // ---------- the running list ----------

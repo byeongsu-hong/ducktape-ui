@@ -1,6 +1,7 @@
 // The store window first; then the colour mode; then, one load at a time,
 // every app that had a window when the store last exited.
 on mount
+  rows = build_rows(catalog, query, library, running, generation)
   parallel
     task window open store -> store_opened _
     task system theme -> system_theme _
@@ -37,6 +38,13 @@ on rescan
   catalog_path = catalog_dir()
   catalog = scan_catalog()
   status = ""
+  rows = build_rows(catalog, query, library, running, generation)
+
+// The search box is bound to `query`; its change route is what refreshes
+// the rows, since a binding alone runs no handler.
+on searched(text)
+  query = text
+  rows = build_rows(catalog, query, library, running, generation)
 
 // Get and Open are one path: load the module, then give it a window. Get
 // also adds the app to the library, which Open finds it already in.
@@ -53,11 +61,13 @@ on instantiated(app)
   library = add_to_library(library, app.id)
   opening = enqueue(opening, app)
   status = ""
+  rows = build_rows(catalog, query, library, running, generation)
   task window open guest -> guest_opened _
 
 on guest_opened(id)
   running = attach_window(running, opening, id)
   opening = drop_first(opening)
+  rows = build_rows(catalog, query, library, running, generation)
 
 on install_failed(error)
   status = error.message
@@ -70,6 +80,7 @@ on quit(id)
 
 on uninstall(id)
   library = remove_from_library(library, id)
+  rows = build_rows(catalog, query, library, running, generation)
   return if !is_running(running, id)
   task window close target=window_of(running, id)
 
@@ -82,6 +93,7 @@ on raise_app(id)
 on window_closed(id)
   running = drop_window(running, id)
   generation = generation + 1
+  rows = build_rows(catalog, query, library, running, generation)
   return if !is_window(store_window, id)
   exit
 
@@ -90,11 +102,13 @@ on window_closed(id)
 // like an install and comes back through here.
 on guest_changed(id, restart)
   generation = generation + 1
+  rows = build_rows(catalog, query, library, running, generation)
   return if !restart || !is_guest(running, id)
   run every restart_guest(surface_at(running, id)) -> guest_changed id false | install_failed _
 
 on tick
   generation = generation + 1
+  rows = build_rows(catalog, query, library, running, generation)
 
 subscribe
   system theme -> system_theme _

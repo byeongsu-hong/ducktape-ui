@@ -6,16 +6,20 @@ extern crate::store
   Running(id:str, name:str, surface:Surface, window:window-id)
   StoreError(message:str)
   Gauge(live:bool, fault:str, fuel:str, tick:str, rate:str, frame:str, idle:str, load:str, dropped:str, level:i64)
+  CardModel(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
+  ShelfModel(id:str, found:bool, entry:CatalogEntry, running:bool, gauge:Gauge)
+  Rows(cards:[CardModel], shelf:[ShelfModel])
   pure scan_catalog() -> [CatalogEntry]
   sync catalog_dir() -> str
   pure find_entry(catalog:&[CatalogEntry], id:&str) -> CatalogEntry?
-  pure filter_catalog(catalog:&[CatalogEntry], query:str) -> [CatalogEntry]
   pure capability_hint(name:str) -> str
   install_app(entry:CatalogEntry) -> Loaded ! StoreError
   stream restore_running(catalog:[CatalogEntry]) -> Loaded ! StoreError
   restart_guest(surface:Surface) -> Surface ! StoreError
   pure gauge(surface:&Surface, generation:i64) -> Gauge
   pure gauge_of(running:&[Running], id:str, generation:i64) -> Gauge
+  pure empty_rows() -> Rows
+  pure build_rows(catalog:&[CatalogEntry], query:&str, library:&[str], running:&[Running], generation:i64) -> Rows
   pure meter(level:i64) -> f64
   sync remembered_library() -> [str]
   pure add_to_library(library:[str], id:str) -> [str]

@@ -63,6 +63,7 @@ view
               space w=fill
               input "" #search <-> query
                 with
+                  change=searched
                   label="Search apps"
                   hint="Search apps"
                   w=220.0
@@ -105,14 +106,15 @@ view
                         @font-bold
                     row gap=10.0 wrap
                       for app in running
-                        RunningChip #chip(app.id)
-                          with
-                            name=app.name
-                            id=app.id
-                            gauge=gauge(app.surface, generation)
-                          events
-                            raise -> raise_app _
-                            quit -> quit _
+                        lazy app by app.id, generation as chip
+                          RunningChip #chip(chip.id)
+                            with
+                              name=chip.name
+                              id=chip.id
+                              gauge=gauge(chip.surface, 0)
+                            events
+                              raise -> raise_app _
+                              quit -> quit _
                 if running_count(running) == 0
                   box #welcome
                     with
@@ -185,21 +187,22 @@ view
                           size=11.5
                           font=figures
                           @text-fg
-                if empty(visible) && !empty(catalog)
+                if empty(rows.cards) && !empty(catalog)
                   text "No app matches that search." size=12.5 @text-muted
                 row #cards w=fill gap=16.0 wrap wrap-gap=16.0
-                  for entry in visible
-                    Card #card(entry.id)
-                      with
-                        entry=entry
-                        installed=in_library(library, entry.id)
-                        running=is_running(running, entry.id)
-                        gauge=gauge_of(running, entry.id, generation)
-                      events
-                        details -> show_details entry.id
-                        install -> install entry
-                        launch -> launch entry
-                        quit -> quit entry.id
+                  for card in rows.cards
+                    lazy card by card.entry.id, card.installed, card.running, generation as shown
+                      Card #card(shown.entry.id)
+                        with
+                          entry=shown.entry
+                          installed=shown.installed
+                          running=shown.running
+                          gauge=shown.gauge
+                        events
+                          details -> show_details _
+                          install -> install _
+                          launch -> launch _
+                          quit -> quit _
           if page == "library" && empty(query)
             scroll #library w=fill h=fill
               col
@@ -208,25 +211,25 @@ view
                   p=24.0
                   gap=12.0
                 text library_hint(library) size=12.5 @text-muted
-                for id in library
-                  col #entry(id) w=fill
-                    match find_entry(catalog, id)
-                      some(entry)
-                        LibraryRow #row(id)
+                for item in rows.shelf
+                  lazy item by item.id, item.found, item.running, generation as shelved
+                    col #entry(shelved.id) w=fill
+                      if shelved.found
+                        LibraryRow #row(shelved.id)
                           with
-                            entry=entry
-                            running=is_running(running, id)
-                            gauge=gauge_of(running, id, generation)
+                            entry=shelved.entry
+                            running=shelved.running
+                            gauge=shelved.gauge
                           events
-                            details -> show_details entry.id
-                            launch -> launch entry
-                            quit -> quit entry.id
-                            uninstall -> uninstall entry.id
-                      none
+                            details -> show_details _
+                            launch -> launch _
+                            quit -> quit _
+                            uninstall -> uninstall _
+                      if !shelved.found
                         row gap=12.0 align=center
-                          text id size=13.0 @text-muted
+                          text shelved.id size=13.0 @text-muted
                           text "is not in the catalog any more" size=12.0 @text-muted
-                          button "Remove" -> uninstall id
+                          button "Remove" -> uninstall shelved.id
                             with
                               @px-10px
                               @py-5px
@@ -311,10 +314,8 @@ view
                           @font-bold
                     rule horizontal thickness=1.0 color=border
                     for app in running
-                      MonitorRow #monitor-row(app.id)
-                        with
-                          name=app.name
-                          gauge=gauge(app.surface, generation)
+                      lazy app by app.id, generation as row
+                        MonitorRow #monitor-row(row.id) name=row.name gauge=gauge(row.surface, 0)
                     if running_count(running) == 0
                       box p=16.0
                         text "Nothing is running. Open an app to see what it costs."
@@ -422,9 +423,10 @@ view
                             @text-muted
                             @font-bold
                         for capability in entry.capabilities
-                          row gap=12.0 align=center
-                            Chip capability=capability
-                            text capability_hint(capability.name) size=13.0 @text-fg
+                          lazy capability as granted
+                            row gap=12.0 align=center
+                              Chip capability=granted
+                              text capability_hint(granted.name) size=13.0 @text-fg
                         if empty(entry.capabilities)
                           text "Nothing beyond drawing its window. It can still write to the store's log and ask for random bytes."
                             with
