@@ -1,0 +1,2 @@
+W020 lazy evaluates `label_of(message)` on every view pass to compute its memo key; key the row with `lazy message by <cheap keys> as label` and compute `label_of(message)` inside the subtree
+W020 lazy evaluates `join(prefix, message.body)` on every view pass to compute its memo key; key the row with `lazy message by <cheap keys> as line` and compute `join(prefix, message.body)` inside the subtree
