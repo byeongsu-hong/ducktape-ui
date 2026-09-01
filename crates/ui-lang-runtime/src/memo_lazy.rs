@@ -53,7 +53,28 @@ use iced::{Element, Event, Length, Rectangle, Size, Vector, mouse};
 use ouroboros::self_referencing;
 use rustc_hash::{FxHashMap, FxHasher};
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+
+thread_local! {
+    static LAYOUT_COUNTS: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+}
+
+/// `(hits, misses)` of every lazy memo's `layout` on this thread since the
+/// last call, which resets them; a probe reads it around one frame.
+pub fn take_memo_lazy_counts() -> (u64, u64) {
+    LAYOUT_COUNTS.with(|counts| counts.replace((0, 0)))
+}
+
+fn count_layout(hit: bool) {
+    LAYOUT_COUNTS.with(|counts| {
+        let (hits, misses) = counts.get();
+        counts.set(if hit {
+            (hits + 1, misses)
+        } else {
+            (hits, misses + 1)
+        });
+    });
+}
 use std::hash::{Hash, Hasher as _};
 use std::rc::Rc;
 
@@ -443,8 +464,10 @@ where
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
 
         if let Some(node) = state.layout.hit(limits) {
+            count_layout(true);
             return shallow(node);
         }
+        count_layout(false);
 
         let node = self.with_element_mut(|element| {
             element

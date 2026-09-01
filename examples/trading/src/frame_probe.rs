@@ -342,9 +342,13 @@ fn frame_cost() {
         std::hint::black_box(state.__view(window));
     }
     let _ = ui_lang_runtime::take_rev_memo_counts();
+    let _ = ui_lang_runtime::take_memo_lazy_counts();
     driver.redraw(here());
     let (hits, misses) = ui_lang_runtime::take_rev_memo_counts();
-    eprintln!("component layout memos per idle frame: {hits} hits, {misses} misses");
+    let (lazy_hits, lazy_misses) = ui_lang_runtime::take_memo_lazy_counts();
+    eprintln!(
+        "layout memos per idle frame: component {hits} hits / {misses} misses, lazy {lazy_hits} hits / {lazy_misses} misses"
+    );
     let mut phases = (Vec::new(), Vec::new(), Vec::new());
     for _ in 0..ROUNDS {
         let frame = driver.redraw_phases(here());
@@ -568,21 +572,17 @@ fn frame_panels() {
         let mut full_driver = warmed(&states[0].1);
         let mut without_driver = warmed(&states[index].1);
 
+        // Diff + layout only: the driver's subscription broadcast and
+        // settle are the same with or without the rows and would bury
+        // the pair's difference.
+        let layout_of = |driver: &mut Driver<_>| driver.redraw_phases(here()).layout.as_micros();
         for round in 0..FRAME_PAIRS {
             let (full, without) = if round % 2 == 0 {
-                let started = Instant::now();
-                full_driver.redraw(here());
-                let full = started.elapsed().as_micros();
-                let started = Instant::now();
-                without_driver.redraw(here());
-                (full, started.elapsed().as_micros())
+                let full = layout_of(&mut full_driver);
+                (full, layout_of(&mut without_driver))
             } else {
-                let started = Instant::now();
-                without_driver.redraw(here());
-                let without = started.elapsed().as_micros();
-                let started = Instant::now();
-                full_driver.redraw(here());
-                (started.elapsed().as_micros(), without)
+                let without = layout_of(&mut without_driver);
+                (layout_of(&mut full_driver), without)
             };
             frame[0].push(full);
             frame[index].push(without);
@@ -594,13 +594,16 @@ fn frame_panels() {
     for (index, (label, _)) in states.iter().enumerate() {
         report(label, std::mem::take(&mut build[index]));
     }
-    eprintln!("\nidle redraw (build + layout), {} markets", DENSE.symbols);
+    eprintln!(
+        "\nidle frame, diff + layout only, {} markets",
+        DENSE.symbols
+    );
     for (index, (label, _)) in states.iter().enumerate() {
         report(label, std::mem::take(&mut frame[index]));
     }
 
     eprintln!("\nwhat each panel's rows cost, paired against the full screen");
-    eprintln!("{:<22} {:>22} {:>22}", "", "view build", "whole frame");
+    eprintln!("{:<22} {:>22} {:>22}", "", "view build", "diff + layout");
     for (index, (label, _)) in states.iter().enumerate().skip(1) {
         let name = label.trim_start_matches("without ");
         let (build_low, build_mid, build_high) = signed_quantiles(&mut paired_build[index]);

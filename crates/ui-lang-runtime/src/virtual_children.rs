@@ -199,6 +199,10 @@ impl Live {
 struct State {
     /// Real heights for children that have been laid out, `None` until then.
     measured: Vec<Option<f32>>,
+    /// Rows whose tree was not diffed against the current element: `diff`
+    /// reconciles only the live rows, and a row is diffed the moment it
+    /// mounts, before any phase walks it.
+    stale: Vec<bool>,
     /// The keys the last pass ran against, so a keyed column can carry
     /// `measured` and `live.focused` across to whatever index a row moved to.
     /// Empty for an unkeyed column.
@@ -591,6 +595,30 @@ where
     /// can only *take* focus while it is measured, so every acquisition is
     /// observed by the next call — and once observed, the child is measured
     /// from then on and keeps reporting.
+    /// Reconciles the row trees with the children — new rows get a tree,
+    /// dropped rows lose theirs — and diffs only the live ones. A row outside
+    /// the window is diffed when it mounts, so a screenful of rows costs a
+    /// screenful of diffs, not one per row that exists.
+    fn diff_live_rows(&self, tree: &mut Tree) {
+        let Tree {
+            state, children, ..
+        } = tree;
+        let state = state.downcast_mut::<State>();
+        children.truncate(self.children.len());
+        state.stale.resize(children.len(), true);
+        for (index, child) in self.children.iter().enumerate() {
+            if index >= children.len() {
+                children.push(Tree::new(child.as_widget()));
+                state.stale.push(false);
+            } else if state.live.contains(index) {
+                children[index].diff(child.as_widget());
+                state.stale[index] = false;
+            } else {
+                state.stale[index] = true;
+            }
+        }
+    }
+
     fn track_focus(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &Renderer) {
         let live = tree.state.downcast_ref::<State>().live.clone();
 
@@ -632,6 +660,7 @@ where
     fn state(&self) -> tree::State {
         tree::State::new(State {
             measured: vec![None; self.children.len()],
+            stale: vec![false; self.children.len()],
             keys: self.keys.clone(),
             estimated_height: self.estimated_height,
             spacing: self.spacing,
@@ -650,7 +679,7 @@ where
             state.spacing = self.spacing;
         }
         if self.keys.is_empty() {
-            tree.diff_children(&self.children);
+            self.diff_live_rows(tree);
             let state = tree.state.downcast_mut::<State>();
             state.measured.resize(self.children.len(), None);
             if state
@@ -663,7 +692,7 @@ where
             return;
         }
         if tree.state.downcast_ref::<State>().keys == self.keys {
-            tree.diff_children(&self.children);
+            self.diff_live_rows(tree);
             return;
         }
 
@@ -675,16 +704,26 @@ where
 
         // Child widget state moves to wherever its key went, so a prepend does
         // not shift every row's memo, cursor, and hover onto its neighbour.
+        // The move is all this does; the trees are diffed below, live rows
+        // now and the rest when they mount.
         tree::diff_children_custom_with_search(
             children,
             &self.children,
-            |tree, child| tree.diff(child.as_widget()),
+            |_, _| {},
             |index| {
                 self.keys.get(index).or_else(|| self.keys.last()).copied()
                     != previous.get(index).copied()
             },
             |child| Tree::new(child.as_widget()),
         );
+        state.stale.clear();
+        state.stale.resize(self.children.len(), true);
+        for (index, child) in self.children.iter().enumerate() {
+            if state.live.contains(index) {
+                children[index].diff(child.as_widget());
+                state.stale[index] = false;
+            }
+        }
 
         // Heights are the same kind of per-row state and move the same way. A
         // list that prepends would otherwise hand every row below the new one
@@ -781,6 +820,10 @@ where
                 // instead of against this infinite limit. Plain `Limits::new`
                 // dropped that flag, and one such row measured infinite,
                 // placing every row below it at y = ∞.
+                if state.stale[index] {
+                    tree.children[index].diff(self.children[index].as_widget());
+                    state.stale[index] = false;
+                }
                 let child_limits = layout::Limits::with_compression(
                     Size::ZERO,
                     Size::new(width, f32::INFINITY),
@@ -1021,6 +1064,144 @@ mod tests {
             _viewport: &Rectangle,
         ) {
         }
+    }
+
+    /// A fixed-height child stamped with the frame that built it. Its tree
+    /// state remembers the stamp it was last diffed against, so a layout
+    /// against a tree from an earlier frame is caught where it happens.
+    const STAMP_ROW: f32 = 20.0;
+
+    struct Stamped {
+        frame: usize,
+        diffs: Rc<Cell<usize>>,
+        layouts: Rc<Cell<usize>>,
+        stale_layouts: Rc<Cell<usize>>,
+    }
+
+    impl Widget<(), iced::Theme, iced_test::renderer::Renderer> for Stamped {
+        fn tag(&self) -> tree::Tag {
+            tree::Tag::of::<usize>()
+        }
+
+        fn state(&self) -> tree::State {
+            tree::State::new(self.frame)
+        }
+
+        fn diff(&self, tree: &mut Tree) {
+            self.diffs.set(self.diffs.get() + 1);
+            *tree.state.downcast_mut::<usize>() = self.frame;
+        }
+
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fixed(STAMP_ROW))
+        }
+
+        fn layout(
+            &mut self,
+            tree: &mut Tree,
+            _renderer: &iced_test::renderer::Renderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            self.layouts.set(self.layouts.get() + 1);
+            if *tree.state.downcast_ref::<usize>() != self.frame {
+                self.stale_layouts.set(self.stale_layouts.get() + 1);
+            }
+            layout::Node::new(Size::new(limits.max().width, STAMP_ROW))
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut iced_test::renderer::Renderer,
+            _theme: &iced::Theme,
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    /// A pass diffs the rows it mounts, not every row that exists, and a row
+    /// that scrolls into the window is diffed before it is laid out.
+    #[test]
+    fn a_pass_diffs_only_the_rows_it_mounts() {
+        const COUNT: usize = 200;
+        const VIEWPORT: f32 = 100.0;
+        let diffs = Rc::new(Cell::new(0));
+        let layouts = Rc::new(Cell::new(0));
+        let stale_layouts = Rc::new(Cell::new(0));
+        let mut renderer = headless_renderer();
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let mut cache = user_interface::Cache::default();
+
+        for frame in 0..4 {
+            let children: Vec<Element<'_, (), iced::Theme, iced_test::renderer::Renderer>> = (0
+                ..COUNT)
+                .map(|_| {
+                    Element::new(Stamped {
+                        frame,
+                        diffs: Rc::clone(&diffs),
+                        layouts: Rc::clone(&layouts),
+                        stale_layouts: Rc::clone(&stale_layouts),
+                    })
+                })
+                .collect();
+            diffs.set(0);
+            layouts.set(0);
+            let mut ui = UserInterface::build(
+                crate::virtual_scroll(iced::widget::scrollable(virtual_children(
+                    children, STAMP_ROW,
+                ))),
+                Size::new(240.0, VIEWPORT),
+                cache,
+                &mut renderer,
+            );
+            // Frame 1 rebuilds the same window; frame 2 scrolls deep into the
+            // strip, so frame 3 mounts rows no pass has diffed yet.
+            let events: Vec<Event> = if frame == 2 {
+                vec![Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Pixels {
+                        x: 0.0,
+                        y: -(STAMP_ROW * COUNT as f32 / 2.0),
+                    },
+                })]
+            } else {
+                Vec::new()
+            };
+            let _ = ui.update(
+                &events,
+                mouse::Cursor::Available(iced::Point::new(120.0, 50.0)),
+                &mut renderer,
+                &mut clipboard,
+                &mut messages,
+            );
+            ui.draw(
+                &mut renderer,
+                &iced::Theme::Light,
+                &renderer::Style::default(),
+                mouse::Cursor::Available(iced::Point::new(120.0, 50.0)),
+            );
+            if frame == 1 {
+                assert_eq!(
+                    diffs.get(),
+                    layouts.get(),
+                    "a settled frame diffs exactly the rows it lays out"
+                );
+            }
+            assert!(
+                diffs.get() < COUNT,
+                "frame {frame} diffed {} of {COUNT} rows",
+                diffs.get()
+            );
+            cache = ui.into_cache();
+        }
+        assert_eq!(
+            stale_layouts.get(),
+            0,
+            "a row was laid out against a tree from an earlier frame"
+        );
     }
 
     /// A fixed-height child that records whether it was actually asked to
