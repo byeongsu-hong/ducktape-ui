@@ -220,9 +220,10 @@ component AlbumStrip(albums:[Album], featured:bool)
           bar=hidden
         row gap=14.0 h=276.0
           for album in albums
-            FeaturedCard album=album #featured(album.id)
-              forward
-                play
+            lazy album as card
+              FeaturedCard album=card #featured(card.id)
+                forward
+                  play
     if !featured
       scroll
         with
@@ -232,9 +233,10 @@ component AlbumStrip(albums:[Album], featured:bool)
           bar=hidden
         row gap=14.0 h=204.0
           for album in albums
-            RecentCard album=album #recent(album.id)
-              forward
-                play
+            lazy album as card
+              RecentCard album=card #recent(card.id)
+                forward
+                  play
 component AlbumGrid(albums:[Album])
   emits
     play(str, str, str)
@@ -328,9 +330,10 @@ component StationStrip(albums:[Album])
       bar=hidden
     row gap=14.0 h=166.0
       for album in albums
-        StationCard album=album #station(album.id)
-          forward
-            play
+        lazy album as card
+          StationCard album=card #station(card.id)
+            forward
+              play
 component ArtistRow(album:Album)
   emits
     play(str, str, str)
@@ -372,9 +375,10 @@ component ArtistGrid(albums:[Album])
       gap=12.0
       @w-full
     for album in albums
-      ArtistRow album=album #artist(album.id)
-        forward
-          play
+      lazy album as card
+        ArtistRow album=card #artist(card.id)
+          forward
+            play
 component SongRow(album:Album)
   emits
     play(str, str, str)
@@ -533,9 +537,10 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
               r=16.0
             col w=fill gap=2.0
               for album in top_picks
-                SongRow album=album #song(album.id)
-                  forward
-                    play
+                lazy album as card
+                  SongRow album=card #song(card.id)
+                    forward
+                      play
         MusicSection.artists
           PageTitle #artists-title
             with
@@ -593,9 +598,10 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
                 text "" w=25.0
               Separator
               for album in recently_played
-                SongRow album=album #song(album.id)
-                  forward
-                    play
+                lazy album as card
+                  SongRow album=card #song(card.id)
+                    forward
+                      play
         MusicSection.search
           PageTitle #search-title
             with

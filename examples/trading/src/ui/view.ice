@@ -1737,14 +1737,15 @@ view
                               if ticket_scale && len(ladder_shape(ticket_ladder)) > 0
                                 col #ladder-preview gap=10.0 w=fill
                                   for figure in ladder_shape(ticket_ladder)
-                                    row w=fill align=center
-                                      Label value=t(locale, figure.label)
-                                      space w=fill
-                                      text figure.value
-                                        with
-                                          size=12.0
-                                          font=digits
-                                          @text-muted
+                                    lazy figure, locale as rung
+                                      row #rung(rung.label) w=fill align=center
+                                        Label value=t(locale, rung.label)
+                                        space w=fill
+                                        text rung.value
+                                          with
+                                            size=12.0
+                                            font=digits
+                                            @text-muted
                               row w=fill align=center
                                 Label value=t(locale, "ORDER VALUE")
                                 space w=fill
@@ -2363,7 +2364,8 @@ view
                                         align-y=center
                                       text t(locale, "No open exposure.") size=11.0 @text-faint
                                   for asset in portfolio_assets(positions)
-                                    PortfolioAllocation asset=asset
+                                    lazy asset as slice
+                                      PortfolioAllocation #allocation(slice.coin) asset=slice
                         // What each step of the window booked, beside the
                         // fold over the fills. The bars are the venue's own
                         // cumulative PnL differenced, so a deposit that lifts
@@ -2734,9 +2736,10 @@ view
                                   align-y=center
                                 text t(locale, "No open positions to list.") size=11.0 @text-faint
                             for asset in portfolio_assets(positions)
-                              PortfolioAssetRow #asset(asset.coin) asset=asset locale=locale
-                                events
-                                  pick -> pick_symbol _
+                              lazy asset, locale as row
+                                PortfolioAssetRow #asset(row.coin) asset=row locale=locale
+                                  events
+                                    pick -> pick_symbol _
                         // What is resting and what has filled, drawn from the
                         // same rows the terminal draws them from: a reader on
                         // this page should not have to leave it to see what
@@ -2837,16 +2840,18 @@ view
                                     align-x=center
                                     wrap=word
                                     @text-faint
-                            for order in orders
-                              OrderRow #portfolio-order(order.oid)
-                                with
-                                  order=order
-                                  locale=locale
-                                  now=clock
-                                  refusal=t(locale, cancel_refusal)
-                                events
-                                  pick -> pick_resting _
-                                  cancel -> cancel_order _ _
+                            // OrderRow is a fixed 26px, as on the terminal page.
+                            col w=fill virtual-row=26.0
+                              for order in orders
+                                OrderRow #portfolio-order(order.oid)
+                                  with
+                                    order=order
+                                    locale=locale
+                                    now=clock
+                                    refusal=t(locale, cancel_refusal)
+                                  events
+                                    pick -> pick_resting _
+                                    cancel -> cancel_order _ _
                         box #portfolio-fills
                           with
                             w=fill
@@ -2952,9 +2957,10 @@ view
                                     wrap=word
                                     @text-faint
                             for fill in fills
-                              FillRow locale=locale fill=fill #portfolio-fill(fill.tid)
-                                events
-                                  pick -> pick_symbol _
+                              lazy fill, locale as row
+                                FillRow locale=locale fill=row #portfolio-fill(row.tid)
+                                  events
+                                    pick -> pick_symbol _
                   Page.settings
                     scroll #settings
                       with
@@ -4069,14 +4075,15 @@ view
                 if len(sweep_figures(sweep)) > 0
                   col #sweep-figures gap=9.0 w=fill
                     for figure in sweep_figures(sweep)
-                      row w=fill align=center
-                        Label value=t(locale, figure.label)
-                        space w=fill
-                        text figure.value
-                          with
-                            size=13.0
-                            font=digits
-                            @text-fg
+                      lazy figure, locale as line
+                        row #figure(line.label) w=fill align=center
+                          Label value=t(locale, line.label)
+                          space w=fill
+                          text line.value
+                            with
+                              size=13.0
+                              font=digits
+                              @text-fg
                 col #sweep-rows gap=4.0 w=fill
                   for row in sweep_rows(sweep)
                     text t(locale, row)

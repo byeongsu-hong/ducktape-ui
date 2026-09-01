@@ -68,6 +68,9 @@ struct ViewScope<'a> {
     /// each already resolved to the roots of the expression it iterates.
     bindings: Vec<(String, Vec<Root>)>,
     in_loop: bool,
+    /// The parent is a column with `virtual-row=`, so a repetition directly
+    /// under it lays out only the rows in view.
+    virtual_rows: bool,
 }
 
 impl ViewScope<'_> {
@@ -123,6 +126,56 @@ fn owns_collection(ty: &Type, document: &Document) -> bool {
     }
 }
 
+/// The per-row work a boundary would skip: a component or extern component
+/// instantiated per item, or a nested repetition. Rows of leaf widgets are
+/// cheap enough that no boundary is worth the memo bookkeeping, and a `lazy`
+/// inside the row already bounds what it wraps.
+fn heavy_row_work(node: &ViewNode, document: &Document) -> Option<&'static str> {
+    match node {
+        ViewNode::Lazy { .. } => None,
+        ViewNode::Component { .. } => Some("a component"),
+        // A component that borrows a parameter is a live control over the
+        // row's data: it cannot sit behind a memo (W016 exempts it for the
+        // same reason), so no boundary is asked for.
+        ViewNode::ExternComponent { function, .. } => document
+            .functions
+            .iter()
+            .find(|item| item.name == *function && item.kind == ExternKind::Component)
+            .is_none_or(|declaration| !declaration.borrowed.iter().any(|borrowed| *borrowed))
+            .then_some("an extern component"),
+        ViewNode::For { .. } | ViewNode::KeyedColumn { .. } | ViewNode::Table { .. } => {
+            Some("a nested repetition")
+        }
+        _ => view_children(node)
+            .into_iter()
+            .find_map(|child| heavy_row_work(child, document)),
+    }
+}
+
+fn unbounded_repetition_warning(
+    form: &str,
+    item: &str,
+    items: &Expr,
+    heavy: &'static str,
+    span: &Span,
+    keyed_column: bool,
+) -> Warning {
+    let items = expr_source(items);
+    let virtualize = if keyed_column {
+        "add `virtual-row=<height>` to the keyed column"
+    } else {
+        "mount the rows in a column with `virtual-row=<height>`"
+    };
+    Warning::new(
+        "W019",
+        span,
+        format!(
+            "`{form} {item} in {items}` builds {heavy} for every row on every view pass; key each row with `lazy {item} by <cheap keys> as <alias>` or {virtualize}"
+        ),
+    )
+    .hint("a `virtual-row` column lays out only the rows in view; a keyed `lazy` rebuilds a row only when its keys move")
+}
+
 /// Component params that feed an unmemoized extern component's content,
 /// keyed by component name, then param name, valued by the names of the
 /// externs that consume it.
@@ -144,6 +197,7 @@ fn unmemoized_content_warnings(
                 host,
                 bindings: Vec::new(),
                 in_loop: false,
+                virtual_rows: false,
             };
             content_walk(
                 root,
@@ -218,14 +272,72 @@ fn content_walk(
                     .hint("the keyed form captures the value by reference and hashes only the keys"),
                 );
             }
+            // A dependency rooted in state is keyed by revisions and never
+            // evaluated on a hit; a bare row binding is cloned, which W017
+            // prices. A call or operator over a row-local value is evaluated
+            // per item per pass only to produce the key it is compared by.
+            if !keyed && reads_row_local && !matches!(dependency, Expr::Path(_)) {
+                let dependency = expr_source(dependency);
+                let row = names
+                    .iter()
+                    .find(|name| scope.bindings.iter().any(|(bound, _)| bound == *name))
+                    .cloned()
+                    .unwrap_or_default();
+                warnings.push(
+                    Warning::new(
+                        "W020",
+                        span,
+                        format!(
+                            "lazy evaluates `{dependency}` on every view pass to compute its memo key; key the row with `lazy {row} by <cheap keys> as {binding}` and compute `{dependency}` inside the subtree"
+                        ),
+                    )
+                    .hint("a memo compares its key before it can skip the subtree, so work inside the dependency is never skipped"),
+                );
+            }
             // A lazy child is memoized: nothing inside it runs per view pass.
             return;
         }
-        ViewNode::For { item, items, .. } => {
+        ViewNode::For {
+            item,
+            items,
+            children,
+            span,
+        } => {
+            // A list the view does not size — state, derived, a prop — with
+            // a component per row and no boundary builds every row per pass.
+            if !scope.virtual_rows
+                && !scope.roots(items, document).is_empty()
+                && !children
+                    .iter()
+                    .all(|child| matches!(child, ViewNode::Lazy { .. }))
+                && let Some(heavy) = children
+                    .iter()
+                    .find_map(|child| heavy_row_work(child, document))
+            {
+                warnings.push(unbounded_repetition_warning(
+                    "for", item, items, heavy, span, false,
+                ));
+            }
             bind(scope, item, items);
             scope.in_loop = true;
         }
-        ViewNode::KeyedColumn { item, items, .. } => {
+        ViewNode::KeyedColumn {
+            item,
+            items,
+            child,
+            options,
+            span,
+            ..
+        } => {
+            if options.virtual_row.is_none()
+                && !scope.roots(items, document).is_empty()
+                && !matches!(**child, ViewNode::Lazy { .. })
+                && let Some(heavy) = heavy_row_work(child, document)
+            {
+                warnings.push(unbounded_repetition_warning(
+                    "keyed", item, items, heavy, span, true,
+                ));
+            }
             bind(scope, item, items);
             scope.in_loop = true;
         }
@@ -293,6 +405,14 @@ fn content_walk(
         }
         _ => {}
     }
+    let was_virtual_rows = scope.virtual_rows;
+    // Control flow flattens into the enclosing column's child list, so rows
+    // under an `if`, `match`, or outer `for` keep the column's window.
+    scope.virtual_rows = match node {
+        ViewNode::Layout { options, .. } => options.virtual_row.is_some(),
+        ViewNode::If { .. } | ViewNode::Match { .. } | ViewNode::For { .. } => was_virtual_rows,
+        _ => false,
+    };
     for child in view_children(node) {
         content_walk(
             child,
@@ -304,6 +424,7 @@ fn content_walk(
             changed,
         );
     }
+    scope.virtual_rows = was_virtual_rows;
     scope.bindings.truncate(scope.bindings.len() - pushed);
     scope.in_loop = was_in_loop;
 }

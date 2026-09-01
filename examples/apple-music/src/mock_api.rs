@@ -15,6 +15,17 @@ pub struct LyricLine {
     pub active: bool,
 }
 
+/// A lyric line is a `lazy` row, so it hashes; the timestamp goes in by its
+/// bits, with `-0.0` folded onto `0.0` so lines that render alike cache alike.
+impl std::hash::Hash for LyricLine {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.text.hash(state);
+        (self.position + 0.0).to_bits().hash(state);
+        self.active.hash(state);
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct HomeFeed {
     pub top_picks: Vec<Album>,

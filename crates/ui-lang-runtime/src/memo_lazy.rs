@@ -70,7 +70,59 @@ struct Parked<Message: 'static, Theme: 'static, Renderer: 'static> {
 /// re-aims from the scrollable's real translation, and the relayout that
 /// follows must recompute THROUGH the memo — a `(dependency, limits)` key
 /// cannot see that the translation moved.
-pub(crate) struct MemoLayout(pub(crate) Option<(layout::Limits, layout::Node)>);
+pub(crate) struct MemoLayout(Vec<(layout::Limits, layout::Node)>);
+
+/// How many `(Limits, Node)` pairs a memo keeps. `ui_lang_runtime::flex`
+/// lays each child out with up to three different limits per pass — measure,
+/// final, stretch — so one slot misses on every pass under a flex parent and
+/// on the next frame's first pass too.
+const LAYOUT_SLOTS: usize = 3;
+
+impl MemoLayout {
+    pub(crate) const fn none() -> Self {
+        Self(Vec::new())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn single(limits: layout::Limits, node: layout::Node) -> Self {
+        Self(vec![(limits, node)])
+    }
+
+    /// The node memoized for `limits`, made current: the phases after
+    /// `layout` walk whichever node the last layout call answered with.
+    pub(crate) fn hit(&mut self, limits: &layout::Limits) -> Option<&layout::Node> {
+        let index = self.0.iter().position(|(cached, _)| cached == limits)?;
+        let pair = self.0.remove(index);
+        self.0.push(pair);
+        self.0.last().map(|(_, node)| node)
+    }
+
+    /// The node the last `layout` call answered with.
+    pub(crate) fn current(&self) -> Option<&layout::Node> {
+        self.0.last().map(|(_, node)| node)
+    }
+
+    /// Remembers `node` for `limits`, dropping the oldest pair past the cap.
+    pub(crate) fn store(&mut self, limits: layout::Limits, node: layout::Node) {
+        self.0.retain(|(cached, _)| *cached != limits);
+        if self.0.len() == LAYOUT_SLOTS {
+            self.0.remove(0);
+        }
+        self.0.push((limits, node));
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub(crate) fn take(&mut self) -> Self {
+        Self(std::mem::take(&mut self.0))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct MemoSite {
@@ -251,14 +303,10 @@ fn shallow(node: &layout::Node) -> layout::Node {
 /// it. Every phase after `layout` receives the parent's `Layout`, which
 /// describes only that box; the child needs its own nodes, positioned exactly
 /// as if they had been returned along with it.
-fn child_layout<'a>(
-    memo: &'a Option<(layout::Limits, layout::Node)>,
-    layout: Layout<'_>,
-) -> Layout<'a> {
-    let node = &memo
-        .as_ref()
-        .expect("`layout` runs before any phase that walks the tree")
-        .1;
+fn child_layout<'a>(memo: &'a MemoLayout, layout: Layout<'_>) -> Layout<'a> {
+    let node = memo
+        .current()
+        .expect("`layout` runs before any phase that walks the tree");
     let root = node.bounds();
     let position = layout.position();
 
@@ -278,7 +326,7 @@ impl<Message, Theme, Renderer> Drop for Internal<Message, Theme, Renderer> {
             self.hash,
             Box::new(Parked {
                 element,
-                layout: MemoLayout(self.layout.0.take()),
+                layout: self.layout.take(),
                 tree: std::mem::replace(&mut self.tree, Tree::empty()),
             }),
         );
@@ -339,7 +387,7 @@ where
             element,
             hash,
             site: self.site,
-            layout: MemoLayout(None),
+            layout: MemoLayout::none(),
             tree,
         })
     }
@@ -362,7 +410,7 @@ where
 
         if current.hash != new_hash {
             current.hash = new_hash;
-            current.layout = MemoLayout(None);
+            current.layout.clear();
 
             let element: Element<'static, Message, Theme, Renderer> =
                 (self.view)(&self.dependency).into();
@@ -394,9 +442,7 @@ where
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
 
-        if let Some((cached_limits, node)) = &state.layout.0
-            && cached_limits == limits
-        {
+        if let Some(node) = state.layout.hit(limits) {
             return shallow(node);
         }
 
@@ -406,7 +452,7 @@ where
                 .layout(&mut state.tree, renderer, limits)
         });
         let handed_up = shallow(&node);
-        state.layout = MemoLayout(Some((*limits, node)));
+        state.layout.store(*limits, node);
         handed_up
     }
 
@@ -433,10 +479,10 @@ where
         // An operation that just dropped the memoized layout left nothing
         // coherent to walk below; the next layout pass rebuilds it, and any
         // nested memo keeps its own still-valid cache for that pass to reuse.
-        if memo.0.is_none() {
+        if memo.is_empty() {
             return;
         }
-        let layout = child_layout(&memo.0, layout);
+        let layout = child_layout(memo, layout);
         self.with_element_mut(|element| {
             element
                 .as_widget_mut()
@@ -462,7 +508,7 @@ where
         } = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(&memo.0, layout);
+        let layout = child_layout(memo, layout);
         self.with_element_mut(|element| {
             element.as_widget_mut().update(
                 child, event, layout, cursor, renderer, clipboard, shell, viewport,
@@ -485,7 +531,7 @@ where
         } = tree
             .state
             .downcast_ref::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(&memo.0, layout);
+        let layout = child_layout(memo, layout);
         self.with_element(|element| {
             element
                 .as_widget()
@@ -510,7 +556,7 @@ where
         } = tree
             .state
             .downcast_ref::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(&memo.0, layout);
+        let layout = child_layout(memo, layout);
         self.with_element(|element| {
             element
                 .as_widget()
@@ -533,7 +579,7 @@ where
         } = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
-        let layout = child_layout(&memo.0, layout);
+        let layout = child_layout(memo, layout);
         let overlay = InnerBuilder {
             cell: self.element.borrow().as_ref().unwrap().clone(),
             element: self
@@ -729,21 +775,21 @@ mod tests {
     fn diff_keeps_the_layout_memo_only_while_the_dependency_holds() {
         let same = widget(7, 0);
         let mut tree = Tree::new(&same as &dyn Widget<(), iced::Theme, iced::Renderer>);
-        assert!(internal(&mut tree).layout.0.is_none());
+        assert!(internal(&mut tree).layout.is_empty());
 
         let memoized = layout::Node::new(Size::new(10.0, 10.0));
-        internal(&mut tree).layout = MemoLayout(Some((layout::Limits::NONE, memoized.clone())));
+        internal(&mut tree).layout = MemoLayout::single(layout::Limits::NONE, memoized.clone());
 
         same.diff(&mut tree);
         assert!(
-            internal(&mut tree).layout.0.is_some(),
+            !internal(&mut tree).layout.is_empty(),
             "an unchanged dependency must keep the memoized layout"
         );
 
         let changed = widget(8, 0);
         changed.diff(&mut tree);
         assert!(
-            internal(&mut tree).layout.0.is_none(),
+            internal(&mut tree).layout.is_empty(),
             "a changed dependency rebuilds the element — a kept node would be stale"
         );
     }
@@ -758,10 +804,10 @@ mod tests {
         let first = counting_widget(7, 800, builds.clone());
         let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
         assert_eq!(builds.get(), 1);
-        internal(&mut tree).layout = MemoLayout(Some((
+        internal(&mut tree).layout = MemoLayout::single(
             layout::Limits::NONE,
             layout::Node::new(Size::new(10.0, 10.0)),
-        )));
+        );
         drop(tree);
 
         let second = counting_widget(7, 800, builds.clone());
@@ -772,7 +818,7 @@ mod tests {
             "a same-content remount must reclaim the parked element, not rebuild it"
         );
         assert!(
-            internal(&mut tree).layout.0.is_some(),
+            !internal(&mut tree).layout.is_empty(),
             "the memoized layout must survive the unmount"
         );
     }
@@ -785,10 +831,10 @@ mod tests {
 
         let first = counting_widget_in(7, 810, 0, builds.clone());
         let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
-        internal(&mut tree).layout = MemoLayout(Some((
+        internal(&mut tree).layout = MemoLayout::single(
             layout::Limits::NONE,
             layout::Node::new(Size::new(10.0, 10.0)),
-        )));
+        );
         drop(tree);
 
         let second = counting_widget_in(8, 810, 0, builds.clone());
@@ -798,7 +844,7 @@ mod tests {
             2,
             "changed content must miss the lot and rebuild"
         );
-        assert!(internal(&mut tree).layout.0.is_none());
+        assert!(internal(&mut tree).layout.is_empty());
     }
 
     /// Evicting a parked subtree drops nested lazy state, which parks itself
@@ -955,6 +1001,104 @@ mod tests {
             parked_subtrees() - before,
             3,
             "twenty rows over three distinct scopes park three subtrees, not twenty"
+        );
+    }
+
+    /// `ui_lang_runtime::flex` lays each child out with up to three different
+    /// limits per pass — measure, final, stretch — and a memo that remembers
+    /// only the last pair recomputes on every one of them, then misses the
+    /// next frame's first pass too. Three pairs make every pass a hit.
+    #[test]
+    fn a_memo_keeps_a_layout_per_limits_across_a_flex_parents_three_passes() {
+        use iced::advanced::renderer::Headless as _;
+
+        type Probed = MemoLazy<
+            'static,
+            (),
+            iced::Theme,
+            iced_test::renderer::Renderer,
+            i32,
+            Element<'static, (), iced::Theme, iced_test::renderer::Renderer>,
+        >;
+
+        /// A fixed cell that counts how often it is laid out.
+        struct Measured {
+            laid_out: Rc<Cell<usize>>,
+        }
+
+        impl Widget<(), iced::Theme, iced_test::renderer::Renderer> for Measured {
+            fn size(&self) -> Size<Length> {
+                Size::new(Length::Fixed(10.0), Length::Fixed(10.0))
+            }
+
+            fn layout(
+                &mut self,
+                _tree: &mut Tree,
+                _renderer: &iced_test::renderer::Renderer,
+                _limits: &layout::Limits,
+            ) -> layout::Node {
+                self.laid_out.set(self.laid_out.get() + 1);
+                layout::Node::new(Size::new(10.0, 10.0))
+            }
+
+            fn draw(
+                &self,
+                _tree: &Tree,
+                _renderer: &mut iced_test::renderer::Renderer,
+                _theme: &iced::Theme,
+                _style: &renderer::Style,
+                _layout: Layout<'_>,
+                _cursor: mouse::Cursor,
+                _viewport: &Rectangle,
+            ) {
+            }
+        }
+
+        let laid_out = Rc::new(Cell::new(0));
+        let counter = laid_out.clone();
+        let mut lazy: Probed = memo_lazy(
+            1,
+            move |_| {
+                Element::new(Measured {
+                    laid_out: counter.clone(),
+                })
+            },
+            941,
+            "limits-probe",
+        );
+        let renderer = iced_test::futures::futures::executor::block_on(
+            iced_test::renderer::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0), None),
+        )
+        .expect("headless renderer");
+        let mut tree =
+            Tree::new(&lazy as &dyn Widget<(), iced::Theme, iced_test::renderer::Renderer>);
+        let passes = [
+            layout::Limits::new(Size::ZERO, Size::new(200.0, 200.0)),
+            layout::Limits::new(Size::ZERO, Size::new(120.0, 200.0)),
+            layout::Limits::new(Size::new(120.0, 0.0), Size::new(120.0, 200.0)),
+        ];
+
+        for limits in &passes {
+            lazy.layout(&mut tree, &renderer, limits);
+        }
+        assert_eq!(laid_out.get(), 3, "three distinct limits are three misses");
+
+        for limits in &passes {
+            lazy.layout(&mut tree, &renderer, limits);
+        }
+        assert_eq!(
+            laid_out.get(),
+            3,
+            "the next frame's three passes must all hit the memo"
+        );
+
+        let fourth = layout::Limits::new(Size::ZERO, Size::new(50.0, 50.0));
+        lazy.layout(&mut tree, &renderer, &fourth);
+        lazy.layout(&mut tree, &renderer, &passes[0]);
+        assert_eq!(
+            laid_out.get(),
+            5,
+            "a fourth pair evicts the oldest, which then misses once"
         );
     }
 

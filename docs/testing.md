@@ -355,7 +355,11 @@ can stop at, and the repo has two:
 - **`lazy`** lowers to `ui_lang_runtime::memo_lazy`, which is iced's `Lazy`
   plus a memoized layout node — while the dependency hash and the incoming
   `Limits` are unchanged, `layout()` clones the stored node instead of walking
-  the subtree. (Plain `iced::widget::Lazy` caches only the element and still
+  the subtree. The memo keeps three `(Limits, Node)` pairs, not one, because
+  `ui_lang_runtime::flex` (what `flex`, a `grid` with `min-cell`, and any
+  `row`/`col` carrying a flexbox option lower to) lays each child out with up
+  to three different limits per pass — measure, final, stretch — and a single
+  slot missed on every one of them and on the next frame's first pass too. (Plain `iced::widget::Lazy` caches only the element and still
   re-walks; the distinction is the whole point of the fork.) The runtime probe
   re-lays-out 150 lazy chat rows in ~35us, against showcase's ~3.3ms for a
   comparable tree with no lazy boundary anywhere. Unmounting parks the subtree

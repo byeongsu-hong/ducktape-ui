@@ -2272,8 +2272,9 @@ iteration index and every row of a `lazy` list otherwise renders under one
 runtime id. A `lazy` inside a `for` therefore needs an `id` derived from the
 `lazy` alias rather than the loop one — `lazy fill as printed` carrying
 `#fill(printed.tid)` — or its rows are indistinguishable to targets, captures,
-and the accessibility tree. Input, combo, named QR data, and a slot from an
-enclosing component are rejected because those forms borrow app-owned data.
+and the accessibility tree. Input, combo, named QR data, a slot from an
+enclosing component, and an extern component with a `&` parameter are
+rejected because those forms borrow app-owned data (`E139`).
 Components and structured children remain usable when their complete expanded
 tree satisfies the same static rule. The enclosing
 component's routing context is preserved: routes inside the subtree resolve
@@ -6313,6 +6314,8 @@ Successful analysis may also emit stable semantic warnings:
 | `W016` | an extern component rebuilds its native widget from string or list content on every view pass, outside any `lazy` boundary |
 | `W017` | a plain `lazy` inside a repetition clones and hashes a row-local list, or a record owning one, on every view pass |
 | `W018` | a `str`, `bytes`, `[T]`, `editor`, or list-owning record state field is cloned into a by-value `pure`/`sync` parameter on every view pass or subscription check |
+| `W019` | a `for` or keyed column over a state-rooted list instantiates a component, an extern component, or a nested repetition per row on every view pass with no per-row `lazy` and no `virtual-row` column |
+| `W020` | a plain `lazy` inside a repetition evaluates a call or operator over the row on every view pass only to compute the key it is compared by |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -6367,7 +6370,7 @@ widget operations. Component-local handlers may still use their own relative
 paths; the warning covers operation paths hidden from the caller and suggests
 adding an explicit component ID.
 
-`W016`, `W017`, and `W018` are performance warnings: iced rebuilds the whole view on
+`W016` through `W020` are performance warnings: iced rebuilds the whole view on
 every message, so a view expression is paid once per frame unless a `lazy`
 boundary memoizes it. `W016` reports an `extern ... component` call whose
 `str` or `[T]` argument reads app state, a derived value, or component state
@@ -6403,6 +6406,23 @@ silently, so zero `W018` sites does not mean zero per-frame record clones.
 The fix is the borrowed parameter, which leaves the call site unchanged, or
 moving the result into state from the handler that writes the field.
 
+`W019` reports a `for`, or a `keyed` column, whose list is rooted in app
+state, a derived value, component state, or a prop, whose row body
+instantiates a component, an extern component, or a nested repetition, and
+which has no per-row boundary: every child of the `for` is not a `lazy`, the
+`for` is not directly under a `col` with `virtual-row=`, or the keyed column
+carries no `virtual-row=` of its own. Rows of leaf widgets are not reported.
+The message names both fixes: `lazy item by <cheap keys> as alias` around the
+row, which rebuilds a row only when its keys move, or `virtual-row=<height>`,
+which lays out only the rows in view. `W020` reports the plain form `lazy
+value as alias` inside a repetition whose value is a call or an operator over
+the row — `lazy label_of(message) as label` — because the memo must evaluate
+that expression on every pass before it can compare the key, so the work it
+wraps is never skipped; a bare row value (priced by `W017` when it owns a
+list) and a value rooted in state (keyed by revisions) are silent. The fix is
+to key the row and move the call inside the subtree.
+
+
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
 Rust item is named by its `crate::module::item` path in rustc's diagnostic.
@@ -6429,7 +6449,7 @@ The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
 output rather than actionable Ice syntax and are suppressed at the generated
 item boundary; Ice's non-CLI-only semantic warnings (`W001-W009` and
-`W011-W018`) continue to come directly from the language checker.
+`W011-W020`) continue to come directly from the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source
 revision.

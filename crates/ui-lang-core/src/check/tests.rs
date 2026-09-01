@@ -1357,6 +1357,32 @@ fn w017_skips_keyed_lazy_and_lazy_outside_loops() {
 }
 
 #[test]
+fn w019_skips_leaf_rows_virtual_columns_and_lazy_rows() {
+    // Line 39: `for fill in fills` mounting a component per row; 41: the
+    // keyed column doing the same; 66: an extern component taking the row by
+    // value. Silent: the `for` over `tabs` whose rows are leaf text, the
+    // `for` under a `virtual-row` column, the keyed column with
+    // `virtual-row`, the `for` whose every row is a `lazy`, the `for`
+    // reached through `if` and `match` under a `virtual-row` column, and the
+    // extern component that borrows the row (a live control, as for W016).
+    assert_eq!(
+        perf_warning_sites("perf-unbounded-repetition", "W019"),
+        vec![39, 41, 66]
+    );
+}
+
+#[test]
+fn w020_skips_bare_rows_keyed_lazy_and_state_rooted_calls() {
+    // Line 26: a call over the row as the dependency; 29: a call mixing state
+    // with the row. Silent: the bare row value, the keyed form computing the
+    // call inside its subtree, and the call over state alone outside a loop.
+    assert_eq!(
+        perf_warning_sites("perf-eager-lazy-dependency", "W020"),
+        vec![26, 29]
+    );
+}
+
+#[test]
 fn w018_skips_handlers_lazy_borrowed_literal_derived_and_test_mounts() {
     // Line 39: the component body reading its own `scratch` state; 47: the
     // subscription condition over `rows`; 59-62: the view reading `draft`,

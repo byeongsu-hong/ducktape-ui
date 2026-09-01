@@ -341,7 +341,7 @@ impl Operation for BustMemoLayouts {
 
     fn custom(&mut self, _id: Option<&Id>, _bounds: Rectangle, state: &mut dyn std::any::Any) {
         if let Some(memo) = state.downcast_mut::<crate::memo_lazy::MemoLayout>() {
-            memo.0 = None;
+            memo.clear();
         }
     }
 }
