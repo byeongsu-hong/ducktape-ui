@@ -326,6 +326,147 @@ pub fn window_title(running: &[Running], window: iced::window::Id) -> String {
     }
 }
 
+// ---------- window placements ----------
+
+/// Where an app's window was when it was last seen, so it comes back there.
+/// `placed` is false until the platform has reported a position — before
+/// that there is nothing to move a window to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placement {
+    pub id: String,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub placed: bool,
+}
+
+/// The ids and geometries remembered from earlier runs, one per line.
+const WINDOWS_FILE: &str = "windows";
+
+pub fn remembered_placements() -> Vec<Placement> {
+    remembered(WINDOWS_FILE)
+        .iter()
+        .filter_map(|line| parse_placement(line))
+        .collect()
+}
+
+fn parse_placement(line: &str) -> Option<Placement> {
+    let mut fields = line.split('\t');
+    let id = fields.next()?.to_string();
+    let mut number = || fields.next()?.parse::<f64>().ok();
+    let (x, y, w, h) = (number()?, number()?, number()?, number()?);
+    Some(Placement {
+        id,
+        x,
+        y,
+        w,
+        h,
+        placed: true,
+    })
+}
+
+/// Writes the list; returns the dirty flag it leaves behind, which is none.
+pub fn save_placements(placements: &[Placement]) -> bool {
+    let lines: Vec<String> = placements
+        .iter()
+        .filter(|placement| placement.placed)
+        .map(|placement| {
+            format!(
+                "{}\t{}\t{}\t{}\t{}",
+                placement.id, placement.x, placement.y, placement.w, placement.h
+            )
+        })
+        .collect();
+    let dir = storage::data_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = storage::write_atomic(&dir.join(WINDOWS_FILE), lines.join("\n").as_bytes());
+    false
+}
+
+/// A placement with nothing to apply.
+pub fn no_placement() -> Placement {
+    Placement {
+        id: String::new(),
+        x: 0.0,
+        y: 0.0,
+        w: 0.0,
+        h: 0.0,
+        placed: false,
+    }
+}
+
+/// What the app shown in `window` remembers, or nothing to apply.
+pub fn placement_at(
+    placements: &[Placement],
+    running: &[Running],
+    window: iced::window::Id,
+) -> Placement {
+    guest_at(running, window)
+        .and_then(|app| placements.iter().find(|placement| placement.id == app.id))
+        .cloned()
+        .unwrap_or_else(no_placement)
+}
+
+/// The window of the app in `window` moved: remember where.
+pub fn moved(
+    placements: Vec<Placement>,
+    running: &[Running],
+    window: iced::window::Id,
+    x: f64,
+    y: f64,
+) -> Vec<Placement> {
+    place(placements, running, window, |placement| {
+        placement.x = x;
+        placement.y = y;
+    })
+}
+
+/// The window of the app in `window` was resized: remember the size.
+pub fn resized(
+    placements: Vec<Placement>,
+    running: &[Running],
+    window: iced::window::Id,
+    w: f64,
+    h: f64,
+) -> Vec<Placement> {
+    place(placements, running, window, |placement| {
+        placement.w = w;
+        placement.h = h;
+    })
+}
+
+fn place(
+    mut placements: Vec<Placement>,
+    running: &[Running],
+    window: iced::window::Id,
+    edit: impl FnOnce(&mut Placement),
+) -> Vec<Placement> {
+    let Some(app) = guest_at(running, window) else {
+        return placements;
+    };
+    let index = match placements
+        .iter()
+        .position(|placement| placement.id == app.id)
+    {
+        Some(index) => index,
+        None => {
+            placements.push(Placement {
+                id: app.id.clone(),
+                x: 0.0,
+                y: 0.0,
+                w: 560.0,
+                h: 420.0,
+                placed: false,
+            });
+            placements.len() - 1
+        }
+    };
+    edit(&mut placements[index]);
+    placements[index].placed = true;
+    placements
+}
+
 // ---------- the library ----------
 
 /// The ids to bring back at boot, one per line.

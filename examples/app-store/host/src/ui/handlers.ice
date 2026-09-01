@@ -64,10 +64,27 @@ on instantiated(app)
   rows = build_rows(catalog, query, library, running, generation)
   task window open guest -> guest_opened _
 
+// The window opens at the template's size and wherever the platform puts
+// it; if the app was seen somewhere before, it goes back there.
 on guest_opened(id)
   running = attach_window(running, opening, id)
   opening = drop_first(opening)
   rows = build_rows(catalog, query, library, running, generation)
+  placing = placement_at(placements, running, id)
+  return if !placing.placed
+  parallel
+    task window resize placing.w placing.h target=id
+    task window move placing.x placing.y target=id
+
+on guest_moved(id, x, y)
+  return if !is_guest(running, id)
+  placements = moved(placements, running, id, x, y)
+  placements_dirty = true
+
+on guest_resized(id, w, h)
+  return if !is_guest(running, id)
+  placements = resized(placements, running, id, w, h)
+  placements_dirty = true
 
 on install_failed(error)
   status = error.message
@@ -94,6 +111,7 @@ on window_closed(id)
   running = drop_window(running, id)
   generation = generation + 1
   rows = build_rows(catalog, query, library, running, generation)
+  placements_dirty = save_placements(placements)
   return if !is_window(store_window, id)
   exit
 
@@ -109,8 +127,12 @@ on guest_changed(id, restart)
 on tick
   generation = generation + 1
   rows = build_rows(catalog, query, library, running, generation)
+  return if !placements_dirty
+  placements_dirty = save_placements(placements)
 
 subscribe
   system theme -> system_theme _
   window closed with-id -> window_closed _
+  window moved with-id -> guest_moved _ _ _
+  window resized with-id -> guest_resized _ _ _
   every 1s when running_count(running) > 0 -> tick

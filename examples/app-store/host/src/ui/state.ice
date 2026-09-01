@@ -9,6 +9,11 @@ state
   running:[Running] = []
   opening:[Loaded] = []
   store_window:window-id? = none
+  // Where each app's window was last seen, so it opens there again; saved
+  // once a second while anything runs, and when a window closes.
+  placements:[Placement] = remembered_placements()
+  placements_dirty = false
+  placing:Placement = no_placement()
   page = "discover"
   selected = ""
   query = ""
