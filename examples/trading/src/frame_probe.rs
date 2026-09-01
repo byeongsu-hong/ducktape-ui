@@ -341,6 +341,20 @@ fn frame_cost() {
     for _ in 0..WARMUP {
         std::hint::black_box(state.__view(window));
     }
+    let _ = ui_lang_runtime::take_rev_memo_counts();
+    driver.redraw(here());
+    let (hits, misses) = ui_lang_runtime::take_rev_memo_counts();
+    eprintln!("component layout memos per idle frame: {hits} hits, {misses} misses");
+    let mut phases = (Vec::new(), Vec::new(), Vec::new());
+    for _ in 0..ROUNDS {
+        let frame = driver.redraw_phases(here());
+        phases.0.push(frame.view.as_micros());
+        phases.1.push(frame.layout.as_micros());
+        phases.2.push(frame.update.as_micros());
+    }
+    report("idle frame: view", phases.0);
+    report("idle frame: diff + layout", phases.1);
+    report("idle frame: event walk", phases.2);
     for round in 0..ROUNDS {
         let started = Instant::now();
         std::hint::black_box(state.__view(window));

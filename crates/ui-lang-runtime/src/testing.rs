@@ -2230,6 +2230,17 @@ impl iced::advanced::Clipboard for TestClipboard {
 }
 
 /// A persistent headless Iced program runtime used by generated tests.
+/// The phases of one `Driver::redraw_phases` frame.
+#[derive(Clone, Copy, Debug)]
+pub struct RedrawPhases {
+    /// The generated `view`: building the element tree.
+    pub view: Duration,
+    /// `UserInterface::build`: diffing the widget tree and laying it out.
+    pub layout: Duration,
+    /// Delivering `RedrawRequested` to every widget.
+    pub update: Duration,
+}
+
 pub struct Driver<P>
 where
     P: Program,
@@ -4131,6 +4142,50 @@ where
 
     pub fn redraw(&mut self, source: Location) {
         self.redraw_at(self.logical_time, source);
+    }
+
+    /// One redraw, timed by phase: the generated `view`, iced's diff and
+    /// layout (`UserInterface::build`), and the event walk that delivers
+    /// `RedrawRequested`. The driver does not draw a frame it is not asked
+    /// to capture, so the renderer's share is not here.
+    pub fn redraw_phases(&mut self, source: Location) -> RedrawPhases {
+        let events = vec![iced::Event::Window(window::Event::RedrawRequested(
+            self.logical_time,
+        ))];
+        let cursor = self.cursor;
+        let started = Instant::now();
+        let element = self.program.view(&self.state, self.window);
+        let view = started.elapsed();
+        let started = Instant::now();
+        let mut interface = UserInterface::build(
+            element,
+            self.size,
+            self.cache.take().unwrap_or_else(|| {
+                panic!(
+                    "test `{}` runtime invariant failed\nexpected: persistent UI cache\nactual: cache unavailable",
+                    self.test_name
+                )
+            }),
+            &mut self.renderer,
+        );
+        let layout = started.elapsed();
+        let started = Instant::now();
+        let mut messages = Vec::new();
+        let (_, statuses) = interface.update(
+            &events,
+            cursor,
+            &mut self.renderer,
+            &mut self.clipboard,
+            &mut messages,
+        );
+        let update = started.elapsed();
+        self.cache = Some(interface.into_cache());
+        self.finish_simulation(events, messages, statuses, source);
+        RedrawPhases {
+            view,
+            layout,
+            update,
+        }
     }
 
     fn redraw_at(&mut self, time: Instant, source: Location) {
