@@ -5,6 +5,7 @@
 //! declared, and more requests than one tick allows.
 
 use app_store_sdk::host;
+use iced::futures::{Stream, StreamExt};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HostError {
@@ -66,4 +67,14 @@ pub async fn borrow_clock() -> Result<bool, HostError> {
 
 pub fn result_label(result: i64) -> String {
     format!("result: {result} (you should never read this)")
+}
+
+/// The host's colour mode: `light` or `dark`, once on subscribing and again
+/// on every change.
+pub fn theme_changes() -> impl Stream<Item = Result<String, HostError>> + Send + 'static {
+    host::theme().map(|answer| {
+        answer
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            .map_err(|message| HostError { message })
+    })
 }

@@ -1,35 +1,42 @@
-//! One installed app: a wasm instance inside a fuel and memory budget, the
+//! One running app: a wasm instance inside a fuel and memory budget, the
 //! frame it draws every tick, and the guest's side of every request it makes.
 //!
 //! Everything the view calls is reachable here — `extern crate::store` in
-//! `app.ice` binds one module — so the catalog and the installed list are
-//! re-exported rather than named twice.
+//! `app.ice` binds one module — so the catalog, the library and the widget
+//! are re-exported rather than named twice.
 
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use app_store_frame as wire;
 use iced::Size;
 use iced::time::Instant;
 use wasmtime::{
-    Config, Engine, Linker, Module, OptLevel, Store, StoreLimits, StoreLimitsBuilder, TypedFunc,
+    Cache, CacheConfig, Config, Engine, Linker, Module, OptLevel, Store, StoreLimits,
+    StoreLimitsBuilder, TypedFunc,
 };
 
-pub use crate::catalog::{Capability, CatalogEntry, StoreError, scan_catalog};
+pub use crate::catalog::{
+    Capability, CatalogEntry, StoreError, capability_hint, catalog_dir, find_entry, scan_catalog,
+};
 pub use crate::guest_view::wasm_view;
-pub use crate::installed::{
-    InstalledApp, Restored, add_installed, installing_label, is_installed, live_label,
-    merge_installed, none_installed, remove_installed, restore_installed, restoring_label,
+pub use crate::library::{
+    CardModel, Gauge, Loaded, Rows, Running, ShelfModel, add_to_library, attach_window, build_rows,
+    drop_first, drop_window, empty_rows, enqueue, gauge, gauge_of, in_library, installing_label,
+    is_guest, is_running, is_window, library_hint, meter, opening_label, remembered_library,
+    remove_from_library, restore_running, running_count, running_label, surface_at, window_of,
+    window_title,
 };
 
 use crate::capabilities::{Inbox, bus, clock, host, storage};
-use crate::installed::{FAULTED, LIVE_INSTANCES};
+use crate::library::{FAULTED, LIVE_INSTANCES};
 use crate::limits::{
     FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE, MAX_FAULT_BYTES, MAX_FRAME_BYTES,
     MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK, MAX_SUBSCRIPTIONS,
-    MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT,
+    MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT,
 };
 
 /// The host-side handle the view holds. Identity is the instance: two
@@ -55,14 +62,14 @@ impl Hash for Surface {
 /// handle the view already holds: the window, the widget and everything the
 /// app wrote to storage stay, the instance and its bus subscriptions do not.
 ///
-/// Async for the same reason [`install_app`] is — the compile is a cranelift
+/// Async for the same reason [`install_app`] is — a cold load is a cranelift
 /// run, and the widget's `update` runs on the window thread, where a second
 /// of it freezes every other guest as well.
 pub async fn restart_guest(surface: Surface) -> Result<Surface, StoreError> {
     let entry = surface.0.lock().expect("guest lock").entry.clone();
     let fresh = Guest::load(&entry);
     let mut guest = surface.0.lock().expect("guest lock");
-    // The Restart button stays live through the compile, so a second press
+    // The Restart button stays live through the load, so a second press
     // arrives here after the first has already installed a fresh instance.
     // Swapping again would drop a *running* guest's tickers, subscriptions and
     // state, and the `Err` arm would mark it faulted although `FAULTED` never
@@ -74,6 +81,7 @@ pub async fn restart_guest(surface: Surface) -> Result<Surface, StoreError> {
     match fresh {
         Ok(mut fresh) => {
             fresh.size = guest.size;
+            fresh.dark = guest.dark;
             fresh.pending.push(wire::Event::Resized {
                 width: guest.size.width,
                 height: guest.size.height,
@@ -90,11 +98,12 @@ pub async fn restart_guest(surface: Surface) -> Result<Surface, StoreError> {
     }
 }
 
-/// Compiles and instantiates the module. Runs on iced's executor, so the
-/// second or so cranelift takes never stalls the window.
-pub async fn install_app(entry: CatalogEntry) -> Result<InstalledApp, StoreError> {
+/// Loads and instantiates the module. Runs on iced's executor, so the second
+/// or so a cold cranelift compile takes never stalls a window; a module the
+/// host has loaded before comes out of the cache in milliseconds.
+pub async fn install_app(entry: CatalogEntry) -> Result<Loaded, StoreError> {
     let guest = Guest::load(&entry).map_err(|message| StoreError { message })?;
-    Ok(InstalledApp {
+    Ok(Loaded {
         id: entry.id,
         name: entry.name,
         surface: Surface(Arc::new(Mutex::new(guest))),
@@ -112,6 +121,25 @@ struct Ticker {
     id: u64,
     every: Duration,
     next: Instant,
+}
+
+/// How the module reached memory: from the cache in a few milliseconds, or
+/// through cranelift.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Load {
+    pub(crate) took: Duration,
+    pub(crate) cached: bool,
+}
+
+/// How many ticks the rate in the status line looks back over.
+const RATE_WINDOW: Duration = Duration::from_secs(1);
+
+/// What one redraw of a guest asks of its window: when to come back, and
+/// whether it published on the bus — which every other window must hear.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Wake {
+    pub(crate) at: Option<Instant>,
+    pub(crate) published: bool,
 }
 
 pub struct Guest {
@@ -143,10 +171,14 @@ pub struct Guest {
     subscriptions: usize,
     /// Something was published this redraw: the other guests must run.
     published: bool,
+    /// The host's colour mode as the widget last told it, and who inside the
+    /// guest asked to hear about it.
+    pub(crate) dark: Option<bool>,
+    theme_subscriptions: Vec<u64>,
     /// The trap that ended the app, if one did. A faulted guest never ticks again.
     pub(crate) fault: Option<String>,
     /// Whether the widget has told the store about that fault. Nothing else
-    /// publishes a message when a guest ends, so the sidebar's counts would
+    /// publishes a message when a guest ends, so the store's counts would
     /// stay at what the last install left them.
     pub(crate) announced_fault: bool,
     /// What this tick already carries, against [`MAX_REPLY_BYTES_PER_TICK`].
@@ -156,9 +188,19 @@ pub struct Guest {
     /// walking it per write is what makes 256 `storage.set`s in a tick a
     /// quarter of a million `stat`s on the window thread.
     storage_used: Option<(u64, usize)>,
-    /// What the last tick cost, for the status line.
+    /// What the last tick cost, for the status line and the monitor.
     pub(crate) fuel_used: u64,
     pub(crate) tick_time: Duration,
+    pub(crate) load: Load,
+    /// What the guest has cost since it was loaded: ticks run, redraws it was
+    /// quiet for and therefore skipped, frames that crossed without their
+    /// layers, and the bytes of the last frame that did cross.
+    pub(crate) ticks: u64,
+    pub(crate) skipped: u64,
+    pub(crate) unchanged: u64,
+    pub(crate) frame_bytes: usize,
+    /// When the recent ticks ran, for a ticks-per-second figure.
+    recent: VecDeque<Instant>,
 }
 
 impl std::fmt::Debug for Guest {
@@ -182,21 +224,54 @@ impl Drop for Guest {
     }
 }
 
+/// One engine for every guest, with wasmtime's own artifact cache under the
+/// data directory: a module the host compiled in an earlier run is a file
+/// read the next time, not a second of cranelift on the executor.
 fn engine() -> &'static Engine {
     static ENGINE: OnceLock<Engine> = OnceLock::new();
     ENGINE.get_or_init(|| {
         let mut config = Config::new();
         config.cranelift_opt_level(OptLevel::Speed);
         config.consume_fuel(true);
+        let mut cache = CacheConfig::new();
+        cache.with_directory(storage::data_dir().join("cache"));
+        // A cache that cannot be set up costs a compile per load, not the
+        // store: an unwritable data directory would refuse `storage.set`
+        // anyway, and reports itself there.
+        config.cache(Cache::new(cache).ok());
         Engine::new(&config).expect("wasmtime engine")
     })
+}
+
+/// The modules loaded this run, by path and modification time. Reopening,
+/// restarting or reinstalling an app that was loaded once is then an
+/// instantiation — under a millisecond — and a module rebuilt meanwhile is
+/// noticed by its timestamp and loaded again.
+fn module(path: &str) -> Result<(Module, bool), String> {
+    static MODULES: OnceLock<Mutex<HashMap<String, (SystemTime, Module)>>> = OnceLock::new();
+    let stamp = std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| format!("{path}: {error}"))?;
+    let modules = MODULES.get_or_init(Mutex::default);
+    if let Some((known, module)) = modules.lock().expect("module cache").get(path)
+        && *known == stamp
+    {
+        return Ok((module.clone(), true));
+    }
+    let module = Module::from_file(engine(), path).map_err(|error| format!("{path}: {error}"))?;
+    modules
+        .lock()
+        .expect("module cache")
+        .insert(path.to_string(), (stamp, module.clone()));
+    Ok((module, false))
 }
 
 impl Guest {
     fn load(entry: &CatalogEntry) -> Result<Self, String> {
         let path = &entry.path;
         let engine = engine();
-        let module = Module::from_file(engine, path).map_err(|error| format!("{path}: {error}"))?;
+        let started = Instant::now();
+        let (module, cached) = module(path)?;
         // Tables are allocated eagerly at their declared minimum, before any
         // fuel or memory limit is consulted, so a module declaring a hundred
         // ten-million-element tables would be gigabytes at Install.
@@ -274,31 +349,68 @@ impl Guest {
             inbox: Inbox::default(),
             subscriptions: 0,
             published: false,
+            dark: None,
+            theme_subscriptions: Vec::new(),
             fault: None,
             announced_fault: false,
             reply_bytes: 0,
             storage_used: None,
             fuel_used: 0,
             tick_time: Duration::ZERO,
+            load: Load {
+                took: started.elapsed(),
+                cached,
+            },
+            ticks: 0,
+            skipped: 0,
+            unchanged: 0,
+            frame_bytes: 0,
+            recent: VecDeque::new(),
         })
     }
 
-    /// One redraw: deliver what is due, tick, answer the new requests, and
-    /// say when the widget must be woken next. A guest nobody can see and
-    /// that has nothing to do is skipped — it would draw the same frame — but
-    /// it still says when it next wants to run.
-    pub(crate) fn redraw(&mut self, now: Instant, visible: bool) -> Option<Instant> {
-        if self.fault.is_some() {
-            return None;
+    /// The host's colour mode, as the window showing this guest has it. A
+    /// change is delivered to every theme subscription the guest holds.
+    pub(crate) fn set_theme(&mut self, now: Instant, dark: bool) {
+        if self.dark == Some(dark) {
+            return;
         }
-        if !visible && self.quiet(now) {
-            return self.next_wake();
+        self.dark = Some(dark);
+        for id in self.theme_subscriptions.clone() {
+            self.due.push((now, theme_item(id, dark)));
+        }
+    }
+
+    /// One redraw: deliver what is due, tick, answer the new requests, and
+    /// say when the widget must be woken next. A guest with nothing to
+    /// deliver and no wish of its own to draw is not ticked at all — the
+    /// frame the host has is the frame it would draw — but it still says
+    /// when it next wants to run.
+    pub(crate) fn redraw(&mut self, now: Instant) -> Wake {
+        if self.fault.is_some() {
+            return Wake::default();
+        }
+        if self.quiet(now) {
+            self.skipped += 1;
+            return Wake {
+                at: self.next_wake(),
+                published: false,
+            };
         }
         self.deliver_due(now);
         self.pending.push(wire::Event::Redraw {
             elapsed_ms: clock::uptime_ms(now),
         });
         self.tick();
+        self.ticks += 1;
+        self.recent.push_back(now);
+        while self
+            .recent
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) > RATE_WINDOW)
+        {
+            self.recent.pop_front();
+        }
         self.reply_bytes = 0;
         for (nth, request) in std::mem::take(&mut self.frame.requests)
             .into_iter()
@@ -318,28 +430,60 @@ impl Guest {
         for id in cancels {
             self.cancel(id);
         }
-        if std::mem::take(&mut self.published) {
-            // Wake the whole window now, so the subscribers tick too.
-            return Some(now);
+        // A publish wakes this window now, so a subscriber sharing it ticks
+        // too; the widget tells the store, whose update redraws every other
+        // window, so the subscribers there tick as well.
+        match std::mem::take(&mut self.published) {
+            true => Wake {
+                at: Some(now),
+                published: true,
+            },
+            false => Wake {
+                at: self.next_wake(),
+                published: false,
+            },
         }
-        self.next_wake()
     }
 
-    /// Nothing waiting, nothing ready: this tick would only redraw the frame
-    /// the host already has.
+    /// Nothing waiting, nothing ready, and the guest's own widgets did not ask
+    /// for a frame: this tick would only draw the frame the host already has.
     fn quiet(&self, now: Instant) -> bool {
         self.pending.is_empty()
             && self.inbox.lock().expect("inbox").is_empty()
             && !self.due.iter().any(|(at, _)| *at <= now)
             && !self.tickers.iter().any(|ticker| ticker.next <= now)
+            && !self.wants_frame(now)
+    }
+
+    /// Whether the guest's last frame asked to be drawn again by now.
+    fn wants_frame(&self, now: Instant) -> bool {
+        match self.frame.redraw {
+            wire::Redraw::Wait => false,
+            wire::Redraw::NextFrame => true,
+            wire::Redraw::At(ms) => clock::uptime_ms(now) >= ms,
+        }
     }
 
     fn next_wake(&self) -> Option<Instant> {
+        let own = match self.frame.redraw {
+            wire::Redraw::Wait => None,
+            wire::Redraw::NextFrame => Some(Instant::now()),
+            wire::Redraw::At(ms) => Some(clock::at_uptime_ms(ms)),
+        };
         self.due
             .iter()
             .map(|(at, _)| *at)
             .chain(self.tickers.iter().map(|ticker| ticker.next))
+            .chain(own)
             .min()
+    }
+
+    /// Ticks per second over the last [`RATE_WINDOW`].
+    pub(crate) fn rate(&self, now: Instant) -> usize {
+        self.recent
+            .iter()
+            .filter(|at| now.saturating_duration_since(**at) <= RATE_WINDOW)
+            .count()
     }
 
     /// The guest stopped waiting for `id`: drop whatever the host kept for it.
@@ -348,6 +492,7 @@ impl Guest {
             |(_, event)| !matches!(event, wire::Event::Response { id: due, .. } if *due == id),
         );
         self.tickers.retain(|ticker| ticker.id != id);
+        self.theme_subscriptions.retain(|theme| *theme != id);
         // Saturating because the subscriber list is keyed by the inbox's
         // address, which a dropped instance can leave behind for the next one.
         if bus::cancel(id, &self.inbox) {
@@ -428,6 +573,18 @@ impl Guest {
             ("host", "random") => {
                 let result = host::random(&payload);
                 self.reply(now, id, result);
+            }
+            ("host", "theme") if self.theme_subscriptions.len() >= MAX_THEME_SUBSCRIPTIONS => {
+                let message = format!("more than {MAX_THEME_SUBSCRIPTIONS} theme subscriptions");
+                self.reply(now, id, Err(message));
+            }
+            // The current mode at once, then every change. The widget sets
+            // the mode before the first tick, so there is always one to send.
+            ("host", "theme") => {
+                self.theme_subscriptions.push(id);
+                if let Some(dark) = self.dark {
+                    self.due.push((now, theme_item(id, dark)));
+                }
             }
             // Both halves in one answer: an app installed while the store has
             // been up for an hour cannot know that, and the uptime its ticks
@@ -535,7 +692,16 @@ impl Guest {
         self.tick_time = started.elapsed();
         self.fuel_used = FUEL_PER_TICK.saturating_sub(self.store.get_fuel().unwrap_or(0));
         match outcome {
-            Ok(frame) => self.frame = frame,
+            Ok(mut frame) => {
+                // The guest drew what the host already holds: keep those
+                // layers and take only what is new — requests, cancels, the
+                // next redraw it wants.
+                if frame.unchanged {
+                    self.unchanged += 1;
+                    frame.layers = std::mem::take(&mut self.frame.layers);
+                }
+                self.frame = frame;
+            }
             Err(error) => {
                 // With `panic = "abort"` a panic is a bare `unreachable`, so
                 // the reason is in the module's buffer or nowhere.
@@ -566,9 +732,16 @@ impl Guest {
         // over; a million of them would be a million refusal strings, so the
         // host keeps enough to say so and drops the rest unanswered.
         frame.requests.truncate(2 * MAX_REQUESTS_PER_TICK);
-        // The host's renderer panics on values a frame may carry and
-        // allocates by the sizes it is given; the guest chose every one.
-        wire::sanitize(&mut frame, [self.size.width, self.size.height]);
+        // A frame that says it changed nothing must not carry layers the
+        // host would then draw unsanitized; it is treated as what it claims.
+        if frame.unchanged {
+            frame.layers.clear();
+        } else {
+            self.frame_bytes = len;
+            // The host's renderer panics on values a frame may carry and
+            // allocates by the sizes it is given; the guest chose every one.
+            wire::sanitize(&mut frame, [self.size.width, self.size.height]);
+        }
         Ok(frame)
     }
 }
@@ -610,6 +783,16 @@ fn one_shot(id: u64, result: Result<Vec<u8>, String>) -> wire::Event {
         id,
         result,
         done: true,
+    }
+}
+
+/// One item of a `host.theme` subscription: the mode's name.
+fn theme_item(id: u64, dark: bool) -> wire::Event {
+    let mode: &[u8] = if dark { b"dark" } else { b"light" };
+    wire::Event::Response {
+        id,
+        result: Ok(mode.to_vec()),
+        done: false,
     }
 }
 

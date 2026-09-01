@@ -15,11 +15,12 @@ fn bus_messages_become_rows_newest_first() {
         },
         redraw(),
     ]);
-    let [subscribe] = frame.requests.as_slice() else {
-        panic!("one subscription at boot, got {:?}", frame.requests);
+    let [subscribe, theme] = frame.requests.as_slice() else {
+        panic!("the bus and the theme at boot, got {:?}", frame.requests);
     };
     assert_eq!(subscribe.kind, "bus.subscribe");
     assert_eq!(subscribe.payload, b"*");
+    assert_eq!(theme.kind, "host.theme");
     assert!(has_text(&frame, "0 events"), "{:?}", texts(&frame));
 
     // `from\ntopic\ntext`: the host fills in `from` itself.

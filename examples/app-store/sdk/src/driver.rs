@@ -42,6 +42,16 @@ pub struct Driver<A: WasmApp> {
     /// than recomputed: iced hands it back from `update`, and a tick that
     /// produced a message rebuilds the tree without one.
     interaction: u8,
+    /// When the tree last asked to be drawn again, in the host's terms.
+    redraw: wire::Redraw,
+    /// The layers the host already holds. A frame equal to them crosses as
+    /// `unchanged` — a few bytes instead of every quad and line again.
+    last_layers: Vec<wire::Layer>,
+    /// The host uptime the last redraw carried, and the instant the guest's
+    /// iced was told it was: an `At` request is measured against the latter
+    /// and sent back in the former.
+    elapsed_ms: u64,
+    now: iced::time::Instant,
 }
 
 impl<A: WasmApp> Default for Driver<A> {
@@ -63,6 +73,10 @@ impl<A: WasmApp> Driver<A> {
             cursor: mouse::Cursor::Unavailable,
             tasks,
             interaction: 0,
+            redraw: wire::Redraw::Wait,
+            last_layers: Vec::new(),
+            elapsed_ms: 0,
+            now: iced::time::Instant::now(),
         }
     }
 
@@ -77,6 +91,10 @@ impl<A: WasmApp> Driver<A> {
             cursor,
             tasks,
             interaction,
+            redraw,
+            last_layers,
+            elapsed_ms,
+            now,
         } = self;
         // Answers that arrived with this batch may have completed a task.
         run_tasks(app, tasks);
@@ -91,10 +109,13 @@ impl<A: WasmApp> Driver<A> {
                 &mut messages,
             );
             if let user_interface::State::Updated {
-                mouse_interaction, ..
+                mouse_interaction,
+                redraw_request,
+                ..
             } = state
             {
                 *interaction = wire_interaction(mouse_interaction);
+                *redraw = wire_redraw(redraw_request, *elapsed_ms, *now);
             }
         }
         // A message rewrites state the tree was built from: drop the tree,
@@ -118,7 +139,16 @@ impl<A: WasmApp> Driver<A> {
         );
         let mut frame = flatten(renderer);
         *cache = ui.into_cache();
+        // A tick that drew the same thing again — a key the view ignored, a
+        // timer answer that changed no text — crosses without its layers.
+        if frame.layers == *last_layers {
+            frame.layers.clear();
+            frame.unchanged = true;
+        } else {
+            *last_layers = frame.layers.clone();
+        }
         frame.interaction = *interaction;
+        frame.redraw = *redraw;
         frame.requests = crate::host::drain_outbox();
         frame.cancels = crate::host::drain_cancels();
         frame
@@ -201,8 +231,11 @@ impl<A: WasmApp> Driver<A> {
                 // web_time shims are unlinked), so host uptime added to it is
                 // a monotonic clock — enough for iced's own animations.
                 wire::Event::Redraw { elapsed_ms } => {
+                    self.elapsed_ms = elapsed_ms;
+                    self.now =
+                        iced::time::Instant::now() + std::time::Duration::from_millis(elapsed_ms);
                     out.push(iced::Event::Window(iced::window::Event::RedrawRequested(
-                        iced::time::Instant::now() + std::time::Duration::from_millis(elapsed_ms),
+                        self.now,
                     )))
                 }
                 wire::Event::Response { id, result, done } => {
@@ -271,6 +304,25 @@ fn poll_tasks<M>(tasks: &mut Tasks<M>) -> Vec<M> {
         true
     });
     messages
+}
+
+/// When the tree wants the next frame, said in host uptime: `At` is measured
+/// against the instant the last redraw was stamped with, which is the only
+/// clock the guest's widgets have read.
+fn wire_redraw(
+    request: iced::window::RedrawRequest,
+    elapsed_ms: u64,
+    now: iced::time::Instant,
+) -> wire::Redraw {
+    use iced::window::RedrawRequest;
+    match request {
+        RedrawRequest::Wait => wire::Redraw::Wait,
+        RedrawRequest::NextFrame => wire::Redraw::NextFrame,
+        RedrawRequest::At(at) => {
+            let later = at.saturating_duration_since(now).as_millis() as u64;
+            wire::Redraw::At(elapsed_ms + later)
+        }
+    }
 }
 
 /// The shapes the host can set. Everything else is the host's own idle
@@ -564,5 +616,107 @@ fn weight_value(weight: iced::font::Weight) -> u16 {
         Weight::Bold => 700,
         Weight::ExtraBold => 800,
         Weight::Black => 900,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{click, has_text, redraw, texts};
+
+    /// A button, a number and a field: the smallest app whose frame can
+    /// change, and whose caret can ask for a frame of its own.
+    struct Counter {
+        count: u32,
+        draft: String,
+    }
+
+    #[derive(Clone)]
+    enum Bump {
+        One,
+        Typed(String),
+    }
+
+    impl WasmApp for Counter {
+        type Message = Bump;
+        const NAME: &'static str = "Counter";
+        const DESCRIPTION: &'static str = "";
+
+        fn boot() -> (Self, iced::Task<Bump>) {
+            let app = Counter {
+                count: 0,
+                draft: String::new(),
+            };
+            (app, iced::Task::none())
+        }
+
+        fn view(&self) -> crate::Element<'_, Bump> {
+            iced::widget::column![
+                iced::widget::button(iced::widget::text(format!("count {}", self.count)))
+                    .on_press(Bump::One),
+                iced::widget::text_input("type here", &self.draft).on_input(Bump::Typed),
+            ]
+            .into()
+        }
+
+        fn update(&mut self, message: Bump) -> iced::Task<Bump> {
+            match message {
+                Bump::One => self.count += 1,
+                Bump::Typed(draft) => self.draft = draft,
+            }
+            iced::Task::none()
+        }
+
+        fn theme(&self) -> iced::Theme {
+            iced::Theme::Light
+        }
+    }
+
+    fn resized() -> wire::Event {
+        wire::Event::Resized {
+            width: 320.0,
+            height: 200.0,
+        }
+    }
+
+    /// The first frame carries its layers; a redraw that drew the same thing
+    /// again carries none and says so; a click that changed the text carries
+    /// them again.
+    #[test]
+    fn a_frame_that_changed_nothing_crosses_without_its_layers() {
+        let mut driver = Driver::<Counter>::new();
+        let first = driver.tick(vec![resized(), redraw()]);
+        assert!(!first.unchanged);
+        assert!(has_text(&first, "count 0"), "{:?}", texts(&first));
+
+        let second = driver.tick(vec![redraw()]);
+        assert!(second.unchanged, "the same frame again");
+        assert!(second.layers.is_empty());
+
+        let third = driver.tick(click(&first, "count 0"));
+        assert!(!third.unchanged, "the click changed the text");
+        assert!(has_text(&third, "count 1"), "{:?}", texts(&third));
+    }
+
+    /// A tree with nothing animating waits — which is what lets the host
+    /// leave a quiet guest alone. A focused field's caret asks for a frame
+    /// at its next blink, said in the host's uptime.
+    #[test]
+    fn the_tree_says_when_it_wants_the_next_frame() {
+        let mut driver = Driver::<Counter>::new();
+        let first = driver.tick(vec![resized(), redraw()]);
+        assert_eq!(first.redraw, wire::Redraw::Wait);
+
+        let mut events = click(&first, "type here");
+        events.pop();
+        events.push(wire::Event::Redraw { elapsed_ms: 1000 });
+        let focused = driver.tick(events);
+        let wire::Redraw::At(blink) = focused.redraw else {
+            panic!("a focused caret wants a frame, got {:?}", focused.redraw);
+        };
+        assert!(
+            (1000..=1500).contains(&blink),
+            "the blink is within one interval of the redraw it was asked at, got {blink}"
+        );
     }
 }

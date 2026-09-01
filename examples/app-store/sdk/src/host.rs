@@ -106,6 +106,13 @@ pub fn log(message: impl AsRef<str>) {
     notify("host.log", message.as_ref().as_bytes());
 }
 
+/// The host's colour mode, now and whenever it changes: every item is
+/// `light` or `dark`. Needs no capability — an app that cannot follow the
+/// host's dark mode is the one thing every app should be allowed to fix.
+pub fn theme() -> Subscription {
+    subscribe("host.theme", &[])
+}
+
 /// The host's eventual answer to a [`request`].
 pub struct Response {
     id: u64,

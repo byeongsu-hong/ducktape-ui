@@ -1,5 +1,6 @@
 app Todo
   title "Todo in wasm"
+  palette active_palette
   id "dev.ducktape.ice.app-store.todo"
   text-size 16
   window
@@ -18,16 +19,31 @@ extern crate::items
   pure next_after(items:[Item]) -> i64
   load_items() -> [Item] ! StorageError
   save_items(items:[Item]) -> str ! StorageError
+  stream theme_changes() -> str ! StorageError
 
 state
   items:[Item] = []
   draft = ""
   next_id = 1
   status = "Loading from the host's storage…"
+  active_palette:palette[TodoTheme] = TodoTheme.light
+  dark = false
 
 // The list lives in the host's storage: it survives uninstall and reinstall.
+// The colour mode is the host's too, streamed in and followed here.
 on mount
-  run every load_items() -> loaded _ | failed _
+  parallel
+    run every load_items() -> loaded _ | failed _
+    stream every theme_changes() -> themed _ | theme_failed _
+
+on themed(mode)
+  dark = mode == "dark"
+  active_palette = TodoTheme.light
+  return if !dark
+  active_palette = TodoTheme.dark
+
+on theme_failed(error)
+  status = error.message
 
 on loaded(stored)
   items = stored
@@ -66,14 +82,19 @@ view
         w=fill
         h=fill
         gap=16.0
-      text "Todo" size=28.0 @text-fg
+      text "Todo"
+        with
+          size=28.0
+          @text-fg
+          @font-bold
       row #composer
         with
           w=fill
           gap=8.0
           align=center
         input "What needs doing?" #draft <-> draft w=fill
-          focused border=primary border-w=2.0
+          active bg=surface border=border border-w=1.0 r=10.0 value=fg placeholder=muted selection=primary
+          focused bg=surface border=primary border-w=1.0 r=10.0
         button "Add" #add -> add
           active bg=primary text=primary_fg r=8.0
           hovered bg=primary/90 text=primary_fg r=8.0
@@ -84,7 +105,9 @@ view
               with
                 w=fill
                 bg=surface
-                r=8.0
+                border=border
+                border-w=1.0
+                r=10.0
                 p=12.0
               row
                 with
@@ -92,11 +115,13 @@ view
                   gap=12.0
                   align=center
                 button label=item_mark(item.done) -> toggle item.id
-                  active bg=bg text=fg r=6.0
-                  text item_mark(item.done)
+                  active bg=raised text=fg r=8.0
+                  hovered bg=border text=fg r=8.0
+                  text item_mark(item.done) @text-fg
                 text item.text w=fill @text-fg
                 button "×" -> remove item.id
-                  active bg=surface text=danger r=6.0
+                  active bg=raised text=danger r=8.0
+                  hovered bg=border text=danger r=8.0
       row w=fill gap=12.0
         text remaining(items) #remaining size=14.0 @text-muted
         text status #status size=12.0 @text-muted

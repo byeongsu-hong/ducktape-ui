@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use app_store_frame as wire;
-use iced::advanced::text::{self as core_text, LineHeight, Shaping, Wrapping};
+use iced::advanced::text::{self as core_text, LineHeight, Paragraph as _, Shaping, Wrapping};
 use iced::advanced::widget::Tree;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};
 use iced::{
@@ -20,16 +20,20 @@ use crate::store::{Guest, Surface};
 
 /// The guest's window. It emits `true` when the user asks for a restart and
 /// `false` when the instance ended on its own — both are the store's business
-/// and neither can be done here: reloading the module is a cranelift run, and
-/// the sidebar's counts are only recomputed when the app has a message.
-pub fn wasm_view(surface: &Surface) -> Element<'_, bool> {
+/// and neither can be done here: reloading the module may be a cranelift
+/// run, and the store's counts are only recomputed when the app has a
+/// message. `dark` is the store's colour mode, which the guest hears about
+/// through its theme subscription.
+pub fn wasm_view(surface: Surface, dark: bool) -> Element<'static, bool> {
     Element::new(WasmView {
-        guest: surface.0.clone(),
+        guest: surface.0,
+        dark,
     })
 }
 
 struct WasmView {
     guest: Arc<Mutex<Guest>>,
+    dark: bool,
 }
 
 impl<Theme, Renderer> Widget<bool, Theme, Renderer> for WasmView
@@ -58,7 +62,7 @@ where
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, bool>,
-        viewport: &Rectangle,
+        _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
         let mut guest = self.guest.lock().expect("guest lock");
@@ -82,6 +86,9 @@ where
                 height: bounds.height,
             });
         }
+        // Before any tick, so a guest subscribing in its `on mount` is
+        // answered with the mode the window already has.
+        guest.set_theme(iced::time::Instant::now(), self.dark);
         match event {
             Event::Mouse(event) => {
                 let translated = match event {
@@ -159,15 +166,21 @@ where
                 shell.request_redraw();
             }
             Event::Window(iced::window::Event::RedrawRequested(now)) => {
-                // Scrolled out of the desk's viewport: a guest with nothing to
-                // do skips the tick, one with work to do does not.
-                if let Some(at) = guest.redraw(*now, viewport.intersects(&bounds)) {
+                // Not every redraw of the window is a tick of the guest: one
+                // with nothing to deliver and no wish to draw is left alone.
+                let wake = guest.redraw(*now);
+                if let Some(at) = wake.at {
                     shell.request_redraw_at(at);
                 }
-                // A trap in that tick changed what the sidebar counts, and a
-                // trap publishes nothing by itself.
-                if guest.fault.is_some() && !guest.announced_fault {
+                // A trap in that tick changed what the monitor counts, and a
+                // trap publishes nothing by itself. A bus publish has to reach
+                // the subscribers in the other windows, and the store's update
+                // is what redraws every window.
+                let faulted = guest.fault.is_some() && !guest.announced_fault;
+                if faulted {
                     guest.announced_fault = true;
+                }
+                if faulted || wake.published {
                     shell.publish(false);
                 }
             }
@@ -212,7 +225,9 @@ where
         let bounds = layout.bounds();
         let guest = self.guest.lock().expect("guest lock");
         if let Some(fault) = &guest.fault {
-            renderer.with_layer(bounds, |renderer| draw_fault(renderer, bounds, fault));
+            renderer.with_layer(bounds, |renderer| {
+                draw_fault(renderer, bounds, fault, self.dark)
+            });
             return;
         }
         renderer.with_layer(bounds, |renderer| {
@@ -226,9 +241,10 @@ where
         // Its own layer, pushed after the frame's: anything added to a parent
         // layer after a child was pushed is drawn beneath that child.
         let mut status = format!(
-            "{:.0}k fuel · {:.2} ms",
+            "{:.0}k fuel · {:.2} ms · {}/s",
             guest.fuel_used as f64 / 1000.0,
-            guest.tick_time.as_secs_f64() * 1000.0
+            guest.tick_time.as_secs_f64() * 1000.0,
+            guest.rate(iced::time::Instant::now()),
         );
         // Only when there is something to admit: the guest was not draining
         // its inbox and the host threw the oldest deliveries away.
@@ -239,18 +255,27 @@ where
             small_text(
                 renderer,
                 status,
-                Point::new(bounds.x + 12.0, bounds.y + bounds.height - 8.0),
-                iced::alignment::Vertical::Bottom,
-                Color::from_rgba(0.40, 0.44, 0.52, 0.9),
+                Point::new(bounds.x + 12.0, bounds.y + bounds.height - 24.0),
+                muted(self.dark),
                 bounds,
             );
         });
     }
 }
 
+/// The status line's colour, legible on the guest's own ground in either
+/// mode — the guest follows the store, so its ground is light when the
+/// store's is.
+fn muted(dark: bool) -> Color {
+    match dark {
+        true => Color::from_rgba(0.62, 0.68, 0.76, 0.9),
+        false => Color::from_rgba(0.40, 0.44, 0.52, 0.9),
+    }
+}
+
 /// The host ended this app. Its last frame is gone with its instance state;
 /// what remains is the reason, in the app's place.
-fn draw_fault<Renderer>(renderer: &mut Renderer, bounds: Rectangle, fault: &str)
+fn draw_fault<Renderer>(renderer: &mut Renderer, bounds: Rectangle, fault: &str, dark: bool)
 where
     Renderer: core_text::Renderer<Font = iced::Font>,
 {
@@ -266,17 +291,15 @@ where
     small_text(
         renderer,
         "The host ended this app.".to_string(),
-        Point::new(left, middle - 12.0),
-        iced::alignment::Vertical::Center,
+        Point::new(left, middle - 20.0),
         Color::from_rgb(0.79, 0.20, 0.27),
         bounds,
     );
     small_text(
         renderer,
         fault.to_string(),
-        Point::new(left, middle + 12.0),
-        iced::alignment::Vertical::Center,
-        Color::from_rgba(0.40, 0.44, 0.52, 0.9),
+        Point::new(left, middle + 4.0),
+        muted(dark),
         bounds,
     );
     let button = restart_button(bounds);
@@ -295,8 +318,7 @@ where
     small_text(
         renderer,
         "Restart".to_string(),
-        Point::new(button.x + 14.0, button.center_y()),
-        iced::alignment::Vertical::Center,
+        Point::new(button.x + 14.0, button.center_y() - 8.0),
         Color::from_rgb(0.79, 0.20, 0.27),
         bounds,
     );
@@ -340,11 +362,15 @@ pub(crate) fn release_focus(serial: u64) {
     focus(serial, false);
 }
 
+/// One 16px line of host text, anchored at its top-left corner. Every text
+/// the host draws is anchored there on purpose: the software renderer's
+/// damage rectangle starts at the anchor and runs right and down, so a line
+/// anchored at its bottom is repainted below itself and leaves its old
+/// glyphs standing when it changes.
 fn small_text<Renderer>(
     renderer: &mut Renderer,
     content: String,
-    position: Point,
-    align_y: iced::alignment::Vertical,
+    top_left: Point,
     color: Color,
     clip: Rectangle,
 ) where
@@ -358,11 +384,11 @@ fn small_text<Renderer>(
             line_height: LineHeight::Absolute(Pixels(16.0)),
             font: iced::Font::DEFAULT,
             align_x: core_text::Alignment::Left,
-            align_y,
+            align_y: iced::alignment::Vertical::Top,
             shaping: Shaping::Advanced,
             wrapping: Wrapping::None,
         },
-        position,
+        top_left,
         color,
         clip,
     );
@@ -397,27 +423,50 @@ where
         );
     }
     for text in &layer.texts {
+        // The recorded anchor is honoured by moving the top-left corner, not
+        // by asking the renderer to align: its damage rectangle starts at the
+        // point it is given and runs right and down, so text aligned any
+        // other way is repainted beside itself and leaves old glyphs behind.
+        let bounds = Size::new(f32::INFINITY, text.line_height);
+        let shaped = core_text::Text {
+            content: text.content.as_str(),
+            bounds,
+            size: Pixels(text.size),
+            line_height: LineHeight::Absolute(Pixels(text.line_height)),
+            font: font(&text.font),
+            align_x: core_text::Alignment::Left,
+            align_y: iced::alignment::Vertical::Top,
+            shaping: Shaping::Advanced,
+            wrapping: Wrapping::None,
+        };
+        let x = match text.anchor.x {
+            wire::AlignX::Left => text.x,
+            wire::AlignX::Center | wire::AlignX::Right => {
+                let width = Renderer::Paragraph::with_text(shaped).min_width();
+                match text.anchor.x {
+                    wire::AlignX::Center => text.x - width / 2.0,
+                    _ => text.x - width,
+                }
+            }
+        };
+        let y = match text.anchor.y {
+            wire::AlignY::Top => text.y,
+            wire::AlignY::Center => text.y - text.line_height / 2.0,
+            wire::AlignY::Bottom => text.y - text.line_height,
+        };
         renderer.fill_text(
             core_text::Text {
                 content: text.content.clone(),
-                bounds: Size::new(f32::INFINITY, text.line_height),
+                bounds,
                 size: Pixels(text.size),
                 line_height: LineHeight::Absolute(Pixels(text.line_height)),
                 font: font(&text.font),
-                align_x: match text.anchor.x {
-                    wire::AlignX::Left => core_text::Alignment::Left,
-                    wire::AlignX::Center => core_text::Alignment::Center,
-                    wire::AlignX::Right => core_text::Alignment::Right,
-                },
-                align_y: match text.anchor.y {
-                    wire::AlignY::Top => iced::alignment::Vertical::Top,
-                    wire::AlignY::Center => iced::alignment::Vertical::Center,
-                    wire::AlignY::Bottom => iced::alignment::Vertical::Bottom,
-                },
+                align_x: core_text::Alignment::Left,
+                align_y: iced::alignment::Vertical::Top,
                 shaping: Shaping::Advanced,
                 wrapping: Wrapping::None,
             },
-            Point::new(text.x, text.y),
+            Point::new(x, y),
             color(text.color),
             rect(text.clip),
         );

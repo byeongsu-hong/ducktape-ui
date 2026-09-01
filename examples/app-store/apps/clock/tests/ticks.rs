@@ -2,7 +2,7 @@
 //! tick the host streams against both.
 
 use app_store_clock::{boot_native, tick_native};
-use app_store_sdk::frame::{Event, Request};
+use app_store_sdk::frame::{Event, Frame, Request};
 use app_store_sdk::testing::{answer, has_text, item, redraw, texts};
 
 /// 2025-01-01T13:45:00Z.
@@ -12,6 +12,19 @@ const NOW_MS: u64 = 1_735_739_100_000;
 /// the wall clock to zero uptime, not to the moment it asked, or every label
 /// is those five minutes fast for the life of the instance.
 const UPTIME_AT_ANSWER_MS: u64 = 300_000;
+
+/// The background of the first quad drawn, which is the app's own backdrop.
+/// An `unchanged` frame carries no layers at all — the host keeps the ones it
+/// already has — so `None` means the backdrop is still whatever was drawn
+/// last.
+fn backdrop(frame: &Frame) -> Option<[f32; 4]> {
+    frame
+        .layers
+        .iter()
+        .flat_map(|layer| layer.quads.iter())
+        .map(|quad| quad.background)
+        .next()
+}
 
 fn request_for<'a>(requests: &'a [Request], kind: &str) -> &'a Request {
     requests
@@ -30,9 +43,10 @@ fn ticks_arrive_as_a_stream_and_move_the_display() {
         },
         redraw(),
     ]);
-    // One subscription and one question: the wall clock is asked for once,
+    // Two subscriptions and one question: the wall clock is asked for once,
     // never per tick.
-    assert_eq!(frame.requests.len(), 2, "{:?}", frame.requests);
+    assert_eq!(frame.requests.len(), 3, "{:?}", frame.requests);
+    request_for(&frame.requests, "host.theme");
     let subscribe = request_for(&frame.requests, "clock.ticks");
     assert_eq!(subscribe.payload, 1000_i64.to_le_bytes());
     let now = request_for(&frame.requests, "clock.now");
@@ -65,5 +79,27 @@ fn ticks_arrive_as_a_stream_and_move_the_display() {
         frame.requests.is_empty(),
         "one subscription serves forever: {:?}",
         frame.requests
+    );
+}
+
+/// The colour mode is a host stream like any other: one item repaints the app
+/// in the host's palette.
+#[test]
+fn the_hosts_dark_mode_repaints_the_app() {
+    boot_native();
+    let light = tick_native(vec![
+        Event::Resized {
+            width: 480.0,
+            height: 320.0,
+        },
+        redraw(),
+    ]);
+    let theme = request_for(&light.requests, "host.theme");
+    let lit = backdrop(&light).expect("the boot frame draws the app");
+    let dark = tick_native(vec![item(theme.id, b"dark"), redraw()]);
+    assert_ne!(
+        backdrop(&dark).unwrap_or(lit),
+        lit,
+        "the app's backdrop follows the host's colour mode"
     );
 }
