@@ -224,7 +224,7 @@ view
                             details -> show_details _
                             launch -> launch _
                             quit -> quit _
-                            uninstall -> uninstall _
+                            uninstall -> ask_uninstall _
                       if !shelved.found
                         row gap=12.0 align=center
                           text shelved.id size=13.0 @text-muted
@@ -403,8 +403,8 @@ view
                               @text-13px
                               @font-bold
                               @hover:bg-border
-                        if in_library(library, entry.id)
-                          button "Uninstall" #uninstall -> uninstall entry.id
+                        if in_library(library, entry.id) && removing != entry.id
+                          button "Uninstall" #uninstall -> ask_uninstall entry.id
                             with
                               @px-16px
                               @py-8px
@@ -414,6 +414,52 @@ view
                               @text-13px
                               @font-bold
                               @hover:bg-danger/10
+                      if removing == entry.id
+                        box #confirm
+                          with
+                            w=fill
+                            bg=danger/10
+                            border=danger
+                            border-w=1.0
+                            r=10.0
+                            px=16.0
+                            py=12.0
+                          row
+                            with
+                              w=fill
+                              gap=12.0
+                              align=center
+                            col gap=2.0
+                              text "Remove it from the library?"
+                                with
+                                  size=13.5
+                                  @text-fg
+                                  @font-bold
+                              text "Its window closes; what it wrote to storage stays for a reinstall."
+                                with
+                                  size=12.5
+                                  @text-muted
+                            space w=fill
+                            button "Keep" #keep -> keep
+                              with
+                                @px-14px
+                                @py-7px
+                                @bg-raised
+                                @text-fg
+                                @rounded-8px
+                                @text-13px
+                                @font-bold
+                                @hover:bg-border
+                            button "Remove" #remove -> uninstall entry.id
+                              with
+                                @px-14px
+                                @py-7px
+                                @bg-danger
+                                @text-primary_fg
+                                @rounded-8px
+                                @text-13px
+                                @font-bold
+                                @hover:bg-danger/90
                       if is_running(running, entry.id)
                         LiveCard gauge=gauge_of(running, entry.id, generation)
                       col gap=10.0
