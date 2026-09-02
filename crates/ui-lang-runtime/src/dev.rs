@@ -98,6 +98,16 @@ impl Span {
 
 impl Drop for Span {
     fn drop(&mut self) {
+        // A span drops on the way out of a panic too, and there it is the only
+        // thing that knows the `.ice` construct that was running: the Rust
+        // location a panic prints is inside generated code or inside the
+        // extern's own body, neither of which the author wrote. Reported
+        // whatever the budget is — attribution during unwind costs nothing
+        // when nothing is unwinding.
+        if std::thread::panicking() {
+            eprintln!("{}", panic_report(self.what, self.name, self.at));
+            return;
+        }
         let (Some(started), Some(budget)) = (self.started, budget()) else {
             return;
         };
@@ -105,6 +115,12 @@ impl Drop for Span {
             eprintln!("{line}");
         }
     }
+}
+
+/// The line an unwinding span prints: where the panic was, in `.ice` terms.
+/// Spans unwind innermost first, so an extern's line precedes the handler's.
+pub fn panic_report(what: &str, name: &str, at: &str) -> String {
+    format!("ice: panic while running {what} `{name}`, at {at}")
 }
 
 /// The line a span over `budget` prints; `None` inside it.
@@ -638,6 +654,14 @@ mod span_tests {
             Some(Duration::from_millis(4))
         );
         assert_eq!(budget_from(Some("0"), false), Some(Duration::ZERO));
+    }
+
+    #[test]
+    fn an_unwinding_span_names_the_ice_construct_that_was_running() {
+        assert_eq!(
+            panic_report("extern", "load_prices", "src/ui/app.ice:16"),
+            "ice: panic while running extern `load_prices`, at src/ui/app.ice:16"
+        );
     }
 
     #[test]

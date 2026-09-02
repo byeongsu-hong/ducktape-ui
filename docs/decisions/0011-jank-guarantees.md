@@ -227,7 +227,10 @@ author spelling `sync`:
   it. `pure` is the exception because it is the one kind the language holds a
   promise about and the one a view calls per node per frame: a guard there
   would grow the generated view, which is what decides Ice's build time, for
-  work `--frames` already prices as view time. It prevents nothing and attributes
+  work `--frames` already prices as view time. The same spans report on the
+  way out of a panic — the `.ice` construct that was running, innermost first
+  — since the Rust location a panic prints is inside generated code or inside
+  the extern's body, neither of which the author wrote. It prevents nothing and attributes
   everything the extern boundary hides; wall-clock budgets stay out of CI
   (`docs/testing.md`, "Performance contracts").
 
