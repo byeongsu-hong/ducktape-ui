@@ -145,6 +145,27 @@ impl MemoFold<'_> {
             })?;
             self.reads.extend(reads);
         }
+        // A `<->` binding is a read the widget makes outside any expression:
+        // the input shows the bound place every pass, so its revisions key
+        // the use like an argument's would.
+        if let ResolvedViewKind::Input = &view.kind {
+            let input = program
+                .resolved_input(id)
+                .map_err(|error| error.to_string())?;
+            let reads = match &input.binding {
+                ResolvedInputBinding::State(binding) => {
+                    revision_reads_of_value(program, binding.checked_ref(), env)
+                }
+                ResolvedInputBinding::Secret { .. } => None,
+            }
+            .ok_or_else(|| {
+                format!(
+                    "the input at {} binds a secret or a value no revision keys",
+                    where_is(program, view)
+                )
+            })?;
+            self.reads.extend(reads);
+        }
         if let ResolvedViewKind::Component { call } = &view.kind {
             let call = program
                 .component_call_by_id(*call)
@@ -220,7 +241,6 @@ fn layout_pure(program: &LoweredProgram, view: &ResolvedView) -> bool {
         | ResolvedViewKind::If { .. }
         | ResolvedViewKind::Match { .. }
         | ResolvedViewKind::For { .. }
-        | ResolvedViewKind::Lazy { .. }
         | ResolvedViewKind::Markdown
         | ResolvedViewKind::Table { .. }
         | ResolvedViewKind::Component { .. }
@@ -230,6 +250,10 @@ fn layout_pure(program: &LoweredProgram, view: &ResolvedView) -> bool {
         | ResolvedViewKind::Canvas
         | ResolvedViewKind::Theme { .. }
         | ResolvedViewKind::Pin { .. } => true,
+        // A `lazy` hands its cached element to every new instance in
+        // `diff`, and a held key skips the diff below the memo; the lazy is
+        // its own boundary anyway.
+        ResolvedViewKind::Lazy { .. } => false,
         // An editor mutates highlighter state across frames; an extern,
         // a themer, a shader, and media are opaque to the compiler; a
         // sensor, a resize handle, a responsive size, a float, and a pane

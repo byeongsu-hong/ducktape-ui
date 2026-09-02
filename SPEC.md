@@ -4068,19 +4068,27 @@ explicitly through the route when a local handler needs it.
 
 A component use is also a layout boundary the compiler inserts on its own.
 When every expression the use evaluates — its arguments, its slot content, the
-body, and the bodies of the components that body uses — reads only app state,
+body, and the bodies of the components that body uses — and every place an
+`input` below it binds with `<->` read only app state,
 derived values, the instance's own state, palette entries, and locals the
 subtree declares, and every widget below it lays out from its own element and
 limits alone, the generated code keys the subtree's layout node on the
-revisions of those reads and skips the layout walk while they hold. The element
-is still built on every pass, so a `&` parameter, a controlled `input`, or an
-`editor` binding lives under the boundary unchanged; only the walk is saved. A
-use whose argument is a row local, a `match` payload, or a secret; a body that
+revisions of those reads and, while they hold, skips both iced's diff of the
+nodes below and their layout walk. The element is still built on every pass,
+so a `&` parameter, a controlled `input`, or an `editor` binding lives under
+the boundary unchanged; only the walks are saved. A `for` or keyed-column row
+is a function of the list its view iterates, and a `match` payload of the
+value its match takes it from, so a use whose argument is one of those keys on
+that expression's revisions — an outer row's list on up, when the list is
+itself a row. That is the compiler's key, not `lazy`'s: a `lazy` over a row
+still hashes the row, so a prepend rebuilds one row rather than the list. A
+use whose argument is a `lazy` alias, a table row, or a secret; a body that
 reads the implicit animation clock; a nested component with state of its own;
-an `extern` component, an `editor`, a `virtual-row` column, an auto-scrolling
-`scroll`, a `sensor`, a resize handle, a responsive size, a `float`, a
-`pane_grid`, or media anywhere below — each of these lays out on every pass as
-before. `lazy` remains the explicit boundary for a subtree inside a component.
+a `lazy`, an `extern` component, an `editor`, a `virtual-row` column, an
+auto-scrolling `scroll`, a `sensor`, a resize handle, a responsive size, a
+`float`, a `pane_grid`, or media anywhere below — each of these diffs and lays
+out on every pass as before. `lazy` remains the explicit boundary for a subtree
+inside a component, and a memoized use never wraps one.
 
 A prop may declare a default after its type. Calls may omit that named prop;
 required props must precede defaulted props:

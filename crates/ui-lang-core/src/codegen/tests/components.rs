@@ -2178,24 +2178,48 @@ view
 }
 
 #[test]
-fn memo_skips_a_use_whose_argument_is_a_row_local_from_outside() {
+fn memo_keys_a_for_row_on_the_list_it_iterates() {
     let generated = memo_program(
         r#"state
   items:[str] = []
+  count = 0
 component Card(title:str)
   text title
 view
   col
     for item in items
-      lazy item as row
-        Card title=row
+      Card title=item
+    text count
 "#,
     );
-    assert!(!generated.contains("rev_memo("), "{generated}");
+    assert_eq!(generated.matches("rev_memo(").count(), 1, "{generated}");
+    assert!(
+        generated.contains("(self.__ice_rev[0], __ice_palette.name)"),
+        "{generated}"
+    );
 }
 
 #[test]
-fn memo_skips_a_use_whose_argument_is_a_match_payload() {
+fn memo_keys_a_keyed_row_on_the_list_it_iterates() {
+    let generated = memo_program(
+        r#"state
+  items:[i64] = []
+component Card(n:i64)
+  text n
+view
+  keyed item in items by=item
+    Card n=item
+"#,
+    );
+    assert_eq!(generated.matches("rev_memo(").count(), 1, "{generated}");
+    assert!(
+        generated.contains("(self.__ice_rev[0], __ice_palette.name)"),
+        "{generated}"
+    );
+}
+
+#[test]
+fn memo_keys_a_match_payload_on_what_it_matches() {
     let generated = memo_program(
         r#"state
   book:str? = none
@@ -2208,6 +2232,50 @@ view
         Card title=depth
       none
         text "no book"
+"#,
+    );
+    assert_eq!(generated.matches("rev_memo(").count(), 1, "{generated}");
+    assert!(
+        generated.contains("(self.__ice_rev[0], __ice_palette.name)"),
+        "{generated}"
+    );
+}
+
+#[test]
+fn memo_keys_a_row_of_a_nested_for_on_both_lists() {
+    let generated = memo_program(
+        r#"state
+  groups:[[str]] = []
+  count = 0
+component Card(title:str)
+  text title
+view
+  col
+    for group in groups
+      for item in group
+        Card title=item
+    text count
+"#,
+    );
+    assert_eq!(generated.matches("rev_memo(").count(), 1, "{generated}");
+    assert!(
+        generated.contains("(self.__ice_rev[0], __ice_palette.name)"),
+        "{generated}"
+    );
+}
+
+#[test]
+fn memo_skips_a_use_whose_argument_is_a_lazy_alias() {
+    let generated = memo_program(
+        r#"state
+  items:[str] = []
+component Card(title:str)
+  text title
+view
+  col
+    for item in items
+      lazy item as row
+        Card title=row
 "#,
     );
     assert!(!generated.contains("rev_memo("), "{generated}");
@@ -2226,6 +2294,42 @@ component Switch(checked:bool) -> bool
   extern native_switch(checked) -> emit(_)
 view
   Switch checked=checked -> changed _
+"#,
+    );
+    assert!(!generated.contains("rev_memo("), "{generated}");
+}
+
+#[test]
+fn memo_keys_a_use_on_what_its_two_way_binding_reads() {
+    let generated = memo_program(
+        r#"component Field()
+  state
+    draft = ""
+  col
+    input "Draft" <-> draft
+view
+  col
+    Field
+"#,
+    );
+    assert_eq!(generated.matches("rev_memo(").count(), 1, "{generated}");
+    assert!(
+        generated.contains("map_or(0, |__state| __state.__ice_rev[0])"),
+        "{generated}"
+    );
+}
+
+#[test]
+fn memo_skips_a_body_that_holds_a_lazy() {
+    let generated = memo_program(
+        r#"state
+  title = "hello"
+component Card(title:str)
+  lazy title as cached
+    text cached
+view
+  col
+    Card title=title
 "#,
     );
     assert!(!generated.contains("rev_memo("), "{generated}");

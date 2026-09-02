@@ -88,6 +88,14 @@ where
 
     fn diff(&self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<State>();
+        // Same site, same revisions: the element below is the one this tree
+        // was last walked against, node for node, so the walk has nothing
+        // to find. The compiler keeps anything whose `diff` must run every
+        // pass — a `lazy`, which hands its cached element to each new
+        // instance there — out of a memoized body.
+        if state.site == self.site && state.key == self.key {
+            return;
+        }
         if state.site != self.site {
             state.site = self.site;
             state.layout.clear();
@@ -329,6 +337,80 @@ mod tests {
     ) {
         widget.diff(tree);
         widget.layout(tree, renderer, limits);
+    }
+
+    /// A child that counts how often it is diffed, which is what the walk
+    /// below a memo costs on a frame whose layout is already cached.
+    struct Diffed {
+        diffs: Rc<Cell<usize>>,
+    }
+
+    impl Widget<(), iced::Theme, TestRenderer> for Diffed {
+        fn diff(&self, _tree: &mut Tree) {
+            self.diffs.set(self.diffs.get() + 1);
+        }
+
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fixed(10.0), Length::Fixed(10.0))
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &TestRenderer,
+            _limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(Size::new(10.0, 10.0))
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut TestRenderer,
+            _theme: &iced::Theme,
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: mouse::Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
+
+    #[test]
+    fn a_held_key_skips_the_diff_below_and_a_moved_one_walks_it() {
+        let renderer = renderer();
+        let diffs = Rc::new(Cell::new(0));
+        let limits = layout::Limits::new(Size::ZERO, Size::new(100.0, 100.0));
+        let memo = |site: u64, key: u64| -> RevMemo<'static, (), iced::Theme, TestRenderer> {
+            rev_memo(
+                site,
+                key,
+                Element::new(Diffed {
+                    diffs: diffs.clone(),
+                }),
+            )
+        };
+
+        let mut first = memo(1, 10);
+        let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, TestRenderer>);
+        pass(&mut first, &mut tree, &renderer, &limits);
+        assert_eq!(
+            diffs.get(),
+            0,
+            "a tree built from the element needs no diff"
+        );
+
+        let mut same = memo(1, 10);
+        pass(&mut same, &mut tree, &renderer, &limits);
+        assert_eq!(diffs.get(), 0, "a held key must not diff the child");
+
+        let mut changed = memo(1, 11);
+        pass(&mut changed, &mut tree, &renderer, &limits);
+        assert_eq!(diffs.get(), 1, "a moved revision must diff the child");
+
+        let mut elsewhere = memo(2, 11);
+        pass(&mut elsewhere, &mut tree, &renderer, &limits);
+        assert_eq!(diffs.get(), 2, "another site's element must diff the child");
     }
 
     #[test]
