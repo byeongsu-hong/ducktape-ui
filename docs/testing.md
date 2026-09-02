@@ -338,6 +338,48 @@ floor, trading its dense terminal, cef-browser the browser's 16ms tick.
 hand-written iced trees; use that one when the question is about a runtime
 widget rather than about generated code.
 
+The part of such a file that rots is not written at all. Nine of them carry an
+`every_target` that calls `ui_lang_runtime::testing::probe::measure_interactions`
+(`tray` does not — a daemon with no window and no `#id` has nothing to census),
+which asks the *running* app what it has — every identified target — and drives each one with the
+interaction it affords: a keystroke into anything writable, a wheel over
+anything whose content is taller than its box, a click on anything
+accessibility says can be activated, a hover over the rest. Every target gets a
+driver of its own, settled and warmed the way `measure_frames` warms one, so a
+row reports that interaction from the app's boot state rather than from
+whatever the previous row's click left behind, and rows print worst-frame
+first:
+
+```text
+6 targets, 20 rounds each, release build
+target                         kind        action  n  action p50/p95   frame p50/p95
+Candles/app/chart-frame/chart  image       hover  20    1138/1150         36/49
+Candles/app/header             semantic    hover  20    1138/1142         31/41
+Candles/app/header/pick-duck   button      hover  20    1123/1136         26/43
+Candles/app/header/pick-tape   button      click  20    3318/3373         25/36
+```
+
+The `action` column is a driver number, not an app number: each simulated event
+builds a `UserInterface` and pays the `cfg(test)` accessibility walk, which is
+why every hover costs about a millisecond here. Read the column *across rows*,
+never as what a click costs a user; `frame` is the redraw the interaction
+caused, and that one is comparable to the phases above.
+
+`pick-duck` is a button and still gets a hover: it is the tab already selected,
+so it carries no `on_press`, and what the probe reads is what the target
+supports rather than what it is. `n` is the rounds a row actually measured —
+an interaction that takes its own target off the screen (a button that opens a
+bar over itself) gets a rebuilt app for the next round, and a row that cannot
+come back keeps the rounds it got.
+
+Nothing there is a constant a `.ice` edit can invalidate, which is what the
+hand-written phases in the same file cannot say: those name targets and
+messages, and a moved node makes them wrong in a way no compile catches. Keep
+writing them for what a census cannot pose — a 1MiB paste, 100k rows, a
+particular state — and let the census cover the rest. It *drives the app*: a
+click runs the handler behind the button with its real extern, so an id whose
+handler must not run goes in the skip list.
+
 Release only — the module is `#![cfg(not(debug_assertions))]`, because `-O0`
 numbers measure rustc, not the app. That also hides it from every debug build
 in CI, so the performance-contracts job type-checks the probes under the

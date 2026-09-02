@@ -206,6 +206,12 @@ Read the numbers this way:
   parameters and ~45 pieces of state, so almost nothing in it holds still long
   enough to cache.
 
+`cargo test --release -p <app> -- --ignored --nocapture every_target` prints one
+row per identified target of that app — the interaction its kind affords, and
+what the frame after it cost — derived from the running app, so no target in it
+can be stale. Use it to find *which* part of a screen is expensive before
+reaching for a hand-written phase.
+
 To prove a whole flow smooth, trace it instead —
 `cargo ice inspect src/ui/app.ice --test checkout_flow --trace --warmup 2 --repeat 20`
 — an opt-in release-mode path over the same program and driver, repeating the

@@ -50,7 +50,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use ui_lang_runtime::testing::{Config, Driver, Key, Location};
+use ui_lang_runtime::testing::{Config, Driver, Key, Location, probe};
 
 use crate::codex::{self, Chunk, Entry};
 use crate::store::{self, Chat};
@@ -575,4 +575,29 @@ mod alloc {
         drop(value);
         (stats.allocations, stats.bytes_allocated)
     }
+}
+
+// ---------------------------------------------------------- derived probe
+
+/// Every identified target of this app, measured from the same boot state.
+///
+/// Nothing here names a target: the list comes from the running app, so it
+/// cannot go stale the way this file's own constants can. Read it as a census —
+/// what one interaction with each part of the screen costs — and the phases
+/// above as the scenarios only this app can pose.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints per-phase costs, asserts nothing"]
+fn every_target() {
+    let report = probe::measure_interactions(
+        || {
+            Driver::new(
+                AiChat::__program(),
+                Config::new("every_target").viewport(VIEWPORT.0, VIEWPORT.1),
+            )
+        },
+        20,
+        &[],
+        here(),
+    );
+    eprintln!("\nai-chat targets\n{report}");
 }
