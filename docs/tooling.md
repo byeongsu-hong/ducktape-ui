@@ -227,6 +227,20 @@ Nms, over the 16ms frame budget, at path.ice:line`` — or ``ice: extern `name`
 the call that spent the turn the handler line reports, which is what the extern
 boundary otherwise hides; `W021` names the same risk ahead of time.
 
+A span also reports on the way out of a panic, whatever the budget is and
+whether or not anything is being timed:
+
+```text
+thread 'main' panicked at src/backend.rs:7:15: index out of bounds
+ice: panic while running extern `stamp_count`, at src/ui/app.ice:13
+ice: panic while running handler `increment`, at src/ui/app.ice:19
+```
+
+The Rust location a panic prints is inside the extern's own body or inside
+generated code; these lines say which `.ice` construct was running, innermost
+first. A panic inside an *async* extern body is not among them: the span covers
+the call that built the future, and the body runs later, off the turn.
+
 Timed extern kinds are every kind but `pure`: a `sync` call in full, and the
 inline construction of a `future`, `task`, `stream` or `sip` — the part of an
 async extern that still runs on the loop thread. A `pure` extern is left bare

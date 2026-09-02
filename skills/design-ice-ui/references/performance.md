@@ -224,6 +224,17 @@ Read the pair as one fact: the handler line says a turn overran, the extern line
 says which call spent it. A `pure` extern is not timed — its cost is view time,
 which `--frames` prices.
 
+The same spans print on a panic, with no budget set and in any build:
+
+```text
+ice: panic while running extern `stamp_count`, at app.ice:13
+ice: panic while running handler `increment`, at app.ice:19
+```
+
+That is the `.ice` reading of a Rust panic whose own location is in the extern's
+body or in generated code. An async extern's body is not covered — the span ends
+when the future is built.
+
 A debug build measures against 16ms on its own; a release build measures when
 `ICE_PERF` names the budget in milliseconds (`ICE_PERF=16 ./target/release/app`,
 `ICE_PERF=0` for every turn). Release numbers are the app's own, so quote those.
