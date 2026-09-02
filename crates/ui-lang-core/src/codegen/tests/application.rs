@@ -150,6 +150,13 @@ view
     assert!(generated.contains("Ducktape::Dark => __IcePalette"));
     assert!(!generated.contains("_ => __IcePalette"));
     assert!(generated.contains("crate::backend::native_theme(self.dark)"));
+    // The theme is memoized so a build stops regenerating iced's extended
+    // palette once per view function. This app carries two palettes and swaps
+    // between them at runtime, so the key has to be the whole palette — name
+    // and colors — not the name alone.
+    assert!(generated.contains(
+        "if __cached_palette.name == __ice_palette.name && __cached_palette.colors == __ice_palette.colors { return __cached_theme.clone(); }"
+    ));
     assert!(generated.contains("background: __ice_palette.colors[0]"));
     assert!(generated.contains("text: __ice_palette.colors[1]"));
     // `box bg=surface` is modelled, so its background travels as a palette
