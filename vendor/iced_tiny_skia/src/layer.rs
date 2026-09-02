@@ -326,8 +326,11 @@ fn visible_bounds(text: &Text) -> Option<Rectangle> {
     // A width with no bound is a text that cannot wrap, so the lines it was
     // given are the lines it has: a `canvas` label, whose height is recorded
     // as unbounded, is worth its own line rather than everything under it.
+    // The shaping breaks a line on either character, and counting a pair as
+    // two costs a line of damage where reading one as none would cost a line
+    // of glyphs.
     let height = if bounds.width.is_infinite() && bounds.height.is_infinite() {
-        line_height.0 * content.split('\n').count() as f32
+        line_height.0 * content.split(['\r', '\n']).count() as f32
     } else {
         bounds.height
     };
