@@ -170,7 +170,7 @@ sheet = ["modal", "direction", "theme"]
 drawer = ["sheet", "modal", "theme"]
 
 [dependencies]
-alacritty_terminal = { version = "=0.25.1", default-features = false, optional = true }
+alacritty_terminal = { version = "=0.26.0", default-features = false, optional = true }
 iced = { version = "=0.14.0", default-features = false, features = ["advanced"], optional = true }
 # NOT an exact pin: this crate is a library, and `=` on tokio would force
 # every consumer's whole graph onto one patch release (the ducktape app resolves
