@@ -5279,7 +5279,9 @@ tree order, and the first column holding the key is the one scrolled to; a
 key no column carries does nothing. The landing is exact on the frame that
 draws: the first jump aims at the row's estimated top, and the column re-aims
 the scroll as it measures the row and its neighbours, until the row stops
-moving.
+moving. A row top is measured from the top of the content and a scroll offset
+from the scroll's own anchor, so the landing reads the anchor rather than
+assuming one: it lands on the same row under `anchor-y=end` as under `start`.
 
 In a daemon whose graph keeps `lifetime mounted` component state, every
 rendered id is qualified by the window that drew it, so one window's render

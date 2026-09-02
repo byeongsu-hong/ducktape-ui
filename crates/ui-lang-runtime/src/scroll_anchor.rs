@@ -382,3 +382,100 @@ impl<T: 'static> Operation<T> for SnapStartAnchoredAxes {
         }
     }
 }
+
+/// Puts a scrollable `y` logical pixels down its content, whichever end its
+/// offsets count from.
+///
+/// A position inside content — a row's top, say — is measured from the top of
+/// that content, the way every row top is. An iced scroll offset is measured
+/// from the scroll's own anchor, and under `Anchor::End` the two run in
+/// opposite directions, so writing a content position straight into `scroll_to`
+/// lands an `anchor-y=end` list nowhere near the row that was asked for.
+///
+/// Like [`snap_to_content_end`], this asks rather than assumes, and in the same
+/// two passes: `probe` puts the axis at offset zero, and the pass after it
+/// reads the translation that produced. Zero means the axis counts from the
+/// start and already wants `y`; the whole overflow means it counts from the end
+/// and wants the rest of that overflow instead.
+///
+/// `target` names the scrollable; `None` takes the first one the walk meets,
+/// which is what a reveal running inside its own scrollable's layout wants.
+pub(crate) struct ScrollContentTo {
+    target: Option<Id>,
+    y: f32,
+    /// False on the probe pass, true on the pass that writes.
+    placing: bool,
+    /// One scrollable per pass, so a nested one does not chase the same offset.
+    done: bool,
+}
+
+impl ScrollContentTo {
+    pub(crate) fn probe(target: Option<Id>, y: f32) -> Self {
+        Self {
+            target,
+            y,
+            placing: false,
+            done: false,
+        }
+    }
+
+    /// The second pass, for a caller driving both itself rather than chaining.
+    pub(crate) fn place(&self) -> Self {
+        Self {
+            target: self.target.clone(),
+            y: self.y,
+            placing: true,
+            done: false,
+        }
+    }
+}
+
+impl<T: 'static> Operation<T> for ScrollContentTo {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&Id>,
+        bounds: Rectangle,
+        content_bounds: Rectangle,
+        translation: Vector,
+        state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if self.done
+            || self
+                .target
+                .as_ref()
+                .is_some_and(|target| id != Some(target))
+        {
+            return;
+        }
+        self.done = true;
+        if !self.placing {
+            state.snap_to(RelativeOffset {
+                x: None,
+                y: Some(0.0),
+            });
+            return;
+        }
+        let overflow = (content_bounds.height - bounds.height).max(0.0);
+        let y = if translation.y == 0.0 {
+            self.y
+        } else {
+            overflow - self.y
+        };
+        state.scroll_to(AbsoluteOffset {
+            x: None,
+            y: Some(y),
+        });
+    }
+
+    fn finish(&self) -> Outcome<T> {
+        if self.placing || !self.done {
+            Outcome::None
+        } else {
+            Outcome::Chain(Box::new(self.place()))
+        }
+    }
+}
