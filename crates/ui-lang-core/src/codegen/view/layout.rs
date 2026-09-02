@@ -52,7 +52,7 @@ fn render_resolved_regular_layout(
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
     let mut body = String::from("{ let mut __children: ::std::vec::Vec<__IceElement<'_, ");
     write!(body, "{message}>> = ::std::vec::Vec::new();").unwrap();
-    let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope)?;
     render_children(
         &mut body,
         children,
@@ -412,7 +412,7 @@ fn render_resolved_flexbox(
     let style = &layout.utility_style;
     let accessibility_key =
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
-    let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope)?;
     let mut body = String::from("{ let mut __items = ::std::vec::Vec::new();");
     render_flex_children(
         &mut body,
@@ -567,7 +567,7 @@ fn render_resolved_scroll(
     let program = document;
     let accessibility_key =
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
-    let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope)?;
     let has_virtual_rows = contains_virtual_rows(child, document, slot)?;
     let child = render_node(child, document, message, env, &child_scope, slot)?;
     let mut code = String::from("::iced::widget::scrollable(__scroll_content)");
@@ -584,13 +584,8 @@ fn render_resolved_scroll(
         ),
     };
     write!(code, ".direction({direction})").unwrap();
-    if let Some(identity) = identity {
-        write!(
-            code,
-            ".id(::iced::widget::Id::from({}))",
-            resolved_view_identity_code(identity, scope, env, document)?
-        )
-        .unwrap();
+    if identity.is_some() {
+        write!(code, ".id(::iced::widget::Id::from({NODE_SCOPE_CLONE}))").unwrap();
     }
     // `keep` is iced's `Start` anchor — the resting place is the same — with
     // the correction supplied by the wrapper applied below.

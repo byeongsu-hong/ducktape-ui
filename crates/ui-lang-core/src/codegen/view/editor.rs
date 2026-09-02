@@ -72,13 +72,8 @@ pub(in crate::codegen) fn render_text_editor(
         .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
         .transpose()?;
     let mut code = "::iced::widget::text_editor(__ice_editor_content)".to_owned();
-    if let Some(identity) = identity {
-        write!(
-            code,
-            ".id(::iced::widget::Id::from({}))",
-            resolved_view_identity_code(identity, scope, env, document)?
-        )
-        .unwrap();
+    if identity.is_some() {
+        write!(code, ".id(::iced::widget::Id::from({NODE_SCOPE_CLONE}))").unwrap();
     }
     if let Some(placeholder) = &placeholder {
         write!(code, ".placeholder({placeholder})").unwrap();

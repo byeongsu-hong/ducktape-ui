@@ -10,7 +10,7 @@ pub(in crate::codegen) fn render_structure(
 ) -> Result<Option<String>, Error> {
     let view = document.resolved_view(node)?;
     let identity = view.identity.as_ref();
-    let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope)?;
     let rendered = match &view.kind {
         ResolvedViewKind::Theme { content } => {
             let content = render_node(*content, document, message, env, &child_scope, slot)?;
@@ -336,7 +336,8 @@ pub(in crate::codegen) fn render_structure(
                 format!("move |__dependency| {{ {lazy_body} }}")
             };
             let lazy_code = format!(
-                "::ui_lang_runtime::memo_lazy(({entries}({child_scope}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()"
+                "::ui_lang_runtime::memo_lazy(({entries}({}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()",
+                borrowed_scope(&child_scope),
             );
             Ok(if hoisted.is_empty() {
                 lazy_code
@@ -346,9 +347,7 @@ pub(in crate::codegen) fn render_structure(
         }
         _ => return Ok(None),
     }?;
-    Ok(Some(identify_rendered(
-        rendered, identity, message, env, document, scope,
-    )?))
+    Ok(Some(identify_rendered(rendered, identity, message)?))
 }
 
 /// The owned clone of the enclosing component's scope that

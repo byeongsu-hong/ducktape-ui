@@ -332,17 +332,15 @@ pub(in crate::codegen) fn render_content(
                     let scope = borrowed_scope(reconciliation_scope(scope, env));
                     format!("format!(\"{{}}/{}@{}\", {scope})", name, call_site)
                 }
-                ComponentScope::Explicit => resolved_view_identity_code(
-                    view.identity.as_ref().ok_or_else(|| {
-                        document.invariant_at_origin(
+                ComponentScope::Explicit => {
+                    if view.identity.is_none() {
+                        return Err(document.invariant_at_origin(
                             view.origin,
                             "explicit component scope has no resolved view identity",
-                        )
-                    })?,
-                    scope,
-                    env,
-                    document,
-                )?,
+                        ));
+                    }
+                    NODE_SCOPE_CLONE.to_owned()
+                }
             };
             set_reconciliation_scope(&mut component_env, format!("{scope_binding}.clone()"));
             if call.storage != ComponentStorage::Stateless {
@@ -669,6 +667,6 @@ pub(in crate::codegen) fn render_content(
         }
         _ => return Ok(None),
     }?;
-    let rendered = identify_rendered(rendered, identity, message, env, document, scope)?;
+    let rendered = identify_rendered(rendered, identity, message)?;
     Ok(Some(rendered))
 }

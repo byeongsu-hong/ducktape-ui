@@ -52,7 +52,6 @@ pub(in crate::codegen) fn render_text(
             document,
             message,
             env,
-            scope,
         ),
     }
 }
@@ -214,7 +213,6 @@ fn render_resolved_rich_text(
     document: &LoweredProgram,
     message: &str,
     env: &dyn BindingEnvironment,
-    scope: &str,
 ) -> Result<String, Error> {
     let program = document;
     // Every child appends to the same span vector, so literal spans and
@@ -278,12 +276,11 @@ fn render_resolved_rich_text(
     let rendered = format!(
         "{{ let mut __rich_spans: ::std::vec::Vec<::iced::widget::text::Span<'_, ::std::string::String>> = ::std::vec::Vec::new();{spans} {code}.into() }}"
     );
-    let Some(identity) = identity else {
+    if identity.is_none() {
         return Ok(rendered);
-    };
-    let id = resolved_view_identity_code(identity, scope, env, document)?;
+    }
     Ok(format!(
-        "{{ let __a11y_key = {id}; let __identified_text: __IceElement<'_, {message}> = {rendered}; ::ui_lang_runtime::accessible(__identified_text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key).into() }}"
+        "{{ let __a11y_key = {NODE_SCOPE_CLONE}; let __identified_text: __IceElement<'_, {message}> = {rendered}; ::ui_lang_runtime::accessible(__identified_text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id(__a11y_key).into() }}"
     ))
 }
 

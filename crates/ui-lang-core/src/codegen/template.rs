@@ -222,13 +222,35 @@ impl Builder<'_> {
     /// The scope a node's descendants render under. Mirrors the inline
     /// emitter: only an identified node extends the path.
     fn child_scope(&self, view: &ResolvedView, scope: &str) -> Result<String, Error> {
-        rendered_child_scope(view.identity.as_ref(), scope, self.env, self.program)
+        view.identity.as_ref().map_or_else(
+            || Ok(scope.to_owned()),
+            |identity| scope_chain_code(identity, scope, self.env, self.program),
+        )
+    }
+
+    /// Code that renders under `scope`: a chain the template's identified
+    /// ancestors extended is bound once here, where code starts, so the
+    /// nodes below read a local instead of formatting the chain each.
+    fn under_scope(
+        scope: &str,
+        render: impl FnOnce(&str) -> Result<String, Error>,
+    ) -> Result<String, Error> {
+        if scope.starts_with("format!(") {
+            Ok(format!(
+                "{{ let {NODE_SCOPE} = {scope}; {} }}",
+                render(NODE_SCOPE_CLONE)?
+            ))
+        } else {
+            render(scope)
+        }
     }
 
     /// Emits the compiled rendering of a whole subtree into a slot, and
     /// returns the hole that reads it.
     fn subtree(&mut self, id: ViewId, scope: &str) -> Result<Node, Error> {
-        let rendered = render_node(id, self.program, self.message, self.env, scope, None)?;
+        let rendered = Self::under_scope(scope, |scope| {
+            render_node(id, self.program, self.message, self.env, scope, None)
+        })?;
         Ok(Node::Subtree {
             slot: self.push_subtree(rendered),
         })
@@ -243,20 +265,23 @@ impl Builder<'_> {
     /// own. Reusing it is the point: the branch renders exactly as before, and
     /// only the layout around it becomes data.
     fn group(&mut self, id: ViewId, scope: &str) -> Result<Node, Error> {
-        let mut body = format!(
-            "{{ let mut __children: ::std::vec::Vec<__IceElement<'_, {}>> = ::std::vec::Vec::new();",
-            self.message
-        );
-        render_children(
-            &mut body,
-            &[id],
-            self.program,
-            self.message,
-            self.env,
-            scope,
-            None,
-        )?;
-        body.push_str(" __children }");
+        let body = Self::under_scope(scope, |scope| {
+            let mut body = format!(
+                "{{ let mut __children: ::std::vec::Vec<__IceElement<'_, {}>> = ::std::vec::Vec::new();",
+                self.message
+            );
+            render_children(
+                &mut body,
+                &[id],
+                self.program,
+                self.message,
+                self.env,
+                scope,
+                None,
+            )?;
+            body.push_str(" __children }");
+            Ok(body)
+        })?;
         Ok(Node::Group {
             slot: self.push_group(body),
         })

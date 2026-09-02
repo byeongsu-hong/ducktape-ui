@@ -23,7 +23,7 @@ pub(in crate::codegen) fn render_pane_grid(
         name: pane_grid.name.clone(),
         key: None,
     };
-    let pane_grid_scope = resolved_view_identity_code(&identity, scope, env, document)?;
+    let pane_grid_scope = scope_chain_code(&identity, scope, env, document)?;
     // The pane-body `move` closure must own its scope chain: interpolating a
     // shared scope local (a component's scope binding) would move it out of
     // the enclosing render and break sibling uses. Both locals below are
@@ -196,16 +196,18 @@ pub(in crate::codegen) fn render_pane_grid(
         }
     }
     append_pane_grid_style(&mut code, pane_grid, env, document)?;
-    identify_rendered(
+    let identified = identify_rendered(
         format!(
-            "{{ let __ice_pane_outer_scope = ({pane_outer_scope}).to_owned(); let __ice_pane_grid_scope = ({pane_grid_scope}).to_owned(); let _ = &__ice_pane_outer_scope; {code}.into() }}"
+            "{{ let __ice_pane_outer_scope = ({pane_outer_scope}).to_owned(); let __ice_pane_grid_scope = {NODE_SCOPE_CLONE}; let _ = &__ice_pane_outer_scope; {code}.into() }}"
         ),
         Some(&identity),
         message,
-        env,
-        document,
-        scope,
-    )
+    )?;
+    // The grid names itself, so it binds the scope its identity wrapper and
+    // panes read, the way `render_node` does for an identified node.
+    Ok(format!(
+        "{{ let {NODE_SCOPE} = {pane_grid_scope}; {identified} }}"
+    ))
 }
 
 pub(in crate::codegen) fn append_pane_grid_style(

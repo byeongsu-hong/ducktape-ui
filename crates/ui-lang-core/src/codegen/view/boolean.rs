@@ -29,7 +29,7 @@ pub(in crate::codegen) fn render_boolean_control(
                 message,
             )?;
             let accessibility_key =
-                resolved_boolean_identity_code(control, identity, "checkbox", scope, program, env)?;
+                resolved_boolean_identity_code(control, identity, "checkbox", scope, env)?;
             let (accessibility_label, accessibility_description) =
                 resolved_boolean_accessibility(control, "__label.clone()", program, env)?;
             let mut widget = "::iced::widget::checkbox(__checked).label(__label.clone())".into();
@@ -62,7 +62,7 @@ pub(in crate::codegen) fn render_boolean_control(
                 message,
             )?;
             let accessibility_key =
-                resolved_boolean_identity_code(control, identity, "toggler", scope, program, env)?;
+                resolved_boolean_identity_code(control, identity, "toggler", scope, env)?;
             let (accessibility_label, accessibility_description) =
                 resolved_boolean_accessibility(control, "__label.clone()", program, env)?;
             let mut widget = "::iced::widget::toggler(__checked).label(__label.clone())".into();
@@ -95,7 +95,7 @@ pub(in crate::codegen) fn render_boolean_control(
             let activation =
                 resolved_interaction_route_code(&control.route, &[&value], env, program, message)?;
             let accessibility_key =
-                resolved_boolean_identity_code(control, identity, "radio", scope, program, env)?;
+                resolved_boolean_identity_code(control, identity, "radio", scope, env)?;
             let (accessibility_label, accessibility_description) =
                 resolved_boolean_accessibility(control, "__label.clone()", program, env)?;
             let mut widget = format!(
@@ -116,7 +116,7 @@ pub(in crate::codegen) fn render_boolean_control(
         control.kind,
         ResolvedBooleanKind::Toggler | ResolvedBooleanKind::Radio
     ) {
-        identify_resolved_boolean(rendered, control, identity, message, scope, program, env)
+        identify_resolved_boolean(rendered, identity, message)
     } else {
         Ok(rendered)
     }
@@ -127,43 +127,28 @@ fn resolved_boolean_identity_code(
     identity: Option<&ResolvedViewIdentity>,
     kind: &str,
     scope: &str,
-    program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let Some(identity) = identity else {
-        let scope = borrowed_scope(reconciliation_scope(scope, env));
-        return Ok(format!(
-            "format!(\"{{}}/@{kind}:{}\", {scope})",
-            control.source_line
-        ));
-    };
-    let scope = borrowed_scope(scope);
-    if let Some(key) = identity.key {
-        Ok(format!(
-            "format!(\"{{}}/{}({{}})\", {scope}, {})",
-            identity.name,
-            resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?
-        ))
-    } else {
-        Ok(format!("format!(\"{{}}/{}\", {scope})", identity.name))
+    if identity.is_some() {
+        return Ok(NODE_SCOPE_CLONE.to_owned());
     }
+    let scope = borrowed_scope(reconciliation_scope(scope, env));
+    Ok(format!(
+        "format!(\"{{}}/@{kind}:{}\", {scope})",
+        control.source_line
+    ))
 }
 
 fn identify_resolved_boolean(
     rendered: String,
-    control: &ResolvedBooleanControl,
     identity: Option<&ResolvedViewIdentity>,
     message: &str,
-    scope: &str,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     if identity.is_none() {
         return Ok(rendered);
     }
-    let id = resolved_boolean_identity_code(control, identity, "boolean", scope, program, env)?;
     Ok(format!(
-        "{{ let __identified: __IceElement<'_, {message}> = {rendered}; let __ice_id = {id}; #[cfg(test)] ::ui_lang_runtime::testing::register_render_source(&__ice_id); ::iced::widget::container(__identified).id(::iced::widget::Id::from(__ice_id)).into() }}"
+        "{{ let __identified: __IceElement<'_, {message}> = {rendered}; #[cfg(test)] ::ui_lang_runtime::testing::register_render_source(&{NODE_SCOPE}); ::iced::widget::container(__identified).id(::iced::widget::Id::from({NODE_SCOPE_CLONE})).into() }}"
     ))
 }
 

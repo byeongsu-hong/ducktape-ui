@@ -70,6 +70,6 @@ pub(in crate::codegen) fn render_controls(
         ),
         _ => return Ok(None),
     }?;
-    let rendered = identify_rendered(rendered, identity, message, env, document, scope)?;
+    let rendered = identify_rendered(rendered, identity, message)?;
     Ok(Some(rendered))
 }
