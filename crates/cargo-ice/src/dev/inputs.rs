@@ -11,6 +11,7 @@ use std::thread;
 use std::time::Duration;
 
 pub(super) const BUILD_FINGERPRINT_ENV: &str = "ICE_DEV_BUILD_FINGERPRINT";
+pub(super) const DEVTOOLS_FEATURE: &str = "ui-lang-runtime/devtools";
 
 #[cfg(test)]
 std::thread_local! {
@@ -985,6 +986,26 @@ pub(super) fn cargo_build(
     )
 }
 
+/// The `cargo build` a `cargo ice dev` iteration runs: the user's own build
+/// args (everything before `--`), then the devtools feature, then the JSON
+/// message format the build watcher parses.
+pub(super) fn dev_build_command(
+    cargo: &OsStr,
+    root: &Path,
+    cargo_args: &[String],
+    fingerprint: &str,
+) -> Command {
+    let mut command = Command::new(cargo);
+    command
+        .arg("build")
+        .args(cargo_args.iter().take_while(|arg| arg.as_str() != "--"))
+        .args(["--features", DEVTOOLS_FEATURE])
+        .arg("--message-format=json-diagnostic-rendered-ansi")
+        .env(BUILD_FINGERPRINT_ENV, fingerprint)
+        .current_dir(root);
+    command
+}
+
 pub(super) fn cargo_build_with_program(
     cargo: &OsStr,
     root: &Path,
@@ -994,23 +1015,12 @@ pub(super) fn cargo_build_with_program(
     cargo_inputs: &CargoInputGraph,
     should_stop: impl Fn() -> bool,
 ) -> Result<Option<CargoBuildOutput>, String> {
-    let build_args = cargo_args
-        .iter()
-        .take_while(|arg| arg.as_str() != "--")
-        .collect::<Vec<_>>();
-    let mut child = Command::new(cargo)
-        .arg("build")
-        .args(build_args)
-        .arg("--message-format=json-diagnostic-rendered-ansi")
-        .env(
-            BUILD_FINGERPRINT_ENV,
-            format!(
-                "{}-{}",
-                source_stamp_fingerprint(ice_stamp),
-                source_stamp_fingerprint(build_stamp)
-            ),
-        )
-        .current_dir(root)
+    let fingerprint = format!(
+        "{}-{}",
+        source_stamp_fingerprint(ice_stamp),
+        source_stamp_fingerprint(build_stamp)
+    );
+    let mut child = dev_build_command(cargo, root, cargo_args, &fingerprint)
         .stdout(Stdio::piped())
         .spawn()
         .map_err(|error| error.to_string())?;

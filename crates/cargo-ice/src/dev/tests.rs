@@ -1,6 +1,20 @@
 use super::*;
 use std::path::{Path, PathBuf};
 
+/// Every build `cargo ice dev` runs asks for `ui-lang-runtime/devtools`, so a
+/// fixture package it builds needs that dependency. Writes the stub crate as
+/// `<directory>/ui-lang-runtime`; the fixture names it by relative path.
+fn write_stub_runtime(directory: &Path) {
+    let stub = directory.join("ui-lang-runtime");
+    std::fs::create_dir_all(stub.join("src")).unwrap();
+    std::fs::write(
+        stub.join("Cargo.toml"),
+        "[package]\nname = \"ui-lang-runtime\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[features]\ndevtools = []\n",
+    )
+    .unwrap();
+    std::fs::write(stub.join("src/lib.rs"), "").unwrap();
+}
+
 fn valid_app() -> &'static str {
     concat!(
         "app Demo\n",
@@ -491,6 +505,39 @@ fn parses_rustc_dep_info_escapes_and_continuations() {
             PathBuf::from("assets/space name.bin"),
             PathBuf::from("src/next.rs"),
         ]
+    );
+}
+
+#[test]
+fn a_dev_build_adds_the_devtools_feature_after_the_user_args() {
+    let args = ["-p", "demo-app", "--features", "extra", "--", "--demo"].map(str::to_owned);
+
+    let command = dev_build_command(
+        std::ffi::OsStr::new("cargo"),
+        Path::new("/workspace"),
+        &args,
+        "abc-def",
+    );
+
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        [
+            "build",
+            "-p",
+            "demo-app",
+            "--features",
+            "extra",
+            "--features",
+            "ui-lang-runtime/devtools",
+            "--message-format=json-diagnostic-rendered-ansi",
+        ]
+    );
+    assert_eq!(
+        command
+            .get_envs()
+            .find(|(key, _)| *key == std::ffi::OsStr::new(BUILD_FINGERPRINT_ENV))
+            .and_then(|(_, value)| value),
+        Some(std::ffi::OsStr::new("abc-def"))
     );
 }
 
@@ -1336,9 +1383,10 @@ fn build_observation_drops_unrelated_workspace_packages() {
         "[workspace]\nmembers = [\"app\", \"used\", \"unrelated\"]\nresolver = \"3\"\n",
     )
     .unwrap();
+    write_stub_runtime(&root);
     std::fs::write(
             app.join("Cargo.toml"),
-            "[package]\nname = \"selected-app\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nused = { path = \"../used\" }\n",
+            "[package]\nname = \"selected-app\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nused = { path = \"../used\" }\nui-lang-runtime = { path = \"../ui-lang-runtime\" }\n",
         )
         .unwrap();
     std::fs::write(
@@ -1387,9 +1435,14 @@ fn build_observation_drops_unrelated_workspace_packages() {
     assert!(stamp_at(&narrowed.1, &unrelated_asset).is_none());
     assert!(stamp_at(&narrowed.1, &used_source).is_some());
     assert!(stamp_at(&narrowed.1, &implicit).is_some());
-    assert_eq!(graph.package_roots.len(), 2);
+    assert_eq!(graph.package_roots.len(), 3);
     assert!(graph.package_roots.contains(&app.canonicalize().unwrap()));
     assert!(graph.package_roots.contains(&used.canonicalize().unwrap()));
+    assert!(
+        graph
+            .package_roots
+            .contains(&root.join("ui-lang-runtime").canonicalize().unwrap())
+    );
     assert!(
         !graph
             .package_roots
@@ -1588,9 +1641,10 @@ fn cargo_build_discovers_rustc_and_build_script_inputs() {
     let embedded = root.join("schema.ice");
     std::fs::create_dir_all(root.join("src")).unwrap();
     std::fs::create_dir_all(external.parent().unwrap()).unwrap();
+    write_stub_runtime(&root);
     std::fs::write(
             root.join("Cargo.toml"),
-            "[package]\nname = \"discovered-inputs\"\nversion = \"0.0.0\"\nedition = \"2024\"\nbuild = \"build.rs\"\n",
+            "[package]\nname = \"discovered-inputs\"\nversion = \"0.0.0\"\nedition = \"2024\"\nbuild = \"build.rs\"\n\n[dependencies]\nui-lang-runtime = { path = \"ui-lang-runtime\" }\n",
         )
         .unwrap();
     std::fs::write(
