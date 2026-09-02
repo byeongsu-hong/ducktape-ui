@@ -393,7 +393,10 @@ can stop at, and the repo has three:
   diff below it, and 1200us → 970us when an identified node's scope was
   bound once per pass instead of every descendant re-formatting the ancestor
   chain (`__ice_node_scope`; the generated view went from 1619 nested scope
-  `format!`s to none outside test targets, and `view` 53us → 47us). Judge a
+  `format!`s to none outside test targets, and `view` 53us → 47us), and
+  ~1–2% more once an accessible node compared its semantic snapshot against
+  the tree's copy instead of cloning it every diff (most of trading's nodes
+  sit under a held memo key that already skips the diff). Judge a
   boundary on that split only: the probes' end-to-end
   `idle redraw` carries ~1.3ms of the driver broadcasting the redraw to every
   subscription and settling, and `frame_panels` deltas taken end-to-end once
