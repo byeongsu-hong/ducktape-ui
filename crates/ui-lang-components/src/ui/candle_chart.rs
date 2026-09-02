@@ -542,6 +542,54 @@ impl Pyramid {
 /// Overlay line colors rotate through these theme roles per moving average.
 const MA_STROKE_WIDTH: f32 = 1.5;
 
+/// How many segments of a polyline go into one path.
+///
+/// Measured on the trading terminal's crosshair drag, which is the case that
+/// pays for this. A study line there carries about 128 points, so the pixels
+/// the rasterizer walks per frame fall 1,194,035 unchunked to 212,109 at 32,
+/// 85,273 at 16 and 48,961 at 8, while retired instructions over the same
+/// drag stop falling at 16: 15.62G unchunked, 13.01G at 32, 12.08G at 16,
+/// 11.94G at 8. Sixteen is where the line stops paying and the extra paths
+/// start.
+pub const POLYLINE_CHUNK: usize = 16;
+
+/// Splits a polyline into paths of at most `chunk` segments each.
+///
+/// A stroked path is rasterized whole, and the damage rectangle only decides
+/// which of its pixels survive: a crosshair band six pixels tall crossing a
+/// 920x368 moving average walks all 338,560 of them. Chunked, the band walks
+/// one chunk's worth.
+///
+/// Consecutive chunks share their boundary point — chunk `n` ends where chunk
+/// `n + 1` begins — so the segment across a boundary is drawn by exactly one
+/// of them and the two meet at a point rather than leaving a gap.
+pub fn polyline_chunks(points: &[Point], chunk: usize) -> Vec<Path> {
+    chunk_ranges(points.len(), chunk)
+        .map(|run| {
+            let run = &points[run];
+            Path::new(|builder| {
+                builder.move_to(run[0]);
+                for point in &run[1..] {
+                    builder.line_to(*point);
+                }
+            })
+        })
+        .collect()
+}
+
+/// The point ranges [`polyline_chunks`] cuts a polyline of `points` into.
+///
+/// Every range but the last ends one past a multiple of `chunk`, so the point
+/// it ends on is the point the next one starts on.
+fn chunk_ranges(points: usize, chunk: usize) -> impl Iterator<Item = Range<usize>> {
+    let chunk = chunk.max(1);
+    let segments = points.saturating_sub(1);
+
+    (0..segments)
+        .step_by(chunk)
+        .map(move |start| start..start.saturating_add(chunk).saturating_add(1).min(points))
+}
+
 /// Plot area: the canvas minus the price axis strip on the right and the
 /// time axis strip at the bottom.
 #[derive(Debug, Clone, Copy)]
@@ -2130,19 +2178,25 @@ impl<Message> CandleProgram<'_, Message> {
             if points.len() < 2 {
                 continue;
             }
-            let path = Path::new(|builder| {
-                builder.move_to(points[0]);
-                for point in &points[1..] {
-                    builder.line_to(*point);
-                }
-            });
+            // Chunks share their boundary point, so a pixel there is blended
+            // by both of them. At full alpha that is the same pixel twice and
+            // invisible; under it the pixel would darken, so a translucent
+            // line stays one path.
+            let chunk = if color.a < 1.0 {
+                usize::MAX
+            } else {
+                POLYLINE_CHUNK
+            };
+            let paths = polyline_chunks(&points, chunk);
             frame.with_clip(ctx.chrome.plot, |frame| {
-                frame.stroke(
-                    &path,
-                    canvas::Stroke::default()
-                        .with_color(color)
-                        .with_width(MA_STROKE_WIDTH),
-                );
+                for path in &paths {
+                    frame.stroke(
+                        path,
+                        canvas::Stroke::default()
+                            .with_color(color)
+                            .with_width(MA_STROKE_WIDTH),
+                    );
+                }
             });
         }
     }
@@ -3670,5 +3724,40 @@ mod tests {
 
         let dark = super::super::theme::DARK.palette;
         assert_ne!(base, fingerprint(&data, 0, viewport, size, &dark));
+    }
+}
+
+#[cfg(test)]
+mod polyline_chunk_tests {
+    use super::chunk_ranges;
+
+    #[test]
+    fn chunks_share_a_boundary_point_and_lose_no_segment() {
+        for points in [0, 1, 2, 3, 64, 65, 129, 921] {
+            for chunk in [1, 16, 32, 128, usize::MAX] {
+                let ranges: Vec<_> = chunk_ranges(points, chunk).collect();
+                if points < 2 {
+                    assert!(ranges.is_empty(), "{points} points is not a line");
+                    continue;
+                }
+
+                assert_eq!(ranges[0].start, 0);
+                assert_eq!(ranges[ranges.len() - 1].end, points);
+                let segments: usize = ranges.iter().map(|run| run.len() - 1).sum();
+                assert_eq!(
+                    segments,
+                    points - 1,
+                    "{points} points in chunks of {chunk} lost or repeated a \
+                     segment"
+                );
+                for pair in ranges.windows(2) {
+                    assert_eq!(
+                        pair[0].end - 1,
+                        pair[1].start,
+                        "chunks must meet at a shared point, not a gap"
+                    );
+                }
+            }
+        }
     }
 }
