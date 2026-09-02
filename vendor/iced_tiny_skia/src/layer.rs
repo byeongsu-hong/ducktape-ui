@@ -311,7 +311,9 @@ impl Layer {
 /// showing a price that has already moved.
 fn visible_bounds(text: &Text) -> Option<Rectangle> {
     let Text::Cached {
+        content,
         bounds,
+        line_height,
         clip_bounds,
         align_x,
         align_y,
@@ -321,9 +323,21 @@ fn visible_bounds(text: &Text) -> Option<Rectangle> {
         return text.visible_bounds();
     };
 
-    // An unbounded width or height reaches past the clip rectangle on both
-    // sides, which leaves the whole of it: the size a text of unknown extent
-    // is worth repainting.
+    // A width with no bound is a text that cannot wrap, so the lines it was
+    // given are the lines it has: a `canvas` label, whose height is recorded
+    // as unbounded, is worth its own line rather than everything under it.
+    // The shaping breaks a line on either character, and counting a pair as
+    // two costs a line of damage where reading one as none would cost a line
+    // of glyphs.
+    let height = if bounds.width.is_infinite() && bounds.height.is_infinite() {
+        line_height.0 * content.split(['\r', '\n']).count() as f32
+    } else {
+        bounds.height
+    };
+
+    // An unbounded extent reaches past the clip rectangle on both sides,
+    // which leaves the whole of it: the size a text of unknown reach is
+    // worth repainting.
     Rectangle {
         x: match align_x {
             Alignment::Default | Alignment::Left | Alignment::Justified => {
@@ -334,9 +348,10 @@ fn visible_bounds(text: &Text) -> Option<Rectangle> {
         },
         y: match align_y {
             Vertical::Top => bounds.y,
-            Vertical::Center => bounds.y - bounds.height / 2.0,
-            Vertical::Bottom => bounds.y - bounds.height,
+            Vertical::Center => bounds.y - height / 2.0,
+            Vertical::Bottom => bounds.y - height,
         },
+        height,
         ..*bounds
     }
     .intersection(clip_bounds)

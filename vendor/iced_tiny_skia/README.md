@@ -29,8 +29,9 @@ every `tiny-skia` window.
 - **A glyph decides for itself whether the clip mask applies to it**, instead
   of the whole text deciding, so a text clipped to a whole window no longer
   blits every glyph through the mask on a partial repaint.
-- **A text damages the pixels its alignment puts it on.** The release
-  measured every text rightwards and downwards from its position, so a
+- **A text damages the pixels its alignment puts it on**, and a canvas label
+  damages its own line. The release measured every text rightwards and
+  downwards from its position and gave a canvas text no bounded height, so a
   right-aligned or centred label left its old glyphs on screen.
 - **The clip mask is filled when it is read, not when it is named.** Filling
   it clears the whole window whatever the rectangle is, and the draw loop
