@@ -4,7 +4,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use iced::widget::canvas::{self, Path};
 use iced::{Color, Point};
 use ui_lang_components::ui::candle_chart::{
-    Candle, ChartCoords, ChartOverlay, POLYLINE_CHUNK, polyline_chunks,
+    Candle, ChartCoords, ChartOverlay, polyline_chunk, polyline_chunks,
 };
 use ui_lang_components::ui::theme;
 
@@ -245,12 +245,15 @@ fn stroke_series(
         // chunks share is blended by both: at full alpha that is the same
         // pixel twice, under it the pixel darkens. A translucent line stays
         // one path.
-        let chunk = if line.color.a < 1.0 {
-            usize::MAX
-        } else {
-            POLYLINE_CHUNK
-        };
+        let translucent = line.color.a < 1.0;
         let flush = |run: &mut Vec<Point>, stroke: &mut dyn FnMut(&Path, Color, f32)| {
+            // Derived per run, not per series: a run broken by a gap in the
+            // data covers less of the plot than the whole series does.
+            let chunk = if translucent {
+                usize::MAX
+            } else {
+                polyline_chunk(run)
+            };
             for path in polyline_chunks(run, chunk) {
                 stroke(&path, line.color, line.width);
             }
