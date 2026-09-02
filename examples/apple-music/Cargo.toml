@@ -15,6 +15,7 @@ ui-lang-build.workspace = true
 [dev-dependencies]
 ui-lang-runtime = { workspace = true, features = ["test-runtime"] }
 iced_runtime = "0.14.0"
+stats_alloc = "0.1.10"
 
 [lints]
 workspace = true

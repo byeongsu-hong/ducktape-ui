@@ -1478,3 +1478,589 @@ fn resize_cost() {
         moving.saturating_sub(stripped)
     );
 }
+
+// ------------------------------------------------- what the audit asked for
+//
+// Everything above prices the terminal. The audit's finding was that the
+// terminal is the only page anyone ever profiled: the portfolio page draws the
+// same 200 fills and the same orders with none of the three boundaries the
+// terminal's copies have, and the word `portfolio` did not appear in this file.
+// The probes below price that page, and the six other scenarios the audit
+// named, against the same fixtures and the same interleaved method.
+//
+// WHICH PHASES WALK THE ACCESSIBILITY TREE. This module is `cfg(test)`, and
+// under `cfg(test)` the runtime builds an accessibility snapshot on every
+// interface it drives. So every phase measured through the driver — `idle
+// redraw`, every `dispatch`, `move_to_point`, `advance` and `resize` — includes
+// that walk, and every phase measured as `state.__view(window)` does not. The
+// two are not comparable for that reason as well as for the layout one.
+//
+//     cargo test --release -p trading-example -- --ignored --nocapture --test-threads=1 frame_probe
+
+use std::time::Duration;
+
+/// A warmed driver over one seeded screen. `Trading::__program()` returns an
+/// opaque `impl Program`, so this cannot be a function that returns a `Driver`.
+macro_rules! warmed_driver {
+    ($name:expr, $state:expr) => {{
+        let mut driver = Driver::new(
+            Trading::__program(),
+            Config::new($name).viewport(VIEWPORT.0, VIEWPORT.1),
+        );
+        *driver.state_mut() = $state;
+        for _ in 0..WARMUP {
+            driver.redraw(here());
+        }
+        driver
+    }};
+}
+
+/// Pairs per interleaved comparison. The differences below are a few hundred
+/// microseconds against a frame whose spread on this machine is over a
+/// millisecond, so the pair has to be repeated until the difference resolves.
+const AUDIT_PAIRS: usize = 150;
+
+/// Runs two actions strictly one for one, alternating which goes first — the
+/// allocator's warmth otherwise lands on whichever runs second and is counted
+/// as the difference. Returns (heavy, light, heavy - light).
+fn interleave(
+    rounds: usize,
+    mut heavy: impl FnMut(),
+    mut light: impl FnMut(),
+) -> (Vec<u128>, Vec<u128>, Vec<i128>) {
+    let mut heavy_samples = Vec::with_capacity(rounds);
+    let mut light_samples = Vec::with_capacity(rounds);
+    let mut paired = Vec::with_capacity(rounds);
+    for round in 0..rounds {
+        let (heavy_us, light_us) = if round % 2 == 0 {
+            let started = Instant::now();
+            heavy();
+            let one = started.elapsed().as_micros();
+            let started = Instant::now();
+            light();
+            (one, started.elapsed().as_micros())
+        } else {
+            let started = Instant::now();
+            light();
+            let one = started.elapsed().as_micros();
+            let started = Instant::now();
+            heavy();
+            (started.elapsed().as_micros(), one)
+        };
+        heavy_samples.push(heavy_us);
+        light_samples.push(light_us);
+        paired.push(heavy_us as i128 - light_us as i128);
+    }
+    (heavy_samples, light_samples, paired)
+}
+
+fn report_delta(label: &str, mut paired: Vec<i128>) {
+    let count = paired.len();
+    let (low, mid, high) = signed_quantiles(&mut paired);
+    eprintln!("{label:<36} {mid:>7}us [{low:>6}..{high:<6}] paired, n={count}");
+}
+
+/// The same dense account, on the page the audit found unmeasured. The
+/// portfolio page draws the fills table (`for fill in fills`, no lazy, no
+/// keyed, no virtual-row), the orders table (the same), the allocation rows
+/// (`for asset in portfolio_assets(positions)`, an extern call in the
+/// for-header) and two extern charts, none of them behind a `lazy`.
+///
+/// `portfolio_history` has to be seeded here: `app` leaves it
+/// `portfolio_empty()`, and both charts are behind
+/// `if portfolio_history_ready(...)`, so an unseeded portfolio page prices two
+/// placeholder boxes rather than two charts.
+fn portfolio_app(screen: Screen) -> Trading {
+    let mut state = app(screen);
+    state.page = crate::Page::Portfolio;
+    state.portfolio_history = crate::portfolio::demo_portfolio_history();
+    state
+}
+
+/// The same screen with a session that may sign, which is what FLATTEN ALL and
+/// CANCEL ALL are gated on — without it `flatten_all_refusal` is non-empty and
+/// the handler returns before it builds a `Sweep`.
+fn tradable_app(screen: Screen) -> Trading {
+    let mut state = app(screen);
+    state.session = crate::custody::demo_session_ready(state.clock);
+    state
+}
+
+/// The portfolio page, phase by phase, and what each of its three unbounded
+/// lists costs.
+///
+/// The three baselines come first and mean what they mean in `frame_cost`:
+/// `__view build only` is the generated code alone and is NOT the frame's
+/// share of it, `idle redraw` is the only number here that counts a whole
+/// frame, and the hydration floor is one small state field written by a
+/// message and read by one node — `portfolio_hovered(none)` writes
+/// `portfolio_hover`, which `#performance-readout` prints and the chart reads.
+/// Then the 5s account poll landing, dispatched as the message the poll's
+/// venue read would produce rather than by calling the venue.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints portfolio-page costs, asserts nothing"]
+fn portfolio_frame_cost() {
+    let state = portfolio_app(DENSE);
+    let mut driver = warmed_driver!("portfolio_frame_cost", portfolio_app(DENSE));
+    let window = driver.window();
+    let landed = account(positions(DENSE.positions, &state.coin));
+
+    for _ in 0..WARMUP {
+        std::hint::black_box(state.__view(window));
+    }
+
+    let mut build = Vec::with_capacity(ROUNDS);
+    let mut idle = Vec::with_capacity(ROUNDS);
+    let mut floor = Vec::with_capacity(ROUNDS);
+    let mut poll = Vec::with_capacity(ROUNDS);
+    for _ in 0..ROUNDS {
+        let started = Instant::now();
+        std::hint::black_box(state.__view(window));
+        build.push(started.elapsed().as_micros());
+
+        let started = Instant::now();
+        driver.redraw(here());
+        idle.push(started.elapsed().as_micros());
+
+        let started = Instant::now();
+        driver.dispatch(__TradingMessage::PortfolioHovered(None), here());
+        driver.redraw(here());
+        floor.push(started.elapsed().as_micros());
+
+        let started = Instant::now();
+        driver.dispatch(
+            __TradingMessage::AccountLoaded(Some(landed.clone())),
+            here(),
+        );
+        driver.redraw(here());
+        poll.push(started.elapsed().as_micros());
+    }
+
+    eprintln!(
+        "\nportfolio page, {}x{}, {} fills / {} orders / {} positions / {} markets",
+        VIEWPORT.0, VIEWPORT.1, DENSE.fills, DENSE.orders, DENSE.positions, DENSE.symbols
+    );
+    report("__view build only", build);
+    report("idle redraw (1 build)", idle);
+    report("one-field write + redraw", floor);
+    report("account poll + redraw", poll);
+
+    // What each of the page's three unbounded lists costs, paired against the
+    // full page inside one moment of a shared machine.
+    type Ablation = fn(&mut Trading);
+    let ablations: &[(&str, Ablation)] = &[
+        ("without fill rows", |state| state.fills.clear()),
+        ("without order rows", |state| state.orders.clear()),
+        // Takes the allocation rows AND the four `portfolio_assets(positions)`
+        // calls in the for-headers with it.
+        ("without positions", |state| state.positions.clear()),
+    ];
+    eprintln!("\nwhat each list costs on this page, paired against the full page");
+    for (label, edit) in ablations {
+        let mut full = warmed_driver!("portfolio_frame_cost", portfolio_app(DENSE));
+        let mut bare = warmed_driver!("portfolio_frame_cost", {
+            let mut state = portfolio_app(DENSE);
+            edit(&mut state);
+            state
+        });
+        let (_, _, paired) =
+            interleave(AUDIT_PAIRS, || full.redraw(here()), || bare.redraw(here()));
+        report_delta(label.trim_start_matches("without "), paired);
+    }
+}
+
+/// How many fill rows the two pages rebuild per frame.
+///
+/// A count rather than a clock: machine-independent, and it says *why*. The
+/// terminal's fills sit behind `keyed ... virtual-row` + `lazy`, so an
+/// unchanged redraw rebuilds none of them — that is what
+/// `fills_stay_memoized_performance_contract` holds. The portfolio page's copy
+/// of the same list has no boundary at all. Counted through `fill_label`, which
+/// `FillRow` calls once per row and nothing else calls.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: counts fill rows rebuilt per page, asserts nothing"]
+fn portfolio_fill_rows_rebuilt_per_frame() {
+    use std::cell::Cell;
+
+    use crate::hyperliquid::FILL_LABELS;
+
+    let mut terminal = warmed_driver!("portfolio_rebuilds", app(DENSE));
+    let mut portfolio = warmed_driver!("portfolio_rebuilds", portfolio_app(DENSE));
+
+    FILL_LABELS.with(Cell::take);
+    terminal.redraw(here());
+    let terminal_unchanged = FILL_LABELS.with(Cell::take);
+    portfolio.redraw(here());
+    let portfolio_unchanged = FILL_LABELS.with(Cell::take);
+
+    // The hydration floor again, counted: one small field written, nothing
+    // about any fill moved.
+    portfolio.dispatch(__TradingMessage::PortfolioHovered(None), here());
+    FILL_LABELS.with(Cell::take);
+    portfolio.redraw(here());
+    let after_one_field = FILL_LABELS.with(Cell::take);
+
+    eprintln!(
+        "\nfill rows rebuilt per redraw, {} fills on both pages",
+        DENSE.fills
+    );
+    eprintln!(
+        "{:<36} {terminal_unchanged:>7} (keyed + virtual-row + lazy)",
+        "terminal, unchanged redraw"
+    );
+    eprintln!(
+        "{:<36} {portfolio_unchanged:>7} (no boundary)",
+        "portfolio, unchanged redraw"
+    );
+    eprintln!(
+        "{:<36} {after_one_field:>7}",
+        "portfolio, after a one-field write"
+    );
+}
+
+/// Sweeping the pointer across the performance chart.
+///
+/// Every pointer move over `#performance-chart` emits `portfolio_hovered`, a
+/// state write, and therefore a whole-app rebuild — with the unbounded 200-row
+/// fills table underneath rebuilt on every one of them. Measured at two
+/// ranges, because `portfolio_performance` clones its point vector twice and
+/// allocates a label String per point: `month` is 61 points, `all` is 181.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints portfolio hover-drag costs, asserts nothing"]
+fn portfolio_hover_cost() {
+    let mut driver = warmed_driver!("portfolio_hover_cost", portfolio_app(DENSE));
+    // A daemon's ids carry the window: `Trading/Id(n)/app/...`, spelled the
+    // way the generated tests spell their own targets.
+    let frame = driver.target(
+        &format!(
+            "Trading/{:?}/app/portfolio/performance/performance-frame",
+            driver.window()
+        ),
+        here(),
+    );
+    let (left, width, y) = (
+        frame.left() as f32,
+        frame.width() as f32,
+        frame.center_y() as f32,
+    );
+
+    macro_rules! sweep {
+        () => {{
+            let mut samples = Vec::with_capacity(ROUNDS);
+            for round in 0..ROUNDS {
+                let x = left + width * ((round % 40) as f32 + 0.5) / 40.0;
+                let started = Instant::now();
+                driver.move_to_point(x, y, here());
+                samples.push(started.elapsed().as_micros());
+            }
+            samples
+        }};
+    }
+
+    let month = sweep!();
+    let landed = driver.state().portfolio_hover.is_some();
+
+    driver.dispatch(
+        __TradingMessage::PickPortfolioRange("all".to_owned()),
+        here(),
+    );
+    driver.redraw(here());
+    let all = sweep!();
+
+    let mut idle = Vec::with_capacity(ROUNDS);
+    for _ in 0..ROUNDS {
+        let started = Instant::now();
+        driver.redraw(here());
+        idle.push(started.elapsed().as_micros());
+    }
+
+    eprintln!(
+        "\npointer swept across #performance-chart, {} fills underneath, \
+         hover landed: {landed}",
+        DENSE.fills
+    );
+    report("pointer move, month (61 pts)", month);
+    report("pointer move, all (181 pts)", all);
+    report("idle redraw, no pointer move", idle);
+}
+
+/// A scale ticket left standing while the feed beats.
+///
+/// `ticket_ladder` builds a 20-rung `Sweep` and is invalidated by `focus`,
+/// `positions` and `account` — all of which `market_ticked` writes — so every
+/// beat rebuilds it, `send_refusal` clones both the `Draft` and the `Sweep` to
+/// pass them by value, and the view clones the `Sweep` twice more through
+/// `ladder_shape`. Paired against the identical screen carrying a limit ticket,
+/// which has no ladder at all.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints scale-ladder beat costs, asserts nothing"]
+fn scale_ladder_beat_cost() {
+    let ladder = |kind: crate::OrderKind| {
+        let mut state = app(DENSE);
+        state.ticket_kind = kind;
+        state.ticket_from = "63,000.00".to_owned();
+        state.ticket_to = "65,000.00".to_owned();
+        state.ticket_rungs = "20".to_owned();
+        state
+    };
+
+    let mut scale = warmed_driver!("scale_ladder", ladder(crate::OrderKind::Scale));
+    let mut limit = warmed_driver!("scale_ladder", ladder(crate::OrderKind::Limit));
+
+    fn beat(round: usize) -> crate::hyperliquid::MarketTick {
+        hyperliquid::probe::beat(DENSE.symbols, DENSE.depth, 8, 64_000.0 + round as f64)
+    }
+    let mut scale_round = 0usize;
+    let mut limit_round = 0usize;
+    let (scale_us, limit_us, paired) = interleave(
+        ROUNDS,
+        || {
+            scale.dispatch(__TradingMessage::MarketTicked(beat(scale_round)), here());
+            scale.redraw(here());
+            scale_round += 1;
+        },
+        || {
+            limit.dispatch(__TradingMessage::MarketTicked(beat(limit_round)), here());
+            limit.redraw(here());
+            limit_round += 1;
+        },
+    );
+
+    eprintln!(
+        "\none feed beat + the frame after it, 20-rung scale ticket against a limit ticket, \
+         {} markets",
+        DENSE.symbols
+    );
+    report("scale ticket, beat + frame", scale_us);
+    report("limit ticket, beat + frame", limit_us);
+    report_delta("what the 20-rung ladder costs", paired);
+}
+
+/// FLATTEN ALL standing over a book of positions while the feed runs.
+///
+/// The confirmation clones its `Option<Sweep>` three times per frame
+/// (`sweep_figures` twice, `sweep_rows` once, all by value) and the keyboard
+/// subscription's gate clones it once more per update batch. Nothing pauses the
+/// 10Hz feed while the modal stands, so the beat is measured with the modal up
+/// and with it down, paired.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints flatten-all confirmation costs, asserts nothing"]
+fn flatten_all_cost() {
+    let screen = Screen {
+        positions: 32,
+        ..DENSE
+    };
+    let mut standing = warmed_driver!("flatten_all", tradable_app(screen));
+    let mut clear = warmed_driver!("flatten_all", tradable_app(screen));
+
+    let started = Instant::now();
+    standing.dispatch(__TradingMessage::FlattenAll, here());
+    let raised = started.elapsed().as_micros();
+    let up = standing.state().sweep.is_some();
+    standing.redraw(here());
+
+    let (_, _, frames) = interleave(
+        AUDIT_PAIRS,
+        || standing.redraw(here()),
+        || clear.redraw(here()),
+    );
+
+    let beat = |round: usize| {
+        hyperliquid::probe::beat(DENSE.symbols, DENSE.depth, 8, 64_000.0 + round as f64)
+    };
+    let mut standing_round = 0usize;
+    let mut clear_round = 0usize;
+    let (with_modal, without_modal, folds) = interleave(
+        ROUNDS,
+        || {
+            standing.dispatch(__TradingMessage::MarketTicked(beat(standing_round)), here());
+            standing_round += 1;
+        },
+        || {
+            clear.dispatch(__TradingMessage::MarketTicked(beat(clear_round)), here());
+            clear_round += 1;
+        },
+    );
+
+    eprintln!(
+        "\nFLATTEN ALL over {} positions, sweep raised: {up}, {} markets on the feed",
+        screen.positions, DENSE.symbols
+    );
+    eprintln!(
+        "{:<36} {raised:>7}us (one press, builds the Sweep)",
+        "flatten_all dispatch"
+    );
+    report_delta("what the modal costs per frame", frames);
+    report("market_ticked, modal standing", with_modal);
+    report("market_ticked, no modal", without_modal);
+    report_delta("what the modal costs per beat", folds);
+}
+
+/// The same dense screens read in Korean.
+///
+/// `t()` is called from 487 generated sites, multiplied by row counts. Under
+/// `Locale::En` it is one `to_owned`; under `Locale::Ko` a key the exact table
+/// does not carry — every formatted number, every composed sentence — walks all
+/// 46 templates and re-derives each one's anchoring with a split and a char
+/// scan. The delta between the two drivers is the translation cost and nothing
+/// else, because the screens are otherwise identical.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints Korean-locale costs, asserts nothing"]
+fn korean_locale_cost() {
+    let localized = |page: fn(Screen) -> Trading, locale: crate::Locale| {
+        let mut state = page(DENSE);
+        state.locale = locale;
+        state
+    };
+
+    for (label, page) in [
+        ("terminal", app as fn(Screen) -> Trading),
+        ("portfolio", portfolio_app as fn(Screen) -> Trading),
+    ] {
+        let mut korean = warmed_driver!("korean_locale", localized(page, crate::Locale::Ko));
+        let mut english = warmed_driver!("korean_locale", localized(page, crate::Locale::En));
+        let (ko, en, paired) = interleave(
+            AUDIT_PAIRS,
+            || korean.redraw(here()),
+            || english.redraw(here()),
+        );
+        eprintln!(
+            "\n{label} page in two languages, {} fills / {} orders / {} markets",
+            DENSE.fills, DENSE.orders, DENSE.symbols
+        );
+        report("idle redraw, Korean", ko);
+        report("idle redraw, English", en);
+        report_delta("what the translation costs", paired);
+    }
+
+    // The call itself, in picoseconds, so the frame numbers above have a unit
+    // cost to be read against. A hit is one table probe; a miss is the whole
+    // 46-template scan, and every number on the screen is a miss.
+    let hit = "MAX DRAWDOWN";
+    let miss = "$3,761,182.51";
+    eprintln!("\nt(locale, key), picoseconds per call");
+    for (label, locale, key) in [
+        ("t(En, table hit)", crate::Locale::En, hit),
+        ("t(Ko, table hit)", crate::Locale::Ko, hit),
+        ("t(En, formatted number)", crate::Locale::En, miss),
+        ("t(Ko, formatted number)", crate::Locale::Ko, miss),
+    ] {
+        let cost = bench(|| {
+            std::hint::black_box(crate::i18n::t(locale, key));
+        });
+        eprintln!("{label:<36} {cost:>7}ps");
+    }
+}
+
+/// Pressing EXPORT FILLS.
+///
+/// `write_fills_csv(venue, fills)` is a `sync` extern taking the 200-element
+/// `Vec<Fill>` by value, and the Rust behind it stats a directory, formats the
+/// whole CSV and does a blocking `std::fs::write` on the UI thread. This runs
+/// the real handler: `export_dir()` is `cfg(test)`-gated to the process temp
+/// directory, so the probe writes there rather than into anyone's Downloads,
+/// and it never touches a network. What a slow or network-mounted home
+/// directory would add to the write is not measured here and cannot be —
+/// that is the point the audit is making about the missing task boundary.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints export-fills handler costs, asserts nothing"]
+fn export_fills_cost() {
+    let mut driver = warmed_driver!("export_fills", app(DENSE));
+    let state = app(DENSE);
+
+    let mut handler = Vec::with_capacity(ROUNDS);
+    for _ in 0..ROUNDS {
+        let started = Instant::now();
+        driver.dispatch(__TradingMessage::ExportFills, here());
+        handler.push(started.elapsed().as_micros());
+    }
+    let wrote = driver.state().status.clone();
+    let failed = driver.state().error.clone();
+
+    eprintln!(
+        "\nEXPORT FILLS, {} fills, to the temp directory",
+        DENSE.fills
+    );
+    report("export_fills handler, END TO END", handler);
+    let clone = bench(|| {
+        std::hint::black_box(state.fills.clone());
+    });
+    let csv = bench(|| {
+        std::hint::black_box(crate::venue::fills_csv(state.venue, &state.fills));
+    });
+    eprintln!(
+        "{:<36} {clone:>7}ps (the by-value extern parameter)",
+        "the Vec<Fill> clone alone"
+    );
+    eprintln!("{:<36} {csv:>7}ps (no syscall)", "fills_csv alone");
+    eprintln!("status: {wrote}");
+    if !failed.is_empty() {
+        eprintln!("error: {failed}");
+    }
+}
+
+/// A fill burst on a busy market.
+///
+/// Every streamed fill carrying `hot` mounts a `FillFlash` beside its row — a
+/// `lifetime mounted` component with a 1000ms animation — and an in-flight
+/// animation asks for a redraw every display frame. In iced every redraw
+/// re-runs the whole view, so for one second after each fill the entire
+/// terminal is rebuilt at display rate. Measured as animation frames after a
+/// fill against animation frames on a settled screen, both driven by `advance`
+/// so the clock is the driver's and not this machine's.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints fill-burst frame costs, asserts nothing"]
+fn fill_burst_cost() {
+    use std::cell::Cell;
+
+    use crate::hyperliquid::FILL_LABELS;
+
+    const FRAME: Duration = Duration::from_millis(16);
+    /// One flash, at 60Hz. The animation is 1000ms.
+    const FLASH_FRAMES: usize = 62;
+
+    let mut driver = warmed_driver!("fill_burst", app(DENSE));
+    let printed = driver.state().fills[0].clone();
+
+    let mut settled = Vec::with_capacity(ROUNDS);
+    let mut flashing = Vec::with_capacity(ROUNDS * 8);
+    let mut rebuilt = usize::MAX;
+    for round in 0..ROUNDS {
+        // Let whatever was alight go out before the settled frames are taken.
+        driver.advance(Duration::from_millis(1_200), here());
+        let started = Instant::now();
+        driver.advance(FRAME, here());
+        settled.push(started.elapsed().as_micros());
+
+        let mut fill = printed.clone();
+        fill.tid = 900_000_000 + round as i64;
+        fill.ts = printed.ts + 1 + round as i64;
+        fill.hot = true;
+        FILL_LABELS.with(Cell::take);
+        driver.dispatch(__TradingMessage::FillsStreamed(vec![fill]), here());
+        driver.advance(FRAME, here());
+        rebuilt = FILL_LABELS.with(Cell::take);
+
+        for _ in 0..8 {
+            let started = Instant::now();
+            driver.advance(FRAME, here());
+            flashing.push(started.elapsed().as_micros());
+        }
+    }
+
+    eprintln!(
+        "\none hot fill prepended onto {} fills, {} markets, 16ms display frames",
+        DENSE.fills, DENSE.symbols
+    );
+    report("frame with a FillFlash alight", flashing);
+    report("frame on a settled screen", settled);
+    eprintln!(
+        "{:<36} {rebuilt:>7} (the keyed memo holds the other {})",
+        "fill rows rebuilt by the prepend",
+        DENSE.fills - rebuilt.min(DENSE.fills)
+    );
+    eprintln!(
+        "{:<36} {FLASH_FRAMES:>7} at 60Hz, per fill",
+        "frames one flash keeps the app rebuilding"
+    );
+}

@@ -1,5 +1,7 @@
 ui_lang::include_app!("src/ui/app.ice");
 
+#[cfg(test)]
+mod frame_probe;
 mod mock_api;
 
 fn main() -> iced::Result {
