@@ -971,22 +971,23 @@ where
     }
 }
 
-type CartesianKey = (
-    ChartConfig,
-    ChartData,
-    CartesianOptions,
-    Option<ChartHit>,
-    UiTheme,
-);
+type CartesianKey = (ChartConfig, ChartData, CartesianOptions, UiTheme);
 
 #[derive(Debug, Default)]
 struct CartesianState {
     hovered: Option<ChartHit>,
     layers: canvas::Cache,
+    /// The hover marks, on their own layer. A pointer move leaves `layers`
+    /// standing and redraws a dashed line and one marker, instead of throwing
+    /// away the grid, the axis and every series to redraw them unchanged.
+    hover: canvas::Cache,
     /// `Cache` invalidates itself when the layer resizes, so the key only has to
     /// carry what else the drawing reads. The clone happens on a miss, never on
     /// the steady-state frames it exists to skip.
     key: RefCell<Option<CartesianKey>>,
+    /// What `hover` was last drawn for. `None` before the first draw, which
+    /// costs at most one clear of an already-empty cache.
+    hover_key: RefCell<Option<ChartHit>>,
 }
 
 struct CartesianProgram<'a, Message> {
@@ -1044,45 +1045,53 @@ impl<Message> canvas::Program<Message> for CartesianProgram<'_, Message> {
                 .key
                 .borrow()
                 .as_ref()
-                .is_some_and(|(config, data, options, hovered, theme)| {
+                .is_some_and(|(config, data, options, theme)| {
                     config == &self.config
                         && data == &self.data
                         && *options == self.options
-                        && hovered == &self.hovered
                         && theme == &self.theme
                 });
         if !unchanged {
+            // The hover marks are positioned by the same geometry, so anything
+            // that moves the chart moves them too.
             state.layers.clear();
+            state.hover.clear();
             *state.key.borrow_mut() = Some((
                 self.config.clone(),
                 self.data.clone(),
                 self.options,
-                self.hovered.clone(),
                 self.theme,
             ));
         }
+        let hover_changed = *state.hover_key.borrow() != self.hovered;
+        if hover_changed {
+            state.hover.clear();
+            *state.hover_key.borrow_mut() = self.hovered.clone();
+        }
 
-        vec![state.layers.draw(renderer, bounds.size(), |frame| {
-            match cartesian_geometry(
-                &self.config,
-                &self.data,
-                Rectangle::with_size(bounds.size()),
-                self.options,
-            ) {
-                Ok(geometry) if !geometry.marks.is_empty() => {
-                    draw_cartesian(
-                        frame,
-                        &geometry,
-                        &self.config,
-                        self.options,
-                        self.hovered.as_ref(),
-                        &self.theme,
-                    );
+        let plot = Rectangle::with_size(bounds.size());
+        vec![
+            state.layers.draw(renderer, bounds.size(), |frame| {
+                match cartesian_geometry(&self.config, &self.data, plot, self.options) {
+                    Ok(geometry) if !geometry.marks.is_empty() => {
+                        draw_cartesian(frame, &geometry, &self.config, self.options, &self.theme);
+                    }
+                    Ok(geometry) => draw_empty(frame, geometry.report.state, &self.theme),
+                    Err(_) => draw_error(frame, &self.theme),
                 }
-                Ok(geometry) => draw_empty(frame, geometry.report.state, &self.theme),
-                Err(_) => draw_error(frame, &self.theme),
-            }
-        })]
+            }),
+            state.hover.draw(renderer, bounds.size(), |frame| {
+                let Some(hit) = self.hovered.as_ref() else {
+                    return;
+                };
+                if let Ok(geometry) =
+                    cartesian_geometry(&self.config, &self.data, plot, self.options)
+                    && !geometry.marks.is_empty()
+                {
+                    draw_hover(frame, &geometry, &self.config, hit, &self.theme);
+                }
+            }),
+        ]
     }
 
     /// `update` already stores the hit under the cursor, so the pointer icon
@@ -1108,10 +1117,9 @@ fn draw_cartesian(
     geometry: &CartesianGeometry,
     config: &ChartConfig,
     options: CartesianOptions,
-    hovered: Option<&ChartHit>,
     theme: &UiTheme,
 ) {
-    draw_vector_layer(frame, geometry, config, options, hovered, theme);
+    draw_vector_layer(frame, geometry, config, options, theme);
     draw_axis_labels(frame, geometry, options, theme);
 }
 
@@ -1252,7 +1260,6 @@ fn draw_vector_layer(
     geometry: &CartesianGeometry,
     config: &ChartConfig,
     options: CartesianOptions,
-    hovered: Option<&ChartHit>,
     theme: &UiTheme,
 ) {
     let size = frame.size();
@@ -1342,66 +1349,83 @@ fn draw_vector_layer(
         }
     }
 
-    if let Some(hit) = hovered
-        && let Some(series) = config.series(&hit.series_key)
-    {
-        let color = series.color.resolve(theme);
-        if let Some(datum) = geometry
-            .datums
-            .iter()
-            .find(|datum| datum.datum_index == hit.datum_index)
-        {
-            svg_line(
-                &mut svg,
-                Point::new(datum.x, geometry.plot.y),
-                Point::new(datum.x, geometry.plot.y + geometry.plot.height),
-                alpha(theme.palette.muted_foreground, 0.55),
-                1.0,
-                Some("3 3"),
-            );
-        }
-        for mark in &geometry.marks {
-            match mark {
-                CartesianMark::Line { series_key, points }
-                | CartesianMark::Area {
-                    series_key, points, ..
-                } if series_key == &hit.series_key => {
-                    if let Some(point) = points
-                        .iter()
-                        .find(|point| point.datum_index == hit.datum_index)
-                    {
-                        svg_circle(
-                            &mut svg,
-                            point.position,
-                            ACTIVE_MARKER_RADIUS,
-                            theme.palette.card,
-                            Some((color, 2.0)),
-                        );
-                    }
-                }
-                CartesianMark::Bar {
-                    series_key,
-                    datum_index,
-                    bounds,
-                    ..
-                } if series_key == &hit.series_key && *datum_index == hit.datum_index => {
-                    svg_rect(
-                        &mut svg,
-                        *bounds,
-                        Color::TRANSPARENT,
-                        Some((theme.palette.foreground, 2.0)),
-                    );
-                }
-                _ => {}
-            }
-        }
-    }
-
     svg.push_str("</svg>");
     frame.draw_svg(
         Rectangle::with_size(size),
         iced::advanced::svg::Svg::new(iced::advanced::svg::Handle::from_memory(svg.into_bytes())),
     );
+}
+
+/// The dash the hover rule is drawn with, as SVG's `stroke-dasharray="3 3"`.
+const HOVER_DASH: [f32; 2] = [3.0, 3.0];
+
+/// The marks that follow the pointer. Native paths rather than a second SVG
+/// document: this layer is redrawn on every pointer move, and an SVG handle
+/// whose bytes change is a fresh `usvg` parse and a full-size `resvg` raster
+/// each time.
+fn draw_hover(
+    frame: &mut canvas::Frame,
+    geometry: &CartesianGeometry,
+    config: &ChartConfig,
+    hit: &ChartHit,
+    theme: &UiTheme,
+) {
+    let Some(series) = config.series(&hit.series_key) else {
+        return;
+    };
+    let color = series.color.resolve(theme);
+    if let Some(datum) = geometry
+        .datums
+        .iter()
+        .find(|datum| datum.datum_index == hit.datum_index)
+    {
+        frame.stroke(
+            &Path::line(
+                Point::new(datum.x, geometry.plot.y),
+                Point::new(datum.x, geometry.plot.y + geometry.plot.height),
+            ),
+            Stroke {
+                line_dash: canvas::LineDash {
+                    segments: &HOVER_DASH,
+                    offset: 0,
+                },
+                ..Stroke::default()
+                    .with_color(alpha(theme.palette.muted_foreground, 0.55))
+                    .with_width(1.0)
+            },
+        );
+    }
+    for mark in &geometry.marks {
+        match mark {
+            CartesianMark::Line { series_key, points }
+            | CartesianMark::Area {
+                series_key, points, ..
+            } if series_key == &hit.series_key => {
+                if let Some(point) = points
+                    .iter()
+                    .find(|point| point.datum_index == hit.datum_index)
+                {
+                    let marker = Path::circle(point.position, ACTIVE_MARKER_RADIUS);
+                    frame.fill(&marker, theme.palette.card);
+                    frame.stroke(&marker, Stroke::default().with_color(color).with_width(2.0));
+                }
+            }
+            CartesianMark::Bar {
+                series_key,
+                datum_index,
+                bounds,
+                ..
+            } if series_key == &hit.series_key && *datum_index == hit.datum_index => {
+                frame.stroke(
+                    &Path::rectangle(bounds.position(), bounds.size()),
+                    Stroke::default()
+                        .with_color(theme.palette.foreground)
+                        .with_width(2.0),
+                );
+            }
+            _ => {}
+        }
+    }
 }
 
 fn svg_color(color: Color) -> String {
