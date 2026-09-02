@@ -1093,7 +1093,7 @@ view
         generated
             .contains(".delay(::std::time::Duration::from_millis(u64::try_from(10).unwrap_or(0)))")
     );
-    assert!(generated.contains("::iced::widget::responsive({ let __ice_responsive_scope = ("));
+    assert!(generated.contains("::ui_lang_runtime::responsive({ let __ice_responsive_scope = ("));
     assert!(generated.contains("move |__size|"));
     assert!(generated.contains("if ((__size.width as f64) < (__size.height as f64))"));
     assert!(generated.contains("if ((__size.width as f64) >= (__size.height as f64))"));

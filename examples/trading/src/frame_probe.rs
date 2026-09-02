@@ -359,6 +359,25 @@ fn frame_cost() {
     report("idle frame: view", phases.0);
     report("idle frame: diff + layout", phases.1);
     report("idle frame: event walk", phases.2);
+    // How often the `responsive` at the terminal's root builds its subtree:
+    // once per frame, and a wheel scroll used to add a second build for the
+    // relayout iced runs inside `update`.
+    let _ = ui_lang_runtime::take_responsive_builds();
+    driver.redraw(here());
+    let idle_builds = ui_lang_runtime::take_responsive_builds();
+    driver.move_to_point(120.0, 520.0, here());
+    let _ = ui_lang_runtime::take_responsive_builds();
+    driver.wheel_lines(0.0, -3.0, here());
+    let scroll_builds = ui_lang_runtime::take_responsive_builds();
+    eprintln!("responsive builds: {idle_builds} per idle frame, {scroll_builds} per wheel scroll");
+    let mut wheel = Vec::with_capacity(ROUNDS);
+    for round in 0..ROUNDS {
+        let lines = if round % 2 == 0 { -3.0 } else { 3.0 };
+        let started = Instant::now();
+        driver.wheel_lines(0.0, lines, here());
+        wheel.push(started.elapsed().as_micros());
+    }
+    report("wheel scroll, END TO END", wheel);
     for round in 0..ROUNDS {
         let started = Instant::now();
         std::hint::black_box(state.__view(window));

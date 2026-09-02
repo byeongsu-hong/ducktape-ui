@@ -2191,7 +2191,10 @@ provides the same continuity behavior as iced's borrowed `key_ref` form.
 inputs can depend on either dimension. A two-way size choice is one container
 holding two complementary `if`s on the bound width — Ice has no `else` — as in
 `examples/showcase/src/ui/app.ice`, whose `col` wraps `if feature_width < 900.0`
-and `if feature_width >= 900.0`.
+and `if feature_width >= 900.0`. The child tree is built in layout, where the
+size is known, once per pass: a relayout inside the same frame — a scroll or a
+keystroke that invalidates layout — reuses the subtree that pass already built
+for its size, and only a new size builds it again.
 
 `theme` applies an iced theme to exactly one child subtree. With no preset or
 `default`, iced chooses the default theme for the outer light/dark mode; `app`

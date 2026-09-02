@@ -96,6 +96,16 @@ fn frame_cost() {
     driver.redraw(here());
     let (hits, misses) = ui_lang_runtime::take_rev_memo_counts();
     eprintln!("component layout memos per idle frame: {hits} hits, {misses} misses");
+    // How often the `responsive` under the catalog builds its subtree. A
+    // boundary above it that holds skips its layout, and with it the build,
+    // so on this screen the count stays at zero; trading's root responsive is
+    // the one that builds every pass.
+    let _ = ui_lang_runtime::take_responsive_builds();
+    driver.redraw(here());
+    let idle_builds = ui_lang_runtime::take_responsive_builds();
+    driver.scroll_to(SCROLLER, 0.0, 40.0, here());
+    let scroll_builds = ui_lang_runtime::take_responsive_builds();
+    eprintln!("responsive builds: {idle_builds} per idle frame, {scroll_builds} per scroll frame");
     // One idle frame split by phase: what the compiler emits, what iced
     // diffs and lays out, and the event walk.
     let mut view_phase = Phase::new("idle frame: view");
