@@ -21,8 +21,9 @@ every `tiny-skia` window.
   can walk the items it produced.
 - **A present hands the display only what changed** — nothing at all when the
   frame is already on screen.
-- **A plain quad crossing the repainted region is filled over that region**
-  rather than over its whole area.
+- **A quad crossing the repainted region is filled over that region** rather
+  than over its whole area — a rounded one too, when the part being filled
+  holds none of the corners it curves inside of.
 - **A glyph that rasterises to nothing is cached** instead of being hinted
   again on every draw.
 - **A glyph decides for itself whether the clip mask applies to it**, instead

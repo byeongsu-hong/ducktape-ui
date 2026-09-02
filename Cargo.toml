@@ -68,10 +68,12 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 # nothing is drawn differently. Pinned by
 # `crates/ui-lang-runtime/tests/canvas_text_damage.rs`.
 #
-# 6. A plain quad crossing the region being repainted is filled over that
-# region, one pixel wider so the mask still cuts the edge, instead of over
-# the whole quad. A window's background quad cost its full area on every
-# partial repaint.
+# 6. A quad crossing the region being repainted is filled over that region,
+# one pixel wider so the mask still cuts the edge, instead of over the whole
+# quad — a rounded one too, as long as the part being filled holds none of
+# the corner squares it curves inside of, since the shape is its own
+# rectangle everywhere else. A window's background quad cost its full area on
+# every partial repaint.
 #
 # 7. A glyph that rasterises to nothing — every space — is kept in the glyph
 # cache like any other. Learning that it is empty means hinting its outline,
