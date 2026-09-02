@@ -32,6 +32,12 @@ every `tiny-skia` window.
 - **A text damages the pixels its alignment puts it on.** The release
   measured every text rightwards and downwards from its position, so a
   right-aligned or centred label left its old glyphs on screen.
+- **The clip mask is filled when it is read, not when it is named.** Filling
+  it clears the whole window whatever the rectangle is, and the draw loop
+  names one far more often than anything reads one: once per layer per damaged
+  region, most of which draw nothing there, twice more around every group of
+  primitives, and once per clipped run of glyphs that then skips the mask for
+  every glyph inside the rectangle anyway.
 
 The four defects are pinned by tests in `crates/ui-lang-runtime/tests`
 (`canvas_offset_clip.rs`, `shadow_layer_clip.rs`, `canvas_text_damage.rs`,

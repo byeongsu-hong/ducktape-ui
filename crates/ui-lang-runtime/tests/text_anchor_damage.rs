@@ -71,7 +71,7 @@ fn a_shorter_label_erases_the_longer_one_it_replaces() {
 
     // The window as it stood: the long label drawn over white.
     let mut pixmap = tiny_skia::Pixmap::new(WIDTH, HEIGHT).expect("pixel map");
-    let mut mask = tiny_skia::Mask::new(WIDTH, HEIGHT).expect("clip mask");
+    let mut mask = iced_tiny_skia::ClipMask::new(WIDTH, HEIGHT).expect("clip mask");
     let viewport = Viewport::with_physical_size(Size::new(WIDTH, HEIGHT), 1.0);
 
     before.draw(
