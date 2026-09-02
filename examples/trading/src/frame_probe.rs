@@ -461,8 +461,13 @@ fn frame_cost() {
          holding a closure and its dependency: building the view stores those,\n\
          and the row itself is built — or found cached — later, in the tree\n\
          walk inside the redraw. Work that moves across that line leaves the\n\
-         build and arrives in the frame. `idle redraw` is the only number here\n\
-         that counts a whole frame.\n\n\
+         build and arrives in the frame.\n\n\
+         And `idle redraw` is NOT the app's frame either. It is a whole\n\
+         `Driver::redraw`, which also broadcasts to every subscription and\n\
+         settles the task queue — work the shipped app does not do per frame,\n\
+         and worth more than a millisecond of the number printed above. The\n\
+         app's frame is `idle frame: view` + `diff + layout` + `event walk`,\n\
+         the three `redraw_phases` rows below.\n\n\
          And an absolute number is not comparable across two builds of the app.\n\
          `__view` is one function; a boundary added anywhere in it re-optimizes\n\
          all of it, worth ~0.5ms between two binaries on a screen with no fills\n\

@@ -15,11 +15,20 @@
 //!
 //! - `__view build only` is the code the Ice compiler emits, including the
 //!   nested `format!` accessibility id chain each node builds. It stops before
-//!   iced's layout and before the accessibility snapshot.
-//! - Every `redraw` phase is a whole frame through `testing::Driver`: layout,
-//!   the event walk, and the accessibility snapshot walk that a `cfg(test)`
-//!   build drives on each frame. `idle redraw` minus `__view build only` is
-//!   everything after the build.
+//!   iced's layout.
+//! - **The app's frame is `idle frame: view` + `diff + layout` + `event walk`,
+//!   and nothing else on this table.** Those three are `redraw_phases`, which
+//!   times the generated view, `UserInterface::build`, and the event walk, and
+//!   stops there.
+//! - **`idle redraw` is NOT the app's frame.** It is a whole `Driver::redraw`,
+//!   which also broadcasts to every subscription and settles the task queue —
+//!   work the shipped app does not do per frame. On this machine that is about
+//!   1.1ms of a 1.4ms `idle redraw` against a 250us frame, and the trading
+//!   probe carries the same constant. Any row here whose label says `redraw`
+//!   or `+ redraw` carries it once per build.
+//! - So read the absolute `redraw` rows as an upper bound with a fixed, large
+//!   additive term, and take every result from a difference: the paired
+//!   overlay ablations, the per-row slope, and the phases above.
 //! - A phase whose label says `+ redraw` costs two builds, not one: the driver
 //!   builds a `UserInterface` per event, so the dispatch and the redraw each
 //!   pay one.
@@ -253,9 +262,22 @@ fn frame_cost() {
     report("one-field write + redraw (Seek, 2)", seek);
     report("search keystroke + redraw (2)", keystroke);
     report("cursor move (1 build)", cursor);
+    // The same idle frame split by phase. Everything above this that says
+    // `redraw` also carries the driver's subscription broadcast and settle;
+    // these three are the app's frame and nothing else.
+    let mut phases = (Vec::new(), Vec::new(), Vec::new());
+    for _ in 0..ROUNDS {
+        let frame = app.redraw_phases(here());
+        phases.0.push(frame.view.as_micros());
+        phases.1.push(frame.layout.as_micros());
+        phases.2.push(frame.update.as_micros());
+    }
+    report("idle frame: view", phases.0);
+    report("idle frame: diff + layout", phases.1);
+    report("idle frame: event walk", phases.2);
     eprintln!(
-        "{:<38} {:>8}us  ({:.0}% of the frame)",
-        "everything after the build",
+        "{:<38} {:>8}us  ({:.0}% of `idle redraw`, most of it settle)",
+        "idle redraw minus the build",
         frame.saturating_sub(build_p50),
         frame.saturating_sub(build_p50) as f64 / frame.max(1) as f64 * 100.0
     );
