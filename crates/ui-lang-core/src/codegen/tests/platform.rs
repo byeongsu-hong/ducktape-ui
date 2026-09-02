@@ -593,7 +593,7 @@ view
         "select_all",
         "select_range",
         "snap_to::<",
-        "snap_to_end",
+        "snap_to_content_end::<",
         "scroll_to::<",
         "scroll_by::<",
         "scroll_to_key::<",
@@ -671,7 +671,7 @@ view
         "select_all",
         "select_range",
         "snap_to::<",
-        "snap_to_end",
+        "snap_to_content_end::<",
         "scroll_to::<",
         "scroll_by::<",
     ] {

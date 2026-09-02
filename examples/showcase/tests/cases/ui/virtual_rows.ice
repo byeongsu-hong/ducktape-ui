@@ -79,6 +79,53 @@ test virtual_column_mounts_only_what_the_viewport_can_see
   expect missing #stream/list/row("row 100")
   expect text "row 399"
 
+// A transcript virtualizes on an estimate and then measures paragraphs many
+// times taller than it. `anchor-y=end` stores the offset as a distance from the
+// bottom, so however wrong the estimate is, the rest position is the newest row
+// and every correction lands above the viewport.
+test an_end_anchored_virtual_column_rests_on_its_newest_row
+  viewport 400 480
+  mount
+    TallStream nums=virtual_nums(200) #chat
+  window redraw
+
+  expect text "row 199"
+  expect no text "row 000"
+
+// `snap-end` names the end of the content, and the end of a chat is its newest
+// message. The native relative offset it lowers to is measured from wherever
+// the scroll is anchored, so on an end-anchored column offset 1.0 is the oldest
+// row: a handler that snapped after every streamed token walked the reader back
+// to the top of the conversation.
+test snap_end_returns_an_end_anchored_column_to_its_newest_row
+  viewport 400 480
+  mount
+    TallStream nums=virtual_nums(200) #chat
+  target stream = #chat/stream
+  window redraw
+
+  scroll-to stream 0.0 20000.0
+  window redraw
+  expect no text "row 199"
+
+  snap-end stream
+  window redraw
+  expect text "row 199"
+
+// The estimate is deliberately far from the truth: 32px declared against 240px
+// measured, the ratio a one-line guess has against a real paragraph.
+component TallStream(nums:[i64])
+  scroll #stream
+    with
+      dir=vertical
+      w=fill
+      h=fill
+      anchor-y=end
+    col #list w=fill virtual-row=32.0
+      for n in nums
+        box #row(n) w=fill h=240.0
+          text virtual_label(n)
+
 // A vertical rule is fill-height by nature, and iced propagates a fill child
 // up through its ancestors — so a keyed row carrying one reports fill height
 // to the virtualized column. The column lays mounted rows out against an

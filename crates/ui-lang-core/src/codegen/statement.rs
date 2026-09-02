@@ -1072,7 +1072,7 @@ pub(in crate::codegen) fn generate_statements(
                         )
                     }
                     ResolvedWidgetOperation::SnapEnd { target } => format!(
-                        "::iced::widget::operation::snap_to_end::<{message}>({})",
+                        "::ui_lang_runtime::snap_to_content_end::<{message}>({})",
                         id(target)?
                     ),
                     ResolvedWidgetOperation::ScrollTo { target, x, y } => format!(

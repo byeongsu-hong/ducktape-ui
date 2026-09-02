@@ -3658,7 +3658,11 @@ by scrolling back through unmeasured content — a message history, say. An
 end-anchored scroll stores its offset as a distance from the bottom, so
 content growing above the viewport carries the offset with it and the visible
 rows stay put. Scrolling forward is unaffected either way, because rows enter
-from the end and correct only what is already below.
+from the end and correct only what is already below. Offsets on such a scroll
+run from the bottom, so it rests on its newest row with no operation at all and
+`task widget snap`'s `0.0` selects that row while `1.0` selects the oldest;
+`task widget snap-end` names the content's end rather than an offset and
+returns a reader who scrolled away to the newest row.
 
 `anchor-y=keep` is the third answer, for the list `end` cannot serve: one whose
 newest row is on **top**. Such a list rests where `start` rests — offset zero
@@ -5207,9 +5211,16 @@ task widget focused #search -> focus_checked _
 task widget cursor #search 3
 task widget select #search 0 5
 task widget snap #results 0.0 1.0
+task widget snap-end #results
 task widget scroll-by #results 0.0 24.0
 task widget scroll-to-key #results selected
 ```
+
+`task widget snap` uses iced's native relative offsets, which are measured from
+the scroll's own anchor: on an `anchor-y=end` scroll, offset zero is the newest
+row and offset one is the oldest. `task widget snap-end` names the end of the
+*content* instead, so it selects the newest row under either anchor — it is the
+operation for returning a reader to the live end of a list.
 
 Targets use the same hierarchy as the rendered component tree. Write the
 outer scope first, then each nested scope separated by `/`:
@@ -5655,7 +5666,8 @@ window blur
 
 Coordinates and scroll amounts are logical pixels. `scroll-to` sets an absolute
 offset and `scroll-by` applies a delta; `snap` uses native relative x/y unit
-offsets and `snap-end` selects the end. Targeted pointer operations
+offsets, measured from the scroll's own anchor, and `snap-end` selects the end
+of the content under either anchor. Targeted pointer operations
 resolve the current visible bounds and use their center; coordinate operations
 use the supplied point directly. The optional pointer button is `left`,
 `right`, `middle`, `back`, or `forward`, and defaults to `left`. `press` keeps
