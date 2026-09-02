@@ -278,7 +278,7 @@ pass (a bucketed lowering when every size read is a literal comparison).
    thing that was not a string at all: every generated view function
    rebuilt the app's `iced::Theme`, so a build ran iced's oklch palette
    generation once a frame for a value that only changes on a theme
-   switch. Memoized on the palette in #864 — apple-music's
+   switch. Memoized on the palette in #865 — apple-music's
    `idle frame: view` 75 -> 68 us, its whole frame 198 -> 189.
 6. `logical_id` gating — shipped in #861. The generated view hands its
    key to `logical_id_maybe` only under `cfg!(test)`, joining the
