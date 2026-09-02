@@ -40,9 +40,13 @@ every `tiny-skia` window.
   primitives, and once per clipped run of glyphs that then skips the mask for
   every glyph inside the rectangle anyway.
 
-The four defects are pinned by tests in `crates/ui-lang-runtime/tests`
+- **A quad's shadow is repainted when the quad changes.** The release
+  measured the damage from the quad's bounds, so a card that lost its shadow
+  kept the old one on screen.
+
+The five defects are pinned by tests in `crates/ui-lang-runtime/tests`
 (`canvas_offset_clip.rs`, `shadow_layer_clip.rs`, `canvas_text_damage.rs`,
-`text_anchor_damage.rs`).
+`text_anchor_damage.rs`, `shadow_damage.rs`).
 
 Wired in through `[patch.crates-io]` in the workspace `Cargo.toml` and in
 `examples/app-store/Cargo.toml`. Delete this directory and both patch entries
