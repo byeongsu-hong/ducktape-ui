@@ -63,6 +63,9 @@ Apply these rules before editing:
   `Badge.Secondary`; do not replace them with free-form variant strings. Do not
   import its showcase adapter interface into an application; define a typed
   Rust boundary for product-specific retained widgets.
+- Give every `for` or keyed column over a state-rooted list that instantiates a
+  component its boundary when it is written — `lazy row … as alias` or a
+  `virtual-row` column — not after a warning reports it.
 - Preserve accessibility: label child-content buttons, label meaningful images,
   never expose secure-input values, and keep source order meaningful.
 
@@ -74,6 +77,9 @@ refactoring `.ice`. Read the other references only when their scope is involved:
   interaction-state planning.
 - [references/views-and-style.md](references/views-and-style.md) for layout,
   widgets, control flow, components, IDs, styling, and accessibility.
+- [references/performance.md](references/performance.md) for lists, tables,
+  streams, timers, and any screen that will hold real data; whenever `cargo ice
+  check` prints a `W016`–`W021` line.
 - [references/rust-boundary.md](references/rust-boundary.md) for project setup,
   extern types/functions/adapters, effects, subscriptions, and Rust tests.
 - [references/tooling-and-lsp.md](references/tooling-and-lsp.md) for live editor
@@ -178,7 +184,8 @@ After a meaningful edit:
 1. Use LSP diagnostics and formatting for immediate feedback.
 2. Run `cargo ice fmt` to format Rust and every discovered `.ice` file.
 3. Run `cargo ice check` to analyze every app graph and let rustc verify extern
-   paths, signatures, generated types, and Cargo features.
+   paths, signatures, generated types, and Cargo features. It must print no
+   `W0xx` line for the graph you changed; each message names the fix.
 4. Run `cargo ice test` when changing first-class tests or behavior they cover;
    ordinary Cargo discovers the same generated tests.
 5. For every visual UI change, run `cargo ice inspect` with an explicit root,
@@ -186,13 +193,18 @@ After a meaningful edit:
    outer geometry, inner padding, text size/line box/baseline, paint,
    accessibility, and `.ice` source fields. Scroll through the full view and
    inspect its end; do not infer appearance from code or stop after compilation
-   succeeds.
-6. After a visual correction, inspect again with the same inputs. When a prior
+   succeeds. Give every node you will inspect or assert on a `#id`: the manifest
+   records only identified nodes, and an unidentified widget appears only in the
+   PNG.
+6. For a screen that will hold real data, run the same inspection with
+   `--frames 60` and read the manifest's `frames` field by the reading guide in
+   [references/performance.md](references/performance.md).
+7. After a visual correction, inspect again with the same inputs. When a prior
    capture is available, run `cargo ice diff` and resolve every unexplained
    manifest or pixel delta. Keep an intentional delta only when it matches the
    requested design change.
-7. Run the narrow relevant Rust test or fixture suite.
-8. Run `cargo ice compat` only when changing backend versions, runtime
+8. Run the narrow relevant Rust test or fixture suite.
+9. Run `cargo ice compat` only when changing backend versions, runtime
    dependencies, compatibility contracts, accessibility bridges, or the
    reference app integration.
 
@@ -246,6 +258,7 @@ Report:
 - the command or LSP evidence that verified them;
 - the inspected input tuple and PNG/JSON paths for visual changes, plus the
   diff report when a baseline existed;
+- the printed `frames:` line when frame cost was measured;
 - any current language or platform limit that remains.
 
 Do not describe the result as React-like. Explain it using Ice's state,
