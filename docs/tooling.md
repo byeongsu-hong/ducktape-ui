@@ -295,7 +295,7 @@ language server. The action publishes error-level generated diagnostics,
 including type and extern-contract failures. Warning-level Rust and Clippy
 findings from backend output are suppressed because they are not actionable
 Ice diagnostics; Ice's non-CLI-only semantic warnings (`W001-W009` and
-`W011-W020`) continue to appear directly from the language checker. Save every
+`W011-W021`) continue to appear directly from the language checker. Save every
 open Ice buffer first so Cargo and the published source ranges describe the
 same source revision.
 

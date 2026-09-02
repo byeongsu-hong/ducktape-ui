@@ -98,9 +98,12 @@ subscription condition (`W018`), a `for` or keyed column over a state-rooted lis
 mounts a component, an extern component, or a nested repetition per row with no per-row
 `lazy` and no `virtual-row` column (`W019`), and a plain `lazy` inside a repetition whose
 dependency is a call or operator over the row, evaluated per pass only to produce its key
-(`W020`); evidence is the five `perf-*` warning fixtures plus the
-`w016`-`w020` checker unit tests pinning each fixture's exact site set,
-and `cargo ice check` reporting zero warnings over the in-repo examples.
+(`W020`), and a `sync` extern called from a handler that a sub-second `every`, a
+stream, the raw event feed, pointer or window motion, or a slider drag routes to (`W021`); evidence is the six
+`perf-*` warning fixtures plus the `w016`-`w021` checker unit tests pinning each
+fixture's exact site set, and `cargo ice check` reporting no warnings over the in-repo
+examples other than the `W021`s on `cef-browser`'s 16ms tick, which keeps its `sync`
+pump by design (ADR 0011).
 Component and handler reachability is combined
 across all workspace or open-editor roots. `cargo ice` additionally reports
 workspace `.ice` files outside every root graph as CLI-only `W010`. Cargo JSON

@@ -1372,6 +1372,18 @@ fn w019_skips_leaf_rows_virtual_columns_and_lazy_rows() {
 }
 
 #[test]
+fn w021_reports_sync_calls_in_handlers_a_hot_trigger_routes_to() {
+    // Line 22: `probe()` under the 16ms tick; 28: `now()` under the pointer
+    // move; 31: `now()` under the slider drag; 37: `probe()` under the
+    // stream route. Silent: the 1s tick, the keyboard press (one turn per
+    // keystroke, like a click), and the button.
+    assert_eq!(
+        perf_warning_sites("perf-sync-in-hot-handler", "W021"),
+        vec![22, 28, 31, 37]
+    );
+}
+
+#[test]
 fn w020_skips_bare_rows_keyed_lazy_and_state_rooted_calls() {
     // Line 26: a call over the row as the dependency; 29: a call mixing state
     // with the row. Silent: the bare row value, the keyed form computing the

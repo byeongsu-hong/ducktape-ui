@@ -6344,6 +6344,7 @@ Successful analysis may also emit stable semantic warnings:
 | `W018` | a `str`, `bytes`, `[T]`, `editor`, or list-owning record state field is cloned into a by-value `pure`/`sync` parameter on every view pass or subscription check |
 | `W019` | a `for` or keyed column over a state-rooted list instantiates a component, an extern component, or a nested repetition per row on every view pass with no per-row `lazy` and no `virtual-row` column |
 | `W020` | a plain `lazy` inside a repetition evaluates a call or operator over the row on every view pass only to compute the key it is compared by |
+| `W021` | a `sync` extern is called from a handler that a sub-second `every`, a stream, the raw event feed, pointer or window motion, or a slider drag routes to |
 
 State initializers are not writers. Reads and writes are collected at the
 already checked expression, mutation, controlled-binding, and test-expression
@@ -6398,7 +6399,7 @@ widget operations. Component-local handlers may still use their own relative
 paths; the warning covers operation paths hidden from the caller and suggests
 adding an explicit component ID.
 
-`W016` through `W020` are performance warnings: iced rebuilds the whole view on
+`W016` through `W021` are performance warnings: iced rebuilds the whole view on
 every message, so a view expression is paid once per frame unless a `lazy`
 boundary memoizes it. `W016` reports an `extern ... component` call whose
 `str` or `[T]` argument reads app state, a derived value, or component state
@@ -6450,6 +6451,20 @@ wraps is never skipped; a bare row value (priced by `W017` when it owns a
 list) and a value rooted in state (keyed by revisions) are silent. The fix is
 to key the row and move the call inside the subtree.
 
+`W021` reports a `sync` extern call inside a handler that runs at a cadence:
+the route of a subscription `every` under one second, of a `stream`
+statement's items or a stream subscription, of the `event`/`events` feed, of
+`mouse moved`, `mouse wheel`, `touch moved`, `window frame`, `window
+moved`/`resized`/`rescaled`, or `window file-hovered`, and a slider's drag
+route. Handlers run on the loop thread, so the app freezes for as long as the
+Rust body takes, once per turn; the message names the async form, `run
+name(args) -> handler`, whose result arrives as a message. A source that
+fires once per user action — a button, a submit route, a picker, a key
+press, a click, a focus change, a close request — is one turn like any other
+and is silent, as is an `every` of a second or more; only the handlers a
+trigger routes to directly are classified. The `cef-browser` example's 16ms
+pump keeps its `sync` by design and carries the warning.
+
 
 `cargo ice check` first reports these language errors directly, then invokes
 `cargo check` so rustc verifies extern items and generated iced types. A missing
@@ -6477,7 +6492,7 @@ The LSP publishes error-level generated diagnostics, including type and extern
 contract failures. Warning-level Rust and Clippy findings describe backend
 output rather than actionable Ice syntax and are suppressed at the generated
 item boundary; Ice's non-CLI-only semantic warnings (`W001-W009` and
-`W011-W020`) continue to come directly from the language checker.
+`W011-W021`) continue to come directly from the language checker.
 The command rejects execution while any open workspace Ice buffer differs from
 disk, preventing Cargo diagnostics from being applied to a different source
 revision.
