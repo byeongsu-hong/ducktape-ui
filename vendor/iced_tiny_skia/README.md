@@ -44,9 +44,13 @@ every `tiny-skia` window.
   measured the damage from the quad's bounds, so a card that lost its shadow
   kept the old one on screen.
 
-The five defects are pinned by tests in `crates/ui-lang-runtime/tests`
+- **A stroke is repainted over the width it was drawn with.** The release
+  measured a changed primitive by the bounds of its path, so a horizontal
+  rule — a rectangle of zero height — asked for no repaint at all.
+
+The six defects are pinned by tests in `crates/ui-lang-runtime/tests`
 (`canvas_offset_clip.rs`, `shadow_layer_clip.rs`, `canvas_text_damage.rs`,
-`text_anchor_damage.rs`, `shadow_damage.rs`).
+`text_anchor_damage.rs`, `shadow_damage.rs`, `stroke_damage.rs`).
 
 Wired in through `[patch.crates-io]` in the workspace `Cargo.toml` and in
 `examples/app-store/Cargo.toml`. Delete this directory and both patch entries

@@ -260,13 +260,16 @@ impl Layer {
             &previous.primitives,
             &current.primitives,
             |item| match item {
-                Item::Live(primitive) => vec![primitive.visible_bounds()],
+                Item::Live(primitive) => {
+                    vec![primitive.visible_bounds().expand(1.0)]
+                }
                 Item::Group(primitives, group_bounds, transformation) => {
                     primitives
                         .as_slice()
                         .iter()
                         .map(Primitive::visible_bounds)
                         .map(|bounds| bounds * *transformation)
+                        .map(|bounds| bounds.expand(1.0))
                         .filter_map(|bounds| bounds.intersection(group_bounds))
                         .collect()
                 }

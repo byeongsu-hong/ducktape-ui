@@ -25,16 +25,31 @@ pub enum Primitive {
 impl Primitive {
     /// Returns the visible bounds of the [`Primitive`].
     pub fn visible_bounds(&self) -> Rectangle {
-        let bounds = match self {
-            Primitive::Fill { path, .. } => path.bounds(),
-            Primitive::Stroke { path, .. } => path.bounds(),
+        let (bounds, reach) = match self {
+            Primitive::Fill { path, .. } => (path.bounds(), 0.0),
+            // A stroke paints half its width either side of the path it
+            // follows, and a mitred corner reaches further still. Without
+            // that, a path with no area of its own — a horizontal rule, a
+            // chart's grid line — measures as a rectangle of zero height.
+            Primitive::Stroke { path, stroke, .. } => (
+                path.bounds(),
+                stroke.width / 2.0
+                    * match stroke.line_join {
+                        tiny_skia::LineJoin::Miter
+                        | tiny_skia::LineJoin::MiterClip => {
+                            stroke.miter_limit.max(1.0)
+                        }
+                        tiny_skia::LineJoin::Round
+                        | tiny_skia::LineJoin::Bevel => 1.0,
+                    },
+            ),
         };
 
         Rectangle {
-            x: bounds.x(),
-            y: bounds.y(),
-            width: bounds.width(),
-            height: bounds.height(),
+            x: bounds.x() - reach,
+            y: bounds.y() - reach,
+            width: bounds.width() + reach * 2.0,
+            height: bounds.height() + reach * 2.0,
         }
     }
 }
