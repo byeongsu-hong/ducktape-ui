@@ -23,7 +23,7 @@ members = [
 resolver = "3"
 # A path dependency is not a member unless listed, and this one must not be:
 # it is a patch over a published crate, not a crate of this workspace.
-exclude = ["vendor/iced_tiny_skia"]
+exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 
 # `vendor/iced_tiny_skia` is the published 0.14.0 source with two renderer
 # defects fixed, one module opened and one present shortened. Both defects
@@ -57,8 +57,16 @@ exclude = ["vendor/iced_tiny_skia"]
 # differ from what it shows (`present_with_damage`), instead of the whole
 # window every time. `examples/app-store` redraws every window after every
 # update, so its idle windows presented a full copy each tick.
+#
+# `vendor/iced_winit` is the published 0.14.0 source with one line changed:
+# the event loop no longer keeps a `WaitUntil` deadline that has already
+# passed when a later one is asked for. Kept, it made winit poll with a zero
+# timeout until the later deadline arrived, so a daemon with two windows that
+# each ask for a timed redraw spun a whole core. Upstream master still has
+# the original line; drop the directory and the patch when a release does not.
 [patch.crates-io]
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
+iced_winit = { path = "vendor/iced_winit" }
 
 [workspace.package]
 edition = "2024"
