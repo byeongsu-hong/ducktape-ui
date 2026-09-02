@@ -220,13 +220,25 @@ refresh the metadata inventory before hashing new or affected files. A changed
 snapshot must remain identical across two reads before the background rebuild
 starts.
 
-In a debug build every generated handler arm is timed: a turn that runs
-longer than the 16ms frame budget prints `ice: handler `name` took Nms, over
-the 16ms frame budget, at path.ice:line` on the app's stderr, which `cargo ice
-dev` shows. It prevents nothing and costs one `Instant` per turn; it attributes
-the stall a `sync` extern or a heavy handler body hides behind the extern
-boundary, the way `W021` names the risk ahead of time. Release builds carry no
-timer.
+Every generated handler arm is timed: a turn that runs longer than the frame
+budget prints ``ice: handler `name` took Nms, over the 16ms frame budget, at
+path.ice:line`` on the app's stderr, which `cargo ice dev` shows. It prevents
+nothing; it attributes the stall a `sync` extern or a heavy handler body hides
+behind the extern boundary, the way `W021` names the risk ahead of time.
+
+A debug build measures against 16ms with nothing to turn on. A release build —
+the one a user runs, and the only one whose timings are the app's own — measures
+only when `ICE_PERF` names the budget in milliseconds:
+
+```console
+$ ICE_PERF=16 ./target/release/my-app
+ice: handler `refresh` took 41ms, over the 16ms frame budget, at src/ui/app.ice:82
+```
+
+`ICE_PERF=0` reports every turn; a value that is not a number is ignored with a
+line saying so. Unset, a release build reads one `OnceLock` per turn and starts
+no clock, which is why observing a shipped app costs no logging dependency in
+`ui-lang-runtime` and no build flag. The budget is read once per process.
 
 `cargo ice dev` also builds with `ui-lang-runtime`'s `devtools` feature, which
 is iced's `debug` feature. The window shows `Press F12 to open debug metrics`
