@@ -13,11 +13,24 @@
 //! * `__view build only` calls the generated `__view` on a bare state — the
 //!   Ice-emitted code alone, no layout, no event walk, and **no accessibility
 //!   walk**.
-//! * Every phase driven through `Driver` — idle redraw, the one-field write,
-//!   scroll, keystroke, cursor move, theme, fold, `Settled` — is a full
-//!   `UserInterface` build plus iced layout plus the event walk, and a test
-//!   build forces the accessibility snapshot, so those numbers carry the a11y
-//!   tree walk that a shipped release build does not.
+//! * **The app's frame is `idle frame: view` + `diff + layout` + `event walk`,
+//!   and nothing else on this table.** Those three are `redraw_phases`, which
+//!   times the generated view, `UserInterface::build` and the event walk and
+//!   stops there. A test build forces the accessibility snapshot, so they do
+//!   carry an a11y tree walk a shipped release build does not.
+//! * **`idle redraw` is not the app's frame**, and neither is any row whose
+//!   label says `+ redraw`. Each of those is a whole `Driver` call, which
+//!   broadcasts to the subscriptions and then settles the task queue — and
+//!   `Driver::settle` waits on the runtime thread by polling, one
+//!   `thread::sleep(1ms)` a round, so a settle that is not already quiescent
+//!   costs about a millisecond of sleep whatever the app did. Measured here:
+//!   `idle redraw` is 1169us against a 93us frame at 8 rows and 1408us against
+//!   317us at 500 rows; dropping that poll to 100us takes the same two rows to
+//!   244us and 499us. The overhead is the sleep, it is roughly constant in the
+//!   app, and a row that makes two `Driver` calls carries it twice.
+//! * So read an absolute `redraw` row as an upper bound with a large fixed term
+//!   added, and take every result from a difference: the paired ablations, the
+//!   per-row slopes, and the phase rows above.
 //! * `push_user` / `recent_chats` are direct calls to the app's own Rust, with
 //!   no view in them at all.
 //!
@@ -216,12 +229,18 @@ fn seed_with(state: &mut AiChat, seeded: Vec<Entry>, chats: usize) -> Vec<Entry>
 
 /// The floor every other number is read against.
 ///
-/// `__view build only` is the Ice-emitted code alone. `idle redraw` adds
-/// layout, the event walk and the accessibility snapshot. The one-field write
-/// is the hydration floor: `copy_text` writes one `str` field that exactly one
-/// node reads (`app.ice:581`), and nothing else on the screen depends on it —
-/// so whatever it costs above an idle redraw is what an Elm rebuild charges
-/// for touching nothing.
+/// `__view build only` is the Ice-emitted code alone. The three `idle frame`
+/// rows are the app's whole frame — the generated view, the diff and layout,
+/// the event walk — and `idle redraw` is the driver's, which is those plus a
+/// subscription broadcast and a settle that sleeps its way to quiescence. The
+/// difference between them is printed under them so nobody has to subtract it
+/// twice.
+///
+/// The one-field write is the hydration floor: `copy_text` writes one `str`
+/// field that exactly one node reads (`app.ice:581`), and nothing else on the
+/// screen depends on it — so whatever it costs above an idle redraw is what an
+/// Elm rebuild charges for touching nothing. It makes two `Driver` calls, so it
+/// carries the settle twice.
 #[test]
 #[ignore = "frame-cost probe, run explicitly: prints per-phase costs, asserts nothing"]
 fn frame_baseline() {
@@ -241,9 +260,32 @@ fn frame_baseline() {
                 std::hint::black_box(driver.state_mut().__view());
             }),
         );
-        report(
+        let idle = report(
             &format!("idle redraw, 1 build ({rows} rows)"),
             sample(FRAMES, || driver.redraw(here())),
+        );
+        // The same idle frame split by phase. These three are the app's frame;
+        // `idle redraw` above is the driver's, and the difference is printed
+        // under them.
+        let mut phases = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..FRAMES {
+            let frame = driver.redraw_phases(here());
+            phases.0.push(frame.view.as_micros());
+            phases.1.push(frame.layout.as_micros());
+            phases.2.push(frame.update.as_micros());
+        }
+        let view = report(&format!("idle frame: view ({rows} rows)"), phases.0);
+        let layout = report(
+            &format!("idle frame: diff + layout ({rows} rows)"),
+            phases.1,
+        );
+        let walk = report(&format!("idle frame: event walk ({rows} rows)"), phases.2);
+        let frame = view + layout + walk;
+        eprintln!(
+            "{:<46} {:>8}us  ({:.0}% of `idle redraw`)",
+            format!("idle redraw minus the app's frame ({rows} rows)"),
+            idle.saturating_sub(frame),
+            idle.saturating_sub(frame) as f64 / idle.max(1) as f64 * 100.0
         );
 
         let mut flip = false;
