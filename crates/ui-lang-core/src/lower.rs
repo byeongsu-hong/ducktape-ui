@@ -729,7 +729,6 @@ pub(crate) struct ResolvedHandler {
     pub(crate) name: String,
     pub(crate) params: Vec<ResolvedHandlerParam>,
     pub(crate) statements: Vec<ResolvedStatement>,
-    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -7719,7 +7718,6 @@ impl Lowerer {
             name: handler.name.clone(),
             params,
             statements,
-            #[cfg(test)]
             origin: declaration.declaration.origin,
         });
         Ok(id)

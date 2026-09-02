@@ -1292,7 +1292,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     // that to matter. Each gets its own group, hence its own file, so an edit
     // to one leaves the other's type check reusable.
     let mut update = String::new();
-    generate_update(&mut update, program, &message)?;
+    generate_update(&mut update, program, &message, source_path)?;
     generate_subscription(&mut out, program, &message)?;
     writeln!(out, "{phase}").unwrap();
     let outline_guard = outline::enable_for_view();

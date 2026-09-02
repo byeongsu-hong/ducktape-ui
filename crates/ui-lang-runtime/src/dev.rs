@@ -11,6 +11,50 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+/// The frame a handler turn is measured against. A turn that runs longer
+/// held the loop for at least one frame: the freeze the source cannot show.
+pub const TURN_BUDGET: Duration = Duration::from_millis(16);
+
+/// Times one generated handler arm in a debug build and reports, on drop,
+/// a turn that ran over [`TURN_BUDGET`] with the handler's `.ice` location.
+/// It prevents nothing; it attributes the stall the extern boundary hides.
+#[doc(hidden)]
+pub struct Turn {
+    handler: &'static str,
+    at: &'static str,
+    started: Instant,
+}
+
+impl Turn {
+    pub fn start(handler: &'static str, at: &'static str) -> Self {
+        Self {
+            handler,
+            at,
+            started: Instant::now(),
+        }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        if let Some(line) = turn_report(self.handler, self.at, self.started.elapsed()) {
+            eprintln!("{line}");
+        }
+    }
+}
+
+/// The line a turn over budget prints; `None` inside the budget.
+pub fn turn_report(handler: &str, at: &str, took: Duration) -> Option<String> {
+    (took > TURN_BUDGET).then(|| {
+        format!(
+            "ice: handler `{handler}` took {}ms, over the {}ms frame budget, at {at}",
+            took.as_millis(),
+            TURN_BUDGET.as_millis()
+        )
+    })
+}
 
 /// Environment variable containing the readiness marker path.
 #[doc(hidden)]
@@ -455,5 +499,22 @@ mod tests {
         );
 
         assert_eq!(phase.load(Ordering::Acquire), 2);
+    }
+}
+
+#[cfg(test)]
+mod turn_tests {
+    use super::*;
+
+    #[test]
+    fn a_turn_over_the_frame_budget_names_its_handler_and_source() {
+        assert_eq!(
+            turn_report("tick", "src/ui/app.ice:12", Duration::from_millis(23)).as_deref(),
+            Some("ice: handler `tick` took 23ms, over the 16ms frame budget, at src/ui/app.ice:12")
+        );
+        assert_eq!(
+            turn_report("tick", "src/ui/app.ice:12", Duration::from_millis(16)),
+            None
+        );
     }
 }
