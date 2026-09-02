@@ -1,32 +1,33 @@
-use std::alloc::System;
 use std::hint::black_box;
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use ui_lang_core::SymbolKind;
 
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+mod common;
+
+use common::clean_window_allocations;
 
 #[test]
 fn validating_component_names_does_not_allocate() {
     const VALIDATIONS: usize = 4_000;
 
     black_box(SymbolKind::Component.accepts(black_box("catalog::controls::Card.Header")));
-    let region = Region::new(GLOBAL);
-    let accepted = (0..VALIDATIONS)
-        .filter(|_| {
-            black_box(SymbolKind::Component.accepts(black_box("catalog::controls::Card.Header")))
-        })
-        .count();
-    let stats = region.change();
+    let mut accepted = 0;
+    let stats = clean_window_allocations(0, || {
+        accepted = (0..VALIDATIONS)
+            .filter(|_| {
+                black_box(
+                    SymbolKind::Component.accepts(black_box("catalog::controls::Card.Header")),
+                )
+            })
+            .count();
+    });
 
     assert_eq!(accepted, VALIDATIONS);
     eprintln!(
         "{VALIDATIONS} component-name validations: {} allocations, {} bytes",
         stats.allocations, stats.bytes_allocated
     );
-    // The test process can charge four one-off harness allocations to this region.
     // The previous segment-collecting path still fails at 4,000 allocations.
-    assert!(stats.allocations <= 4, "{stats:?}");
-    assert!(stats.bytes_allocated <= 900, "{stats:?}");
+    assert_eq!(stats.allocations, 0, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 0, "{stats:?}");
 }
