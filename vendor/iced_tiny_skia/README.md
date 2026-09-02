@@ -29,9 +29,13 @@ every `tiny-skia` window.
 - **A glyph decides for itself whether the clip mask applies to it**, instead
   of the whole text deciding, so a text clipped to a whole window no longer
   blits every glyph through the mask on a partial repaint.
+- **A text damages the pixels its alignment puts it on.** The release
+  measured every text rightwards and downwards from its position, so a
+  right-aligned or centred label left its old glyphs on screen.
 
-The three defects are pinned by tests in `crates/ui-lang-runtime/tests`
-(`canvas_offset_clip.rs`, `shadow_layer_clip.rs`, `canvas_text_damage.rs`).
+The four defects are pinned by tests in `crates/ui-lang-runtime/tests`
+(`canvas_offset_clip.rs`, `shadow_layer_clip.rs`, `canvas_text_damage.rs`,
+`text_anchor_damage.rs`).
 
 Wired in through `[patch.crates-io]` in the workspace `Cargo.toml` and in
 `examples/app-store/Cargo.toml`. Delete this directory and both patch entries
