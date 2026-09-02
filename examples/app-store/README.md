@@ -213,8 +213,10 @@ their family, so the store's default never reaches them.
 Loading a module is cranelift's compile the first time and a file read the
 next: wasmtime's artifact cache lives under the data directory, and a module
 loaded once in a run is kept in memory, so Restart, Quit-then-Open and
-reinstall are an instantiation — under a millisecond. The Monitor's Load
-column says which it was.
+reinstall are an instantiation — under a millisecond. The compile itself
+runs across every core (wasmtime's `parallel-compilation`), so a cold
+restore of five apps takes a few seconds rather than their sum. The
+Monitor's Load column says which it was.
 
 Measured against the store before this redesign, each run under Xvfb
 (software rendering, no GPU) with the same five apps restored at start,

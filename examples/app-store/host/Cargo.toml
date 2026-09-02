@@ -9,7 +9,7 @@ iced = { workspace = true, features = ["smol"] }
 ui-lang.workspace = true
 ui-lang-runtime = { workspace = true, features = ["full-runtime"] }
 app-store-frame.workspace = true
-wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "cache"] }
+wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "cache", "parallel-compilation"] }
 wasmparser = "0.251"
 getrandom = "0.3"
 
