@@ -466,10 +466,16 @@ where
             wire::AlignY::Center => text.y - text.line_height / 2.0,
             wire::AlignY::Bottom => text.y - text.line_height,
         };
+        let clip = rect(text.clip);
         renderer.fill_text(
             core_text::Text {
                 content: text.content.clone(),
-                bounds,
+                // Finite on purpose: the renderer multiplies a text's bounds
+                // by the layer's transformation as a 4x4 matrix, which turns
+                // an infinite width into a NaN height, and a NaN is never
+                // equal to itself — so every text counted as changed every
+                // frame and damaged the window from its corner down.
+                bounds: Size::new((clip.x + clip.width - x).max(0.0), text.line_height),
                 size: Pixels(text.size),
                 line_height: LineHeight::Absolute(Pixels(text.line_height)),
                 font: font(&text.font),
@@ -480,7 +486,7 @@ where
             },
             Point::new(x, y),
             color(text.color),
-            rect(text.clip),
+            clip,
         );
     }
 }
