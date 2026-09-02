@@ -314,22 +314,25 @@ fn composer_keystroke() {
     }
 }
 
-/// A token landing while a reply is being written.
+/// One streamed token, against a reasoning summary that is already long.
 ///
-/// `on streamed` does three things per token: appends to the live answer
-/// (incremental), assigns `live_thinking = markdown(part.thinking)` — and
-/// `Chunk.thinking` is documented as cumulative (`codex.rs:160`), so that is a
-/// full reparse of the whole reasoning summary every time — and issues
-/// `task widget snap-end` at the transcript, which walks the tree.
+/// `on streamed` does three things per token: it appends to the live answer, it
+/// appends to the live reasoning summary, and it issues `task widget snap-end`
+/// at the transcript, which walks the tree. Both appends extend a parsed
+/// document rather than rebuilding it, so what a token costs should not depend
+/// on how much either surface already holds.
 ///
-/// The summary sizes below are what a reasoning trace actually reaches. If the
-/// per-token cost curves upward with them, the reparse is quadratic in the
-/// summary; if it stays flat, it is not.
+/// The summary sizes below are what a reasoning trace actually reaches, and the
+/// summary is written the way the wire writes it — a piece at a time — before
+/// the measurement starts. A per-token cost that curves upward with the size is
+/// a reparse of what is already there; a flat one is not.
+///
+/// Read the slope, not the absolute: every row here is a `dispatch` plus a
+/// `redraw`, and both settle the task queue, which the module doc prices.
 #[test]
 #[ignore = "frame-cost probe, run explicitly: prints per-phase costs, asserts nothing"]
 fn streamed_token() {
-    eprintln!("\nai-chat streaming — {LONG} rows behind a live reply, cumulative summary");
-    let summary = ANSWER.repeat(24);
+    eprintln!("\nai-chat streaming — {LONG} rows behind a live reply");
     for kb in [0usize, 1, 4, 16] {
         // A fresh driver per size: the live answer grows as tokens land, and
         // measuring a longer answer instead of a longer summary is the trap.
@@ -338,22 +341,35 @@ fn streamed_token() {
         driver.state_mut().busy = true;
         driver.state_mut().status = "Responding".to_owned();
         driver.state_mut().__ice_derived = Default::default();
-        let thinking = summary[..(kb * 1024).min(summary.len())].to_owned();
+
+        // Written the way it arrives: `response.reasoning_summary_text.delta`
+        // carries a piece, never the whole summary so far.
+        let mut written = 0;
+        let mut pieces = ANSWER.split_inclusive(' ').cycle();
+        while written < kb * 1024 {
+            let piece = pieces.next().expect("an endless summary");
+            written += piece.len();
+            driver.dispatch(streamed("", piece), here());
+        }
+
         report(
-            &format!("token: update + redraw ({kb}KB summary)"),
+            &format!("token: update + redraw ({kb}KB summary written)"),
             sample(FRAMES, || {
-                driver.dispatch(
-                    __AiChatMessage::Streamed(Chunk {
-                        answer: "token ".to_owned(),
-                        thinking: thinking.clone(),
-                        status: "Responding".to_owned(),
-                    }),
-                    here(),
-                );
+                driver.dispatch(streamed("token ", "reasoning "), here());
                 driver.redraw(here());
             }),
         );
     }
+}
+
+/// A chunk shaped the way the wire sends one: a piece for each live surface.
+fn streamed(answer: &str, thinking: &str) -> __AiChatMessage {
+    __AiChatMessage::Streamed(Chunk {
+        answer: answer.to_owned(),
+        thinking: thinking.to_owned(),
+        thinking_ended: false,
+        status: "Responding".to_owned(),
+    })
 }
 
 /// What the sidebar adds to every frame.

@@ -14,7 +14,7 @@
 extern crate::codex
   Session()
   Entry(id:i64, kind:str, title:str, detail:str, body:str, status:str, open:bool, dark:bool)
-  Chunk(answer:str, thinking:str, status:str)
+  Chunk(answer:str, thinking:str, thinking_ended:bool, status:str)
   CodexError(message:str)
   sync codex_session() -> Session
   sync codex_account() -> str
