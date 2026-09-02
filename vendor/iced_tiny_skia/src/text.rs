@@ -273,13 +273,30 @@ impl GlyphCache {
         let key = (cache_key, [r, g, b]);
 
         if let hash_map::Entry::Vacant(entry) = self.entries.entry(key) {
+            // A glyph that yields no pixels — a space, or one the font cannot
+            // rasterise — is remembered as an empty entry. Learning that it
+            // is empty means hinting its outline, and without the entry that
+            // ran again for every space on every draw.
             // TODO: Outline support
-            let image = swash.get_image_uncached(font_system, cache_key)?;
+            let Some(image) = swash.get_image_uncached(font_system, cache_key)
+            else {
+                let _ = entry.insert((
+                    Vec::new(),
+                    cosmic_text::Placement {
+                        left: 0,
+                        top: 0,
+                        width: 0,
+                        height: 0,
+                    },
+                ));
+                return None;
+            };
 
             let glyph_size = image.placement.width as usize
                 * image.placement.height as usize;
 
             if glyph_size == 0 {
+                let _ = entry.insert((Vec::new(), image.placement));
                 return None;
             }
 
@@ -337,8 +354,9 @@ impl GlyphCache {
 
         let _ = self.recently_used.insert(key);
 
-        self.entries.get(&key).map(|(buffer, placement)| {
-            (bytemuck::cast_slice(buffer.as_slice()), *placement)
+        self.entries.get(&key).and_then(|(buffer, placement)| {
+            (!buffer.is_empty())
+                .then(|| (bytemuck::cast_slice(buffer.as_slice()), *placement))
         })
     }
 
