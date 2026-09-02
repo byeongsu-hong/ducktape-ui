@@ -26,7 +26,7 @@ resolver = "3"
 exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 
 # `vendor/iced_tiny_skia` is the published 0.14.0 source with the changes
-# below: four defects fixed, one module opened, one present shortened and
+# below: five defects fixed, one module opened, one present shortened and
 # four repaints narrowed. Every one of them reaches every software render,
 # which is what every headless capture, `cargo ice inspect` and any
 # `tiny-skia` window draws with. Drop the directory and this patch when a
@@ -111,6 +111,13 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 # rectangle anyway. A rectangle already held is answered without touching a
 # byte. Pinned by `crates/ui-lang-runtime/tests/partial_repaint_quad.rs`,
 # whose quad crosses the repainted region and so is drawn through the mask.
+#
+# 11. It measures a changed quad's damage from the quad's own bounds, but a
+# shadow is its own rectangle: offset from the quad and blurred wider than
+# it, so it darkens pixels those bounds never reach. A card that lost its
+# shadow, or took a different one, kept the old shadow on screen. The
+# rectangle the shadow covers is unioned into the damage. Pinned by
+# `crates/ui-lang-runtime/tests/shadow_damage.rs`.
 #
 # `vendor/iced_winit` is the published 0.14.0 source with one line changed:
 # the event loop no longer keeps a `WaitUntil` deadline that has already

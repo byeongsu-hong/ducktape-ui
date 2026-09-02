@@ -220,7 +220,7 @@ impl Layer {
             &previous.quads,
             &current.quads,
             |(quad, _)| {
-                quad.bounds
+                covered(quad)
                     .expand(1.0)
                     .intersection(&current.bounds)
                     .into_iter()
@@ -299,6 +299,25 @@ impl Layer {
         damage.extend(images);
         damage
     }
+}
+
+/// The rectangle a quad covers, shadow and all.
+///
+/// A shadow is its own rectangle: offset from the quad and blurred wider
+/// than it, so it darkens pixels the quad's own bounds never reach. A quad
+/// that changes has to take those back, or the shadow it used to cast stays
+/// on screen.
+fn covered(quad: &Quad) -> Rectangle {
+    if quad.shadow.color.a <= 0.0 {
+        return quad.bounds;
+    }
+
+    quad.bounds.union(&Rectangle {
+        x: quad.bounds.x + quad.shadow.offset.x - quad.shadow.blur_radius,
+        y: quad.bounds.y + quad.shadow.offset.y - quad.shadow.blur_radius,
+        width: quad.bounds.width + quad.shadow.blur_radius * 2.0,
+        height: quad.bounds.height + quad.shadow.blur_radius * 2.0,
+    })
 }
 
 /// The rectangle `text` covers on screen.
