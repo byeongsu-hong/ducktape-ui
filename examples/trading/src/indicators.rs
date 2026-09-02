@@ -3,7 +3,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use iced::widget::canvas::{self, Path};
 use iced::{Color, Point};
-use ui_lang_components::ui::candle_chart::{Candle, ChartCoords, ChartOverlay};
+use ui_lang_components::ui::candle_chart::{
+    Candle, ChartCoords, ChartOverlay, POLYLINE_CHUNK, polyline_chunks,
+};
 use ui_lang_components::ui::theme;
 
 use crate::ChartIndicator;
@@ -234,38 +236,43 @@ fn stroke_series(
     mut point: impl FnMut(usize, f64) -> Point,
     mut stroke: impl FnMut(&Path, Color, f32),
 ) {
+    // Chunked rather than one path per series: a stroked path is rasterized
+    // whole however little of it the damage rectangle keeps, and the crosshair
+    // is a six-pixel band across a line nine hundred wide.
+    let mut run: Vec<Point> = Vec::new();
     for line in series {
-        let mut segments = 0;
-        let path = Path::new(|builder| {
-            let mut drawing = false;
-            let mut previous = None;
-            for index in indices {
-                if let Some(previous) = previous
-                    && line.values[previous + 1..=*index]
-                        .iter()
-                        .any(Option::is_none)
-                {
-                    drawing = false;
-                }
-                let Some(value) = line.values[*index] else {
-                    drawing = false;
-                    previous = Some(*index);
-                    continue;
-                };
-                let at = point(*index, value);
-                if drawing {
-                    builder.line_to(at);
-                    segments += 1;
-                } else {
-                    builder.move_to(at);
-                    drawing = true;
-                }
-                previous = Some(*index);
+        // Bollinger's middle band is drawn at 0.55 alpha, and the point two
+        // chunks share is blended by both: at full alpha that is the same
+        // pixel twice, under it the pixel darkens. A translucent line stays
+        // one path.
+        let chunk = if line.color.a < 1.0 {
+            usize::MAX
+        } else {
+            POLYLINE_CHUNK
+        };
+        let flush = |run: &mut Vec<Point>, stroke: &mut dyn FnMut(&Path, Color, f32)| {
+            for path in polyline_chunks(run, chunk) {
+                stroke(&path, line.color, line.width);
             }
-        });
-        if segments > 0 {
-            stroke(&path, line.color, line.width);
+            run.clear();
+        };
+        let mut previous = None;
+        for index in indices {
+            let broken = previous.is_some_and(|previous: usize| {
+                line.values[previous + 1..=*index]
+                    .iter()
+                    .any(Option::is_none)
+            });
+            let value = line.values[*index];
+            if broken || value.is_none() {
+                flush(&mut run, &mut stroke);
+            }
+            if let Some(value) = value {
+                run.push(point(*index, value));
+            }
+            previous = Some(*index);
         }
+        flush(&mut run, &mut stroke);
     }
 }
 
@@ -517,13 +524,30 @@ mod tests {
         let candles = long_candles();
         let indices = (0..candles.len()).collect::<Vec<_>>();
         let mut strokes = 0;
+        let mut pens: Vec<(String, u32)> = Vec::new();
         stroke_series(
             all.series_for_draw(&candles),
             &indices,
             |index, value| Point::new(index as f32, value as f32),
-            |_, _, _| strokes += 1,
+            |_, color, width| {
+                strokes += 1;
+                let pen = (format!("{color:?}"), width.to_bits());
+                if !pens.contains(&pen) {
+                    pens.push(pen);
+                }
+            },
         );
-        assert_eq!(strokes, 7, "every configured line reaches the stroke sink");
+        // Seven lines drawn with six pens: Bollinger's upper and lower share
+        // one, and its middle band is the same colour at another width.
+        assert_eq!(
+            pens.len(),
+            6,
+            "every configured line reaches the stroke sink"
+        );
+        assert!(
+            strokes > 7,
+            "an opaque line is chunked, so it is more than one stroke: {strokes}"
+        );
     }
 
     #[test]
