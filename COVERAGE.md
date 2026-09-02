@@ -665,7 +665,10 @@ paint; redraw-emitted messages remain unapplied and capture stays
 observation-only. Generated identified targets retain their originating
 imported `.ice` path, line, and column. `cargo ice inspect` activates an
 otherwise inert generated entry for one real app `Program`, fixed environment,
-and preset. Its release-only trace modes measure authored tests,
+and preset. `--frames N` measures that same driver before the capture and
+records per-phase p50/p95 microseconds and layout memo totals in the manifest;
+two manifests differing only there compare as matching, and dropping the ignore
+rule is Red. Its release-only trace modes measure authored tests,
 deterministically generate semantic actions from a refreshed live inventory,
 or replay an exact artifact environment/sequence on a fresh boot. The strict
 trace-schema-1 artifact retains raw phase samples and tail summaries,

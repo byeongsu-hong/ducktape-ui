@@ -22,6 +22,7 @@ use std::process::{Command, ExitCode, Stdio};
 const DEV_USAGE: &str =
     "cargo ice dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...]";
 const INSPECT_USAGE: &str = "cargo ice inspect ROOT.ice [render options]\n\
+  cargo ice inspect ROOT.ice --frames N [--release] [render options]\n\
   cargo ice inspect ROOT.ice --test NAME --trace [--warmup N] [--repeat N] [--deadline-ms MS | --max-to-median RATIO]\n\
   cargo ice inspect ROOT.ice --fuzz interactions --seed N --steps N [--confirm N] [--deadline-ms MS | --max-to-median RATIO]\n\
   cargo ice inspect ROOT.ice --replay TRACE.json [--confirm N]\n\

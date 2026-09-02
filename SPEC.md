@@ -5803,8 +5803,13 @@ only the canonical matching root, constructs the normal app/daemon `Program`,
 applies the requested preset and fixed environment, and writes one named PNG
 plus JSON manifest. Options cover viewport, preset, render/system theme, scale,
 locale, platform, reduced motion, name, output directory, and an explicit Cargo
-package for external includes. A fragment without a top-level app/daemon or a
-root not included by the selected package is rejected.
+package for external includes. `--frames N` additionally measures eight warmup
+redraws and then `N` timed frames on that same driver before capturing, and
+records per-phase p50/p95 microseconds, the frame and warmup counts, the build
+profile, and layout memo hit/miss totals in the manifest's `frames` object;
+`--release` builds the inspection optimized and is accepted only with
+`--frames`. A fragment without a top-level app/daemon or a root not included by
+the selected package is rejected.
 
 `cargo ice inspect` also has an opt-in release-only interaction trace path.
 `--test NAME --trace` measures an authored first-class Ice test with explicit
@@ -5826,8 +5831,9 @@ strictly smaller sequence when possible.
 manifest values and 8-bit RGBA pixels under explicit numeric, channel, and
 changed-ratio tolerances. It writes machine-readable `report.json` and a
 transparent/red `diff.png`, then exits unsuccessfully for a disallowed delta.
-Artifact names, PNG filenames, and capture-statement labels are reported as
-ignored identity fields; all rendered and environmental fields participate.
+Artifact names, PNG filenames, capture-statement labels, and the measured
+`frames` object are reported as ignored fields; all rendered and environmental
+fields participate.
 Capture remains observation-only; golden policy belongs to tooling rather
 than runtime behavior. A capture delivers a redraw request to the same native
 widget tree immediately before drawing so status-aware widgets render their
@@ -6579,7 +6585,7 @@ candidate children, and removes staged executables on replacement or shutdown.
 | `cargo ice expand FILE` | prints generated Rust for debugging |
 | `cargo ice dev -p PACKAGE [<cargo-build-args>] [-- <app-args>]` | discovers the package's unique Ice root, watches complete source/build inputs, reloads compatible views in place, and replaces the running app only after a rebuilt shadow candidate reports ready |
 | `cargo ice bundle -p PACKAGE [--target TRIPLE]...` | analyzes the package's Ice root, builds it in release, and writes the host platform's installable artifact: a signed, notarized macOS `.app` and `.dmg`, a Debian `.deb` with a desktop entry and icon theme, or a per-user Windows `.msi`; the app name and `id` become the product name and identifier, every icon size is rendered from one SVG, repeated macOS targets are joined with `lipo`, and signing credentials come from the environment |
-| `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts, or release-mode authored/generated/replay interaction evidence in a strict sibling `trace.json` |
+| `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts, optionally with `--frames N [--release]` per-phase frame cost and layout memo counts in the manifest's `frames` object, or release-mode authored/generated/replay interaction evidence in a strict sibling `trace.json` |
 | `cargo ice diff BASE.json CURRENT.json [options]` | compares structured manifests and RGBA pixels, writes JSON/PNG diff artifacts, and fails outside explicit tolerances |
 | `cargo ice api FILE` | checks an app or declaration-only interface graph and prints its deterministic, versioned public API fingerprint |
 | `cargo ice api diff BASE.json CURRENT.json [--format human\|json]` | verifies both fingerprints, classifies public changes, and exits nonzero when any breaking change is present |

@@ -998,12 +998,18 @@ where
     }
 
     let mut driver = Driver::new(program(), config);
+    let frames = parsed_env::<usize>("ICE_AGENT_INSPECT_FRAMES")
+        .filter(|count| *count > 0)
+        .map(|count| driver.measure_frames(count, source));
     let capture = driver.capture(name, source);
-    let result = serde_json::json!({
+    let mut result = serde_json::json!({
         "source": generated_source,
         "png": capture.png_path,
         "manifest": capture.metadata_path,
     });
+    if let Some(frames) = frames {
+        result["frames"] = frames_json(frames);
+    }
     write_agent_result(source, result);
 }
 
@@ -2241,6 +2247,56 @@ pub struct RedrawPhases {
     pub update: Duration,
 }
 
+/// What `Driver::measure_frames` measured: per-phase percentiles over the
+/// timed frames and the layout memo totals across all of them.
+#[derive(Clone, Copy, Debug)]
+pub struct Frames {
+    /// Timed frames.
+    pub count: usize,
+    /// Untimed redraws run before the timed ones.
+    pub warmup: usize,
+    /// `"debug"` or `"release"`; debug microseconds are ratios, not budgets.
+    pub build_profile: &'static str,
+    /// `(p50, p95)` microseconds building the generated `view`.
+    pub view_us: (u64, u64),
+    /// `(p50, p95)` microseconds diffing and laying out the widget tree.
+    pub layout_us: (u64, u64),
+    /// `(p50, p95)` microseconds delivering `RedrawRequested`.
+    pub update_us: (u64, u64),
+    /// `(hits, misses)` of `rev_memo` layouts over the timed frames.
+    pub rev_memo: (u64, u64),
+    /// `(hits, misses)` of `memo_lazy` layouts over the timed frames.
+    pub memo_lazy: (u64, u64),
+}
+
+/// The `Frames` shape shared by the capture manifest and the inspection result.
+fn frames_json(frames: Frames) -> serde_json::Value {
+    let phase = |(p50, p95): (u64, u64)| serde_json::json!({ "p50": p50, "p95": p95 });
+    let memo = |(hits, misses): (u64, u64)| serde_json::json!({ "hits": hits, "misses": misses });
+    serde_json::json!({
+        "count": frames.count,
+        "warmup": frames.warmup,
+        "build_profile": frames.build_profile,
+        "view_us": phase(frames.view_us),
+        "layout_us": phase(frames.layout_us),
+        "update_us": phase(frames.update_us),
+        "rev_memo": memo(frames.rev_memo),
+        "memo_lazy": memo(frames.memo_lazy),
+    })
+}
+
+/// `(p50, p95)` by the index rule `examples/showcase/src/frame_probe.rs` uses.
+fn percentiles(mut samples: Vec<u64>) -> (u64, u64) {
+    samples.sort_unstable();
+    let at = |percentile: usize| {
+        samples
+            .get(samples.len().saturating_sub(1) * percentile / 100)
+            .copied()
+            .unwrap_or_default()
+    };
+    (at(50), at(95))
+}
+
 pub struct Driver<P>
 where
     P: Program,
@@ -2284,6 +2340,7 @@ where
     capture_before_action: Option<usize>,
     capture_after_action: Option<usize>,
     trace_capture_result: Option<PathBuf>,
+    frames: Option<Frames>,
 }
 
 impl<P> Driver<P>
@@ -2459,6 +2516,7 @@ where
             capture_before_action: parsed_env("ICE_TRACE_CAPTURE_BEFORE_ACTION"),
             capture_after_action: parsed_env("ICE_TRACE_CAPTURE_ACTION"),
             trace_capture_result: std::env::var_os("ICE_TRACE_CAPTURE_RESULT").map(PathBuf::from),
+            frames: None,
         };
         driver.resubscribe(config.source);
         driver.run_task(task, config.source);
@@ -3845,7 +3903,7 @@ where
             )
         });
 
-        let manifest = serde_json::json!({
+        let mut manifest = serde_json::json!({
             "schema_version": 2,
             "name": name,
             "png": format!("{name}.png"),
@@ -3883,6 +3941,9 @@ where
             },
             "targets": targets,
         });
+        if let Some(frames) = self.frames {
+            manifest["frames"] = frames_json(frames);
+        }
         std::fs::write(
             &metadata_path,
             serde_json::to_vec_pretty(&manifest).expect("JSON values are serializable"),
@@ -4186,6 +4247,45 @@ where
             layout,
             update,
         }
+    }
+
+    /// Warms up, then times `count` frames by phase and totals the layout
+    /// memo hits across them. The result is kept, so the next `capture`
+    /// records it in the manifest.
+    pub fn measure_frames(&mut self, count: usize, source: Location) -> Frames {
+        const WARMUP: usize = 8;
+
+        for _ in 0..WARMUP {
+            self.redraw(source);
+        }
+        let _ = crate::rev_memo::take_rev_memo_counts();
+        let _ = crate::memo_lazy::take_memo_lazy_counts();
+        let mut view = Vec::with_capacity(count);
+        let mut layout = Vec::with_capacity(count);
+        let mut update = Vec::with_capacity(count);
+        let micros = |phase: Duration| u64::try_from(phase.as_micros()).unwrap_or(u64::MAX);
+        for _ in 0..count {
+            let phases = self.redraw_phases(source);
+            view.push(micros(phases.view));
+            layout.push(micros(phases.layout));
+            update.push(micros(phases.update));
+        }
+        let frames = Frames {
+            count,
+            warmup: WARMUP,
+            build_profile: if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            },
+            view_us: percentiles(view),
+            layout_us: percentiles(layout),
+            update_us: percentiles(update),
+            rev_memo: crate::rev_memo::take_rev_memo_counts(),
+            memo_lazy: crate::memo_lazy::take_memo_lazy_counts(),
+        };
+        self.frames = Some(frames);
+        frames
     }
 
     fn redraw_at(&mut self, time: Instant, source: Location) {
@@ -7658,6 +7758,92 @@ mod tests {
         assert!(
             (active_background["r"].as_f64().expect("red channel") - 0.2).abs() < 1.0e-6,
             "capture must update native widget status before drawing: {active_background}"
+        );
+
+        std::fs::remove_dir_all(&artifact_dir).expect("remove test capture directory");
+    }
+
+    fn frames_artifact_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ice-test-frames-{}-{}",
+            std::process::id(),
+            StableId::new(name).node_id().0
+        ))
+    }
+
+    fn capture_manifest_json(capture: &Capture) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(&capture.metadata_path).expect("capture manifest"))
+            .expect("valid capture manifest")
+    }
+
+    #[test]
+    fn percentiles_use_the_probe_index_rule() {
+        // `(len - 1) * p / 100` over sorted samples, the rule
+        // `examples/showcase/src/frame_probe.rs` uses: for four samples that
+        // is index 1 and index 2, not 2 and 3.
+        assert_eq!(percentiles(vec![40, 10, 30, 20]), (20, 30));
+        assert_eq!(percentiles(vec![7]), (7, 7));
+    }
+
+    #[test]
+    fn measured_frames_reach_the_capture_manifest() {
+        let artifact_dir = frames_artifact_dir("measured_frames");
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("measured_frames")
+                .viewport(160.0, 120.0)
+                .artifact_dir(artifact_dir.clone()),
+        );
+
+        let measured = driver.measure_frames(3, HERE);
+        let capture = driver.capture("measured_frames", HERE);
+        let frames = capture_manifest_json(&capture)["frames"].clone();
+
+        assert_eq!((measured.count, measured.warmup), (3, 8));
+        assert_eq!(frames["count"], 3);
+        assert_eq!(frames["warmup"], 8);
+        assert_eq!(
+            frames["build_profile"],
+            if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            }
+        );
+        for phase in ["view_us", "layout_us", "update_us"] {
+            let p50 = frames[phase]["p50"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{phase} p50 must be an integer: {frames}"));
+            let p95 = frames[phase]["p95"]
+                .as_u64()
+                .unwrap_or_else(|| panic!("{phase} p95 must be an integer: {frames}"));
+            assert!(p50 <= p95, "{phase} p50 {p50}us exceeds p95 {p95}us");
+        }
+        for memo in ["rev_memo", "memo_lazy"] {
+            assert!(
+                frames[memo]["hits"].is_u64() && frames[memo]["misses"].is_u64(),
+                "{memo} must count hits and misses: {frames}"
+            );
+        }
+
+        std::fs::remove_dir_all(&artifact_dir).expect("remove test capture directory");
+    }
+
+    #[test]
+    fn an_unmeasured_capture_omits_frames() {
+        let artifact_dir = frames_artifact_dir("unmeasured_frames");
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("unmeasured_frames")
+                .viewport(160.0, 120.0)
+                .artifact_dir(artifact_dir.clone()),
+        );
+
+        let capture = driver.capture("unmeasured_frames", HERE);
+
+        assert!(
+            capture_manifest_json(&capture).get("frames").is_none(),
+            "a capture without a frame measurement must not claim timings"
         );
 
         std::fs::remove_dir_all(&artifact_dir).expect("remove test capture directory");
