@@ -150,8 +150,25 @@ impl Engine {
             }
         }
 
+        // A plain rectangle that crosses the region is filled only where the
+        // region lets it through — one pixel wider, so the mask cuts that
+        // edge and the quad's own edges keep their anti-aliasing. The pixels
+        // are the same; the work is the region's, not the quad's.
+        let (fill_path, fill_transform) = match (
+            clip_mask.is_some()
+                && fill_border_radius == [0.0; 4]
+                && matches!(background, Background::Color(_)),
+            physical_bounds.intersection(&clip_bounds.expand(1.0)),
+        ) {
+            (true, Some(visible)) => (
+                rounded_rectangle(visible, [0.0; 4]),
+                tiny_skia::Transform::identity(),
+            ),
+            _ => (path, transform),
+        };
+
         pixels.fill_path(
-            &path,
+            &fill_path,
             &tiny_skia::Paint {
                 shader: match background {
                     Background::Color(color) => {
@@ -203,7 +220,7 @@ impl Engine {
                 ..tiny_skia::Paint::default()
             },
             tiny_skia::FillRule::EvenOdd,
-            transform,
+            fill_transform,
             clip_mask,
         );
 
