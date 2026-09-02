@@ -542,16 +542,63 @@ impl Pyramid {
 /// Overlay line colors rotate through these theme roles per moving average.
 const MA_STROKE_WIDTH: f32 = 1.5;
 
-/// How many segments of a polyline go into one path.
+/// The most segments of a polyline that go into one path.
 ///
-/// Measured on the trading terminal's crosshair drag, which is the case that
-/// pays for this. A study line there carries about 128 points, so the pixels
-/// the rasterizer walks per frame fall 1,194,035 unchunked to 212,109 at 32,
+/// A chunk costs one path built and, when a damage rectangle crosses it, one
+/// rasterization of its whole bounding box. Finer chunks always walk fewer
+/// pixels, so what stops the cut getting finer is the per-path cost, which is
+/// counted per path and not per pixel — hence a segment count.
+///
+/// Sixteen, measured on the trading terminal's crosshair drag, where a study
+/// line carries about 128 points across a 920px plot. The pixels the
+/// rasterizer walks per frame fall 1,194,035 unchunked to 212,109 at 32,
 /// 85,273 at 16 and 48,961 at 8, while retired instructions over the same
 /// drag stop falling at 16: 15.62G unchunked, 13.01G at 32, 12.08G at 16,
-/// 11.94G at 8. Sixteen is where the line stops paying and the extra paths
-/// start.
-pub const POLYLINE_CHUNK: usize = 16;
+/// 11.94G at 8. Eight walks fewer pixels and buys no instructions, so the
+/// knee is flat from 8 to 16 and the larger of the two is taken.
+const POLYLINE_CHUNK: usize = 16;
+
+/// The widest a chunk may be on screen before it is cut by span instead.
+///
+/// [`POLYLINE_CHUNK`] alone is tuned to one density. A series of a few dozen
+/// points across the same plot puts every segment inside one chunk, which is
+/// no chunking at all — exactly what a sparse study would hit, and the case
+/// the count alone gets silently wrong.
+///
+/// A hundred and twenty-eight, which is a little wider than the 122px sixteen
+/// segments span at the density the count was measured on. Deliberately: the
+/// cap is there to catch a series too sparse to cut, not to second-guess the
+/// count where the count was measured. It starts biting below about thirty
+/// points across a full-width plot and never changes a denser series, where
+/// finer chunks are what the pixels want anyway — at 641 points the count cap
+/// holds the chunk at 16 and the rasterizer walks 16,129 pixels a frame
+/// against the 180,722 a span-derived 142 would have cost.
+const CHUNK_SPAN: f32 = 128.0;
+
+/// How many segments of `points` make one chunk: at most [`POLYLINE_CHUNK`],
+/// and fewer when that many would span more than [`CHUNK_SPAN`] pixels.
+///
+/// One chunk for a polyline with nothing to cut, or one whose span is not a
+/// finite number.
+pub fn polyline_chunk(points: &[Point]) -> usize {
+    let segments = points.len().saturating_sub(1);
+    if segments == 0 {
+        return 1;
+    }
+
+    let (left, right) = points
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(left, right), point| {
+            (left.min(point.x), right.max(point.x))
+        });
+    let span = right - left;
+    if !span.is_finite() || span <= 0.0 {
+        return POLYLINE_CHUNK;
+    }
+
+    let by_span = ((segments as f32 * CHUNK_SPAN / span).ceil() as usize).max(1);
+    by_span.min(POLYLINE_CHUNK)
+}
 
 /// Splits a polyline into paths of at most `chunk` segments each.
 ///
@@ -2185,7 +2232,7 @@ impl<Message> CandleProgram<'_, Message> {
             let chunk = if color.a < 1.0 {
                 usize::MAX
             } else {
-                POLYLINE_CHUNK
+                polyline_chunk(&points)
             };
             let paths = polyline_chunks(&points, chunk);
             frame.with_clip(ctx.chrome.plot, |frame| {
@@ -3729,7 +3776,59 @@ mod tests {
 
 #[cfg(test)]
 mod polyline_chunk_tests {
-    use super::chunk_ranges;
+    use super::{POLYLINE_CHUNK, chunk_ranges, polyline_chunk};
+    use iced::Point;
+
+    #[test]
+    fn a_chunk_covers_about_the_same_width_at_any_density() {
+        // The same 920px plot the constant was measured on, sampled three
+        // ways: a few dozen points, the terminal's usual load, and a series
+        // dense enough to reach the plot's pixel cap.
+        for count in [24usize, 128, 500] {
+            let points: Vec<Point> = (0..count)
+                .map(|index| {
+                    Point::new(
+                        index as f32 * 920.0 / (count - 1) as f32,
+                        (index % 7) as f32,
+                    )
+                })
+                .collect();
+            let chunk = polyline_chunk(&points);
+            let chunks = chunk_ranges(points.len(), chunk).count();
+            let width = 920.0 / chunks as f32;
+
+            assert!(
+                chunks > 1,
+                "{count} points over 920px must chunk, not fall back to one \
+                 path"
+            );
+            assert!(
+                width <= 190.0,
+                "{count} points over 920px gave {chunks} chunks of \
+                 {width:.0}px, wider than a chunk may be"
+            );
+            assert!(
+                chunk <= POLYLINE_CHUNK,
+                "{count} points gave a chunk of {chunk} segments, past the \
+                 per-path knee"
+            );
+        }
+    }
+
+    #[test]
+    fn a_polyline_with_nothing_to_cut_stays_one_path() {
+        // Eight points across seven pixels: under the count cap either way,
+        // and the span cap has nothing to say about a line this short.
+        let points: Vec<Point> = (0..8)
+            .map(|index| Point::new(index as f32, index as f32))
+            .collect();
+        assert_eq!(
+            chunk_ranges(points.len(), polyline_chunk(&points)).count(),
+            1
+        );
+        assert_eq!(polyline_chunk(&[]), 1);
+        assert_eq!(polyline_chunk(&[Point::new(0.0, 0.0)]), 1);
+    }
 
     #[test]
     fn chunks_share_a_boundary_point_and_lose_no_segment() {
