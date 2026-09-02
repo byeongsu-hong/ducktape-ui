@@ -64,8 +64,9 @@ Apply these rules before editing:
   import its showcase adapter interface into an application; define a typed
   Rust boundary for product-specific retained widgets.
 - Give every `for` or keyed column over a state-rooted list that instantiates a
-  component its boundary when it is written — `lazy row … as alias` or a
-  `virtual-row` column — not after a warning reports it.
+  component, an extern component, or a nested repetition its boundary when it is
+  written — `lazy row … as alias` or a `virtual-row` column — not after a
+  warning reports it.
 - Preserve accessibility: label child-content buttons, label meaningful images,
   never expose secure-input values, and keep source order meaningful.
 
