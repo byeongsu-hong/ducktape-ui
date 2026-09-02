@@ -24,6 +24,9 @@ tiny-skia = ["iced/tiny-skia"]
 x11 = ["iced/x11", "thread-pool"]
 wayland = ["iced/wayland", "thread-pool"]
 thread-pool = ["iced/thread-pool"]
+# `cargo ice dev` turns this on; nothing else does. It is iced's `debug`
+# feature: F12 debug metrics, and reporting for the `debug` spans Ice lowers.
+devtools = ["iced/debug"]
 test-runtime = [
     "dep:iced_test",
     "dep:iced_tiny_skia",

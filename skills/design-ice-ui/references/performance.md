@@ -219,6 +219,9 @@ prints on the app's stderr:
 ice: handler `name` took Nms, over the 16ms frame budget, at path.ice:line
 ```
 
+A dev build also carries iced's devtools, which F12 opens: a human-facing
+profiler, not agent evidence.
+
 ## Do not
 
 - Do not wrap everything in `lazy`. It changes iced widget construction, carries

@@ -457,6 +457,13 @@ jobs:
       - name: Build application and smoke harness
         shell: bash
         run: |
+          # The overlap smoke below runs `cargo ice dev`, which builds with
+          # `ui-lang-runtime/devtools`; that tree must be warm before its budget.
+          # It runs first so the plain build leaves the shipped binary in place
+          # for the first-frame step.
+          if [ "${{ matrix.label }}" = "Linux" ]; then
+            cargo build --locked -p showcase --features ui-lang-runtime/devtools
+          fi
           cargo build --locked -p "${{ matrix.package }}"
           rustc --edition=2024 -D warnings scripts/native-wgpu-smoke.rs -o "${{ matrix.helper }}"
       - name: Draw first frame through Vulkan

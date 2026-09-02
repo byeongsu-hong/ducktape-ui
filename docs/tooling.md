@@ -228,6 +228,19 @@ the stall a `sync` extern or a heavy handler body hides behind the extern
 boundary, the way `W021` names the risk ahead of time. Release builds carry no
 timer.
 
+`cargo ice dev` also builds with `ui-lang-runtime`'s `devtools` feature, which
+is iced's `debug` feature. The window shows `Press F12 to open debug metrics`
+once at boot; F12 opens iced's devtools, which drive the external `iced_comet`
+profiler the overlay offers to install with `cargo install`. iced's boot,
+update, view, layout, draw, and present spans report there, and so do Ice's
+`debug start`, `debug finish`, and `debug.time_with` spans. `check`, `test`,
+`inspect`, `review`, `bundle`, and release builds outside `dev` carry none of
+it. The package must depend on `ui-lang-runtime` under that name, which every
+Ice app does, since generated code references `::ui_lang_runtime`. The feature
+costs artifact sharing: a dev build no longer reuses what `cargo check` or
+`cargo ice check` compiled, so the first dev build after an upgrade recompiles
+the iced tree and `target/` grows by that second variant.
+
 An accepted edit is first offered to the running process as a view reload. The
 runner re-runs parse, check, and lowering — so the edit is diagnosed exactly as
 before — and republishes the view as data. When the running binary still fills

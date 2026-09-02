@@ -5,9 +5,9 @@ mod watcher;
 #[cfg(test)]
 use self::inputs::{
     BUILD_FINGERPRINT_ENV, CargoBuildOutput, CargoInputGraph, FileStamp, build_script_inputs,
-    build_script_rerun_path, cargo_build_with_program, dev_stamps, file_stamp_attempts,
-    parse_dep_info, reset_file_stamp_attempts, rustc_dep_info_path, settled_dev_stamps,
-    settled_dev_stamps_after, settled_dev_stamps_for_paths_with_cargo_inputs,
+    build_script_rerun_path, cargo_build_with_program, dev_build_command, dev_stamps,
+    file_stamp_attempts, parse_dep_info, reset_file_stamp_attempts, rustc_dep_info_path,
+    settled_dev_stamps, settled_dev_stamps_after, settled_dev_stamps_for_paths_with_cargo_inputs,
     source_stamp_fingerprint, stamp_contains_snapshot,
 };
 use self::inputs::{

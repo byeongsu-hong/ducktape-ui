@@ -3155,7 +3155,8 @@ boundary. Use `debug.active(state)` to read whether a span is present.
 `debug.time_with` accepts a string name plus any non-span expression and returns
 the expression's exact type. These calls always compile; iced's `debug` Cargo
 feature activates reporting, while builds without it use iced's native no-op
-spans.
+spans. `cargo ice dev` turns that feature on through `ui-lang-runtime`'s
+`devtools` feature.
 
 There is no arbitrary Rust expression, method call, closure, general allocation
 API, or implicit truthiness. New operations either belong in a small universal builtin
