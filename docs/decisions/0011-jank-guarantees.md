@@ -220,8 +220,10 @@ author spelling `sync`:
   `cef-browser` pump is the known exception and keeps its `sync`; the
   warning is the language saying so at that line, not a ban.
 - **Dev-time attribution.** `cargo ice dev` times every handler arm and
-  every extern call in debug builds and prints the `.ice` span of any that
-  exceeds a frame, StrictMode-style. It prevents nothing and attributes
+  every extern call and prints the `.ice` span of any that exceeds a frame,
+  StrictMode-style. A debug build measures against 16ms; a release build,
+  where the timings are the app's own, measures when `ICE_PERF` names the
+  budget in milliseconds — no logging dependency and no build flag for it. It prevents nothing and attributes
   everything the extern boundary hides; wall-clock budgets stay out of CI
   (`docs/testing.md`, "Performance contracts").
 

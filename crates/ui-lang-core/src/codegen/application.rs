@@ -6,9 +6,12 @@ use super::*;
 // to a fresh owned value (component state reads) or is Copy — re-emitting one
 // of those costs nothing, while re-emitting a parameter is a use after move
 // that surfaces as an E0382 on the `include_app!` line with no usable span.
-/// A debug-build timer on the handler arm: a turn over the frame budget is
-/// reported with the handler's `.ice` location (ADR 0011, G3). The guard
-/// drops when the arm's closure returns, early `return`s included.
+/// A timer on the handler arm: a turn over the frame budget is reported with
+/// the handler's `.ice` location (ADR 0011, G3). The guard drops when the
+/// arm's closure returns, early `return`s included. A release build measures
+/// nothing until `ICE_PERF` names a budget, which is why this is not gated on
+/// `debug_assertions`: the app that stutters in front of a user is the
+/// release one.
 fn turn_timer_code(
     program: &LoweredProgram,
     handler: &ResolvedHandler,
@@ -25,7 +28,7 @@ fn turn_timer_code(
         },
     };
     format!(
-        "#[cfg(debug_assertions)] let __ice_turn = ::ui_lang_runtime::dev::Turn::start({:?}, {at:?});",
+        "let __ice_turn = ::ui_lang_runtime::dev::Turn::start({:?}, {at:?});",
         handler.name
     )
 }

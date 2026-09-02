@@ -211,13 +211,17 @@ To prove a whole flow smooth, trace it instead —
 — an opt-in release-mode path over the same program and driver, repeating the
 actions `--repeat` times, so it costs far more than one inspection.
 
-For a stall the extern boundary hides, run the app under `cargo ice dev`. A debug
-build times every generated handler arm, and a turn over the 16ms frame budget
-prints on the app's stderr:
+For a stall the extern boundary hides, run the app under `cargo ice dev`. Every
+generated handler arm is timed, and a turn over the 16ms frame budget prints on
+the app's stderr:
 
 ```text
 ice: handler `name` took Nms, over the 16ms frame budget, at path.ice:line
 ```
+
+A debug build measures against 16ms on its own; a release build measures when
+`ICE_PERF` names the budget in milliseconds (`ICE_PERF=16 ./target/release/app`,
+`ICE_PERF=0` for every turn). Release numbers are the app's own, so quote those.
 
 A dev build also carries iced's devtools, which F12 opens: a human-facing
 profiler, not agent evidence.

@@ -1009,7 +1009,7 @@ view
 }
 
 #[test]
-fn every_handler_arm_starts_a_debug_turn_timer_at_its_source() {
+fn every_handler_arm_starts_a_turn_timer_at_its_source() {
     let source = r#"app Timed
 theme contract AppTheme
   bg
@@ -1029,7 +1029,16 @@ view
   button "Bump" #bump -> bump
 "#;
     let generated = compile(source, "timed.ice").unwrap();
-    assert!(generated.contains(
-        "#[cfg(debug_assertions)] let __ice_turn = ::ui_lang_runtime::dev::Turn::start(\"bump\", \"timed.ice:14\");"
-    ), "{generated}");
+    assert!(
+        generated.contains(
+            "let __ice_turn = ::ui_lang_runtime::dev::Turn::start(\"bump\", \"timed.ice:14\");"
+        ),
+        "{generated}"
+    );
+    // The release app is the one that stutters in front of a user, so the
+    // timer is gated at run time by `ICE_PERF`, never by the build profile.
+    assert!(
+        !generated.contains("#[cfg(debug_assertions)] let __ice_turn"),
+        "{generated}"
+    );
 }
