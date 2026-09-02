@@ -3230,7 +3230,11 @@ where
     }
 
     pub fn snap_end(&mut self, id: &str, source: Location) {
-        self.snap(id, 1.0, 1.0, source);
+        let scroll_id = self.require_scroll_target(id, source);
+        self.perform_widget(Box::new(crate::scroll_anchor::content_end_operation::<()>(
+            scroll_id,
+        )));
+        self.settle(Some(source));
     }
 
     pub fn drag(&mut self, from: &str, to: &str, source: Location) {

@@ -707,7 +707,8 @@ window keeps widget state across rerenders, while a task-issued window open
 starts a fresh widget cache and window-local input lifecycle.
 Targeted focus, scroll, selection, and cursor operations validate the native
 widget capability they invoke, reject ambiguous candidates, and use the actual
-matched widget ID. Convenience taps allocate around retained multi-touch
+matched widget ID. `snap-end` selects the end of the content rather than a
+native offset, so it reaches the newest row under either scroll anchor. Convenience taps allocate around retained multi-touch
 contacts instead of reusing an active finger ID.
 Absolute and earlier-alias-relative test targets, definition, and rename stay
 within one test, and generated runtime failures retain imported `.ice` paths and

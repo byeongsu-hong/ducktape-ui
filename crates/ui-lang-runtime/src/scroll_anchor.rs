@@ -32,8 +32,9 @@
 //! carrying keys through the scroll boundary; reach for the virtualized list
 //! instead when a capped live list has to be read while it moves.
 
-use iced::advanced::widget::operation::scrollable::AbsoluteOffset;
-use iced::advanced::widget::{Operation, Tree, tree};
+use iced::advanced::widget::operation::Outcome;
+use iced::advanced::widget::operation::scrollable::{AbsoluteOffset, RelativeOffset};
+use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
 
@@ -277,5 +278,107 @@ where
 {
     fn from(anchor: ScrollAnchor<'a, Message, Theme, Renderer>) -> Self {
         Self::new(anchor)
+    }
+}
+
+/// The task behind `task widget snap-end`, and the driver's `snap-end` step:
+/// leaves the scrollable named `target` showing the end of its content.
+///
+/// iced's own `snap_to_end` is relative offset one, and an offset counts from
+/// wherever the scrollable is anchored. Under the end anchor `anchor-y=end`
+/// asks for, offset zero is the newest row and offset one is the oldest, so
+/// snapping "to the end" of a chat walked the reader back to the start of the
+/// conversation — the opposite of what the step is named for.
+///
+/// A scrollable does not report its anchor to an operation, so this asks
+/// instead of assuming. It snaps every axis to offset zero and then reads the
+/// translation that produced: offset zero translates to zero under
+/// `Anchor::Start` and to the whole overflow under `Anchor::End`. An axis that
+/// did not move is therefore start-anchored and wants offset one; an axis that
+/// did is already showing its end. Both passes run inside one `Action::Widget`,
+/// against one layout, so nothing is drawn at the intermediate position.
+pub fn snap_to_content_end<Message: Send + 'static>(target: Id) -> iced::Task<Message> {
+    iced::advanced::widget::operate(content_end_operation::<Message>(target))
+}
+
+/// The same operation, unwrapped, for the headless driver: it runs operations
+/// itself rather than through a task.
+pub(crate) fn content_end_operation<T: 'static>(target: Id) -> impl Operation<T> + 'static {
+    SnapToOffsetZero {
+        target,
+        found: false,
+    }
+}
+
+/// First pass: put every axis at offset zero, whichever end that turns out to
+/// be.
+struct SnapToOffsetZero {
+    target: Id,
+    found: bool,
+}
+
+impl<T: 'static> Operation<T> for SnapToOffsetZero {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&Id>,
+        _bounds: Rectangle,
+        _content_bounds: Rectangle,
+        _translation: Vector,
+        state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if id != Some(&self.target) {
+            return;
+        }
+        state.snap_to(RelativeOffset {
+            x: Some(0.0),
+            y: Some(0.0),
+        });
+        self.found = true;
+    }
+
+    fn finish(&self) -> Outcome<T> {
+        if self.found {
+            Outcome::Chain(Box::new(SnapStartAnchoredAxes {
+                target: self.target.clone(),
+            }))
+        } else {
+            Outcome::None
+        }
+    }
+}
+
+/// Second pass: correct the axes offset zero left sitting at their start.
+struct SnapStartAnchoredAxes {
+    target: Id,
+}
+
+impl<T: 'static> Operation<T> for SnapStartAnchoredAxes {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&Id>,
+        bounds: Rectangle,
+        content_bounds: Rectangle,
+        translation: Vector,
+        state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if id != Some(&self.target) {
+            return;
+        }
+        // An axis with nothing to scroll translates to zero from either anchor
+        // and shows the same pixels at either offset, so it carries no answer
+        // and is left where it is.
+        let x = (content_bounds.width > bounds.width && translation.x == 0.0).then_some(1.0);
+        let y = (content_bounds.height > bounds.height && translation.y == 0.0).then_some(1.0);
+        if x.is_some() || y.is_some() {
+            state.snap_to(RelativeOffset { x, y });
+        }
     }
 }
