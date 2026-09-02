@@ -1,6 +1,7 @@
 mod auth;
 mod codex;
 mod composer;
+mod frame_probe;
 mod render;
 mod select;
 mod store;

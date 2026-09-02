@@ -139,6 +139,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "stats_alloc",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",
@@ -767,6 +768,7 @@ dependencies = [
  "iced",
  "plist",
  "semver",
+ "stats_alloc",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",
@@ -896,6 +898,7 @@ name = "candles-example"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "stats_alloc",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-components",
@@ -2408,6 +2411,7 @@ name = "hotreload-example"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "stats_alloc",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",
@@ -2445,6 +2449,7 @@ name = "ice-starter"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "stats_alloc",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",
@@ -3490,6 +3495,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced_runtime",
+ "stats_alloc",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",
@@ -6131,6 +6137,7 @@ name = "tray-example"
 version = "0.1.0"
 dependencies = [
  "iced",
+ "stats_alloc",
  "ui-lang",
  "ui-lang-build",
  "ui-lang-runtime",

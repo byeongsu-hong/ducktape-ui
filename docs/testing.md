@@ -328,16 +328,21 @@ rather than about compiler flags.
 ### The frame
 
 ```sh
-cargo test --release -p showcase -- --ignored --nocapture frame_cost
+cargo test --release -p showcase -- --ignored --nocapture --test-threads=1 frame_probe
 ```
 
-`examples/showcase/src/frame_probe.rs` drives the real generated app through
-`testing::Driver` and prints p50/p95 per phase. `crates/ui-lang-runtime/tests/frame_probe.rs`
-is its counterpart for hand-written iced trees; use that one when the question
-is about a runtime widget rather than about generated code.
+Every example carries one: `examples/<app>/src/frame_probe.rs` drives the real
+generated app through `testing::Driver` and prints p50/p95 per phase, each
+probing what that app's shape makes expensive — starter is the framework's own
+floor, trading its dense terminal, cef-browser the browser's 16ms tick.
+`crates/ui-lang-runtime/tests/frame_probe.rs` is their counterpart for
+hand-written iced trees; use that one when the question is about a runtime
+widget rather than about generated code.
 
 Release only — the module is `#![cfg(not(debug_assertions))]`, because `-O0`
-numbers measure rustc, not the app.
+numbers measure rustc, not the app. That also hides it from every debug build
+in CI, so the performance-contracts job type-checks the probes under the
+release cfg: a probe that rots against a generated API fails there.
 
 The phase that matters is `__view build only` against `idle redraw`: the first
 is the code the Ice compiler emits, the second adds iced's layout and event

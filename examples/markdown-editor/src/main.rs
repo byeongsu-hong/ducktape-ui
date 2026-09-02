@@ -2,6 +2,7 @@ ui_lang::include_app!("src/ui/app.ice");
 
 mod document;
 mod editor;
+mod frame_probe;
 mod library;
 
 fn main() -> iced::Result {

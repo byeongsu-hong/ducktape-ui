@@ -176,7 +176,6 @@ jobs:
           cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test data_grid_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test frame_probe -- --ignored --nocapture --test-threads=1
-          cargo test --release --locked -p trading-example --no-run
           cargo test --locked -p ui-lang-build performance_contract -- --ignored --test-threads=1
           cargo test --locked -p showcase --test derived_cache -- --ignored --nocapture --test-threads=1
           # Every ignored test in this crate is a contract, and naming two
@@ -192,6 +191,13 @@ jobs:
       # against the null renderer failed the whole target with 29 errors.
       - name: Test the runtime library in release
         run: cargo test --release --locked -p ui-lang-runtime --lib
+      # The same guard for the examples' frame probes, which are
+      # `#![cfg(not(debug_assertions))]` modules no debug job compiles: the
+      # starter's had rotted against a generated message's new payload. A
+      # type-check under the release cfg holds all ten; linking their fat-LTO
+      # test binaries would cost this job minutes apiece.
+      - name: Type-check the example frame probes in release
+        run: cargo check --release --tests --locked -p ai-chat-example -p music-example -p candles-example -p browser-example -p hotreload-example -p markdown-example -p showcase -p ice-starter -p trading-example -p tray-example
 
   review:
     name: Review bundles and packaging
