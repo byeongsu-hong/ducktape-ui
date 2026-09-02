@@ -304,10 +304,13 @@ pass (a bucketed lowering when every size read is a literal comparison).
    chain that builds scopes and keys is the larger half of the identity
    cost — emitting no scope or key strings at all leaves 886
    allocations, so the chain is 251 of the 1273 against the 98 the
-   gating removed, 2.6x more. It is still not worth buying, because the
-   row underneath says allocation count is not what this build spends
-   its time on: `__view build only` is 91–96 us before and after, and
-   the shipped configuration that drops 98 allocations does not move it.
+   gating removed, 2.6x more. It is still not worth buying. A sampled
+   profile of the build puts about 38% of it in the allocator — libc
+   `malloc`, `cfree` and `realloc` — so 251 allocations of 1273 is
+   roughly 3% of the build, about 2 us of 70, at or below what a p50
+   comparison resolves on this box. The shipped gating agrees: dropping
+   98 allocations did not move `__view build only`, which is 91-96 us
+   before and after.
    The price would be an invariant no compiler checks — `codegen/view.rs`
    and `codegen/statement.rs` rebuild the same path independently, the
    latter for a handler's `focus`/`scroll` target — for 251 allocations
