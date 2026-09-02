@@ -13,7 +13,7 @@ pub(in crate::codegen) fn render_button(
 ) -> Result<String, Error> {
     let program = document;
     let accessibility_key =
-        resolved_accessibility_key_code(identity, "button", button.origin, scope, env, document)?;
+        owned_accessibility_key_code(identity, "button", button.origin, scope, env, document)?;
     let fallback_label = match &button.content {
         ResolvedButtonContent::Label(label) => rust_string(label),
         ResolvedButtonContent::Child(_) => "::std::string::String::new()".into(),
@@ -158,7 +158,7 @@ pub(in crate::codegen) fn render_button(
         })
         .unwrap_or_default();
     Ok(format!(
-        "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){checked}{expanded}.disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}{focus_ring}.into() }}"
+        "{code}; ::ui_lang_runtime::accessible(__button, __a11y_id, ::ui_lang_runtime::Role::Button).logical_id_maybe(::core::cfg!(test).then_some(&*__a11y_key)).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){checked}{expanded}.disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}{focus_ring}.into() }}"
     ))
 }
 

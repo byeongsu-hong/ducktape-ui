@@ -76,7 +76,7 @@ pub(in crate::codegen) fn render_input(
         .transpose()?
         .unwrap_or(binding_constructor);
     let accessibility_key =
-        resolved_accessibility_key_code(identity, "input", input.origin, scope, env, document)?;
+        owned_accessibility_key_code(identity, "input", input.origin, scope, env, document)?;
     let accessibility_label = input
         .accessibility_label
         .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
@@ -215,7 +215,7 @@ pub(in crate::codegen) fn render_input(
         )
     };
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled}; let __secure = {secure}; let __role = if __secure {{ ::ui_lang_runtime::Role::PasswordInput }} else {{ ::ui_lang_runtime::Role::TextInput }}; let __input = ::ui_lang_runtime::accessible({widget}, __a11y_id, __role).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){a11y_value}.disabled(__disabled){accessibility_description}; {view} }}"
+        "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __disabled = {disabled}; let __secure = {secure}; let __role = if __secure {{ ::ui_lang_runtime::Role::PasswordInput }} else {{ ::ui_lang_runtime::Role::TextInput }}; let __input = ::ui_lang_runtime::accessible({widget}, __a11y_id, __role).logical_id_maybe(::core::cfg!(test).then_some(&*__a11y_key)).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}){a11y_value}.disabled(__disabled){accessibility_description}; {view} }}"
     ))
 }
 

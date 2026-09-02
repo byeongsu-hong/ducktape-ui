@@ -69,7 +69,7 @@ pub(in crate::codegen) fn render_slider(
     let accessibility_key =
         resolved_accessibility_key_code(identity, "slider", slider.origin, scope, env, document)?;
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __slider_value = {value}; let __slider = {widget}; ::ui_lang_runtime::accessible(__slider, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Slider).logical_id(__a11y_key).label(\"Slider\").value(format!(\"{{}}\", __slider_value)).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __slider_value = {value}; let __slider = {widget}; ::ui_lang_runtime::accessible(__slider, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Slider).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label(\"Slider\").value(format!(\"{{}}\", __slider_value)).into() }}"
     ))
 }
 
@@ -111,7 +111,7 @@ pub(in crate::codegen) fn render_progress(
         document,
     )?;
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __progress_input = {value}; let __progress = {{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range({min}, {max}, __progress_input); {widget} }}; ::ui_lang_runtime::accessible(__progress, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ProgressIndicator).logical_id(__a11y_key).label(\"Progress\").value(format!(\"{{}}\", __progress_input)).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __progress_input = {value}; let __progress = {{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range({min}, {max}, __progress_input); {widget} }}; ::ui_lang_runtime::accessible(__progress, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ProgressIndicator).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label(\"Progress\").value(format!(\"{{}}\", __progress_input)).into() }}"
     ))
 }
 
