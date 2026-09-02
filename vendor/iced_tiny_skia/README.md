@@ -25,6 +25,9 @@ every `tiny-skia` window.
   rather than over its whole area.
 - **A glyph that rasterises to nothing is cached** instead of being hinted
   again on every draw.
+- **A glyph decides for itself whether the clip mask applies to it**, instead
+  of the whole text deciding, so a text clipped to a whole window no longer
+  blits every glyph through the mask on a partial repaint.
 
 The three defects are pinned by tests in `crates/ui-lang-runtime/tests`
 (`canvas_offset_clip.rs`, `shadow_layer_clip.rs`, `canvas_text_damage.rs`).

@@ -43,6 +43,7 @@ impl Pipeline {
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
+        clip_region: Option<Rectangle>,
         transformation: Transformation,
     ) {
         let Some(paragraph) = paragraph.upgrade() else {
@@ -59,6 +60,7 @@ impl Pipeline {
             color,
             pixels,
             clip_mask,
+            clip_region,
             transformation,
         );
     }
@@ -70,6 +72,7 @@ impl Pipeline {
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
+        clip_region: Option<Rectangle>,
         transformation: Transformation,
     ) {
         let Some(editor) = editor.upgrade() else {
@@ -86,6 +89,7 @@ impl Pipeline {
             color,
             pixels,
             clip_mask,
+            clip_region,
             transformation,
         );
     }
@@ -103,6 +107,7 @@ impl Pipeline {
         shaping: Shaping,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
+        clip_region: Option<Rectangle>,
         transformation: Transformation,
     ) {
         let line_height = f32::from(line_height);
@@ -147,6 +152,7 @@ impl Pipeline {
             color,
             pixels,
             clip_mask,
+            clip_region,
             transformation,
         );
     }
@@ -158,6 +164,7 @@ impl Pipeline {
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
         clip_mask: Option<&tiny_skia::Mask>,
+        clip_region: Option<Rectangle>,
         transformation: Transformation,
     ) {
         let mut font_system = font_system().write().expect("Write font system");
@@ -170,6 +177,7 @@ impl Pipeline {
             color,
             pixels,
             clip_mask,
+            clip_region,
             transformation,
         );
     }
@@ -180,6 +188,12 @@ impl Pipeline {
     }
 }
 
+/// Draws the glyphs of a `buffer`.
+///
+/// `clip_region`, when given, is the rectangle `clip_mask` was filled with:
+/// a glyph inside it is drawn without the mask, which leaves its pixels
+/// untouched, and one outside it is skipped, since the mask would have
+/// dropped every pixel anyway.
 fn draw(
     font_system: &mut cosmic_text::FontSystem,
     glyph_cache: &mut GlyphCache,
@@ -188,6 +202,7 @@ fn draw(
     color: Color,
     pixels: &mut tiny_skia::PixmapMut<'_>,
     clip_mask: Option<&tiny_skia::Mask>,
+    clip_region: Option<Rectangle>,
     transformation: Transformation,
 ) {
     let position = position * transformation;
@@ -220,11 +235,34 @@ fn draw(
                         .map(|c| c.a() as f32 / 255.0)
                         .unwrap_or(1.0);
 
+                let x = physical_glyph.x + placement.left;
+                let y = physical_glyph.y - placement.top
+                    + (run.line_y * transformation.scale_factor()).round()
+                        as i32;
+
+                let clip_mask = match (clip_mask, clip_region) {
+                    (Some(mask), Some(region)) => {
+                        let bounds = Rectangle {
+                            x: x as f32,
+                            y: y as f32,
+                            width: placement.width as f32,
+                            height: placement.height as f32,
+                        };
+
+                        if bounds.is_within(&region) {
+                            None
+                        } else if !region.intersects(&bounds) {
+                            continue;
+                        } else {
+                            Some(mask)
+                        }
+                    }
+                    (clip_mask, _) => clip_mask,
+                };
+
                 pixels.draw_pixmap(
-                    physical_glyph.x + placement.left,
-                    physical_glyph.y - placement.top
-                        + (run.line_y * transformation.scale_factor()).round()
-                            as i32,
+                    x,
+                    y,
                     pixmap,
                     &tiny_skia::PixmapPaint {
                         opacity,
@@ -271,6 +309,10 @@ impl GlyphCache {
     ) -> Option<(&[u8], cosmic_text::Placement)> {
         let [r, g, b, _a] = color.into_rgba8();
         let key = (cache_key, [r, g, b]);
+
+        // Marked before the entry is made, so that the two paths that record
+        // an empty glyph and return early keep it over the next trim.
+        let _ = self.recently_used.insert(key);
 
         if let hash_map::Entry::Vacant(entry) = self.entries.entry(key) {
             // A glyph that yields no pixels — a space, or one the font cannot
@@ -351,8 +393,6 @@ impl GlyphCache {
 
             let _ = entry.insert((buffer, image.placement));
         }
-
-        let _ = self.recently_used.insert(key);
 
         self.entries.get(&key).and_then(|(buffer, placement)| {
             (!buffer.is_empty())
