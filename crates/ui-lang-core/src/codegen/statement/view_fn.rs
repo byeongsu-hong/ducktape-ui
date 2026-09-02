@@ -138,6 +138,15 @@ pub(in crate::codegen) fn generate_view(
         ""
     };
     let callback_value = if daemon { "window" } else { "" };
+    // The third span (ADR 0011, G3): a frame whose build overran says so at
+    // the view's root node. It covers the element tree this function emits —
+    // not iced's layout and draw, and not a `lazy` subtree, which is evaluated
+    // during layout.
+    let span = format!(
+        "let __ice_view = ::ui_lang_runtime::dev::Span::view({}, {});",
+        rust_string(program.app_name()),
+        span_location_code(program, program.resolved_view(program.app_view())?.origin)
+    );
     let palette = format!(
         "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
     );
@@ -145,7 +154,7 @@ pub(in crate::codegen) fn generate_view(
     if mounted.is_empty() {
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = {navigation}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {span} {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = {navigation}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     } else {
@@ -162,7 +171,7 @@ pub(in crate::codegen) fn generate_view(
         let (boot_drain, boot_wrap) = boot_dispatch_code(program, message);
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {boot_drain} let __ice_root: __IceElement<'_, {message}> = {result}; {boot_wrap} ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {span} {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {boot_drain} let __ice_root: __IceElement<'_, {message}> = {result}; {boot_wrap} ::ui_lang_runtime::dev::ready(__ice_root) }}"
         )
         .unwrap();
     }
