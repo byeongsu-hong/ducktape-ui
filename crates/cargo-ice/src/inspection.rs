@@ -112,21 +112,16 @@ pub(super) fn inspect(root: &Path, args: &[String]) -> Result<(), String> {
             mode,
         );
     }
-    let mut command = Command::new(&cargo);
-    command
-        .current_dir(root)
-        .args(["test", "--package", &package]);
-    if options.release {
-        command.arg("--release");
-    }
-    command
-        .args([INSPECT_TEST, "--", "--nocapture"])
-        .env("ICE_AGENT_INSPECT_SOURCE", &source)
-        .env("ICE_AGENT_INSPECT_ROOT", root)
-        .env("ICE_AGENT_INSPECT_NAME", name)
-        .env("ICE_AGENT_INSPECT_ARTIFACT_DIR", &artifact_dir)
-        .env("ICE_AGENT_INSPECT_RESULT", &result_path);
-    set_inspect_environment(&mut command, &options);
+    let mut command = inspect_command(
+        &cargo,
+        root,
+        &package,
+        &source,
+        name,
+        &artifact_dir,
+        &result_path,
+        &options,
+    );
 
     let output = command.output().map_err(|error| error.to_string())?;
     if !output.status.success() {
@@ -168,6 +163,36 @@ pub(super) fn inspect(root: &Path, args: &[String]) -> Result<(), String> {
         println!("{}", frames_summary(frames));
     }
     Ok(())
+}
+
+/// The `cargo test` invocation a plain inspection runs.
+#[allow(clippy::too_many_arguments)]
+fn inspect_command(
+    cargo: &str,
+    root: &Path,
+    package: &str,
+    source: &Path,
+    name: &str,
+    artifact_dir: &Path,
+    result_path: &Path,
+    options: &InspectOptions,
+) -> Command {
+    let mut command = Command::new(cargo);
+    command
+        .current_dir(root)
+        .args(["test", "--package", package]);
+    if options.release {
+        command.arg("--release");
+    }
+    command
+        .args([INSPECT_TEST, "--", "--nocapture"])
+        .env("ICE_AGENT_INSPECT_SOURCE", source)
+        .env("ICE_AGENT_INSPECT_ROOT", root)
+        .env("ICE_AGENT_INSPECT_NAME", name)
+        .env("ICE_AGENT_INSPECT_ARTIFACT_DIR", artifact_dir)
+        .env("ICE_AGENT_INSPECT_RESULT", result_path);
+    set_inspect_environment(&mut command, options);
+    command
 }
 
 /// The one stdout line `--frames` adds after the inspection result.
@@ -1710,6 +1735,76 @@ mod tests {
             let error = parse_inspect(&arguments).unwrap_err();
             assert!(error.contains(expected), "{arguments:?} reported {error:?}");
         }
+    }
+
+    #[test]
+    fn frame_measurement_reaches_the_inspection_command() {
+        fn command(frames: Option<usize>, release: bool) -> Command {
+            let options = InspectOptions {
+                frames,
+                release,
+                ..InspectOptions::default()
+            };
+            inspect_command(
+                "cargo",
+                Path::new("/root"),
+                "example",
+                Path::new("/root/src/ui/app.ice"),
+                "inspection",
+                Path::new("/root/target/ice-inspect"),
+                Path::new("/root/target/ice-inspect/.request.json"),
+                &options,
+            )
+        }
+        fn release_arguments(command: &Command) -> usize {
+            command
+                .get_args()
+                .filter(|argument| *argument == "--release")
+                .count()
+        }
+        fn frames_environment(command: &Command) -> Option<String> {
+            let (_, value) = command
+                .get_envs()
+                .find(|(name, _)| *name == "ICE_AGENT_INSPECT_FRAMES")?;
+            Some(value?.to_string_lossy().into_owned())
+        }
+
+        let measured = command(Some(60), true);
+        assert_eq!(
+            release_arguments(&measured),
+            1,
+            "--release once: {:?}",
+            measured.get_args().collect::<Vec<_>>()
+        );
+        assert_eq!(frames_environment(&measured).as_deref(), Some("60"));
+
+        let plain = command(None, false);
+        assert_eq!(
+            release_arguments(&plain),
+            0,
+            "no --release: {:?}",
+            plain.get_args().collect::<Vec<_>>()
+        );
+        assert_eq!(frames_environment(&plain), None);
+    }
+
+    #[test]
+    fn frames_summary_reports_the_contract_line() {
+        let frames = json!({
+            "count": 60,
+            "warmup": 8,
+            "build_profile": "debug",
+            "view_us": { "p50": 650, "p95": 720 },
+            "layout_us": { "p50": 1100, "p95": 1300 },
+            "update_us": { "p50": 100, "p95": 130 },
+            "rev_memo": { "hits": 81, "misses": 0 },
+            "memo_lazy": { "hits": 12, "misses": 0 },
+        });
+        assert_eq!(
+            frames_summary(&frames),
+            "frames: 60 @ debug | view p50 650us p95 720us | layout p50 1100us p95 1300us \
+             | update p50 100us p95 130us | rev_memo 81/0 | memo_lazy 12/0"
+        );
     }
 
     #[test]
