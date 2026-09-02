@@ -43,7 +43,7 @@ use std::alloc::System;
 use std::time::{Duration, Instant};
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-use ui_lang_runtime::testing::{Config, Driver, Location, ThemeMode};
+use ui_lang_runtime::testing::{Config, Driver, Location, ThemeMode, probe};
 
 use crate::cef_runtime::AttachResult;
 use crate::{__CefBrowserMessage, CefBrowser};
@@ -560,4 +560,29 @@ fn attach_and_navigate() {
         "attached vs not, per frame",
         live as i128 - detached as i128
     );
+}
+
+// ---------------------------------------------------------- derived probe
+
+/// Every identified target of this app, measured from the same boot state.
+///
+/// Nothing here names a target: the list comes from the running app, so it
+/// cannot go stale the way this file's own constants can. Read it as a census —
+/// what one interaction with each part of the screen costs — and the phases
+/// above as the scenarios only this app can pose.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints per-phase costs, asserts nothing"]
+fn every_target() {
+    let report = probe::measure_interactions(
+        || {
+            Driver::new(
+                CefBrowser::__program(),
+                Config::new("every_target").viewport(VIEWPORT.0, VIEWPORT.1),
+            )
+        },
+        20,
+        &[],
+        here(),
+    );
+    eprintln!("\ncef-browser targets\n{report}");
 }

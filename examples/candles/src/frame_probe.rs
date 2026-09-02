@@ -39,7 +39,7 @@ use std::alloc::System;
 use std::time::Instant;
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-use ui_lang_runtime::testing::{Config, Driver, Location, MouseButton};
+use ui_lang_runtime::testing::{Config, Driver, Location, MouseButton, probe};
 
 use crate::market::{self, CandleHit};
 use crate::{__CandlesMessage, Candles};
@@ -581,4 +581,29 @@ fn cold_boot_cost() {
     report("first __view after boot", first_view);
     report("second __view (warm)", warm_view);
     report("first redraw of a fresh driver", first_frame);
+}
+
+// ---------------------------------------------------------- derived probe
+
+/// Every identified target of this app, measured from the same boot state.
+///
+/// Nothing here names a target: the list comes from the running app, so it
+/// cannot go stale the way this file's own constants can. Read it as a census —
+/// what one interaction with each part of the screen costs — and the phases
+/// above as the scenarios only this app can pose.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints per-phase costs, asserts nothing"]
+fn every_target() {
+    let report = probe::measure_interactions(
+        || {
+            Driver::new(
+                Candles::__program(),
+                Config::new("every_target").viewport(VIEWPORT.0, VIEWPORT.1),
+            )
+        },
+        20,
+        &[],
+        here(),
+    );
+    eprintln!("\ncandles targets\n{report}");
 }

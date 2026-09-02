@@ -1,5 +1,6 @@
 //! Headless runtime used by generated Ice tests.
 
+pub mod probe;
 mod trace;
 
 use crate::{SemanticEnd, SemanticSnapshot, SemanticState, StableId};
@@ -7784,6 +7785,56 @@ mod tests {
         // is index 1 and index 2, not 2 and 3.
         assert_eq!(percentiles(vec![40, 10, 30, 20]), (20, 30));
         assert_eq!(percentiles(vec![7]), (7, 7));
+    }
+
+    #[test]
+    fn a_derived_probe_measures_every_identified_target_by_its_kind() {
+        let report = probe::measure_interactions(
+            || {
+                Driver::new(
+                    iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                        boot, update, view,
+                    ),
+                    Config::new("derived_probe").viewport(400.0, 400.0),
+                )
+            },
+            2,
+            &["App/root/count"],
+            HERE,
+        );
+
+        let action = |target: &str| {
+            report
+                .target(target)
+                .unwrap_or_else(|| panic!("no row for {target}: {report}"))
+                .action
+        };
+        assert_eq!(action("App/root/increment"), probe::Action::Click);
+        assert_eq!(action("App/root/input"), probe::Action::Type);
+        assert_eq!(action("App/root/scroll"), probe::Action::Scroll);
+        assert_eq!(action("App/root"), probe::Action::Hover);
+
+        // The skip list is the only thing that keeps a handler from running.
+        assert!(report.target("App/root/count").is_none(), "{report}");
+        assert!(
+            report
+                .skipped
+                .iter()
+                .any(|skipped| skipped.target == "App/root/count" && skipped.reason == "asked for"),
+            "{report}"
+        );
+
+        // Rows lead with the interaction that costs the most frame.
+        let frames = report
+            .rows
+            .iter()
+            .map(|row| row.frame_us.0)
+            .collect::<Vec<_>>();
+        assert!(
+            frames.windows(2).all(|pair| pair[0] >= pair[1]),
+            "rows are ordered by frame cost: {frames:?}"
+        );
+        assert_eq!(report.rounds, 2);
     }
 
     #[test]

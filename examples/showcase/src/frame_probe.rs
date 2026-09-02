@@ -17,7 +17,7 @@
 
 use std::time::Instant;
 
-use ui_lang_runtime::testing::{Config, Driver, Location, MouseButton};
+use ui_lang_runtime::testing::{Config, Driver, Location, MouseButton, probe};
 
 use crate::{__ShowcaseMessage, Showcase};
 
@@ -779,4 +779,29 @@ fn median(samples: &[u128]) -> u128 {
         .get(sorted.len().saturating_sub(1) / 2)
         .copied()
         .unwrap_or_default()
+}
+
+// ---------------------------------------------------------- derived probe
+
+/// Every identified target of this app, measured from the same boot state.
+///
+/// Nothing here names a target: the list comes from the running app, so it
+/// cannot go stale the way this file's own constants can. Read it as a census —
+/// what one interaction with each part of the screen costs — and the phases
+/// above as the scenarios only this app can pose.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints per-phase costs, asserts nothing"]
+fn every_target() {
+    let report = probe::measure_interactions(
+        || {
+            Driver::new(
+                Showcase::__program(),
+                Config::new("every_target").viewport(1440.0, 900.0),
+            )
+        },
+        20,
+        &[],
+        here(),
+    );
+    eprintln!("\nshowcase targets\n{report}");
 }

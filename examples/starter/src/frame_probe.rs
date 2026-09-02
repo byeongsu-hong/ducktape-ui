@@ -38,7 +38,7 @@ use std::alloc::System;
 use std::time::Instant;
 
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-use ui_lang_runtime::testing::{Config, Driver, Location, MouseButton};
+use ui_lang_runtime::testing::{Config, Driver, Location, MouseButton, probe};
 
 use crate::{__StarterMessage, Starter};
 
@@ -192,6 +192,31 @@ fn frame_baseline() {
     view_only.report();
     idle.report();
     write.report();
+}
+
+// ---------------------------------------------------------- derived probe
+
+/// Every identified target of this app, measured from the same boot state.
+///
+/// Nothing here names a target: the list comes from the running app, so it
+/// cannot go stale the way the constants above can. Read it as a census — what
+/// one interaction with each part of the screen costs — and the phases below
+/// as the scenarios only this app can pose.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints per-phase costs, asserts nothing"]
+fn every_target() {
+    let report = probe::measure_interactions(
+        || {
+            Driver::new(
+                Starter::__program(),
+                Config::new("every_target").viewport(VIEWPORT.0, VIEWPORT.1),
+            )
+        },
+        20,
+        &[],
+        here(),
+    );
+    eprintln!("\nstarter targets\n{report}");
 }
 
 // ------------------------------------------------------------------- paste

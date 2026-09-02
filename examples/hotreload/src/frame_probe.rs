@@ -40,7 +40,7 @@ use std::time::Instant;
 use iced::widget::text_editor::Content;
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use ui_lang_runtime::template::{Template, TemplateSource};
-use ui_lang_runtime::testing::{Config, Driver, Location, MouseButton};
+use ui_lang_runtime::testing::{Config, Driver, Location, MouseButton, probe};
 
 use crate::{__HotReloadMessage, HotReload};
 
@@ -484,4 +484,29 @@ fn template_json() -> Option<String> {
         }
     }
     None
+}
+
+// ---------------------------------------------------------- derived probe
+
+/// Every identified target of this app, measured from the same boot state.
+///
+/// Nothing here names a target: the list comes from the running app, so it
+/// cannot go stale the way this file's own constants can. Read it as a census —
+/// what one interaction with each part of the screen costs — and the phases
+/// above as the scenarios only this app can pose.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prints per-phase costs, asserts nothing"]
+fn every_target() {
+    let report = probe::measure_interactions(
+        || {
+            Driver::new(
+                HotReload::__program(),
+                Config::new("every_target").viewport(VIEWPORT.0, VIEWPORT.1),
+            )
+        },
+        20,
+        &[],
+        here(),
+    );
+    eprintln!("\nhotreload targets\n{report}");
 }
