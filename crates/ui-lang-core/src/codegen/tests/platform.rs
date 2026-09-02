@@ -1007,3 +1007,29 @@ view
     .unwrap_err();
     assert_eq!(error.code, "E130");
 }
+
+#[test]
+fn every_handler_arm_starts_a_debug_turn_timer_at_its_source() {
+    let source = r#"app Timed
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 0
+on bump
+  count = count + 1
+view
+  button "Bump" #bump -> bump
+"#;
+    let generated = compile(source, "timed.ice").unwrap();
+    assert!(generated.contains(
+        "#[cfg(debug_assertions)] let __ice_turn = ::ui_lang_runtime::dev::Turn::start(\"bump\", \"timed.ice:14\");"
+    ), "{generated}");
+}

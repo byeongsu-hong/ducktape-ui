@@ -6,6 +6,30 @@ use super::*;
 // to a fresh owned value (component state reads) or is Copy — re-emitting one
 // of those costs nothing, while re-emitting a parameter is a use after move
 // that surfaces as an E0382 on the `include_app!` line with no usable span.
+/// A debug-build timer on the handler arm: a turn over the frame budget is
+/// reported with the handler's `.ice` location (ADR 0011, G3). The guard
+/// drops when the arm's closure returns, early `return`s included.
+fn turn_timer_code(
+    program: &LoweredProgram,
+    handler: &ResolvedHandler,
+    source_path: &str,
+) -> String {
+    // A fragment's origin carries its path; a root-document line carries
+    // none and is the root source itself.
+    let origin = program.origin(handler.origin);
+    let at = match &origin.path {
+        Some(path) => format!("{}:{}", path.display(), origin.line),
+        None => match program.source_origin(origin.line) {
+            Some((path, line)) => format!("{}:{line}", path.display()),
+            None => format!("{source_path}:{}", origin.line),
+        },
+    };
+    format!(
+        "#[cfg(debug_assertions)] let __ice_turn = ::ui_lang_runtime::dev::Turn::start({:?}, {at:?});",
+        handler.name
+    )
+}
+
 fn handler_param_binding(param: &ResolvedHandlerParam) -> Binding {
     Binding {
         code: param.name.clone(),
@@ -627,6 +651,7 @@ pub(in crate::codegen) fn generate_update(
     out: &mut String,
     program: &LoweredProgram,
     message: &str,
+    source_path: &str,
 ) -> Result<(), Error> {
     let accessibility_root = rust_string(program.app_name());
     let has_fallthrough_arm = program
@@ -742,6 +767,7 @@ pub(in crate::codegen) fn generate_update(
         // Keep statement-level `return` inside this arm so every user update
         // reaches the post-state accessibility snapshot below.
         writeln!(out, "{pattern} => (|| {{").unwrap();
+        writeln!(out, "{}", turn_timer_code(program, handler, source_path)).unwrap();
         for param in &handler.params {
             writeln!(out, "let _ = &{};", param.name).unwrap();
         }
@@ -872,6 +898,7 @@ pub(in crate::codegen) fn generate_update(
                 bindings.join(", ")
             )
             .unwrap();
+            writeln!(out, "{}", turn_timer_code(program, handler, source_path)).unwrap();
             for param in &handler.params {
                 writeln!(out, "let _ = &{};", param.name).unwrap();
             }

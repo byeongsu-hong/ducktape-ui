@@ -197,6 +197,14 @@ refresh the metadata inventory before hashing new or affected files. A changed
 snapshot must remain identical across two reads before the background rebuild
 starts.
 
+In a debug build every generated handler arm is timed: a turn that runs
+longer than the 16ms frame budget prints `ice: handler `name` took Nms, over
+the 16ms frame budget, at path.ice:line` on the app's stderr, which `cargo ice
+dev` shows. It prevents nothing and costs one `Instant` per turn; it attributes
+the stall a `sync` extern or a heavy handler body hides behind the extern
+boundary, the way `W021` names the risk ahead of time. Release builds carry no
+timer.
+
 An accepted edit is first offered to the running process as a view reload. The
 runner re-runs parse, check, and lowering — so the edit is diagnosed exactly as
 before — and republishes the view as data. When the running binary still fills
