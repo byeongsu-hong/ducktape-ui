@@ -71,6 +71,10 @@ Sketch the indentation tree, not boxes floating on a canvas:
 7. Use `stack` for visual overlap and `overlay` for modal interaction.
 8. Use `responsive` when layout must react to native limits.
 
+Write a repetition over a state-rooted list together with its boundary — a
+per-row `lazy` or a `virtual-row` column — not after a warning reports it; see
+[performance.md](performance.md).
+
 Keep source order equal to semantic reading and keyboard focus order. Avoid
 deep nesting that exists only to simulate CSS wrappers.
 
@@ -256,11 +260,18 @@ Implement in this order:
 2. Declare typed Rust boundaries.
 3. Declare minimal state.
 4. Implement handlers and complete effect routes.
-5. Build the view tree from recipes and typed local exceptions.
-6. Extract only proven structural component boundaries.
-7. Add status styling and polish.
-8. Audit control internals across roles, states, breakpoints, and scroll extent.
-9. Check accessibility labels and source order.
+5. Write the design as a first-class Ice test before the view exists. Pin the
+   `viewport` and any `preset`, declare a `target` for each identified node, and
+   `expect` the outer bounds, inner geometry, text size, color, radius, and
+   accessible name the design specifies. Chain each nested target off its alias
+   rather than spelling a longer `#` path (`docs/testing.md`, "Targets and
+   assertions").
+6. Build the view tree from recipes and typed local exceptions until that test
+   passes.
+7. Extract only proven structural component boundaries.
+8. Add status styling and polish.
+9. Audit control internals across roles, states, breakpoints, and scroll extent.
+10. Check accessibility labels and source order.
 
 Then:
 

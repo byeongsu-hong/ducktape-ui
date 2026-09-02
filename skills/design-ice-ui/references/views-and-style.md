@@ -299,6 +299,11 @@ lazy loading as busy
 
 Use `lazy` only around a measurably expensive subtree. Do not use it as React
 `useMemo`; it changes Iced widget construction and has hashability constraints.
+A `lazy` inside a repetition keys on cheap row fields —
+`lazy note by note.path, note.stamp as row` — whenever the row owns a list, which
+the plain form clones and hashes every pass (`W017`), or whenever the dependency
+is a call over the row, which the plain form must evaluate before it can compare
+(`W020`); see [performance.md](performance.md).
 Inside `lazy` only the dependency alias is visible as a value, but the
 enclosing component's routing context is preserved: local handlers, `forward`,
 and `emit` work exactly as outside. A component event delivered from inside a

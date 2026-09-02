@@ -8,6 +8,7 @@ syntax guesses.
 
 - [Find the command](#find-the-command)
 - [Command reference](#command-reference)
+- [See one component alone](#see-one-component-alone)
 - [Use the live LSP](#use-the-live-lsp)
 - [LSP capabilities](#lsp-capabilities)
 - [Open-buffer and workspace behavior](#open-buffer-and-workspace-behavior)
@@ -55,6 +56,7 @@ cargo ice <fmt [--check] | check | test | clippy | compat | expand <file.ice> | 
 | `cargo ice compat` | verify backend/runtime pins and run reference app tests |
 | `cargo ice expand FILE` | print generated Rust for one app root |
 | `cargo ice inspect FILE [options]` | render the actual app headlessly and write a PNG plus structured JSON manifest |
+| `cargo ice inspect FILE --frames N [--release]` | the same inspection, with per-frame view/layout/update timings and memo counters added to the manifest |
 | `cargo ice diff BASE.json CURRENT.json [options]` | compare manifests and pixels, write `report.json` plus `diff.png`, and fail on unexplained deltas |
 | `cargo ice schema` | print generative Core/LSP/backend JSON |
 | `cargo ice lsp` | run the live stdio language server, including the `Run Ice lint` source action |
@@ -94,6 +96,31 @@ accessibility, and the originating `.ice` path/line/column for identified
 nodes. The command runs the generated app `Program`; it does not substitute a
 separate mock view.
 
+The manifest records only nodes that carry a `#id`. A widget without one is
+visible in the PNG and absent from the JSON, so give every node you intend to
+inspect, diff, or assert on an id before capturing.
+
+`--frames N` measures the same inspection before it captures. `N` is a positive
+integer; the run takes 8 warmup redraws, discards the memo counters, then times
+`N` frames and reads the counters once as totals over them. `--frames` is
+rejected together with `--trace`, `--fuzz`, or `--replay`. `--release` is a flag
+accepted only with `--frames`, and makes the inspection's `cargo test` run with
+`--release`. The manifest then carries a top-level `frames` object with `count`,
+`warmup`, `build_profile` (`"debug"` or `"release"`), integer-microsecond `p50`
+and `p95` for `view_us`, `layout_us`, and `update_us`, and `hits`/`misses` for
+`rev_memo` and `memo_lazy`. After the result JSON the command prints one extra
+line:
+
+```text
+frames: 60 @ debug | view p50 650us p95 720us | layout p50 1100us p95 1300us | update p50 100us p95 130us | rev_memo 81/0 | memo_lazy 12/0
+```
+
+A debug run is for ratios and memo misses only; add `--release` before quoting
+an absolute number. `cargo ice diff` ignores every difference whose path is
+`/frames` or starts with `/frames/`, and still lists that rule in the report's
+`ignored_paths`. See [performance.md](performance.md) for how to read the
+numbers.
+
 `inspect` captures the initial or selected-preset state. When the required
 state is reached through interaction, use a first-class Ice test to perform
 semantic actions and `capture` after them, then pass that manifest to `diff`.
@@ -112,6 +139,30 @@ The command exits unsuccessfully when structured fields differ or the changed
 pixel ratio exceeds the allowed maximum. Read both `report.json` and
 `diff.png`; tolerance is an explicit review decision, not a way to hide an
 unknown change.
+
+## See one component alone
+
+`cargo ice inspect` renders app roots only. To look at one component, author a
+first-class Ice test with a one-root `mount` and a `capture`:
+
+```ice
+test delete_dialog_contract
+  viewport 560 320
+  mount
+    DeleteDialog #dialog title="Grocery list" busy=false
+      events
+        delete -> confirm_delete
+        cancel -> cancel_delete
+  target dialog = #dialog/root
+  target cancel = dialog/cancel
+  expect dialog.width == 400.0
+  expect a11y cancel name "Cancel"
+  capture dialog_default
+```
+
+Run it with `cargo ice test delete_dialog_contract -- --nocapture`, then read the
+PNG and manifest under `target/ice-test-artifacts/<sanitized-test-name>/` by the
+same rules as an inspection. `ICE_TEST_ARTIFACT_DIR` replaces the artifact root.
 
 ## Use the live LSP
 
