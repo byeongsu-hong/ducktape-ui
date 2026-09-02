@@ -374,11 +374,8 @@ pub(crate) fn release_focus(serial: u64) {
     focus(serial, false);
 }
 
-/// One 16px line of host text, anchored at its top-left corner. Every text
-/// the host draws is anchored there on purpose: the software renderer's
-/// damage rectangle starts at the anchor and runs right and down, so a line
-/// anchored at its bottom is repainted below itself and leaves its old
-/// glyphs standing when it changes.
+/// One 16px line of host text, anchored at its top-left corner, which is
+/// where every text the host draws is anchored.
 fn small_text<Renderer>(
     renderer: &mut Renderer,
     content: String,
@@ -436,9 +433,10 @@ where
     }
     for text in &layer.texts {
         // The recorded anchor is honoured by moving the top-left corner, not
-        // by asking the renderer to align: its damage rectangle starts at the
-        // point it is given and runs right and down, so text aligned any
-        // other way is repainted beside itself and leaves old glyphs behind.
+        // by asking the renderer to align. The renderer damages an aligned
+        // text over the whole width it was given, since only the shaping
+        // knows how much of that width the glyphs use; measuring here costs
+        // one shaping per aligned text and repaints the glyphs alone.
         let bounds = Size::new(f32::INFINITY, text.line_height);
         let shaped = core_text::Text {
             content: text.content.as_str(),
