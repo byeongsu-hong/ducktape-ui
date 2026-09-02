@@ -4,12 +4,13 @@ use super::*;
 use crate::Warning;
 use crate::ast::expr_source;
 use crate::check::facts::{
-    CheckedCallArgument, CheckedCallTarget, CheckedExprKind, CheckedExprOwner, CheckedFacts,
-    CheckedPathRoot, CheckedSubscriptionExprRole, CheckedValueRef, CheckedViewExprRole,
+    CheckedCallArgument, CheckedCallTarget, CheckedCanvasRouteTarget, CheckedExprKind,
+    CheckedExprOwner, CheckedFacts, CheckedInteractionKind, CheckedPathRoot,
+    CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedValueRef, CheckedViewExprRole,
     CheckedViewScope,
 };
 use crate::check::usage::path_roots;
-use crate::hir::{DeclarationIndex, OriginArena, ViewId, view_children};
+use crate::hir::{DeclarationIndex, HandlerId, OriginArena, StatementId, ViewId, view_children};
 
 /// iced rebuilds the whole view on every message, so anything a view
 /// expression computes or clones is paid per view pass unless a `lazy`
@@ -35,8 +36,155 @@ pub(in crate::check) fn performance_warnings(
         origins,
         &mut warnings,
     );
+    hot_sync_call_warnings(declarations, facts, origins, &mut warnings);
     warnings.sort_by_key(|warning| (warning.line, warning.column));
     warnings
+}
+
+/// `W021`: a `sync` extern called from a handler that a hot trigger routes
+/// to. Handlers run on the loop thread, so the app freezes for as long as
+/// the Rust body takes — once per tick, item, event or drag step.
+fn hot_sync_call_warnings(
+    declarations: &DeclarationIndex,
+    facts: &CheckedFacts,
+    origins: &OriginArena,
+    warnings: &mut Vec<Warning>,
+) {
+    // The handlers whose turns come at a cadence, and the cadence.
+    let mut hot: HashMap<HandlerId, String> = HashMap::new();
+    for subscription in facts.subscriptions() {
+        let cadence = match &subscription.source {
+            CheckedSubscriptionSource::Every { milliseconds }
+            | CheckedSubscriptionSource::Repeat { milliseconds, .. } => {
+                if *milliseconds >= 1_000 {
+                    continue;
+                }
+                format!("every {milliseconds}ms")
+            }
+            CheckedSubscriptionSource::Run { .. }
+            | CheckedSubscriptionSource::Recipe { .. }
+            | CheckedSubscriptionSource::Extern { .. } => "on every stream item".into(),
+            // The whole event feed, or the sources that fire continuously
+            // while the pointer, a finger, or the window moves. A press, a
+            // key, a focus change, or a close request is one turn per user
+            // action, the same cadence as a button.
+            CheckedSubscriptionSource::Events { .. } | CheckedSubscriptionSource::Event { .. } => {
+                "on every event".into()
+            }
+            CheckedSubscriptionSource::Mouse(MouseEvent::Moved) => "on every pointer move".into(),
+            CheckedSubscriptionSource::Mouse(MouseEvent::Wheel) => "on every wheel step".into(),
+            CheckedSubscriptionSource::Touch(TouchEvent::Moved) => "on every touch move".into(),
+            CheckedSubscriptionSource::Window(WindowEvent::Frame) => "on every window frame".into(),
+            CheckedSubscriptionSource::Window(
+                WindowEvent::Moved | WindowEvent::Resized | WindowEvent::Rescaled,
+            ) => "on every window resize or move".into(),
+            CheckedSubscriptionSource::Window(WindowEvent::FileHovered) => {
+                "on every file-hover event".into()
+            }
+            CheckedSubscriptionSource::Mouse(_)
+            | CheckedSubscriptionSource::Touch(_)
+            | CheckedSubscriptionSource::Window(_)
+            | CheckedSubscriptionSource::Keyboard(_)
+            | CheckedSubscriptionSource::InputMethod(_)
+            | CheckedSubscriptionSource::SystemTheme => continue,
+        };
+        hot.entry(subscription.route.handler).or_insert(cadence);
+    }
+    // A slider routes every drag step; buttons, submits and pickers route
+    // once per interaction and are not hot.
+    for view in facts.views() {
+        let Some(interaction) = facts.interaction(view.id) else {
+            continue;
+        };
+        if !matches!(interaction.kind, CheckedInteractionKind::Slider) {
+            continue;
+        }
+        for route in &interaction.routes {
+            if let CheckedCanvasRouteTarget::Handler(handler) = route.target {
+                hot.entry(handler)
+                    .or_insert_with(|| "on every drag step".into());
+            }
+        }
+    }
+    // A `stream` statement's success route — its first route — runs once
+    // per item. The statement kind is read off the semantic key
+    // `statement_semantic_key` builds (`run:Stream:…`).
+    let statements = (0..declarations.statement_count())
+        .map(|index| StatementId(index as u32))
+        .filter_map(|id| Some((id, declarations.try_statement(id)?)));
+    for (id, statement) in statements.clone() {
+        let Some(checked) = facts.try_statement(id) else {
+            continue;
+        };
+        if !checked.semantic_key.starts_with("run:Stream:") {
+            continue;
+        }
+        if let Some(route) = statement.routes.first().and_then(|id| facts.try_route(*id)) {
+            hot.entry(route.target)
+                .or_insert_with(|| "on every stream item".into());
+        }
+    }
+    // Most programs have no hot trigger and leave here having allocated
+    // nothing (the checker's allocation contracts count this pass).
+    if hot.is_empty() {
+        return;
+    }
+    // Task-owned expressions (a `run`'s arguments) belong to the statement's
+    // handler.
+    let task_handlers = statements
+        .filter_map(|(_, statement)| Some((statement.task?, statement.handler)))
+        .collect::<HashMap<_, _>>();
+    for expr in facts.expressions() {
+        let CheckedExprKind::Call {
+            target: CheckedCallTarget::Extern(function),
+            ..
+        } = &expr.kind
+        else {
+            continue;
+        };
+        let Some(declaration) = declarations.try_extern_decl(function.id) else {
+            continue;
+        };
+        if !matches!(declaration.kind, ExternKind::Sync) {
+            continue;
+        }
+        let handler = match facts.expression_use(expr.owner).owner {
+            CheckedExprOwner::HandlerStatement { statement, .. } => {
+                declarations.statement(statement).handler
+            }
+            CheckedExprOwner::Task { task, .. } => match task_handlers.get(&task) {
+                Some(handler) => *handler,
+                None => continue,
+            },
+            _ => continue,
+        };
+        let Some(cadence) = hot.get(&handler) else {
+            continue;
+        };
+        let origin = origins.get(expr.origin);
+        let span = Span {
+            line: origin.line,
+            column: origin.column,
+        };
+        let name = &declaration.name;
+        let params = declaration
+            .params
+            .iter()
+            .map(|(param, _)| param.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        warnings.push(
+            Warning::new(
+                "W021",
+                &span,
+                format!(
+                    "`{name}` is a `sync` extern called from `{}`, which runs {cadence}; the loop blocks for as long as its Rust body takes — declare `{name}` without `sync` and route its result with `run {name}({params}) -> <handler>`",
+                    declarations.handler(handler).name
+                ),
+            )
+            .hint("`sync` is for an immediate effect or environment read; anything that can wait belongs in an async extern, whose result arrives as a message"),
+        );
+    }
 }
 
 fn lazy_dependency_type(

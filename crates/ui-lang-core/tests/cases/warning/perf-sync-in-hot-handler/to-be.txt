@@ -1,0 +1,4 @@
+W021 `probe` is a `sync` extern called from `tick`, which runs every 16ms; the loop blocks for as long as its Rust body takes — declare `probe` without `sync` and route its result with `run probe() -> <handler>`
+W021 `now` is a `sync` extern called from `pointer_moved`, which runs on every pointer move; the loop blocks for as long as its Rust body takes — declare `now` without `sync` and route its result with `run now() -> <handler>`
+W021 `now` is a `sync` extern called from `dragged`, which runs on every drag step; the loop blocks for as long as its Rust body takes — declare `now` without `sync` and route its result with `run now() -> <handler>`
+W021 `probe` is a `sync` extern called from `progressed`, which runs on every stream item; the loop blocks for as long as its Rust body takes — declare `probe` without `sync` and route its result with `run probe() -> <handler>`
