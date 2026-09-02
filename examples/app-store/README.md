@@ -269,6 +269,7 @@ Fuel and memory bound what a module does to itself. What it can make the
 | `MAX_CANCELS` | one tick's worth of everything the host holds | the rest of that frame's cancels ignored |
 | `MAX_REPLY_BYTES_PER_TICK` | 4 MiB | `Err` for the rest of that tick, checked before the work: it counts the payloads the requests carried in and the copies a publish made, not only the answers |
 | `MAX_BUS_BYTES` | 64 KiB per message | `Err` from `bus.publish` |
+| `BUS_WAKE_INTERVAL` | 50 ms | the other windows are woken for a guest's publishes at most twenty times a second; the messages are in the subscribers' inboxes at once, and the last of a burst wakes when the interval is up |
 | `MAX_INBOX` / `MAX_INBOX_BYTES` | 1024 events, 1 MiB | its oldest bus deliveries dropped, and counted in its status line |
 | `MAX_VALUE_BYTES` | 1 MiB | `Err` from `storage.set` |
 | `MAX_APP_KEYS` | 1024 per app | `Err` from `storage.set` |

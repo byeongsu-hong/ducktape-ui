@@ -35,9 +35,9 @@ pub use crate::library::{
 use crate::capabilities::{Inbox, bus, clock, host, storage};
 use crate::library::{FAULTED, LIVE_INSTANCES};
 use crate::limits::{
-    FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE, MAX_FAULT_BYTES, MAX_FRAME_BYTES,
-    MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK, MAX_SUBSCRIPTIONS,
-    MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT,
+    BUS_WAKE_INTERVAL, FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE, MAX_FAULT_BYTES,
+    MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK,
+    MAX_SUBSCRIPTIONS, MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT,
 };
 
 /// The host-side handle the view holds. Identity is the instance: two
@@ -172,6 +172,10 @@ pub struct Guest {
     subscriptions: usize,
     /// Something was published this redraw: the other guests must run.
     published: bool,
+    /// A publish whose wake has not gone out yet, and when the last one did:
+    /// wakes are spaced by `BUS_WAKE_INTERVAL`.
+    wake_pending: bool,
+    last_wake: Option<Instant>,
     /// The host's colour mode as the widget last told it, and who inside the
     /// guest asked to hear about it.
     pub(crate) dark: Option<bool>,
@@ -350,6 +354,8 @@ impl Guest {
             inbox: Inbox::default(),
             subscriptions: 0,
             published: false,
+            wake_pending: false,
+            last_wake: None,
             dark: None,
             theme_subscriptions: Vec::new(),
             fault: None,
@@ -393,10 +399,7 @@ impl Guest {
         }
         if self.quiet(now) {
             self.skipped += 1;
-            return Wake {
-                at: self.next_wake(),
-                published: false,
-            };
+            return self.wake(now);
         }
         self.deliver_due(now);
         self.pending.push(wire::Event::Redraw {
@@ -431,18 +434,39 @@ impl Guest {
         for id in cancels {
             self.cancel(id);
         }
-        // A publish wakes this window now, so a subscriber sharing it ticks
-        // too; the widget tells the store, whose update redraws every other
-        // window, so the subscribers there tick as well.
-        match std::mem::take(&mut self.published) {
-            true => Wake {
-                at: Some(now),
-                published: true,
-            },
-            false => Wake {
+        if std::mem::take(&mut self.published) {
+            self.wake_pending = true;
+        }
+        self.wake(now)
+    }
+
+    /// A publish wakes this window now, so a subscriber sharing it ticks
+    /// too; the widget tells the store, whose update redraws every other
+    /// window, so the subscribers there tick as well. Not more often than
+    /// `BUS_WAKE_INTERVAL`, though: until the interval is up the wake waits,
+    /// and this window asks to be redrawn the moment it is, so the last
+    /// publish of a burst still reaches the other windows.
+    fn wake(&mut self, now: Instant) -> Wake {
+        if !self.wake_pending {
+            return Wake {
                 at: self.next_wake(),
                 published: false,
-            },
+            };
+        }
+        if let Some(last) = self.last_wake
+            && now < last + BUS_WAKE_INTERVAL
+        {
+            let due = last + BUS_WAKE_INTERVAL;
+            return Wake {
+                at: Some(self.next_wake().map_or(due, |next| next.min(due))),
+                published: false,
+            };
+        }
+        self.wake_pending = false;
+        self.last_wake = Some(now);
+        Wake {
+            at: Some(now),
+            published: true,
         }
     }
 

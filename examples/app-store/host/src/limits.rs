@@ -1,5 +1,7 @@
 //! What one guest may spend, and what it may make the host spend.
 
+use std::time::Duration;
+
 /// What one tick may burn before the host ends the app. Roughly one fuel
 /// per wasm instruction; a busy frame of a list app is a few million.
 pub(crate) const FUEL_PER_TICK: u64 = 200_000_000;
@@ -90,3 +92,11 @@ pub(crate) const MAX_FAULT_BYTES: usize = 1024;
 /// Keys per app, and how long the one directory scan behind a guest's
 /// `storage_used` takes.
 pub(crate) const MAX_APP_KEYS: usize = 1024;
+
+/// How often at most a guest's publishes wake the other windows. The
+/// messages are in the subscribers' inboxes the moment they are published;
+/// the wake is what makes the other windows redraw to take them, and one
+/// per frame from a guest that publishes every frame would repaint every
+/// window at its frame rate. The last publish of a burst is never lost:
+/// its wake comes when the interval is up.
+pub(crate) const BUS_WAKE_INTERVAL: Duration = Duration::from_millis(50);
