@@ -23,6 +23,9 @@ pub(in crate::codegen) const NODE_SCOPE: &str = "__ice_node_scope";
 /// strips the clone where the scope is only read.
 pub(in crate::codegen) const NODE_SCOPE_CLONE: &str = "__ice_node_scope.clone()";
 
+/// [`NODE_SCOPE`] where the reader takes a `&str`.
+pub(in crate::codegen) const NODE_SCOPE_BORROW: &str = "__ice_node_scope.as_str()";
+
 pub(super) fn rendered_child_scope(
     identity: Option<&ResolvedViewIdentity>,
     scope: &str,
@@ -77,7 +80,51 @@ pub(super) fn resolved_str_argument_code(
     })
 }
 
+/// The accessibility key of a node that only reads it: `StableId::new` hashes
+/// it and `logical_id` takes it by reference, so an identified node borrows
+/// its scope binding rather than cloning it per frame.
 pub(super) fn resolved_accessibility_key_code(
+    identity: Option<&ResolvedViewIdentity>,
+    kind: &str,
+    origin: OriginId,
+    scope: &str,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    accessibility_key_code(
+        NODE_SCOPE_BORROW,
+        identity,
+        kind,
+        origin,
+        scope,
+        env,
+        program,
+    )
+}
+
+/// The same key at a node that also moves it into a `widget::Id` — `focus_id`
+/// takes the id by value, so this form owns its `String`.
+pub(super) fn owned_accessibility_key_code(
+    identity: Option<&ResolvedViewIdentity>,
+    kind: &str,
+    origin: OriginId,
+    scope: &str,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    accessibility_key_code(
+        NODE_SCOPE_CLONE,
+        identity,
+        kind,
+        origin,
+        scope,
+        env,
+        program,
+    )
+}
+
+fn accessibility_key_code(
+    identified: &str,
     identity: Option<&ResolvedViewIdentity>,
     kind: &str,
     origin: OriginId,
@@ -93,7 +140,7 @@ pub(super) fn resolved_accessibility_key_code(
                 program.origin(origin).line
             ))
         },
-        |_| Ok(NODE_SCOPE_CLONE.to_owned()),
+        |_| Ok(identified.to_owned()),
     )
 }
 

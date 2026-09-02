@@ -105,7 +105,7 @@ pub(in crate::codegen) fn render_pick_list(
         .transpose()?
         .unwrap_or_else(|| "\"Select\"".to_owned());
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __pick_selected = {selected}; let __pick_options = {options}; let __pick_option_count = __pick_options.len(); let __pick = {widget}; ::ui_lang_runtime::accessible(__pick, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ComboBox).logical_id(__a11y_key).label({accessibility_label}).value_maybe(__pick_selected.map(|__value| __value.to_string())).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __pick_selected = {selected}; let __pick_options = {options}; let __pick_option_count = __pick_options.len(); let __pick = {widget}; ::ui_lang_runtime::accessible(__pick, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ComboBox).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label({accessibility_label}).value_maybe(__pick_selected.map(|__value| __value.to_string())).into() }}"
     ))
 }
 
@@ -227,7 +227,7 @@ pub(in crate::codegen) fn render_combo_box(
     let accessibility_key =
         resolved_accessibility_key_code(identity, "combo-box", combo.origin, scope, env, document)?;
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __combo_selection = {selected}; let __combo_option_count = {}.options().len(); let __combo = {widget}; ::ui_lang_runtime::accessible(__combo, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ComboBox).logical_id(__a11y_key).label({}).value_maybe(__combo_selection).into() }}",
+        "{{ let __a11y_key = {accessibility_key}; let __combo_selection = {selected}; let __combo_option_count = {}.options().len(); let __combo = {widget}; ::ui_lang_runtime::accessible(__combo, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ComboBox).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label({}).value_maybe(__combo_selection).into() }}",
         state.code,
         resolved_expr_use_code(program, combo.placeholder, env, ValueMode::Owned)?,
     ))

@@ -41,7 +41,7 @@ pub(in crate::codegen) fn render_boolean_control(
             .unwrap();
             widget.push_str(&resolved_checkbox_style_code(style, program, env)?);
             Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __label = {label}; let __checked = {checked}; let __disabled = {disabled}; let __activate = {{ let __value = !__checked; {activation} }}; let __checkbox = {widget}; ::ui_lang_runtime::accessible(__checkbox, __a11y_id, ::ui_lang_runtime::Role::CheckBox).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
+                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __label = {label}; let __checked = {checked}; let __disabled = {disabled}; let __activate = {{ let __value = !__checked; {activation} }}; let __checkbox = {widget}; ::ui_lang_runtime::accessible(__checkbox, __a11y_id, ::ui_lang_runtime::Role::CheckBox).logical_id_maybe(::core::cfg!(test).then_some(&*__a11y_key)).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
             ))
         }
         (ResolvedBooleanKind::Toggler, ResolvedBooleanStyle::Toggler(style)) => {
@@ -74,7 +74,7 @@ pub(in crate::codegen) fn render_boolean_control(
             .unwrap();
             widget.push_str(&resolved_toggler_style_code(style, program, env)?);
             Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __label = {label}; let __checked = {checked}; let __disabled = {disabled}; let __activate = {activation}; let __toggler = {widget}; ::ui_lang_runtime::accessible(__toggler, __a11y_id, ::ui_lang_runtime::Role::Switch).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
+                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __label = {label}; let __checked = {checked}; let __disabled = {disabled}; let __activate = {activation}; let __toggler = {widget}; ::ui_lang_runtime::accessible(__toggler, __a11y_id, ::ui_lang_runtime::Role::Switch).logical_id_maybe(::core::cfg!(test).then_some(&*__a11y_key)).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).disabled(__disabled).on_activate_maybe(if __disabled {{ None }} else {{ Some(__activate) }}){accessibility_description}.into() }}"
             ))
         }
         (ResolvedBooleanKind::Radio, ResolvedBooleanStyle::Radio(style)) => {
@@ -104,7 +104,7 @@ pub(in crate::codegen) fn render_boolean_control(
             append_resolved_boolean_options(&mut widget, &control.options, false, program, env)?;
             widget.push_str(&resolved_radio_style_code(style, program, env)?);
             Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __label = {label}; let __checked = {checked}; let __activate = {activation}; let __radio = {widget}; ::ui_lang_runtime::accessible(__radio, __a11y_id, ::ui_lang_runtime::Role::RadioButton).logical_id(__a11y_key.clone()).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).selected(__checked).on_activate_maybe(Some(__activate)){accessibility_description}.into() }}"
+                "{{ let __a11y_key = {accessibility_key}; let __a11y_id = ::ui_lang_runtime::StableId::new(&__a11y_key); let __label = {label}; let __checked = {checked}; let __activate = {activation}; let __radio = {widget}; ::ui_lang_runtime::accessible(__radio, __a11y_id, ::ui_lang_runtime::Role::RadioButton).logical_id_maybe(::core::cfg!(test).then_some(&*__a11y_key)).focus_id(::iced::widget::Id::from(__a11y_key)).label({accessibility_label}).checked(__checked).selected(__checked).on_activate_maybe(Some(__activate)){accessibility_description}.into() }}"
             ))
         }
         _ => Err(program.invariant_at_origin(

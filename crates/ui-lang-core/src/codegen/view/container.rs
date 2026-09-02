@@ -123,7 +123,7 @@ pub(in crate::codegen) fn render_container(
         code
     };
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __container_content: __IceElement<'_, {message}> = {content}; let __container = {{ {setup} {code} }}; ::ui_lang_runtime::accessible(__container, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id(__a11y_key).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __container_content: __IceElement<'_, {message}> = {content}; let __container = {{ {setup} {code} }}; ::ui_lang_runtime::accessible(__container, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::GenericContainer).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).into() }}"
     ))
 }
 

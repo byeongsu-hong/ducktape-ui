@@ -486,6 +486,23 @@ where
         self
     }
 
+    /// [`Self::logical_id`] where the caller decides whether the key is worth
+    /// keeping. A key the caller owns is moved, exactly as it would be.
+    ///
+    /// Only test inspection reads a logical id back, and the generated view
+    /// already gates its two sibling facilities — the render-source push and
+    /// the id registration — on `cfg(test)`. It passes `None` here for the
+    /// same reason: outside a test the copy is built, stored and never read.
+    /// Nothing about the widget changes either way, so the `widget::Id` a
+    /// node carries has the same spelling in both builds.
+    #[doc(hidden)]
+    pub fn logical_id_maybe(self, id: Option<impl Into<String>>) -> Self {
+        match id {
+            Some(id) => self.logical_id(id),
+            None => self,
+        }
+    }
+
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.semantics.label = Some(label.into());
         self

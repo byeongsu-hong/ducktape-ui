@@ -688,7 +688,10 @@ view
     assert!(generated.contains("::iced::widget::radio(__label.clone(), true"));
     assert!(generated.contains("::ui_lang_runtime::Role::RadioButton"));
     assert!(generated.contains(".checked(__checked).selected(__checked)"));
-    assert!(generated.contains(".logical_id(__a11y_key.clone())"));
+    assert!(
+        generated
+            .contains(".logical_id_maybe(::core::cfg!(test).then_some(&*__a11y_key)).focus_id(")
+    );
     assert!(generated.contains(".on_activate_maybe(Some(__activate))"));
     assert!(generated.contains("move |_| __ControlsMessage::ChoiceChanged(\"first\".to_owned())"));
     assert!(generated.contains(
@@ -1474,10 +1477,25 @@ view
     // `text` is published as data, so its identity is a template segment
     // rather than a generated key expression.
     assert!(generated.contains(r#"\"segment\": \"plain\""#));
-    // Only the two focusables read the key again after `logical_id`, to build
-    // their `focus_id`; the other five wrappers move it.
-    assert!(generated.contains(".logical_id(__a11y_key.clone()).focus_id("));
-    assert_eq!(generated.matches("__a11y_key.clone()").count(), 2);
+    // `logical_id` reads the key, so an identified wrapper borrows its scope
+    // binding. Only the two focusables own a `String`, because `focus_id`
+    // takes the id by value.
+    assert!(
+        generated
+            .contains(".logical_id_maybe(::core::cfg!(test).then_some(&*__a11y_key)).focus_id(")
+    );
+    assert_eq!(
+        generated
+            .matches("let __a11y_key = __ice_node_scope.as_str();")
+            .count(),
+        5
+    );
+    assert_eq!(
+        generated
+            .matches("let __a11y_key = __ice_node_scope.clone();")
+            .count(),
+        2
+    );
     for id in [
         "rich",
         "toggle",
@@ -1574,13 +1592,14 @@ view
 
     assert_eq!(
         generated.matches("::ui_lang_runtime::accessible(").count(),
-        generated.matches(".logical_id(__a11y_key").count()
+        generated.matches(".logical_id_maybe(").count()
     );
-    // The key is a `String` built fresh per node per frame, and `StableId`
-    // borrows it without holding on, so `logical_id` takes it by move. Only a
-    // node that reads the key AGAIN afterwards still clones — here just the
-    // checkbox, which builds its `focus_id` from it.
-    assert_eq!(generated.matches("__a11y_key.clone()").count(), 1);
+    // `StableId` hashes the key through a borrow and `logical_id` reads it,
+    // so every wrapper here hands both the scope binding itself rather than a
+    // copy of it. The controls that would own a key — the ones that move it
+    // into a `widget::Id` — are published as data in this view.
+    assert_eq!(generated.matches("__a11y_key.clone()").count(), 0);
+    assert!(generated.contains("let __a11y_key = __ice_node_scope.as_str();"));
     // The identity is formatted once, into the node's scope binding.
     assert_eq!(generated.matches("/image").count(), 1);
     assert!(!generated.contains("/@media:"));

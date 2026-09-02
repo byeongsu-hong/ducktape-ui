@@ -274,6 +274,33 @@ pass (a bucketed lowering when every size read is a literal comparison).
 5. The build's remaining floor: scope/id `format!`s and the a11y semantics
    clone per pass (profile-led), then the nested-stateful and
    animation-revision follow-ups above.
-6. a11y key interning and `logical_id` gating — runtime + codegen.
+6. a11y key interning and `logical_id` gating — runtime + codegen. The
+   gating half has shipped: the generated view hands its key to
+   `logical_id_maybe` only under `cfg!(test)`, joining the render-source
+   push and the id registration, which were already gated that way.
+   Measured on apple-music's `__view build only`: 1273 allocations and
+   195,739 bytes stay exactly that in a test build, and become 1175 and
+   189,280 in a shipped one — 98 allocations, 6,459 bytes, the copy an
+   identified node used to make of its scope. Interning is the rest of
+   that cost and the larger part of it: emitting no scope or key strings
+   at all leaves 886 allocations, so the `format!` chain is 251 of them,
+   2.6x what the copies were. Two constraints on that half:
+
+   - The `widget::Id` a node carries must have the same spelling in a
+     test build and a shipped one. `cfg(test)` may add a string; it may
+     never change an id's form. #809 is what the alternative costs:
+     codegen skipped a navigation root the test mount wrapped, so a
+     shipped daemon had no Tab traversal that every test said it had.
+     The gating above obeys this by construction — it drops metadata
+     nothing outside a test reads, and touches no id. Note also that
+     `iced::widget::Id` has no numeric constructor, `Internal::Unique`
+     being private, so a hashed id is still `Id::from(hash.to_string())`:
+     a short allocation at 322 sites rather than none.
+   - `codegen/statement.rs` rebuilds the same path independently, for a
+     handler's `focus`/`scroll` target. Interning has to reach both
+     spellings, and the invariant needs a test that fails when they
+     drift: a generated app whose handler focuses a keyed target,
+     asserted through a real widget op rather than through the driver's
+     own target resolution.
 7. `emit` in-turn delivery with the acyclicity check.
 8. `stream`/`task` async constructors; `W021`; dev-runner timing.
