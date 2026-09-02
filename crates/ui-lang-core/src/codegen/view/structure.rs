@@ -120,7 +120,7 @@ pub(in crate::codegen) fn render_structure(
             let builder = format!(
                 "{{ let __ice_responsive_scope = ({child_scope}).to_owned(); let __ice_responsive_recon = ({responsive_recon}).to_owned(); let _ = (&__ice_responsive_scope, &__ice_responsive_recon); move |__size| {{ let __responsive: __IceElement<'_, {message}> = {content}; __responsive }} }}"
             );
-            let mut code = format!("::iced::widget::responsive({builder})");
+            let mut code = format!("::ui_lang_runtime::responsive({builder})");
             for (method, length) in [("width", &responsive.width), ("height", &responsive.height)] {
                 if let Some(length) = length {
                     write!(

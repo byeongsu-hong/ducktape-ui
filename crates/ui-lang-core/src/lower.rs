@@ -18551,7 +18551,7 @@ view
         let elapsed = started.elapsed();
         assert_eq!(program.responsives.len(), RESPONSIVES);
         assert_eq!(
-            generated.matches("::iced::widget::responsive(").count(),
+            generated.matches("::ui_lang_runtime::responsive(").count(),
             RESPONSIVES
         );
         eprintln!("4k normalized responsives lowered and emitted in {elapsed:?}");

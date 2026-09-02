@@ -15,6 +15,7 @@ mod memo_lazy;
 mod press_area;
 mod qr;
 mod resize_handle;
+mod responsive;
 pub mod rev;
 mod rev_memo;
 #[cfg(feature = "full-runtime")]
@@ -50,6 +51,7 @@ pub use memo_lazy::*;
 pub use press_area::*;
 pub use qr::*;
 pub use resize_handle::*;
+pub use responsive::*;
 pub use rev_memo::*;
 #[cfg(feature = "full-runtime")]
 pub use rich_text_editor::{ContentVersion, EditorChange, RichTextEditor};
