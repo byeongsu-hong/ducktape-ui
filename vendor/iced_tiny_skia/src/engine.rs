@@ -150,21 +150,32 @@ impl Engine {
             }
         }
 
-        // A plain rectangle that crosses the region is filled only where the
-        // region lets it through — one pixel wider, so the mask cuts that
-        // edge and the quad's own edges keep their anti-aliasing. The pixels
-        // are the same; the work is the region's, not the quad's.
-        let (fill_path, fill_transform) = match (
-            clip_mask.is_some()
-                && fill_border_radius == [0.0; 4]
-                && matches!(background, Background::Color(_)),
-            physical_bounds.intersection(&clip_bounds.expand(1.0)),
-        ) {
-            (true, Some(visible)) => (
+        // A rectangle that crosses the region is filled only where the region
+        // lets it through — one pixel wider, so the mask cuts that edge and
+        // the quad's own edges keep their anti-aliasing. The pixels are the
+        // same; the work is the region's, not the quad's. A rounded quad
+        // qualifies as long as the part being filled holds none of the
+        // corners it curves inside of, since it is its own rectangle
+        // everywhere else.
+        let visible = (clip_mask.is_some()
+            && matches!(background, Background::Color(_)))
+        .then(|| physical_bounds.intersection(&clip_bounds.expand(1.0)))
+        .flatten()
+        .filter(|visible| {
+            !corners(physical_bounds, fill_border_radius, transformation)
+                .iter()
+                .any(|corner| {
+                    corner.width > 0.0
+                        && corner.expand(1.0).intersects(visible)
+                })
+        });
+
+        let (fill_path, fill_transform) = match visible {
+            Some(visible) => (
                 rounded_rectangle(visible, [0.0; 4]),
                 tiny_skia::Transform::identity(),
             ),
-            _ => (path, transform),
+            None => (path, transform),
         };
 
         pixels.fill_path(
@@ -692,6 +703,39 @@ fn into_transform(transformation: Transformation) -> tiny_skia::Transform {
         tx: translation.x,
         ty: translation.y,
     }
+}
+
+/// The four squares a rounded rectangle curves inside of, in physical
+/// pixels. The shape covers its own bounds everywhere else.
+fn corners(
+    bounds: Rectangle,
+    border_radius: [f32; 4],
+    transformation: Transformation,
+) -> [Rectangle; 4] {
+    let [top_left, top_right, bottom_right, bottom_left] = border_radius
+        .map(|radius| radius * transformation.scale_factor());
+
+    [
+        Rectangle::new(bounds.position(), Size::new(top_left, top_left)),
+        Rectangle {
+            x: bounds.x + bounds.width - top_right,
+            y: bounds.y,
+            width: top_right,
+            height: top_right,
+        },
+        Rectangle {
+            x: bounds.x + bounds.width - bottom_right,
+            y: bounds.y + bounds.height - bottom_right,
+            width: bottom_right,
+            height: bottom_right,
+        },
+        Rectangle {
+            x: bounds.x,
+            y: bounds.y + bounds.height - bottom_left,
+            width: bottom_left,
+            height: bottom_left,
+        },
+    ]
 }
 
 fn rounded_rectangle(
