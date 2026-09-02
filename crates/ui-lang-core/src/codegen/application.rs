@@ -119,9 +119,17 @@ pub(in crate::codegen) fn generate_theme(
     } else {
         ""
     };
+    // `Theme::custom` runs iced's `Extended::generate`, which derives about
+    // thirty colors through oklch — sixty-odd `cbrt`/`atan` calls — and every
+    // generated view function asks for the theme, so a build paid for it once
+    // a frame for a value that only changes when the palette does. The whole
+    // input is this palette, so one memo entry answers every call: keyed on
+    // the palette itself, the cache cannot go stale, and what it hands back is
+    // an `Arc` clone rather than a second palette. A daemon whose windows
+    // carry different palettes simply misses, which is what it does today.
     writeln!(
         out,
-        "fn __app_theme(__ice_palette: __IcePalette) -> ::iced::Theme {{"
+        "fn __app_theme(__ice_palette: __IcePalette) -> ::iced::Theme {{\n         ::std::thread_local! {{ static __ICE_APP_THEME: ::std::cell::RefCell<::std::option::Option<(__IcePalette, ::iced::Theme)>> = const {{ ::std::cell::RefCell::new(::std::option::Option::None) }}; }}\n         __ICE_APP_THEME.with(|__cached| {{\n         if let ::std::option::Option::Some((__cached_palette, __cached_theme)) = &*__cached.borrow() {{\n         if __cached_palette.name == __ice_palette.name && __cached_palette.colors == __ice_palette.colors {{ return __cached_theme.clone(); }}\n         }}\n         let __theme ="
     )
     .unwrap();
     writeln!(
@@ -161,7 +169,13 @@ pub(in crate::codegen) fn generate_theme(
         palette_field(theme.native_tokens.danger)
     )
     .unwrap();
-    writeln!(out, "}})\n}}").unwrap();
+    writeln!(
+        out,
+        "}});\n\
+         *__cached.borrow_mut() = ::std::option::Option::Some((__ice_palette, __theme.clone()));\n\
+         __theme }})\n}}"
+    )
+    .unwrap();
     writeln!(
         out,
         "{}",

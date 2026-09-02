@@ -274,7 +274,12 @@ pass (a bucketed lowering when every size read is a literal comparison).
 5. The build's remaining floor: scope/id `format!`s and the a11y semantics
    clone per pass (profile-led), then the nested-stateful and
    animation-revision follow-ups above. The clone is done; the
-   `format!`s are measured and declined in 6.
+   `format!`s are measured and declined in 6. The floor also held one
+   thing that was not a string at all: every generated view function
+   rebuilt the app's `iced::Theme`, so a build ran iced's oklch palette
+   generation once a frame for a value that only changes on a theme
+   switch. Memoized on the palette in #865 — apple-music's
+   `idle frame: view` 75 -> 68 us, its whole frame 198 -> 189.
 6. `logical_id` gating — shipped in #861. The generated view hands its
    key to `logical_id_maybe` only under `cfg!(test)`, joining the
    render-source push and the id registration, which were already gated
@@ -304,11 +309,17 @@ pass (a bucketed lowering when every size read is a literal comparison).
    chain that builds scopes and keys is the larger half of the identity
    cost — emitting no scope or key strings at all leaves 886
    allocations, so the chain is 251 of the 1273 against the 98 the
-   gating removed, 2.6x more. It is still not worth buying, because the
-   row underneath says allocation count is not what this build spends
-   its time on: `__view build only` is 91–96 us before and after, and
-   the shipped configuration that drops 98 allocations does not move it.
-   The price would be an invariant no compiler checks — `codegen/view.rs`
+   gating removed, 2.6x more. It is still not worth buying, and the
+   reason is the size of the slice rather than the size of the
+   allocator. A sampled profile puts about 38% of this build in libc's
+   `malloc`, `cfree` and `realloc` — allocation is the largest single
+   thing in it — so 251 allocations of 1273 is roughly 3% of the build,
+   about 2 us of 70, at or below what a p50 comparison resolves on this
+   box. The shipped gating measured exactly that: dropping 98
+   allocations did not move `__view build only`, which is 91-96 us
+   before and after. Do not read this entry as "allocations do not
+   matter here"; 98 of them are simply too few to see. The price would
+   be an invariant no compiler checks — `codegen/view.rs`
    and `codegen/statement.rs` rebuild the same path independently, the
    latter for a handler's `focus`/`scroll` target — for 251 allocations
    and 25 KB that do not show up in a frame. Two things would reopen it:
