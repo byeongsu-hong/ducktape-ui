@@ -231,7 +231,13 @@ impl geometry::frame::Backend for Frame {
                 align_x: text.align_x,
                 align_y: text.align_y,
                 shaping: text.shaping,
-                clip_bounds: Rectangle::with_size(Size::INFINITE),
+                // The frame's own rectangle, not an infinite one: the layer
+                // multiplies this by its transformation to find what a
+                // changed text damaged, and `0.0 * f32::INFINITY` is NaN —
+                // a rectangle that loses no comparison and so asked for the
+                // whole window. The geometry is drawn inside this rectangle
+                // either way; the group carries the same clip.
+                clip_bounds: self.clip_bounds,
             });
         } else {
             text.draw_with(|path, color| self.fill(&path, color));

@@ -64,6 +64,9 @@ accesskit_windows = "=0.32.0"
 # Self dev-dependency: turns `test-runtime` on for this crate's own tests
 # without putting it back in `default`.
 ui-lang-runtime = { path = ".", features = ["test-runtime"] }
+# Named directly so a test can reach the renderer's layers, which is where
+# the patched crate's damage behaviour is observable.
+iced_tiny_skia = { version = "=0.14.0", default-features = false }
 dhat = "=0.3.3"
 serde_json = "1"
 stats_alloc = "0.1.10"

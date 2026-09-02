@@ -25,11 +25,12 @@ resolver = "3"
 # it is a patch over a published crate, not a crate of this workspace.
 exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 
-# `vendor/iced_tiny_skia` is the published 0.14.0 source with two renderer
-# defects fixed, one module opened and one present shortened. Both defects
-# reach every software render, which is what every headless capture,
-# `cargo ice inspect` and any `tiny-skia` window draws with. Drop the
-# directory and this patch when a release carries all four.
+# `vendor/iced_tiny_skia` is the published 0.14.0 source with the changes
+# below: three defects fixed, one module opened, one present shortened and
+# two repaints narrowed. Every one of them reaches every software render,
+# which is what every headless capture, `cargo ice inspect` and any
+# `tiny-skia` window draws with. Drop the directory and this patch when a
+# release carries all of them.
 #
 # 1. It translates a canvas group's clip rectangle by the group's own
 # transformation twice — once when the layer records it and again when the
@@ -57,6 +58,24 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 # differ from what it shows (`present_with_damage`), instead of the whole
 # window every time. `examples/app-store` redraws every window after every
 # update, so its idle windows presented a full copy each tick.
+#
+# 5. It records a `canvas` text with an infinite clip rectangle. Finding what
+# a changed text damaged multiplies that rectangle by the layer's
+# transformation, and a 4x4 multiply turns an infinite size into a NaN one
+# (`0.0 * f32::INFINITY`); a NaN rectangle loses no comparison, so a chart
+# label whose number changed asked for the whole window. The frame's own
+# rectangle is recorded instead — the group already carries the same clip, so
+# nothing is drawn differently. Pinned by
+# `crates/ui-lang-runtime/tests/canvas_text_damage.rs`.
+#
+# 6. A plain quad crossing the region being repainted is filled over that
+# region, one pixel wider so the mask still cuts the edge, instead of over
+# the whole quad. A window's background quad cost its full area on every
+# partial repaint.
+#
+# 7. A glyph that rasterises to nothing — every space — is kept in the glyph
+# cache like any other. Learning that it is empty means hinting its outline,
+# and without the entry that ran again for every space on every draw.
 #
 # `vendor/iced_winit` is the published 0.14.0 source with one line changed:
 # the event loop no longer keeps a `WaitUntil` deadline that has already
