@@ -26,7 +26,7 @@ resolver = "3"
 exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 
 # `vendor/iced_tiny_skia` is the published 0.14.0 source with the changes
-# below: three defects fixed, one module opened, one present shortened and
+# below: four defects fixed, one module opened, one present shortened and
 # three repaints narrowed. Every one of them reaches every software render,
 # which is what every headless capture, `cargo ice inspect` and any
 # `tiny-skia` window draws with. Drop the directory and this patch when a
@@ -86,6 +86,17 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 # glyph inside the region is now drawn without the mask and one outside it is
 # skipped; the mask is that rectangle filled without anti-aliasing, so it is
 # 255 over the first and 0 over the second and neither changes a pixel.
+#
+# 9. It finds what a text damaged by measuring from the text's position
+# rightwards and downwards whatever its alignment, but the renderer draws a
+# right-aligned text to the left of that position and a centred one around
+# it. A changed label therefore repainted ground it never covered and left
+# the glyphs it did cover standing: a chart's price column kept showing a
+# price that had already moved, and the app store's guest status line read
+# "2/1/s" for the rest of the session. The alignment is applied to the
+# rectangle before it is clipped; a text of unbounded extent still reaches
+# past its clip rectangle on both sides and so is worth all of it. Pinned by
+# `crates/ui-lang-runtime/tests/text_anchor_damage.rs`.
 #
 # `vendor/iced_winit` is the published 0.14.0 source with one line changed:
 # the event loop no longer keeps a `WaitUntil` deadline that has already

@@ -1,5 +1,7 @@
 use crate::Primitive;
 use crate::core::renderer::Quad;
+use crate::core::alignment::Vertical;
+use crate::core::text::Alignment;
 use crate::core::{
     self, Background, Color, Point, Rectangle, Svg, Transformation,
 };
@@ -235,7 +237,7 @@ impl Layer {
             |item| {
                 item.as_slice()
                     .iter()
-                    .filter_map(Text::visible_bounds)
+                    .filter_map(visible_bounds)
                     .map(|bounds| bounds * item.transformation())
                     .collect()
             },
@@ -244,7 +246,7 @@ impl Layer {
                     text_a.as_slice(),
                     text_b.as_slice(),
                     |text| {
-                        text.visible_bounds()
+                        visible_bounds(text)
                             .into_iter()
                             .map(|bounds| bounds * text_a.transformation())
                             .collect()
@@ -297,6 +299,47 @@ impl Layer {
         damage.extend(images);
         damage
     }
+}
+
+/// The rectangle `text` covers on screen.
+///
+/// `Text::visible_bounds` measures a cached text from its position
+/// rightwards and downwards, whatever its alignment, but the renderer draws
+/// a right-aligned one to the left of that position and a centred one around
+/// it. The damage then asks for ground the text never covered and leaves the
+/// glyphs it did cover standing, which is how a chart's price column keeps
+/// showing a price that has already moved.
+fn visible_bounds(text: &Text) -> Option<Rectangle> {
+    let Text::Cached {
+        bounds,
+        clip_bounds,
+        align_x,
+        align_y,
+        ..
+    } = text
+    else {
+        return text.visible_bounds();
+    };
+
+    // An unbounded width or height reaches past the clip rectangle on both
+    // sides, which leaves the whole of it: the size a text of unknown extent
+    // is worth repainting.
+    Rectangle {
+        x: match align_x {
+            Alignment::Default | Alignment::Left | Alignment::Justified => {
+                bounds.x
+            }
+            Alignment::Center => bounds.x - bounds.width / 2.0,
+            Alignment::Right => bounds.x - bounds.width,
+        },
+        y: match align_y {
+            Vertical::Top => bounds.y,
+            Vertical::Center => bounds.y - bounds.height / 2.0,
+            Vertical::Bottom => bounds.y - bounds.height,
+        },
+        ..*bounds
+    }
+    .intersection(clip_bounds)
 }
 
 impl Default for Layer {
