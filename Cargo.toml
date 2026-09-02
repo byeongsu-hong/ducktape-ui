@@ -94,9 +94,13 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 # the glyphs it did cover standing: a chart's price column kept showing a
 # price that had already moved, and the app store's guest status line read
 # "2/1/s" for the rest of the session. The alignment is applied to the
-# rectangle before it is clipped; a text of unbounded extent still reaches
-# past its clip rectangle on both sides and so is worth all of it. Pinned by
-# `crates/ui-lang-runtime/tests/text_anchor_damage.rs`.
+# rectangle before it is clipped. A text whose width has no bound cannot
+# wrap, so the lines it was given are the lines it has and a `canvas` label
+# is worth its own line rather than everything under it; its width still
+# reaches past the clip rectangle on both sides, since only the shaping knows
+# how far the glyphs run. Pinned by
+# `crates/ui-lang-runtime/tests/text_anchor_damage.rs` and
+# `tests/canvas_text_damage.rs`.
 #
 # 10. The clip mask is filled when something reads it, not when the draw loop
 # names a rectangle. Filling costs a `clear` over the whole window whatever
