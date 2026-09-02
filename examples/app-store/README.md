@@ -215,8 +215,9 @@ next: wasmtime's artifact cache lives under the data directory, and a module
 loaded once in a run is kept in memory, so Restart, Quit-then-Open and
 reinstall are an instantiation — under a millisecond. The compile itself
 runs across every core (wasmtime's `parallel-compilation`), so a cold
-restore of five apps takes a few seconds rather than their sum. The
-Monitor's Load column says which it was.
+restore of five apps takes about a second on a quiet machine rather than
+their sum, and a warm one about a fifth of that. The Monitor's Load column
+says which it was.
 
 Measured against the store before this redesign, each run under Xvfb
 (software rendering, no GPU) with the same five apps restored at start,
@@ -228,6 +229,25 @@ the same machine:
 | --- | --- | --- | --- |
 | before: one window, every guest ticked on every frame | 3.1–3.3 % of a core | 92–96 % | 145 MB |
 | after | 1.6–1.7 % | 12 % | 153 MB |
+
+Four later fixes moved it again. The host had replayed a guest's text with
+an infinite width so that nothing would wrap; a transformation turns that
+into a NaN, a NaN is never equal to itself, so every text of every guest
+counted as changed and damaged the window from its corner down. The other
+three are in the software renderer and the event loop, and reach every
+program: a plain quad crossing the repainted region is filled over that
+region instead of whole, a glyph that rasterises to nothing — every space —
+is cached like any other instead of being hinted again on every draw, and
+the event loop no longer polls without waiting when one window's redraw
+deadline has passed and another's has not.
+Measured the same way, the binary from the table above against today's,
+interleaved, two runs each — a different machine from the one above, so
+read the pair, not the absolute figures:
+
+| | idle | pointer moving over a guest | resident |
+| --- | --- | --- | --- |
+| the redesign | 2.3–2.5 % of a core | 18–23 % | 103 MB |
+| today | 0.5–0.6 % | 3.6–5.1 % | 104 MB |
 
 What moved the numbers, in the order it mattered: a guest is ticked only
 when something is due for it or its own tree asked for a frame, so Counter
