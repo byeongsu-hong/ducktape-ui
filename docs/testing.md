@@ -757,6 +757,24 @@ What is left is inherent, and worth naming so nobody re-measures it:
   iced text input borrows app state*, `check/options.rs`; the header strip and
   the ticket's quote both move on every beat, so a boundary there would miss
   every time it mattered.
+- **Which block of the chrome is which cannot be measured, and the bound says
+  it does not need to be.** Chrome is drawn unconditionally, so no edit to
+  `Trading` takes the header, the tab bar, the ticket or the book's own frame
+  off the screen the way an empty `Vec` takes its rows off — and a guard added
+  for the probe would change the view the number is about. What can be swapped
+  is the page under the header: `frame_panels`' `without any rows, portfolio`
+  is the same screen with the same rows gone on a page whose generated view
+  carries 231 nodes against the terminal's 302. The floor moves 501us to
+  485us. Swapping the entire terminal chrome for a different page's is worth
+  16us of a 1145us frame, so no single block inside it — the ticket is 138 of
+  those 302 nodes, the largest by more than double — is worth a boundary, even
+  before `lazy` refuses the ticket's inputs.
+- **The memo the compiler already inserts covers most of the chrome.**
+  `beat_cost` prints the count: 73 of the 113 component layout memos a frame
+  reaches still hit on the frame after a feed beat, and the 40 that miss are
+  the rows and the figures that just moved — the header price, the equity, the
+  latency, the book, the tape, the alerts, the positions. On an idle frame all
+  113 hit. The chrome that can be skipped for free already is.
 - **The frame after a beat still costs ~1.5ms more than an idle one**, before
   and after this change alike — +1491us without the boundary, +1593us with it,
   n=11 interleaved runs of `beat_cost` each. `allMids` republishes every market,

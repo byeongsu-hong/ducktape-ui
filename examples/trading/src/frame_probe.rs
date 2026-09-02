@@ -258,9 +258,19 @@ fn app(screen: Screen) -> Trading {
     state
 }
 
-/// One entry per thing that can be taken off the screen. Every one of them is
-/// rows: the panels themselves, their headers and the ticket have no data to
-/// remove, so what they cost falls out as the remainder.
+/// One entry per thing that can be taken off the screen.
+///
+/// Most of them are rows, because rows are what state can remove: the panels
+/// themselves, their headers and the ticket are drawn unconditionally, so no
+/// edit to `Trading` takes one of them off. What they cost together is the
+/// remainder — every row gone and a frame still costing what it costs.
+///
+/// The last entry is what bounds that remainder. It is the same screen with no
+/// rows on a different page, so the pair is two chrome walks of known and
+/// different size — 231 generated view nodes against the terminal's 302 —
+/// measured in one binary. What swapping the whole of one chrome for the
+/// other's is worth is the ceiling on what any block inside it is worth.
+/// `docs/testing.md` records what that came to.
 type Ablation = (&'static str, fn(&mut Trading));
 
 const ABLATIONS: &[Ablation] = &[
@@ -275,16 +285,24 @@ const ABLATIONS: &[Ablation] = &[
         state.tape = hyperliquid::tape_new()
     }),
     ("without any rows", |state| {
-        state.query = "\0".to_owned();
-        state.positions.clear();
-        state.fills.clear();
-        state.book = None;
-        state.tape_prints.clear();
-        state.alerts.clear();
-        state.orders.clear();
-        state.tape = hyperliquid::tape_new();
+        strip_rows(state);
+    }),
+    ("without any rows, portfolio", |state| {
+        strip_rows(state);
+        state.page = crate::Page::Portfolio;
     }),
 ];
+
+fn strip_rows(state: &mut Trading) {
+    state.query = "\0".to_owned();
+    state.positions.clear();
+    state.fills.clear();
+    state.book = None;
+    state.tape_prints.clear();
+    state.alerts.clear();
+    state.orders.clear();
+    state.tape = hyperliquid::tape_new();
+}
 
 fn ablated(screen: Screen) -> Vec<(&'static str, Trading)> {
     let mut variants = vec![("full screen", app(screen))];
@@ -621,7 +639,7 @@ fn frame_panels() {
         report(label, std::mem::take(&mut frame[index]));
     }
 
-    eprintln!("\nwhat each panel's rows cost, paired against the full screen");
+    eprintln!("\nwhat each part of the screen costs, paired against the full screen");
     eprintln!("{:<22} {:>22} {:>22}", "", "view build", "diff + layout");
     for (index, (label, _)) in states.iter().enumerate().skip(1) {
         let name = label.trim_start_matches("without ");
@@ -739,6 +757,17 @@ fn beat_cost() {
         driver.redraw(here());
         after.push(started.elapsed().as_micros());
     }
+
+    // How much of the chrome the compiler's own memo already skips when the
+    // feed moves. Every component use whose reads are all keyed carries one,
+    // and a beat dirties only the state it writes: what still misses is the
+    // chrome that is chrome *because* it shows a number that just moved.
+    let tick = hyperliquid::probe::beat(DENSE.symbols, DENSE.depth, 8, 64_000.0);
+    driver.dispatch(__TradingMessage::MarketTicked(tick), here());
+    let _ = ui_lang_runtime::take_rev_memo_counts();
+    driver.redraw(here());
+    let (hits, misses) = ui_lang_runtime::take_rev_memo_counts();
+    eprintln!("\ncomponent layout memos on the frame after a beat: {hits} hits / {misses} misses");
 
     eprintln!("\none beat of the market feed, {} markets", DENSE.symbols);
     report("idle redraw (nothing moved)", idle);
