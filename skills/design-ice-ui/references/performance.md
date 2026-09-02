@@ -212,12 +212,17 @@ To prove a whole flow smooth, trace it instead —
 actions `--repeat` times, so it costs far more than one inspection.
 
 For a stall the extern boundary hides, run the app under `cargo ice dev`. Every
-generated handler arm is timed, and a turn over the 16ms frame budget prints on
-the app's stderr:
+generated handler arm is timed, and so is every extern call but a `pure` one; a
+span over the 16ms frame budget prints on the app's stderr, innermost first:
 
 ```text
-ice: handler `name` took Nms, over the 16ms frame budget, at path.ice:line
+ice: extern `save_source` took 41ms, over the 16ms frame budget, at app.ice:17
+ice: handler `save_source_file` took 42ms, over the 16ms frame budget, at app.ice:52
 ```
+
+Read the pair as one fact: the handler line says a turn overran, the extern line
+says which call spent it. A `pure` extern is not timed — its cost is view time,
+which `--frames` prices.
 
 A debug build measures against 16ms on its own; a release build measures when
 `ICE_PERF` names the budget in milliseconds (`ICE_PERF=16 ./target/release/app`,

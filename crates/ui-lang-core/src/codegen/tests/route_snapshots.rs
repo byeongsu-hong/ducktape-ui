@@ -61,7 +61,7 @@ view
     let generated = compile(&source, "route_snapshots.ice").unwrap();
 
     assert_eq!(generated.matches("let __ice_run_route_").count(), 5);
-    assert!(generated.contains("::iced::Task::perform(crate::backend::fetch("));
+    assert!(generated.contains("::iced::Task::perform(({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"fetch\", \"route_snapshots.ice:4\"); crate::backend::fetch("));
     assert!(generated.contains("), move |result| match result"));
     assert!(generated.contains("crate::backend::cached("));
     assert!(generated.contains(").map(move |result| match result"));
@@ -90,7 +90,7 @@ view
 
     let first_snapshot = generated.find("let __ice_run_route_").unwrap();
     let future_mapper = generated
-        .find("::iced::Task::perform(crate::backend::fetch")
+        .find("::iced::Task::perform(({ let __ice_call")
         .unwrap();
     assert!(first_snapshot < future_mapper);
 }

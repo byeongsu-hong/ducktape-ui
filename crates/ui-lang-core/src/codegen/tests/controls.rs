@@ -313,7 +313,10 @@ view
         "let __ice_next = crate::backend::count_rows(::std::convert::AsRef::as_ref(&(self.rows))); if ::ui_lang_runtime::state_changed!(self.total, __ice_next)"
     ));
     assert!(generated.contains(
-        "let __ice_next = crate::backend::stamp(::std::convert::AsRef::as_ref(&(self.name))); if ::ui_lang_runtime::state_changed!(self.name, __ice_next)"
+        "let __ice_next = ({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\
+         \"stamp\", \"feed.ice:6\"); \
+         crate::backend::stamp(::std::convert::AsRef::as_ref(&(self.name))) }); if \
+         ::ui_lang_runtime::state_changed!(self.name, __ice_next)"
     ));
     assert!(generated.contains(
         "let __ice_next = crate::backend::page_text(::std::borrow::Borrow::borrow(&(self.doc))); if ::ui_lang_runtime::state_changed!(self.name, __ice_next)"

@@ -334,36 +334,31 @@ fn resolved_run_task_code(
         .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
+    // The constructor runs inline on the loop thread — the freeze SPEC §1's
+    // arrow does not cover — so it is timed like any other extern call.
+    let call = extern_call_code(program, action, format!("{}({args})", action.rust_path));
     Ok(wrap(
         if let (Some(error_message), Some(_)) = (&error_message, &action.error) {
             match kind {
                 EffectKind::Future => format!(
-                    "::iced::Task::perform({}({args}), {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
-                    action.rust_path
+                    "::iced::Task::perform({call}, {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})"
                 ),
                 EffectKind::Task => format!(
-                    "{}({args}).map({mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
-                    action.rust_path
+                    "{call}.map({mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})"
                 ),
                 EffectKind::Stream => format!(
-                    "::iced::Task::run({}({args}), {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})",
-                    action.rust_path
+                    "::iced::Task::run({call}, {mapper}|result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }})"
                 ),
             }
         } else {
             match kind {
-                EffectKind::Future => format!(
-                    "::iced::Task::perform({}({args}), {mapper}|value| {success_message})",
-                    action.rust_path
-                ),
-                EffectKind::Task => format!(
-                    "{}({args}).map({mapper}|value| {success_message})",
-                    action.rust_path
-                ),
-                EffectKind::Stream => format!(
-                    "::iced::Task::run({}({args}), {mapper}|value| {success_message})",
-                    action.rust_path
-                ),
+                EffectKind::Future => {
+                    format!("::iced::Task::perform({call}, {mapper}|value| {success_message})")
+                }
+                EffectKind::Task => format!("{call}.map({mapper}|value| {success_message})"),
+                EffectKind::Stream => {
+                    format!("::iced::Task::run({call}, {mapper}|value| {success_message})")
+                }
             }
         },
     ))
@@ -763,6 +758,8 @@ pub(in crate::codegen) fn generate_statements(
                     .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
                     .collect::<Result<Vec<_>, _>>()?
                     .join(", ");
+                let call =
+                    extern_call_code(program, action, format!("{}({args})", action.rust_path));
                 let progress_message = route_result_code(
                     progress,
                     "value",
@@ -779,9 +776,9 @@ pub(in crate::codegen) fn generate_statements(
                         "error",
                         resolved_route_code(error_route, &["error"], env, program, message)?,
                     );
-                    writeln!(out, "{task_prefix}::iced::Task::sip({}({args}), |value| {progress_message}, |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}", action.rust_path).unwrap();
+                    writeln!(out, "{task_prefix}::iced::Task::sip({call}, |value| {progress_message}, |result| match result {{ ::std::result::Result::Ok(value) => {success_message}, ::std::result::Result::Err(error) => {error_message} }}){task_suffix}").unwrap();
                 } else {
-                    writeln!(out, "{task_prefix}::iced::Task::sip({}({args}), |value| {progress_message}, |value| {success_message}){task_suffix}", action.rust_path).unwrap();
+                    writeln!(out, "{task_prefix}::iced::Task::sip({call}, |value| {progress_message}, |value| {success_message}){task_suffix}").unwrap();
                 }
             }
             ResolvedStatementKind::TaskFlow(flow) => {

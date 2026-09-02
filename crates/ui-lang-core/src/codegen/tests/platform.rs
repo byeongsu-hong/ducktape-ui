@@ -99,11 +99,10 @@ view
     assert!(generated.contains("native_meter(self.amount).map"));
     assert!(generated.contains("borrowed_meter(::std::convert::AsRef::as_ref(&(self.label)), ::std::convert::AsRef::as_ref(&(self.values)), ::std::borrow::Borrow::borrow(&(self.seen))).map"));
     assert!(generated.contains("passive().map(move |__value| __InteropMessage::__ExternNoop)"));
-    assert!(
-        generated
-            .contains("focus_next().map(|value| { let _ = &value; __InteropMessage::Focused })")
-    );
-    assert!(generated.contains("save().map(|result| match result"));
+    assert!(generated.contains(
+        "crate::backend::focus_next() }).map(|value| { let _ = &value; __InteropMessage::Focused })"
+    ));
+    assert!(generated.contains("crate::backend::save() }).map(|result| match result"));
     assert!(generated.contains("Result::Err(error) => __InteropMessage::Failed(error)"));
 }
 
@@ -1009,6 +1008,49 @@ view
 }
 
 #[test]
+fn every_extern_call_starts_a_span_at_the_extern_declaration() {
+    let source = r#"app Timed
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+extern crate::backend
+  sync pump() -> bool
+  pure label(on:bool) -> str
+state
+  running = false
+on bump
+  running = pump()
+view
+  col
+    button "Bump" #bump -> bump
+    text label(running) #label
+"#;
+    let generated = compile(source, "timed.ice").unwrap();
+    // A `sync` extern in a handler: what W021 warns about ahead of time, timed.
+    assert!(
+        generated.contains(
+            "({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"pump\", \
+             \"timed.ice:13\"); crate::backend::pump() })"
+        ),
+        "{generated}"
+    );
+    // A `pure` extern is left bare: a view calls one per node per frame, and
+    // the promise the language holds it to is what makes that safe to skip.
+    assert!(
+        generated.contains("crate::backend::label(self.running)"),
+        "{generated}"
+    );
+    assert!(!generated.contains("extern_call(\"label\""), "{generated}");
+}
+
+#[test]
 fn every_handler_arm_starts_a_turn_timer_at_its_source() {
     let source = r#"app Timed
 theme contract AppTheme
@@ -1031,7 +1073,7 @@ view
     let generated = compile(source, "timed.ice").unwrap();
     assert!(
         generated.contains(
-            "let __ice_turn = ::ui_lang_runtime::dev::Turn::start(\"bump\", \"timed.ice:14\");"
+            "let __ice_turn = ::ui_lang_runtime::dev::Span::handler(\"bump\", \"timed.ice:14\");"
         ),
         "{generated}"
     );

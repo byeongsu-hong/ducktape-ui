@@ -13,22 +13,23 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// The frame a handler turn is measured against by default. A turn that runs
+/// The frame a span is measured against by default. A handler turn that runs
 /// longer held the loop for at least one frame: the freeze the source cannot
-/// show.
-pub const TURN_BUDGET: Duration = Duration::from_millis(16);
+/// show. An extern call that does is where the turn spent it.
+pub const FRAME_BUDGET: Duration = Duration::from_millis(16);
 
-/// Names the budget, in milliseconds, a turn is reported against — and, in a
+/// Names the budget, in milliseconds, a span is reported against — and, in a
 /// release build, that anything is measured at all. `ICE_PERF=8` reports
-/// every turn over 8ms; `ICE_PERF=0` reports every turn.
+/// every span over 8ms; `ICE_PERF=0` reports every span.
 pub const BUDGET_ENV: &str = "ICE_PERF";
 
 /// The budget spans are reported against, or `None` when nothing is measured.
 ///
-/// A debug build measures against [`TURN_BUDGET`] as it always has. A release
+/// A debug build measures against [`FRAME_BUDGET`] as it always has. A release
 /// build measures only when [`BUDGET_ENV`] names a budget, so a shipped app
-/// pays one relaxed load per turn and carries no logging dependency for it.
+/// pays one relaxed load per span and carries no logging dependency for it.
 /// Read once per process: an app cannot change its own budget mid-run.
+#[inline]
 pub fn budget() -> Option<Duration> {
     static BUDGET: OnceLock<Option<Duration>> = OnceLock::new();
     *BUDGET.get_or_init(|| {
@@ -40,7 +41,7 @@ pub fn budget() -> Option<Duration> {
 }
 
 fn budget_from(value: Option<&str>, debug_build: bool) -> Option<Duration> {
-    let default = debug_build.then_some(TURN_BUDGET);
+    let default = debug_build.then_some(FRAME_BUDGET);
     let Some(value) = value else {
         return default;
     };
@@ -55,43 +56,68 @@ fn budget_from(value: Option<&str>, debug_build: bool) -> Option<Duration> {
     }
 }
 
-/// Times one generated handler arm and reports, on drop, a turn that ran over
-/// the [`budget`] with the handler's `.ice` location. It prevents nothing; it
-/// attributes the stall the extern boundary hides.
+/// Times one generated handler arm or one extern call and reports, on drop, a
+/// span that ran over the [`budget`] with its `.ice` location. It prevents
+/// nothing; it attributes the stall the extern boundary hides — the handler
+/// says a turn overran, the extern inside it says which call did.
 #[doc(hidden)]
-pub struct Turn {
-    handler: &'static str,
+pub struct Span {
+    what: &'static str,
+    name: &'static str,
     at: &'static str,
     started: Option<Instant>,
 }
 
-impl Turn {
-    pub fn start(handler: &'static str, at: &'static str) -> Self {
+impl Span {
+    /// A generated handler arm, named as the source spells it, at the `.ice`
+    /// line the handler is declared on.
+    #[inline]
+    pub fn handler(name: &'static str, at: &'static str) -> Self {
+        Self::start("handler", name, at)
+    }
+
+    /// One extern call, at the `.ice` line the extern is declared on: a
+    /// program has one extern of a name, and the enclosing handler span names
+    /// the turn it ran in.
+    #[inline]
+    pub fn extern_call(name: &'static str, at: &'static str) -> Self {
+        Self::start("extern", name, at)
+    }
+
+    #[inline]
+    fn start(what: &'static str, name: &'static str, at: &'static str) -> Self {
         Self {
-            handler,
+            what,
+            name,
             at,
-            // No budget, no clock: an unobserved turn reads one `OnceLock`.
+            // No budget, no clock: an unobserved span reads one `OnceLock`.
             started: budget().map(|_| Instant::now()),
         }
     }
 }
 
-impl Drop for Turn {
+impl Drop for Span {
     fn drop(&mut self) {
         let (Some(started), Some(budget)) = (self.started, budget()) else {
             return;
         };
-        if let Some(line) = turn_report(self.handler, self.at, started.elapsed(), budget) {
+        if let Some(line) = span_report(self.what, self.name, self.at, started.elapsed(), budget) {
             eprintln!("{line}");
         }
     }
 }
 
-/// The line a turn over `budget` prints; `None` inside it.
-pub fn turn_report(handler: &str, at: &str, took: Duration, budget: Duration) -> Option<String> {
+/// The line a span over `budget` prints; `None` inside it.
+pub fn span_report(
+    what: &str,
+    name: &str,
+    at: &str,
+    took: Duration,
+    budget: Duration,
+) -> Option<String> {
     (took > budget).then(|| {
         format!(
-            "ice: handler `{handler}` took {}ms, over the {}ms frame budget, at {at}",
+            "ice: {what} `{name}` took {}ms, over the {}ms frame budget, at {at}",
             took.as_millis(),
             budget.as_millis()
         )
@@ -545,27 +571,40 @@ mod tests {
 }
 
 #[cfg(test)]
-mod turn_tests {
+mod span_tests {
     use super::*;
 
     #[test]
-    fn a_turn_over_the_frame_budget_names_its_handler_and_source() {
+    fn a_span_over_the_frame_budget_names_what_ran_and_where() {
         assert_eq!(
-            turn_report(
+            span_report(
+                "handler",
                 "tick",
                 "src/ui/app.ice:12",
                 Duration::from_millis(23),
-                TURN_BUDGET
+                FRAME_BUDGET
             )
             .as_deref(),
             Some("ice: handler `tick` took 23ms, over the 16ms frame budget, at src/ui/app.ice:12")
         );
         assert_eq!(
-            turn_report(
+            span_report(
+                "extern",
+                "pump",
+                "src/ui/app.ice:7",
+                Duration::from_millis(40),
+                FRAME_BUDGET
+            )
+            .as_deref(),
+            Some("ice: extern `pump` took 40ms, over the 16ms frame budget, at src/ui/app.ice:7")
+        );
+        assert_eq!(
+            span_report(
+                "handler",
                 "tick",
                 "src/ui/app.ice:12",
                 Duration::from_millis(16),
-                TURN_BUDGET
+                FRAME_BUDGET
             ),
             None
         );
@@ -574,21 +613,22 @@ mod turn_tests {
     #[test]
     fn a_named_budget_is_the_one_reported_against() {
         assert_eq!(
-            turn_report(
-                "tick",
+            span_report(
+                "extern",
+                "pump",
                 "app.ice:1",
                 Duration::from_millis(9),
                 Duration::from_millis(8)
             )
             .as_deref(),
-            Some("ice: handler `tick` took 9ms, over the 8ms frame budget, at app.ice:1")
+            Some("ice: extern `pump` took 9ms, over the 8ms frame budget, at app.ice:1")
         );
     }
 
     #[test]
     fn a_release_build_measures_nothing_until_the_budget_is_named() {
         assert_eq!(budget_from(None, false), None);
-        assert_eq!(budget_from(None, true), Some(TURN_BUDGET));
+        assert_eq!(budget_from(None, true), Some(FRAME_BUDGET));
         assert_eq!(
             budget_from(Some("8"), false),
             Some(Duration::from_millis(8))
@@ -603,6 +643,6 @@ mod turn_tests {
     #[test]
     fn a_budget_that_is_not_milliseconds_leaves_the_build_default() {
         assert_eq!(budget_from(Some("yes"), false), None);
-        assert_eq!(budget_from(Some(""), true), Some(TURN_BUDGET));
+        assert_eq!(budget_from(Some(""), true), Some(FRAME_BUDGET));
     }
 }

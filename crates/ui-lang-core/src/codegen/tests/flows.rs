@@ -191,8 +191,8 @@ view
     let generated = compile(source, "streams.ice").unwrap();
     assert!(generated.contains("fn __ui_lang_check_stream_numbers"));
     assert!(generated.contains("Task::run(crate::backend::numbers(arg0), |value| value)"));
-    assert!(generated.contains("Task::run(crate::backend::numbers(3), |value|"));
-    assert!(generated.contains("Task::run(crate::backend::fallible(), |result| match result"));
+    assert!(generated.contains("Task::run(({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"numbers\", \"streams.ice:4\"); crate::backend::numbers(3) }), |value|"));
+    assert!(generated.contains("Task::run(({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"fallible\", \"streams.ice:6\"); crate::backend::fallible() }), |result| match result"));
     assert!(generated.contains("Result::Err(error) => __StreamsMessage::Failed(error)"));
     assert!(generated.contains(
             "Subscription::run(crate::backend::fallible).map(move |__value| __StreamsMessage::Observed(__value))"
@@ -250,7 +250,7 @@ view
     let generated = compile(source, "sips.ice").unwrap();
     assert!(generated.contains("fn __ui_lang_check_sip_transfer"));
     assert!(generated.contains("let _: f64 = value"));
-    assert!(generated.contains("Task::sip(crate::backend::transfer(3), |value|"));
+    assert!(generated.contains("Task::sip(({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"transfer\", \"sips.ice:4\"); crate::backend::transfer(3) }), |value|"));
     assert!(generated.contains("Task::sip(crate::backend::fallible(), |value|"));
     assert!(generated.contains("Result::Err(error) => __SipsMessage::Failed(error)"));
 }
@@ -299,11 +299,11 @@ view
   text "Flows"
 "#;
     let generated = compile(source, "flows.ice").unwrap();
-    assert!(generated.contains("Task::run(crate::backend::numbers(3), |value| value)"));
+    assert!(generated.contains("Task::run(({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"numbers\", \"flows.ice:4\"); crate::backend::numbers(3) }), |value| value)"));
     assert!(generated.contains(".map(move |value| (value + 1))"));
-    assert!(generated.contains(".then(move |value| crate::backend::double(value))"));
+    assert!(generated.contains(".then(move |value| ({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"double\", \"flows.ice:5\"); crate::backend::double(value) }))"));
     assert!(generated.contains(".map(move |result| result.map(|value| (value + 1)))"));
-    assert!(generated.contains(".and_then(move |value| crate::backend::fallible(value))"));
+    assert!(generated.contains(".and_then(move |value| ({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"fallible\", \"flows.ice:6\"); crate::backend::fallible(value) }))"));
     assert!(generated.contains(".collect()"));
     assert!(generated.contains(".discard::<__FlowsMessage>()"));
     assert!(generated.contains("i64::try_from(__task.units())"));

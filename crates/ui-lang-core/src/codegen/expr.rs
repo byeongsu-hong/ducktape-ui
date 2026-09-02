@@ -574,6 +574,37 @@ struct ExprEmission<'a> {
     component_state_scope: Option<&'a str>,
 }
 
+/// Wraps an extern call in the span that times it (ADR 0011, G3). The guard
+/// drops once the block's value — the call's result — has been computed, so
+/// what it measures is the Rust body that ran on the loop thread: a `sync`
+/// extern in full, an async one's inline construction, which is the part of it
+/// the arrow in SPEC §1 does not cover.
+///
+/// A `pure` extern is left bare. It is the one kind the language has a promise
+/// about, it is the kind a view calls per node per frame, and a guard there
+/// would grow the generated view — the function size that decides Ice's build
+/// time — for work `cargo ice inspect --frames` already prices as view time.
+///
+/// The span is per extern, not per call site: a program has one extern of a
+/// name, the enclosing handler span names the turn a call ran in, and an
+/// expression node carries no origin to name a call site with. The block is
+/// parenthesised because an expression is emitted where a bare block would
+/// read as a statement.
+pub(in crate::codegen) fn extern_call_code(
+    program: &LoweredProgram,
+    function: &crate::hir::ExternDeclaration,
+    call: String,
+) -> String {
+    if function.kind == crate::semantic::ExternKind::Pure {
+        return call;
+    }
+    format!(
+        "({{ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call({:?}, {}); {call} }})",
+        function.name,
+        span_location_code(program, function.declaration.origin)
+    )
+}
+
 impl<'a> ExprEmission<'a> {
     fn for_resolved(program: &'a LoweredProgram) -> Self {
         Self {
@@ -689,7 +720,11 @@ fn expr_node_code(
                         })
                         .collect::<Result<Vec<_>, Error>>()?
                         .join(", ");
-                    return Ok(format!("{}({args})", function.rust_path));
+                    return Ok(extern_call_code(
+                        context.program,
+                        function,
+                        format!("{}({args})", function.rust_path),
+                    ));
                 }
                 ResolvedCallTarget::Builtin(name) => name,
             };
