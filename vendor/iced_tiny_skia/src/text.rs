@@ -310,6 +310,10 @@ impl GlyphCache {
         let [r, g, b, _a] = color.into_rgba8();
         let key = (cache_key, [r, g, b]);
 
+        // Marked before the entry is made, so that the two paths that record
+        // an empty glyph and return early keep it over the next trim.
+        let _ = self.recently_used.insert(key);
+
         if let hash_map::Entry::Vacant(entry) = self.entries.entry(key) {
             // A glyph that yields no pixels — a space, or one the font cannot
             // rasterise — is remembered as an empty entry. Learning that it
@@ -389,8 +393,6 @@ impl GlyphCache {
 
             let _ = entry.insert((buffer, image.placement));
         }
-
-        let _ = self.recently_used.insert(key);
 
         self.entries.get(&key).and_then(|(buffer, placement)| {
             (!buffer.is_empty())
