@@ -108,17 +108,11 @@ fn hot_sync_call_warnings(
     }
     // A `stream` statement's success route — its first route — runs once
     // per item. The statement kind is read off the semantic key
-    // `statement_semantic_key` builds (`run:Stream:…`). Task-owned
-    // expressions (a `run`'s arguments) belong to the statement's handler.
-    let mut task_handlers = HashMap::new();
-    for index in 0..declarations.statement_count() {
-        let id = StatementId(index as u32);
-        let Some(statement) = declarations.try_statement(id) else {
-            continue;
-        };
-        if let Some(task) = statement.task {
-            task_handlers.insert(task, statement.handler);
-        }
+    // `statement_semantic_key` builds (`run:Stream:…`).
+    let statements = (0..declarations.statement_count())
+        .map(|index| StatementId(index as u32))
+        .filter_map(|id| Some((id, declarations.try_statement(id)?)));
+    for (id, statement) in statements.clone() {
         let Some(checked) = facts.try_statement(id) else {
             continue;
         };
@@ -130,9 +124,16 @@ fn hot_sync_call_warnings(
                 .or_insert_with(|| "on every stream item".into());
         }
     }
+    // Most programs have no hot trigger and leave here having allocated
+    // nothing (the checker's allocation contracts count this pass).
     if hot.is_empty() {
         return;
     }
+    // Task-owned expressions (a `run`'s arguments) belong to the statement's
+    // handler.
+    let task_handlers = statements
+        .filter_map(|(_, statement)| Some((statement.task?, statement.handler)))
+        .collect::<HashMap<_, _>>();
     for expr in facts.expressions() {
         let CheckedExprKind::Call {
             target: CheckedCallTarget::Extern(function),
