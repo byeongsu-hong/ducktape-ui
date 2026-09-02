@@ -1,14 +1,14 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::f32::consts::{PI, TAU};
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::rc::Rc;
 
 use super::theme::{Theme as UiTheme, alpha, mix};
 use iced::advanced::text::Alignment as TextAlignment;
 use iced::alignment::{Horizontal, Vertical};
 use iced::mouse;
-use iced::widget::canvas::{self, Path, Stroke};
+use iced::widget::canvas::{self, LineCap, LineJoin, Path, Stroke, path};
 use iced::widget::{Canvas, Column, Container, Row, Space, container, row, text};
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Pixels, Point, Radians, Rectangle,
@@ -1167,30 +1167,21 @@ fn draw_axis_labels(
     }
 }
 
-fn svg_trace(points: &[PlotPoint], curve: CartesianCurve) -> String {
-    let mut path = String::new();
+/// Continues the current subpath through `points[1..]`, from a builder already
+/// sitting on `points[0]`.
+fn trace(builder: &mut path::Builder, points: &[PlotPoint], curve: CartesianCurve) {
     match curve {
         CartesianCurve::Linear => {
             for point in &points[1..] {
-                let _ = write!(path, " L{} {}", point.position.x, point.position.y);
+                builder.line_to(point.position);
             }
         }
         CartesianCurve::Monotone => {
             for segment in monotone_segments(points) {
-                let _ = write!(
-                    path,
-                    " C{} {},{} {},{} {}",
-                    segment.control_a.x,
-                    segment.control_a.y,
-                    segment.control_b.x,
-                    segment.control_b.y,
-                    segment.to.x,
-                    segment.to.y
-                );
+                builder.bezier_curve_to(segment.control_a, segment.control_b, segment.to);
             }
         }
     }
-    path
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1255,6 +1246,7 @@ fn monotone_segments(points: &[PlotPoint]) -> Vec<CubicSegment> {
         .collect()
 }
 
+/// The chart's static drawing: grid, axis, and one path per series.
 fn draw_vector_layer(
     frame: &mut canvas::Frame,
     geometry: &CartesianGeometry,
@@ -1262,39 +1254,25 @@ fn draw_vector_layer(
     options: CartesianOptions,
     theme: &UiTheme,
 ) {
-    let size = frame.size();
-    let mut svg = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {} {}" preserveAspectRatio="none">"#,
-        size.width, size.height
-    );
     let grid = mix(theme.palette.background, theme.palette.foreground, 0.12);
     let axis = mix(theme.palette.background, theme.palette.foreground, 0.28);
     let ticks = options.tick_count.clamp(2, 10);
+    let rule = |frame: &mut canvas::Frame, y: f32, color: Color| {
+        frame.stroke(
+            &Path::line(
+                Point::new(geometry.plot.x, y),
+                Point::new(geometry.plot.x + geometry.plot.width, y),
+            ),
+            Stroke::default().with_color(color).with_width(GRID_WIDTH),
+        );
+    };
     if options.show_grid {
         for index in 0..ticks {
             let ratio = index as f32 / (ticks - 1) as f32;
-            let y = geometry.plot.y + geometry.plot.height * ratio;
-            svg_line(
-                &mut svg,
-                Point::new(geometry.plot.x, y),
-                Point::new(geometry.plot.x + geometry.plot.width, y),
-                grid,
-                GRID_WIDTH,
-                None,
-            );
+            rule(frame, geometry.plot.y + geometry.plot.height * ratio, grid);
         }
     }
-    svg_line(
-        &mut svg,
-        Point::new(geometry.plot.x, geometry.plot.y + geometry.plot.height),
-        Point::new(
-            geometry.plot.x + geometry.plot.width,
-            geometry.plot.y + geometry.plot.height,
-        ),
-        axis,
-        GRID_WIDTH,
-        None,
-    );
+    rule(frame, geometry.plot.y + geometry.plot.height, axis);
 
     for mark in &geometry.marks {
         let key = match mark {
@@ -1311,26 +1289,34 @@ fn draw_vector_layer(
                 if let (CartesianMark::Area { baseline_y, .. }, Some(first), Some(last)) =
                     (mark, points.first(), points.last())
                 {
-                    let path = format!(
-                        "M{} {} L{} {}{} L{} {} Z",
-                        first.position.x,
-                        baseline_y,
-                        first.position.x,
-                        first.position.y,
-                        svg_trace(points, options.curve),
-                        last.position.x,
-                        baseline_y
+                    let area = Path::new(|builder| {
+                        builder.move_to(Point::new(first.position.x, *baseline_y));
+                        builder.line_to(first.position);
+                        trace(builder, points, options.curve);
+                        builder.line_to(Point::new(last.position.x, *baseline_y));
+                        builder.close();
+                    });
+                    frame.fill(
+                        &area,
+                        Color {
+                            a: color.a * 0.16,
+                            ..color
+                        },
                     );
-                    svg_path(&mut svg, &path, color, color.a * 0.16, None);
                 }
                 if points.len() >= 2 {
-                    let path = format!(
-                        "M{} {}{}",
-                        points[0].position.x,
-                        points[0].position.y,
-                        svg_trace(points, options.curve)
+                    let line = Path::new(|builder| {
+                        builder.move_to(points[0].position);
+                        trace(builder, points, options.curve);
+                    });
+                    frame.stroke(
+                        &line,
+                        Stroke {
+                            line_cap: LineCap::Round,
+                            line_join: LineJoin::Round,
+                            ..Stroke::default().with_color(color).with_width(LINE_WIDTH)
+                        },
                     );
-                    svg_path(&mut svg, &path, color, color.a, Some(LINE_WIDTH));
                 }
                 let show_points = points.len() == 1
                     || matches!(
@@ -1339,30 +1325,25 @@ fn draw_vector_layer(
                     );
                 if show_points {
                     for point in points {
-                        svg_circle(&mut svg, point.position, MARKER_RADIUS, color, None);
+                        frame.fill(&Path::circle(point.position, MARKER_RADIUS), color);
                     }
                 }
             }
             CartesianMark::Bar { bounds, .. } => {
-                svg_rect(&mut svg, *bounds, color, None);
+                // `fill_rectangle` would be one call less, but it asks
+                // `tiny_skia` for an aliased fill, and a bar two pixels from
+                // its neighbour wants the same soft edge the rest of the chart
+                // has.
+                frame.fill(&Path::rectangle(bounds.position(), bounds.size()), color);
             }
         }
     }
-
-    svg.push_str("</svg>");
-    frame.draw_svg(
-        Rectangle::with_size(size),
-        iced::advanced::svg::Svg::new(iced::advanced::svg::Handle::from_memory(svg.into_bytes())),
-    );
 }
 
-/// The dash the hover rule is drawn with, as SVG's `stroke-dasharray="3 3"`.
 const HOVER_DASH: [f32; 2] = [3.0, 3.0];
 
-/// The marks that follow the pointer. Native paths rather than a second SVG
-/// document: this layer is redrawn on every pointer move, and an SVG handle
-/// whose bytes change is a fresh `usvg` parse and a full-size `resvg` raster
-/// each time.
+/// The marks that follow the pointer, on their own cache: redrawn on every
+/// pointer move while the static layer stands.
 fn draw_hover(
     frame: &mut canvas::Frame,
     geometry: &CartesianGeometry,
@@ -1426,98 +1407,6 @@ fn draw_hover(
             _ => {}
         }
     }
-}
-
-fn svg_color(color: Color) -> String {
-    format!(
-        "#{:02x}{:02x}{:02x}",
-        (color.r * 255.0).round() as u8,
-        (color.g * 255.0).round() as u8,
-        (color.b * 255.0).round() as u8
-    )
-}
-
-fn svg_line(
-    svg: &mut String,
-    from: Point,
-    to: Point,
-    color: Color,
-    width: f32,
-    dash: Option<&str>,
-) {
-    let dash = dash.map_or(String::new(), |dash| {
-        format!(r#" stroke-dasharray="{dash}""#)
-    });
-    let _ = write!(
-        svg,
-        r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-opacity="{}" stroke-width="{width}"{dash}/>"#,
-        from.x,
-        from.y,
-        to.x,
-        to.y,
-        svg_color(color),
-        color.a
-    );
-}
-
-fn svg_path(svg: &mut String, path: &str, color: Color, opacity: f32, stroke: Option<f32>) {
-    let _ = match stroke {
-        Some(width) => write!(
-            svg,
-            r#"<path d="{path}" fill="none" stroke="{}" stroke-opacity="{}" stroke-width="{width}" stroke-linecap="round" stroke-linejoin="round"/>"#,
-            svg_color(color),
-            opacity
-        ),
-        None => write!(
-            svg,
-            r#"<path d="{path}" fill="{}" fill-opacity="{opacity}"/>"#,
-            svg_color(color)
-        ),
-    };
-}
-
-fn svg_circle(
-    svg: &mut String,
-    point: Point,
-    radius: f32,
-    fill: Color,
-    stroke: Option<(Color, f32)>,
-) {
-    let stroke = stroke.map_or(String::new(), |(color, width)| {
-        format!(
-            r#" stroke="{}" stroke-opacity="{}" stroke-width="{width}""#,
-            svg_color(color),
-            color.a
-        )
-    });
-    let _ = write!(
-        svg,
-        r#"<circle cx="{}" cy="{}" r="{radius}" fill="{}" fill-opacity="{}"{stroke}/>"#,
-        point.x,
-        point.y,
-        svg_color(fill),
-        fill.a
-    );
-}
-
-fn svg_rect(svg: &mut String, bounds: Rectangle, fill: Color, stroke: Option<(Color, f32)>) {
-    let stroke = stroke.map_or(String::new(), |(color, width)| {
-        format!(
-            r#" stroke="{}" stroke-opacity="{}" stroke-width="{width}""#,
-            svg_color(color),
-            color.a
-        )
-    });
-    let _ = write!(
-        svg,
-        r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" fill-opacity="{}"{stroke}/>"#,
-        bounds.x,
-        bounds.y,
-        bounds.width,
-        bounds.height,
-        svg_color(fill),
-        fill.a
-    );
 }
 
 fn draw_empty(frame: &mut canvas::Frame, state: DataState, theme: &UiTheme) {
