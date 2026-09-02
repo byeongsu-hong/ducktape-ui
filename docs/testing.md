@@ -339,6 +339,14 @@ is about a runtime widget rather than about generated code.
 Release only — the module is `#![cfg(not(debug_assertions))]`, because `-O0`
 numbers measure rustc, not the app.
 
+`cargo ice inspect ROOT.ice --frames N [--release]` is the generated form of
+this probe: it measures any Ice app with no hand-written Rust file, over the
+same three `Driver::redraw_phases` phases and the same p50/p95 index rule, and
+writes them into the capture manifest's `frames` object beside the `rev_memo`
+and `memo_lazy` totals. Reach for the probe here when the question is which of
+showcase's interactions costs what; reach for `--frames` when the question is
+what one idle frame of an arbitrary app costs.
+
 The phase that matters is `__view build only` against `idle redraw`: the first
 is the code the Ice compiler emits, the second adds iced's layout and event
 walk. On showcase that is ~0.72ms against ~3.3ms, so roughly three quarters of a

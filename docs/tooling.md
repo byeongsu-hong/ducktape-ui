@@ -25,6 +25,29 @@ package selection. `cargo ice diff BASE.json CURRENT.json` writes
 changed-pixel ratio exceeds explicit `--pixel-threshold`,
 `--max-changed-ratio`, or `--value-tolerance` settings.
 
+`--frames N` measures that same headless inspection before it captures: eight
+warmup redraws, then `N` timed frames split into the generated `view`, iced's
+diff and layout, and the event walk, plus the layout memo hits and misses
+totalled over those frames. The capture manifest gains a top-level `frames`
+object with the p50/p95 microseconds per phase, the frame and warmup counts,
+the build profile, and both memo counts, and one summary line follows the
+result JSON:
+
+```text
+frames: 60 @ debug | view p50 650us p95 720us | layout p50 1100us p95 1300us | update p50 100us p95 130us | rev_memo 81/0 | memo_lazy 12/0
+```
+
+A debug build measures rustc as much as the app, so read its microseconds as
+ratios between phases and trust only the memo counts absolutely; add
+`--release` for absolute numbers. `cargo ice diff` ignores `frames` entirely —
+timings are never a visual delta.
+
+The warmup and timed redraws are ordinary driver redraws that apply the
+messages they emit, so an app whose idle redraw emits messages (an animation, a
+window frame subscription) captures the state those redraws left behind, and
+its PNG can differ from a plain `cargo ice inspect` capture: `cargo ice diff`
+ignores only `/frames`, never that difference.
+
 Interaction tracing is an opt-in release-mode path over that same generated
 program and semantic driver:
 

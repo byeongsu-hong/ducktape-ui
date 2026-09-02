@@ -18,7 +18,9 @@ use ui_lang_template::trace::{
 
 const INSPECT_TEST: &str = "__ice_agent_inspect";
 const MAX_DIFF_PIXELS: usize = 16_777_216;
-const IGNORED_MANIFEST_PATHS: &[&str] = &["/name", "/png", "/capture_source/statement"];
+/// Manifest subtrees a visual diff never reports: artifact identity, and the
+/// frame timings `--frames` records, which differ on every run by design.
+const IGNORED_MANIFEST_PATHS: &[&str] = &["/name", "/png", "/capture_source/statement", "/frames"];
 
 #[derive(Debug, Default, PartialEq)]
 struct InspectOptions {
@@ -35,6 +37,8 @@ struct InspectOptions {
     platform: Option<String>,
     reduced_motion: bool,
     test: Option<String>,
+    frames: Option<usize>,
+    release: bool,
     trace: bool,
     warmup: Option<usize>,
     repeat: Option<usize>,
@@ -111,14 +115,12 @@ pub(super) fn inspect(root: &Path, args: &[String]) -> Result<(), String> {
     let mut command = Command::new(&cargo);
     command
         .current_dir(root)
-        .args([
-            "test",
-            "--package",
-            &package,
-            INSPECT_TEST,
-            "--",
-            "--nocapture",
-        ])
+        .args(["test", "--package", &package]);
+    if options.release {
+        command.arg("--release");
+    }
+    command
+        .args([INSPECT_TEST, "--", "--nocapture"])
         .env("ICE_AGENT_INSPECT_SOURCE", &source)
         .env("ICE_AGENT_INSPECT_ROOT", root)
         .env("ICE_AGENT_INSPECT_NAME", name)
@@ -162,7 +164,35 @@ pub(super) fn inspect(root: &Path, args: &[String]) -> Result<(), String> {
         }))
         .expect("inspection output is serializable")
     );
+    if let Some(frames) = result.get("frames") {
+        println!("{}", frames_summary(frames));
+    }
     Ok(())
+}
+
+/// The one stdout line `--frames` adds after the inspection result.
+fn frames_summary(frames: &Value) -> String {
+    let phase = |name: &str| {
+        let percentiles = &frames[format!("{name}_us")];
+        format!(
+            "{name} p50 {}us p95 {}us",
+            percentiles["p50"], percentiles["p95"]
+        )
+    };
+    let memo = |name: &str| {
+        let counts = &frames[name];
+        format!("{name} {}/{}", counts["hits"], counts["misses"])
+    };
+    format!(
+        "frames: {} @ {} | {} | {} | {} | {} | {}",
+        frames["count"],
+        frames["build_profile"].as_str().unwrap_or_default(),
+        phase("view"),
+        phase("layout"),
+        phase("update"),
+        memo("rev_memo"),
+        memo("memo_lazy"),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -785,6 +815,9 @@ fn set_inspect_environment(command: &mut Command, options: &InspectOptions) {
     if options.reduced_motion {
         command.env("ICE_AGENT_INSPECT_REDUCED_MOTION", "true");
     }
+    if let Some(frames) = options.frames {
+        command.env("ICE_AGENT_INSPECT_FRAMES", frames.to_string());
+    }
 }
 
 fn set_replay_environment(command: &mut Command, replay: &TraceArtifact) {
@@ -886,12 +919,12 @@ fn parse_inspect(args: &[String]) -> Result<InspectOptions, String> {
     let mut index = 1;
     while index < args.len() {
         let flag = args[index].as_str();
-        if flag == "--reduced-motion" || flag == "--trace" {
-            let slot = if flag == "--trace" {
-                &mut options.trace
-            } else {
-                &mut options.reduced_motion
-            };
+        if let Some(slot) = match flag {
+            "--reduced-motion" => Some(&mut options.reduced_motion),
+            "--release" => Some(&mut options.release),
+            "--trace" => Some(&mut options.trace),
+            _ => None,
+        } {
             if *slot {
                 return Err(format!("duplicate `{flag}`"));
             }
@@ -922,6 +955,10 @@ fn parse_inspect(args: &[String]) -> Result<InspectOptions, String> {
             "--steps" => {
                 let value = positive_usize(flag, &value)?;
                 set_once(&mut options.steps, value, flag)?;
+            }
+            "--frames" => {
+                let value = positive_usize(flag, &value)?;
+                set_once(&mut options.frames, value, flag)?;
             }
             "--warmup" => {
                 let value = value
@@ -977,7 +1014,7 @@ fn parse_inspect(args: &[String]) -> Result<InspectOptions, String> {
         }
         index += 2;
     }
-    validate_trace_options(&options)?;
+    validate_inspect_options(&options)?;
     Ok(options)
 }
 
@@ -991,12 +1028,20 @@ fn trace_mode(options: &InspectOptions) -> Option<TraceMode> {
     }
 }
 
-fn validate_trace_options(options: &InspectOptions) -> Result<(), String> {
+fn validate_inspect_options(options: &InspectOptions) -> Result<(), String> {
     let requested_modes = usize::from(options.trace)
         + usize::from(options.fuzz.is_some())
         + usize::from(options.replay.is_some());
     if requested_modes > 1 {
         return Err("choose exactly one of `--trace`, `--fuzz`, or `--replay`".into());
+    }
+    if options.frames.is_some() && requested_modes > 0 {
+        return Err(
+            "--frames measures the plain inspection; use --trace for interaction timings".into(),
+        );
+    }
+    if options.release && options.frames.is_none() {
+        return Err("--release requires --frames".into());
     }
     match trace_mode(options) {
         None => {
@@ -1259,7 +1304,7 @@ pub(super) fn compare_capture_manifests(
     differences.retain(|difference| {
         difference["path"]
             .as_str()
-            .is_none_or(|path| !IGNORED_MANIFEST_PATHS.contains(&path))
+            .is_none_or(|path| !ignored_manifest_path(path))
     });
     let changed_ratio = if pixels.total == 0 {
         0.0
@@ -1298,6 +1343,14 @@ pub(super) fn compare_capture_manifests(
     )
     .map_err(|error| error.to_string())?;
     Ok(report)
+}
+
+/// An ignored path covers its own value and everything below it.
+fn ignored_manifest_path(path: &str) -> bool {
+    IGNORED_MANIFEST_PATHS.iter().any(|ignored| {
+        path.strip_prefix(ignored)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    })
 }
 
 fn parse_diff(args: &[String]) -> Result<DiffOptions, String> {
@@ -1627,6 +1680,86 @@ mod tests {
         assert_eq!(options.scale, Some(2.0));
         assert!(options.reduced_motion);
         assert!(parse_inspect(&["app.ice".into(), "--theme".into(), "blue".into()]).is_err());
+    }
+
+    #[test]
+    fn parses_frame_measurement_only_for_the_plain_inspection() {
+        let options = parse_inspect(&[
+            "src/ui/app.ice".into(),
+            "--frames".into(),
+            "60".into(),
+            "--release".into(),
+        ])
+        .unwrap();
+        assert_eq!(options.frames, Some(60));
+        assert!(options.release);
+
+        for (arguments, expected) in [
+            (vec!["app.ice", "--frames", "0"], "positive integer"),
+            (
+                vec!["app.ice", "--frames", "5", "--trace"],
+                "use --trace for interaction timings",
+            ),
+            (vec!["app.ice", "--release"], "--release requires --frames"),
+            (
+                vec!["app.ice", "--frames", "5", "--frames", "6"],
+                "duplicate `--frames`",
+            ),
+        ] {
+            let arguments = arguments.into_iter().map(String::from).collect::<Vec<_>>();
+            let error = parse_inspect(&arguments).unwrap_err();
+            assert!(error.contains(expected), "{arguments:?} reported {error:?}");
+        }
+    }
+
+    #[test]
+    fn diff_ignores_measured_frame_timings() {
+        fn manifest_with_frames(name: &str, view_p50: u64) -> Value {
+            let mut manifest = capture_manifest(name);
+            manifest["frames"] = json!({
+                "count": 30,
+                "warmup": 8,
+                "build_profile": "debug",
+                "view_us": { "p50": view_p50, "p95": view_p50 + 70 },
+                "layout_us": { "p50": 1_100, "p95": 1_300 },
+                "update_us": { "p50": 100, "p95": 130 },
+                "rev_memo": { "hits": 81, "misses": 0 },
+                "memo_lazy": { "hits": 12, "misses": 0 },
+            });
+            manifest
+        }
+
+        let fixture = tempfile::tempdir().unwrap();
+        let baseline = fixture.path().join("baseline.json");
+        let current = fixture.path().join("current.json");
+        for (path, manifest) in [
+            (&baseline, manifest_with_frames("baseline", 650)),
+            (&current, manifest_with_frames("current", 940)),
+        ] {
+            fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            write_png(&path.with_extension("png"), 1, 1, &[0, 0, 0, 255]).unwrap();
+        }
+
+        let report = compare_capture_manifests(
+            &baseline,
+            &current,
+            &fixture.path().join("diff"),
+            DiffThresholds::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            report["manifest"]["difference_count"], 0,
+            "frame timings are not a visual delta: {}",
+            report["manifest"]["differences"]
+        );
+        assert_eq!(report["matches"], true);
+        assert!(
+            report["manifest"]["ignored_paths"]
+                .as_array()
+                .is_some_and(|paths| paths.iter().any(|path| path == "/frames")),
+            "the diff report must name the rule it applied"
+        );
     }
 
     #[test]
