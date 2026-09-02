@@ -68,7 +68,6 @@
 //! memoized row and hands every measured height to its neighbour. Mounting is
 //! still a window over the viewport; keys decide only whose state is whose.
 
-use iced::advanced::widget::operation::scrollable::AbsoluteOffset;
 use iced::advanced::widget::operation::{Focusable, Outcome};
 use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
@@ -377,14 +376,15 @@ where
     // the row tops the last layout measured, and the caller lays out again
     // on `true`, which is when the next measurements land.
     if let Some(offset) = sync.reveal {
-        content.as_widget_mut().operate(
-            tree,
-            layout,
-            renderer,
-            &mut ApplyScroll {
-                offset: Some(offset),
-            },
-        );
+        // Two passes, because a scrollable does not tell an operation which end
+        // its offsets count from; `ScrollContentTo` asks it.
+        let mut probe = crate::scroll_anchor::ScrollContentTo::probe(None, offset);
+        content
+            .as_widget_mut()
+            .operate(tree, layout, renderer, &mut probe);
+        content
+            .as_widget_mut()
+            .operate(tree, layout, renderer, &mut probe.place());
     }
     sync.needs_layout
 }
@@ -399,37 +399,6 @@ struct SyncAfterWheel {
     needs_layout: bool,
     /// The absolute offset a revealing column asked the scrollable for.
     reveal: Option<f32>,
-}
-
-/// Scrolls the first scrollable it meets to an absolute vertical offset. The
-/// second half of a reveal: `SyncAfterWheel` learns the offset below the
-/// scrollable, after its own `scrollable` callback has already passed.
-struct ApplyScroll {
-    /// Taken by the first scrollable; a nested one must not chase it too.
-    offset: Option<f32>,
-}
-
-impl Operation for ApplyScroll {
-    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-        operate(self);
-    }
-
-    fn scrollable(
-        &mut self,
-        _id: Option<&Id>,
-        _bounds: Rectangle,
-        _content_bounds: Rectangle,
-        _translation: Vector,
-        state: &mut dyn iced::advanced::widget::operation::Scrollable,
-    ) {
-        let Some(offset) = self.offset.take() else {
-            return;
-        };
-        state.scroll_to(AbsoluteOffset {
-            x: None,
-            y: Some(offset),
-        });
-    }
 }
 
 impl Operation for SyncAfterWheel {
@@ -554,15 +523,13 @@ impl<T: 'static> Operation<T> for ScrollToKey {
 
     fn finish(&self) -> Outcome<T> {
         match self.offset {
-            Some(y) => Outcome::Chain(Box::new(
-                iced::advanced::widget::operation::scrollable::scroll_to(
-                    self.target.clone(),
-                    AbsoluteOffset {
-                        x: None,
-                        y: Some(y),
-                    },
-                ),
-            )),
+            // A row top is measured from the top of the content and a scroll
+            // offset from the scroll's anchor, so the jump goes through
+            // `ScrollContentTo` rather than straight into `scroll_to`.
+            Some(y) => Outcome::Chain(Box::new(crate::scroll_anchor::ScrollContentTo::probe(
+                Some(self.target.clone()),
+                y,
+            ))),
             None => Outcome::None,
         }
     }

@@ -260,6 +260,11 @@ mod virtual_rows {
 }
 
 #[cfg(test)]
+mod scroll_to_key_anchor {
+    ui_lang::include_app!("tests/cases/ui/scroll_to_key_anchor.ice");
+}
+
+#[cfg(test)]
 mod component_output {
     mod plugin_backend {
         pub use crate::backend::borrowed_help;
