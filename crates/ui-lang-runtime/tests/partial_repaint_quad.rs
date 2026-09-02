@@ -32,12 +32,18 @@ fn untouched() -> tiny_skia::PremultipliedColorU8 {
 }
 
 fn pixel(pixmap: &tiny_skia::Pixmap, x: u32, y: u32) -> tiny_skia::PremultipliedColorU8 {
-    pixmap.pixels()[(y * WIDTH + x) as usize]
+    pixmap.pixels()[(y * pixmap.width() + x) as usize]
 }
 
 /// Repaints `region` of a window holding one rounded quad, over a buffer
 /// pre-filled with a colour the scene never paints.
 fn repaint(region: Rectangle) -> tiny_skia::Pixmap {
+    repaint_at(region, 1.0)
+}
+
+/// The same window at `scale`, where the quad's corner radius is a physical
+/// distance the renderer has to scale for itself.
+fn repaint_at(region: Rectangle, scale: f32) -> tiny_skia::Pixmap {
     let mut renderer = Renderer::new(Font::DEFAULT, Pixels(16.0));
 
     renderer.fill_quad(
@@ -52,10 +58,14 @@ fn repaint(region: Rectangle) -> tiny_skia::Pixmap {
         Color::BLACK,
     );
 
-    let mut pixmap = tiny_skia::Pixmap::new(WIDTH, HEIGHT).expect("pixel map");
+    let physical = Size::new(
+        (WIDTH as f32 * scale) as u32,
+        (HEIGHT as f32 * scale) as u32,
+    );
+    let mut pixmap = tiny_skia::Pixmap::new(physical.width, physical.height).expect("pixel map");
     pixmap.pixels_mut().fill(untouched());
-    let mut mask = tiny_skia::Mask::new(WIDTH, HEIGHT).expect("clip mask");
-    let viewport = Viewport::with_physical_size(Size::new(WIDTH, HEIGHT), 1.0);
+    let mut mask = tiny_skia::Mask::new(physical.width, physical.height).expect("clip mask");
+    let viewport = Viewport::with_physical_size(physical, scale);
 
     renderer.draw(
         &mut pixmap.as_mut(),
@@ -128,5 +138,37 @@ fn a_partial_repaint_that_holds_a_corner_keeps_it_round() {
         pixel(&pixmap, 150, 100),
         untouched(),
         "(150, 100) is outside the repainted region and must be untouched"
+    );
+}
+
+#[test]
+fn a_corner_stays_round_when_the_window_is_scaled() {
+    // Twice the pixels for the same window: the corner's radius is 24
+    // logical units and 48 physical ones, and the renderer decides where
+    // the shape is square in physical pixels.
+    //
+    // The region starts to the right of a 24-pixel corner and inside a
+    // 48-pixel one, so a renderer that forgot to scale the radius would
+    // believe this region holds no corner and fill it square.
+    let pixmap = repaint_at(
+        Rectangle {
+            x: 36.0,
+            y: 0.0,
+            width: 34.0,
+            height: 60.0,
+        },
+        2.0,
+    );
+
+    // The corner's arc is centred at (88, 88) physical with a radius of 48.
+    assert_eq!(
+        pixel(&pixmap, 73, 41).red(),
+        255,
+        "the pixel outside the corner's arc must stay background"
+    );
+    assert_eq!(
+        pixel(&pixmap, 100, 100).red(),
+        0,
+        "the quad must still be filled where it is square"
     );
 }
