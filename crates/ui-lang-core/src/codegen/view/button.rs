@@ -64,7 +64,7 @@ pub(in crate::codegen) fn render_button(
                     "button child diverged from normalized HIR",
                 ));
             }
-            let child_scope = rendered_child_scope(identity, scope, env, document)?;
+            let child_scope = rendered_child_scope(identity, scope)?;
             render_node(child, document, message, env, &child_scope, slot)?
         }
         _ => {

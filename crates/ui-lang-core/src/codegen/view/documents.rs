@@ -13,7 +13,7 @@ pub(in crate::codegen) fn render_documents(
         ResolvedViewKind::Markdown | ResolvedViewKind::Table { .. } => view.identity.as_ref(),
         _ => None,
     };
-    let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope)?;
     let rendered = match &view.kind {
         ResolvedViewKind::Markdown => {
             let markdown = document.resolved_markdown(node)?;
@@ -42,6 +42,6 @@ pub(in crate::codegen) fn render_documents(
         )),
         _ => return Ok(None),
     }?;
-    let rendered = identify_rendered(rendered, identity, message, env, document, scope)?;
+    let rendered = identify_rendered(rendered, identity, message)?;
     Ok(Some(rendered))
 }

@@ -10,7 +10,7 @@ pub(in crate::codegen) fn render_media(
 ) -> Result<Option<String>, Error> {
     let view = document.resolved_view(node)?;
     let identity = view.identity.as_ref();
-    let child_scope = rendered_child_scope(identity, scope, env, document)?;
+    let child_scope = rendered_child_scope(identity, scope)?;
     let rendered = match &view.kind {
         ResolvedViewKind::Media => {
             let resolved = document.resolved_media(node)?;
@@ -38,7 +38,7 @@ pub(in crate::codegen) fn render_media(
         }
         _ => return Ok(None),
     }?;
-    let rendered = identify_rendered(rendered, identity, message, env, document, scope)?;
+    let rendered = identify_rendered(rendered, identity, message)?;
     Ok(Some(rendered))
 }
 

@@ -4,32 +4,40 @@ pub(super) fn identify_rendered(
     rendered: String,
     identity: Option<&ResolvedViewIdentity>,
     message: &str,
-    env: &dyn BindingEnvironment,
-    program: &LoweredProgram,
-    scope: &str,
 ) -> Result<String, Error> {
-    let Some(identity) = identity else {
+    if identity.is_none() {
         return Ok(rendered);
-    };
-    let id = resolved_view_identity_code(identity, scope, env, program)?;
+    }
     Ok(format!(
-        "{{ let __identified: __IceElement<'_, {message}> = {rendered}; let __ice_id = {id}; #[cfg(test)] ::ui_lang_runtime::testing::register_render_source(&__ice_id); ::iced::widget::container(__identified).id(::iced::widget::Id::from(__ice_id)).into() }}"
+        "{{ let __identified: __IceElement<'_, {message}> = {rendered}; #[cfg(test)] ::ui_lang_runtime::testing::register_render_source(&{NODE_SCOPE}); ::iced::widget::container(__identified).id(::iced::widget::Id::from({NODE_SCOPE_CLONE})).into() }}"
     ))
 }
+
+/// The local `render_node` binds an identified node's scope to, once per
+/// pass, before the node's own renderer runs: its id, its accessibility key
+/// and every descendant's scope read this binding instead of formatting the
+/// ancestor chain again. A nested identified node shadows it with its own.
+pub(in crate::codegen) const NODE_SCOPE: &str = "__ice_node_scope";
+
+/// [`NODE_SCOPE`] in the owned form a scope binding takes; `borrowed_scope`
+/// strips the clone where the scope is only read.
+pub(in crate::codegen) const NODE_SCOPE_CLONE: &str = "__ice_node_scope.clone()";
 
 pub(super) fn rendered_child_scope(
     identity: Option<&ResolvedViewIdentity>,
     scope: &str,
-    env: &dyn BindingEnvironment,
-    program: &LoweredProgram,
 ) -> Result<String, Error> {
-    identity.map_or_else(
-        || Ok(scope.to_owned()),
-        |identity| resolved_view_identity_code(identity, scope, env, program),
-    )
+    Ok(match identity {
+        Some(_) => NODE_SCOPE_CLONE.to_owned(),
+        None => scope.to_owned(),
+    })
 }
 
-fn resolved_view_identity_code(
+/// The scope an identified node extends its parent's with — the expression
+/// `render_node` binds to [`NODE_SCOPE`], and what the template emitter,
+/// whose identified nodes are data rather than code, chains for the code
+/// slots below them.
+pub(in crate::codegen) fn scope_chain_code(
     identity: &ResolvedViewIdentity,
     scope: &str,
     env: &dyn BindingEnvironment,
@@ -85,7 +93,7 @@ pub(super) fn resolved_accessibility_key_code(
                 program.origin(origin).line
             ))
         },
-        |identity| resolved_view_identity_code(identity, scope, env, program),
+        |_| Ok(NODE_SCOPE_CLONE.to_owned()),
     )
 }
 
@@ -243,6 +251,13 @@ pub(in crate::codegen) fn render_node(
         rendered
     } else {
         unreachable!("every view node belongs to a render group")
+    };
+    let rendered = match &view.identity {
+        Some(identity) => format!(
+            "{{ let {NODE_SCOPE} = {}; {rendered} }}",
+            scope_chain_code(identity, scope, env, document)?
+        ),
+        None => rendered,
     };
     let track_descendants = matches!(
         view.kind,

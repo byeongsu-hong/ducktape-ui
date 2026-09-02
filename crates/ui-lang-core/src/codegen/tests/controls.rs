@@ -1578,7 +1578,8 @@ view
     // node that reads the key AGAIN afterwards still clones — here just the
     // checkbox, which builds its `focus_id` from it.
     assert_eq!(generated.matches("__a11y_key.clone()").count(), 1);
-    assert_eq!(generated.matches("/image").count(), 2);
+    // The identity is formatted once, into the node's scope binding.
+    assert_eq!(generated.matches("/image").count(), 1);
     assert!(!generated.contains("/@media:"));
 }
 

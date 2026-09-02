@@ -390,7 +390,11 @@ can stop at, and the repo has three:
   layout went from ~1080us to ~570us with the layout skip alone. On trading's
   dense terminal, diff + layout went 1300us → 1202us when its row components
   became boundaries (68 → 113 hits) and → 1074us when a held key stopped the
-  diff below it. Judge a boundary on that split only: the probes' end-to-end
+  diff below it, and 1200us → 970us when an identified node's scope was
+  bound once per pass instead of every descendant re-formatting the ancestor
+  chain (`__ice_node_scope`; the generated view went from 1619 nested scope
+  `format!`s to none outside test targets, and `view` 53us → 47us). Judge a
+  boundary on that split only: the probes' end-to-end
   `idle redraw` carries ~1.3ms of the driver broadcasting the redraw to every
   subscription and settling, and `frame_panels` deltas taken end-to-end once
   read the rows as owning a walk the build phase shows them to be a fraction

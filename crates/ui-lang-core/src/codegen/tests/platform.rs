@@ -686,13 +686,20 @@ view
         generated
             .contains("Id::from(format!(\"{}/list({})\", \"DynamicOperations\", self.selected))")
     );
+    // A keyed identity is formatted once per node, into the scope binding
+    // the node's key, id and descendants all read.
     assert!(
-        generated.contains("let __a11y_key = format!(\"{}/field({})\", \"DynamicOperations\", id)")
+        generated.contains(
+            "let __ice_node_scope = format!(\"{}/field({})\", \"DynamicOperations\", id)"
+        )
     );
+    assert!(generated.contains("let __a11y_key = __ice_node_scope.clone()"));
     assert!(generated.contains(".id(::iced::widget::Id::from(__a11y_key.clone()))"));
-    assert!(generated.contains(
-        ".id(::iced::widget::Id::from(format!(\"{}/list({})\", \"DynamicOperations\", id)))"
-    ));
+    assert!(
+        generated
+            .contains("let __ice_node_scope = format!(\"{}/list({})\", \"DynamicOperations\", id)")
+    );
+    assert!(generated.contains(".id(::iced::widget::Id::from(__ice_node_scope.clone()))"));
 }
 
 #[test]
