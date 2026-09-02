@@ -273,34 +273,54 @@ pass (a bucketed lowering when every size read is a literal comparison).
 4. Row components keyed on their list; a held key skips the diff — #812.
 5. The build's remaining floor: scope/id `format!`s and the a11y semantics
    clone per pass (profile-led), then the nested-stateful and
-   animation-revision follow-ups above.
-6. a11y key interning and `logical_id` gating — runtime + codegen. The
-   gating half has shipped: the generated view hands its key to
-   `logical_id_maybe` only under `cfg!(test)`, joining the render-source
-   push and the id registration, which were already gated that way.
-   Measured on apple-music's `__view build only`: 1273 allocations and
-   195,739 bytes stay exactly that in a test build, and become 1175 and
-   189,280 in a shipped one — 98 allocations, 6,459 bytes, the copy an
-   identified node used to make of its scope. Interning is the rest of
-   that cost and the larger part of it: emitting no scope or key strings
-   at all leaves 886 allocations, so the `format!` chain is 251 of them,
-   2.6x what the copies were. Two constraints on that half:
+   animation-revision follow-ups above. The clone is done; the
+   `format!`s are measured and declined in 6.
+6. `logical_id` gating — shipped in #861. The generated view hands its
+   key to `logical_id_maybe` only under `cfg!(test)`, joining the
+   render-source push and the id registration, which were already gated
+   that way, and an identified node that only reads its key borrows its
+   scope binding instead of cloning it. Measured on apple-music's
+   `__view build only`: a test build stays at 1273 allocations and
+   195,739 bytes exactly, and a shipped one becomes 1175 and 189,280 —
+   98 allocations, 6,459 bytes.
 
-   - The `widget::Id` a node carries must have the same spelling in a
-     test build and a shipped one. `cfg(test)` may add a string; it may
-     never change an id's form. #809 is what the alternative costs:
-     codegen skipped a navigation root the test mount wrapped, so a
-     shipped daemon had no Tab traversal that every test said it had.
-     The gating above obeys this by construction — it drops metadata
-     nothing outside a test reads, and touches no id. Note also that
-     `iced::widget::Id` has no numeric constructor, `Internal::Unique`
-     being private, so a hashed id is still `Id::from(hash.to_string())`:
-     a short allocation at 322 sites rather than none.
-   - `codegen/statement.rs` rebuilds the same path independently, for a
-     handler's `focus`/`scroll` target. Interning has to reach both
-     spellings, and the invariant needs a test that fails when they
-     drift: a generated app whose handler focuses a keyed target,
-     asserted through a real widget op rather than through the driver's
-     own target resolution.
+   The gate belongs in the generated view rather than inside
+   `logical_id`, and that is the load-bearing part. Gating on an active
+   render source instead — the obvious runtime spelling — reads as
+   equivalent and is not: it silently drops the logical id of every
+   widget built by a *hand-written* view under the driver, which six
+   existing runtime tests caught. `cfg!(test)` at the call site is exact
+   where the render source is a proxy.
+
+   Related and unchanged by that: the `widget::Id` a node carries must
+   have the same spelling in a test build and a shipped one. `cfg(test)`
+   may add a string; it may never change an id's form. #809 is what the
+   alternative costs — codegen skipped a navigation root the test mount
+   wrapped, so a shipped daemon had no Tab traversal that every test
+   said it had. The gating above obeys this by construction: it drops
+   metadata nothing outside a test reads, and touches no id.
+
+   **Interning the key chain is measured and declined.** The `format!`
+   chain that builds scopes and keys is the larger half of the identity
+   cost — emitting no scope or key strings at all leaves 886
+   allocations, so the chain is 251 of the 1273 against the 98 the
+   gating removed, 2.6x more. It is still not worth buying, because the
+   row underneath says allocation count is not what this build spends
+   its time on: `__view build only` is 91–96 us before and after, and
+   the shipped configuration that drops 98 allocations does not move it.
+   The price would be an invariant no compiler checks — `codegen/view.rs`
+   and `codegen/statement.rs` rebuild the same path independently, the
+   latter for a handler's `focus`/`scroll` target — for 251 allocations
+   and 25 KB that do not show up in a frame. Two things would reopen it:
+   a build where allocation count is itself the constraint (a fixed
+   arena, a no-allocation contract over the view build, a target where
+   the allocator is the bottleneck), or a numeric constructor for
+   `iced::widget::Id` upstream. `Internal::Unique` is private today, so
+   even a hashed id is `Id::from(hash.to_string())` — a short allocation
+   at 322 sites rather than none, which is most of why interning cannot
+   reach zero. If it is ever taken, the drift between the two spellings
+   needs a test that fails when they diverge: a generated app whose
+   handler focuses a keyed target, asserted through a real widget op
+   rather than through the driver's own target resolution.
 7. `emit` in-turn delivery with the acyclicity check.
 8. `stream`/`task` async constructors; `W021`; dev-runner timing.
