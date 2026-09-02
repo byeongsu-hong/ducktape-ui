@@ -162,6 +162,13 @@ where
                         }
                     }
                 };
+                // A key the focused guest takes is taken: the window's Tab
+                // traversal and any `status=ignored` listener would otherwise
+                // read the guest's typing as nobody's. Modifier state is not
+                // a key, and every widget is owed it.
+                if !matches!(event, keyboard::Event::ModifiersChanged(_)) {
+                    shell.capture_event();
+                }
                 guest.pending.push(translated);
                 shell.request_redraw();
             }
