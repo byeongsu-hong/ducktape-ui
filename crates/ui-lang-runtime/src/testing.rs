@@ -2287,6 +2287,7 @@ fn frames_json(frames: Frames) -> serde_json::Value {
 
 /// `(p50, p95)` by the index rule `examples/showcase/src/frame_probe.rs` uses.
 fn percentiles(mut samples: Vec<u64>) -> (u64, u64) {
+    debug_assert!(!samples.is_empty(), "percentiles need at least one sample");
     samples.sort_unstable();
     let at = |percentile: usize| {
         samples
