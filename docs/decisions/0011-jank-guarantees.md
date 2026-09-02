@@ -219,12 +219,15 @@ author spelling `sync`:
   event, or a sub-second `every` is reported, naming the async form. The
   `cef-browser` pump is the known exception and keeps its `sync`; the
   warning is the language saying so at that line, not a ban.
-- **Dev-time attribution.** Every handler arm and every extern call but a
-  `pure` one is timed, and the `.ice` span of any that exceeds a frame is
-  printed, StrictMode-style. A debug build measures against 16ms; a release
-  build, where the timings are the app's own, measures when `ICE_PERF` names
-  the budget in milliseconds — no logging dependency and no build flag for
-  it. `pure` is the exception because it is the one kind the language holds a
+- **Dev-time attribution.** Every view build, every handler arm and every
+  extern call but a `pure` one is timed, and the `.ice` span of any that
+  exceeds a frame is printed, StrictMode-style — the three answer *which* of
+  a frame's parts overran before any of them says why. A debug build measures
+  the two event-shaped spans against 16ms; a release build, where the timings
+  are the app's own, measures when `ICE_PERF` names the budget in milliseconds
+  — no logging dependency and no build flag for it. The view span reports only
+  under a named budget in either profile, because it runs every frame and a
+  `-O0` frame is not a measurement of the app. `pure` is the exception because it is the one kind the language holds a
   promise about and the one a view calls per node per frame: a guard there
   would grow the generated view, which is what decides Ice's build time, for
   work `--frames` already prices as view time. The same spans report on the

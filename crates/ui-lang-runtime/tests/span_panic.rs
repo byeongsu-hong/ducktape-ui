@@ -17,13 +17,7 @@ fn a_panic_under_two_spans_names_both_innermost_first() {
         panic!("the extern's own body panicked");
     }
 
-    let output = Command::new(std::env::current_exe().expect("the test binary has a path"))
-        .arg("a_panic_under_two_spans_names_both_innermost_first")
-        .args(["--exact", "--nocapture"])
-        .env(CHILD, "1")
-        .output()
-        .expect("the test binary re-executes");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = child_stderr("a_panic_under_two_spans_names_both_innermost_first");
 
     let extern_line = stderr
         .find("ice: panic while running extern `load_prices`, at src/ui/app.ice:16")
@@ -35,4 +29,35 @@ fn a_panic_under_two_spans_names_both_innermost_first() {
         extern_line < handler_line,
         "the call inside the turn reports first:\n{stderr}"
     );
+}
+
+/// A view span starts no clock unless `ICE_PERF` names a budget, and it still
+/// has to name the view on the way out of a panic: it is the only `.ice`
+/// reading a `pure` extern's panic gets.
+#[test]
+fn an_unbudgeted_view_span_still_names_the_view() {
+    if std::env::var_os(CHILD).is_some() {
+        let _view = ui_lang_runtime::dev::Span::view("Starter", "src/ui/app.ice:20");
+        panic!("a pure extern panicked while the view was being built");
+    }
+
+    let stderr = child_stderr("an_unbudgeted_view_span_still_names_the_view");
+    assert!(
+        stderr.contains("ice: panic while running view `Starter`, at src/ui/app.ice:20"),
+        "no view line in:\n{stderr}"
+    );
+}
+
+/// Runs one of this file's tests in a child process and returns its stderr.
+/// `ICE_PERF` is cleared so the child measures only what its build profile
+/// measures on its own.
+fn child_stderr(test: &str) -> String {
+    let output = Command::new(std::env::current_exe().expect("the test binary has a path"))
+        .arg(test)
+        .args(["--exact", "--nocapture"])
+        .env(CHILD, "1")
+        .env_remove(ui_lang_runtime::dev::BUDGET_ENV)
+        .output()
+        .expect("the test binary re-executes");
+    String::from_utf8_lossy(&output.stderr).into_owned()
 }

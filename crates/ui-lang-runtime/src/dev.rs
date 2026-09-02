@@ -23,7 +23,15 @@ pub const FRAME_BUDGET: Duration = Duration::from_millis(16);
 /// every span over 8ms; `ICE_PERF=0` reports every span.
 pub const BUDGET_ENV: &str = "ICE_PERF";
 
-/// The budget spans are reported against, or `None` when nothing is measured.
+/// The budget spans are reported against, and whether it was asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Budget {
+    limit: Option<Duration>,
+    named: bool,
+}
+
+/// The budget an event-shaped span — a handler turn, an extern call — is
+/// reported against, or `None` when nothing is measured.
 ///
 /// A debug build measures against [`FRAME_BUDGET`] as it always has. A release
 /// build measures only when [`BUDGET_ENV`] names a budget, so a shipped app
@@ -31,7 +39,23 @@ pub const BUDGET_ENV: &str = "ICE_PERF";
 /// Read once per process: an app cannot change its own budget mid-run.
 #[inline]
 pub fn budget() -> Option<Duration> {
-    static BUDGET: OnceLock<Option<Duration>> = OnceLock::new();
+    state().limit
+}
+
+/// The budget a per-frame span — the view build — is reported against.
+///
+/// `None` unless [`BUDGET_ENV`] named one. A view is built every frame and a
+/// debug frame is not a measurement of the app, so the one span that would
+/// print at frame rate on the build profile whose numbers mean the least is
+/// the one that has to be asked for.
+#[inline]
+fn named_budget() -> Option<Duration> {
+    let state = state();
+    state.named.then_some(state.limit).flatten()
+}
+
+fn state() -> Budget {
+    static BUDGET: OnceLock<Budget> = OnceLock::new();
     *BUDGET.get_or_init(|| {
         budget_from(
             std::env::var(BUDGET_ENV).ok().as_deref(),
@@ -40,13 +64,19 @@ pub fn budget() -> Option<Duration> {
     })
 }
 
-fn budget_from(value: Option<&str>, debug_build: bool) -> Option<Duration> {
-    let default = debug_build.then_some(FRAME_BUDGET);
+fn budget_from(value: Option<&str>, debug_build: bool) -> Budget {
+    let default = Budget {
+        limit: debug_build.then_some(FRAME_BUDGET),
+        named: false,
+    };
     let Some(value) = value else {
         return default;
     };
     match value.trim().parse::<u64>() {
-        Ok(milliseconds) => Some(Duration::from_millis(milliseconds)),
+        Ok(milliseconds) => Budget {
+            limit: Some(Duration::from_millis(milliseconds)),
+            named: true,
+        },
         Err(_) => {
             eprintln!(
                 "ice: ignoring {BUDGET_ENV}={value:?}, which is not a budget in milliseconds"
@@ -56,16 +86,19 @@ fn budget_from(value: Option<&str>, debug_build: bool) -> Option<Duration> {
     }
 }
 
-/// Times one generated handler arm or one extern call and reports, on drop, a
-/// span that ran over the [`budget`] with its `.ice` location. It prevents
-/// nothing; it attributes the stall the extern boundary hides — the handler
-/// says a turn overran, the extern inside it says which call did.
+/// Times one generated handler arm, one extern call or one view build, and
+/// reports, on drop, a span that ran over the [`budget`] with its `.ice`
+/// location. It prevents nothing; it attributes the stall neither the source
+/// nor a Rust backtrace can show — the view says a frame's build overran, the
+/// handler says a turn did, the extern inside it says which call did.
 #[doc(hidden)]
 pub struct Span {
     what: &'static str,
     name: &'static str,
     at: &'static str,
-    started: Option<Instant>,
+    /// The clock and the budget it will be read against, or `None` when this
+    /// span is not being timed at all.
+    timing: Option<(Instant, Duration)>,
 }
 
 impl Span {
@@ -73,7 +106,7 @@ impl Span {
     /// line the handler is declared on.
     #[inline]
     pub fn handler(name: &'static str, at: &'static str) -> Self {
-        Self::start("handler", name, at)
+        Self::start("handler", name, at, budget())
     }
 
     /// One extern call, at the `.ice` line the extern is declared on: a
@@ -81,17 +114,31 @@ impl Span {
     /// the turn it ran in.
     #[inline]
     pub fn extern_call(name: &'static str, at: &'static str) -> Self {
-        Self::start("extern", name, at)
+        Self::start("extern", name, at, budget())
+    }
+
+    /// One build of the generated `__view`, at the `.ice` line of the view's
+    /// root node. It covers the element tree the compiler emits and nothing
+    /// after it: iced lays out and draws what the build returned, and a `lazy`
+    /// boundary evaluates its subtree during layout, outside this span.
+    #[inline]
+    pub fn view(name: &'static str, at: &'static str) -> Self {
+        Self::start("view", name, at, named_budget())
     }
 
     #[inline]
-    fn start(what: &'static str, name: &'static str, at: &'static str) -> Self {
+    fn start(
+        what: &'static str,
+        name: &'static str,
+        at: &'static str,
+        budget: Option<Duration>,
+    ) -> Self {
         Self {
             what,
             name,
             at,
             // No budget, no clock: an unobserved span reads one `OnceLock`.
-            started: budget().map(|_| Instant::now()),
+            timing: budget.map(|budget| (Instant::now(), budget)),
         }
     }
 }
@@ -108,7 +155,7 @@ impl Drop for Span {
             eprintln!("{}", panic_report(self.what, self.name, self.at));
             return;
         }
-        let (Some(started), Some(budget)) = (self.started, budget()) else {
+        let Some((started, budget)) = self.timing else {
             return;
         };
         if let Some(line) = span_report(self.what, self.name, self.at, started.elapsed(), budget) {
@@ -616,6 +663,19 @@ mod span_tests {
         );
         assert_eq!(
             span_report(
+                "view",
+                "Trading",
+                "src/ui/view.ice:20",
+                Duration::from_millis(22),
+                FRAME_BUDGET
+            )
+            .as_deref(),
+            Some(
+                "ice: view `Trading` took 22ms, over the 16ms frame budget, at src/ui/view.ice:20"
+            )
+        );
+        assert_eq!(
+            span_report(
                 "handler",
                 "tick",
                 "src/ui/app.ice:12",
@@ -643,17 +703,28 @@ mod span_tests {
 
     #[test]
     fn a_release_build_measures_nothing_until_the_budget_is_named() {
-        assert_eq!(budget_from(None, false), None);
-        assert_eq!(budget_from(None, true), Some(FRAME_BUDGET));
-        assert_eq!(
-            budget_from(Some("8"), false),
-            Some(Duration::from_millis(8))
-        );
-        assert_eq!(
-            budget_from(Some(" 4 "), true),
-            Some(Duration::from_millis(4))
-        );
-        assert_eq!(budget_from(Some("0"), false), Some(Duration::ZERO));
+        let limit = |value, debug_build| budget_from(value, debug_build).limit;
+        assert_eq!(limit(None, false), None);
+        assert_eq!(limit(None, true), Some(FRAME_BUDGET));
+        assert_eq!(limit(Some("8"), false), Some(Duration::from_millis(8)));
+        assert_eq!(limit(Some(" 4 "), true), Some(Duration::from_millis(4)));
+        assert_eq!(limit(Some("0"), false), Some(Duration::ZERO));
+    }
+
+    /// A view is built every frame, so the debug default — which nobody asked
+    /// for, and whose numbers measure `-O0` — must not reach it. Only a budget
+    /// the run named does.
+    #[test]
+    fn only_a_named_budget_reaches_a_per_frame_span() {
+        let named = |value, debug_build| {
+            let budget = budget_from(value, debug_build);
+            budget.named.then_some(budget.limit).flatten()
+        };
+        assert_eq!(named(None, true), None);
+        assert_eq!(named(None, false), None);
+        assert_eq!(named(Some("yes"), true), None);
+        assert_eq!(named(Some("8"), true), Some(Duration::from_millis(8)));
+        assert_eq!(named(Some("0"), false), Some(Duration::ZERO));
     }
 
     #[test]
@@ -666,7 +737,7 @@ mod span_tests {
 
     #[test]
     fn a_budget_that_is_not_milliseconds_leaves_the_build_default() {
-        assert_eq!(budget_from(Some("yes"), false), None);
-        assert_eq!(budget_from(Some(""), true), Some(FRAME_BUDGET));
+        assert_eq!(budget_from(Some("yes"), false).limit, None);
+        assert_eq!(budget_from(Some(""), true).limit, Some(FRAME_BUDGET));
     }
 }

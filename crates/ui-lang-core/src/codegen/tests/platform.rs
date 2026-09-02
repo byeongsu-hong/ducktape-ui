@@ -1008,6 +1008,38 @@ view
 }
 
 #[test]
+fn a_view_build_starts_a_span_at_its_root_node() {
+    let source = r#"app Timed
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  count = 0
+on bump
+  count = count + 1
+view
+  button "Bump" #bump -> bump
+"#;
+    let generated = compile(source, "timed.ice").unwrap();
+    // Line 17 is the root node, `button "Bump"` — where a view build that
+    // overran, or panicked, is reported against.
+    assert!(
+        generated.contains(
+            "fn __view(&self) -> __IceElement<'_, __TimedMessage> { let __ice_view = \
+             ::ui_lang_runtime::dev::Span::view(\"Timed\", \"timed.ice:17\");"
+        ),
+        "{generated}"
+    );
+}
+
+#[test]
 fn every_extern_call_starts_a_span_at_the_extern_declaration() {
     let source = r#"app Timed
 theme contract AppTheme

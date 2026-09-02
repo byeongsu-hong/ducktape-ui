@@ -218,13 +218,19 @@ To prove a whole flow smooth, trace it instead —
 actions `--repeat` times, so it costs far more than one inspection.
 
 For a stall the extern boundary hides, run the app under `cargo ice dev`. Every
-generated handler arm is timed, and so is every extern call but a `pure` one; a
-span over the 16ms frame budget prints on the app's stderr, innermost first:
+view build and every handler arm is timed, and so is every extern call but a
+`pure` one; a span over the 16ms frame budget prints on the app's stderr,
+innermost first:
 
 ```text
 ice: extern `save_source` took 41ms, over the 16ms frame budget, at app.ice:17
 ice: handler `save_source_file` took 42ms, over the 16ms frame budget, at app.ice:52
+ice: view `MarkdownEditor` took 24ms, over the 16ms frame budget, at app.ice:31
 ```
+
+A `view` line prices the element tree the compiler emits — not iced's layout and
+draw, and not a `lazy` subtree, which runs during layout — so a frame that is
+slow with no `view` line is a layout problem, which is what `--frames` splits.
 
 Read the pair as one fact: the handler line says a turn overran, the extern line
 says which call spent it. A `pure` extern is not timed — its cost is view time,
@@ -241,9 +247,11 @@ That is the `.ice` reading of a Rust panic whose own location is in the extern's
 body or in generated code. An async extern's body is not covered — the span ends
 when the future is built.
 
-A debug build measures against 16ms on its own; a release build measures when
-`ICE_PERF` names the budget in milliseconds (`ICE_PERF=16 ./target/release/app`,
-`ICE_PERF=0` for every turn). Release numbers are the app's own, so quote those.
+A debug build measures handlers and externs against 16ms on its own; a release
+build measures when `ICE_PERF` names the budget in milliseconds
+(`ICE_PERF=16 ./target/release/app`, `ICE_PERF=0` for every turn). The view span
+is per frame and reports only under a named budget, in either profile. Release
+numbers are the app's own, so quote those.
 
 A dev build also carries iced's devtools, which F12 opens: a human-facing
 profiler, not agent evidence.

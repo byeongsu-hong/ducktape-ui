@@ -220,12 +220,24 @@ refresh the metadata inventory before hashing new or affected files. A changed
 snapshot must remain identical across two reads before the background rebuild
 starts.
 
-Every generated handler arm is timed, and so is every extern call inside one: a
-span that runs longer than the frame budget prints ``ice: handler `name` took
-Nms, over the 16ms frame budget, at path.ice:line`` — or ``ice: extern `name`
-…`` — on the app's stderr, which `cargo ice dev` shows. The extern line names
-the call that spent the turn the handler line reports, which is what the extern
-boundary otherwise hides; `W021` names the same risk ahead of time.
+Three things are timed: every build of the generated `__view`, every generated
+handler arm, and every extern call inside one. A span that runs longer than the
+frame budget prints ``ice: view `App` took Nms, over the 16ms frame budget, at
+path.ice:line`` — or ``ice: handler `name` …``, or ``ice: extern `name` …`` —
+on the app's stderr, which `cargo ice dev` shows. Together they say which of the
+three a stutter is: the frame's build, the turn that answered an interaction, or
+the call inside that turn, which is what the extern boundary otherwise hides;
+`W021` names the same risk ahead of time.
+
+The view span covers the element tree the compiler emits and nothing after it:
+iced's layout and draw are outside it, and so is a `lazy` boundary, whose
+subtree is evaluated during layout.
+
+It is also the one span that has to be asked for, in either build profile: it
+reports only when `ICE_PERF` names a budget. A view is built every frame, so on
+the debug default it prints per frame — a plain `cargo test -p showcase` emits
+93 such lines — and the number it would print there prices `-O0`, not the app.
+Name a budget to see it: `ICE_PERF=16 cargo ice dev …`, or the release binary.
 
 A span also reports on the way out of a panic, whatever the budget is and
 whether or not anything is being timed:
@@ -238,8 +250,11 @@ ice: panic while running handler `increment`, at src/ui/app.ice:19
 
 The Rust location a panic prints is inside the extern's own body or inside
 generated code; these lines say which `.ice` construct was running, innermost
-first. A panic inside an *async* extern body is not among them: the span covers
-the call that built the future, and the body runs later, off the turn.
+first. A panic during a frame's build says `ice: panic while running view
+\`App\`` instead, which is the only `.ice` reading a `pure` extern's panic gets,
+since `pure` carries no span of its own. A panic inside an *async* extern body
+is not covered at all: the span covers the call that built the future, and the
+body runs later, off the turn.
 
 Timed extern kinds are every kind but `pure`: a `sync` call in full, and the
 inline construction of a `future`, `task`, `stream` or `sip` — the part of an
@@ -249,9 +264,9 @@ because a view calls one per node per frame and its cost is view time, which
 declared, not the call site: a program has one extern of a name, and the handler
 span says which turn it ran in.
 
-A debug build measures against 16ms with nothing to turn on. A release build —
-the one a user runs, and the only one whose timings are the app's own — measures
-only when `ICE_PERF` names the budget in milliseconds:
+A debug build measures handlers and externs against 16ms with nothing to turn
+on. A release build — the one a user runs, and the only one whose timings are
+the app's own — measures only when `ICE_PERF` names the budget in milliseconds:
 
 ```console
 $ ICE_PERF=16 ./target/release/my-app
