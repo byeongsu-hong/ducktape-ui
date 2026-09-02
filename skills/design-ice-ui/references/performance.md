@@ -162,10 +162,11 @@ cargo ice inspect path/to/app.ice --viewport 1440x900 --frames 60
 ```
 
 `N` is a positive integer. The run takes 8 warmup redraws, discards the memo
-counters, then times `N` `redraw_phases` frames; the counters are read once
-afterwards, as totals over the `N` frames. `--frames` is rejected together with
-`--trace`, `--fuzz`, or `--replay`. `--release` is a flag, accepted only with
-`--frames`, and makes the inspection's `cargo test` run with `--release`.
+counters, then times `N` frames split into the generated view, iced's diff and
+layout, and the redraw walk; the counters are read once afterwards, as totals
+over the `N` frames. `--frames` is rejected together with `--trace`, `--fuzz`,
+or `--replay`. `--release` is a flag, accepted only with `--frames`, and makes
+the inspection's `cargo test` run with `--release`.
 
 The manifest then carries a top-level `frames` object:
 

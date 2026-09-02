@@ -116,13 +116,12 @@ so a test selects an identified descendant such as `#counter/root`. Target
 aliases may reuse an earlier target as a path prefix, while `#` paths remain
 absolute.
 
-An absolute path reaches what the tested view exposes at its top; a layout ID
-nested below that is reached by chaining from an alias, not by spelling out a
-longer `#` path. The chain names every identified ancestor, not only the
-outermost — an alias does not reach past an intervening ID. Given a dialog
-holding a button, `#connect` and `#gate/connect`
-are both `E194 unknown rendered widget target`, and this is the form that
-resolves:
+A target path names every identified ancestor between the tested view and the
+node, not only the outermost. An absolute `#` path spells that chain out, and an
+alias is the shorter spelling of the same path. Skipping an intervening ID fails
+with `E194 unknown rendered widget target`. Given a dialog `#gate` holding a
+button `#connect`, `#connect` alone does not resolve, while `#gate/connect` and
+the alias form both do:
 
 ```ice
 target dialog = #gate
@@ -131,8 +130,8 @@ target field = dialog/address-input
 focus field
 ```
 
-Actions and assertions take the alias too, so `focus #address-input` fails for
-the same reason `target` did.
+Actions and assertions take either spelling, so `focus #gate/address-input`
+resolves and `focus #address-input` fails for the same reason `target` would.
 
 Component-local state is read with `expect component`:
 
