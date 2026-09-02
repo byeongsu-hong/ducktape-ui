@@ -199,6 +199,24 @@ pub(in crate::codegen) fn revision_reads_within(
     walk.node(root, &mut reads).then_some(reads)
 }
 
+/// The revision reads of one value read outside any expression — the place
+/// an `input`'s `<->` binds, which the widget reads every pass.
+pub(in crate::codegen) fn revision_reads_of_value(
+    program: &LoweredProgram,
+    value: ResolvedValueRef,
+    env: &dyn BindingEnvironment,
+) -> Option<BTreeSet<String>> {
+    let mut reads = BTreeSet::new();
+    let mut walk = RevisionWalk {
+        program,
+        env,
+        bound: HashSet::new(),
+        internal: &|_| false,
+        sources: false,
+    };
+    walk.value(value, &mut reads).then_some(reads)
+}
+
 /// The state field a bare key expression reads, as its revision read, when
 /// the key is exactly an app or component state field: that revision
 /// subsumes the key in the memo tuple.

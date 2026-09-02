@@ -145,6 +145,27 @@ impl MemoFold<'_> {
             })?;
             self.reads.extend(reads);
         }
+        // A `<->` binding is a read the widget makes outside any expression:
+        // the input shows the bound place every pass, so its revisions key
+        // the use like an argument's would.
+        if let ResolvedViewKind::Input = &view.kind {
+            let input = program
+                .resolved_input(id)
+                .map_err(|error| error.to_string())?;
+            let reads = match &input.binding {
+                ResolvedInputBinding::State(binding) => {
+                    revision_reads_of_value(program, binding.checked_ref(), env)
+                }
+                ResolvedInputBinding::Secret { .. } => None,
+            }
+            .ok_or_else(|| {
+                format!(
+                    "the input at {} binds a secret or a value no revision keys",
+                    where_is(program, view)
+                )
+            })?;
+            self.reads.extend(reads);
+        }
         if let ResolvedViewKind::Component { call } = &view.kind {
             let call = program
                 .component_call_by_id(*call)

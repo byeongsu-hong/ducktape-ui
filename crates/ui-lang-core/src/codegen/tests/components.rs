@@ -2300,6 +2300,26 @@ view
 }
 
 #[test]
+fn memo_keys_a_use_on_what_its_two_way_binding_reads() {
+    let generated = memo_program(
+        r#"component Field()
+  state
+    draft = ""
+  col
+    input "Draft" <-> draft
+view
+  col
+    Field
+"#,
+    );
+    assert_eq!(generated.matches("rev_memo(").count(), 1, "{generated}");
+    assert!(
+        generated.contains("map_or(0, |__state| __state.__ice_rev[0])"),
+        "{generated}"
+    );
+}
+
+#[test]
 fn memo_skips_a_body_that_holds_a_lazy() {
     let generated = memo_program(
         r#"state

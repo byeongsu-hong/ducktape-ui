@@ -4068,7 +4068,8 @@ explicitly through the route when a local handler needs it.
 
 A component use is also a layout boundary the compiler inserts on its own.
 When every expression the use evaluates — its arguments, its slot content, the
-body, and the bodies of the components that body uses — reads only app state,
+body, and the bodies of the components that body uses — and every place an
+`input` below it binds with `<->` read only app state,
 derived values, the instance's own state, palette entries, and locals the
 subtree declares, and every widget below it lays out from its own element and
 limits alone, the generated code keys the subtree's layout node on the
