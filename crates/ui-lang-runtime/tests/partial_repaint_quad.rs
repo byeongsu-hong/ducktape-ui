@@ -64,7 +64,8 @@ fn repaint_at(region: Rectangle, scale: f32) -> tiny_skia::Pixmap {
     );
     let mut pixmap = tiny_skia::Pixmap::new(physical.width, physical.height).expect("pixel map");
     pixmap.pixels_mut().fill(untouched());
-    let mut mask = tiny_skia::Mask::new(physical.width, physical.height).expect("clip mask");
+    let mut mask =
+        iced_tiny_skia::ClipMask::new(physical.width, physical.height).expect("clip mask");
     let viewport = Viewport::with_physical_size(physical, scale);
 
     renderer.draw(

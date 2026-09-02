@@ -52,7 +52,7 @@ fn a_partial_repaint_leaves_the_text_outside_its_region_alone() {
 
     let mut pixmap = tiny_skia::Pixmap::new(WIDTH, HEIGHT).expect("pixel map");
     pixmap.pixels_mut().fill(untouched());
-    let mut mask = tiny_skia::Mask::new(WIDTH, HEIGHT).expect("clip mask");
+    let mut mask = iced_tiny_skia::ClipMask::new(WIDTH, HEIGHT).expect("clip mask");
     let viewport = Viewport::with_physical_size(Size::new(WIDTH, HEIGHT), 1.0);
 
     renderer.draw(

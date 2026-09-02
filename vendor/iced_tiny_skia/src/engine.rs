@@ -33,7 +33,7 @@ impl Engine {
         background: &Background,
         transformation: Transformation,
         pixels: &mut tiny_skia::PixmapMut<'_>,
-        clip_mask: &mut tiny_skia::Mask,
+        clip_mask: &mut ClipMask,
         clip_bounds: Rectangle,
     ) {
         let physical_bounds = quad.bounds * transformation;
@@ -43,10 +43,17 @@ impl Engine {
         }
 
         // Kept whole: the shadow reaches past the quad, so the two passes
-        // ask the same mask different questions.
-        let mask = &*clip_mask;
+        // ask the same mask different questions — and the one fill they
+        // share is spent only when one of them is going to ask.
+        let mask = if !physical_bounds.is_within(&clip_bounds)
+            || quad.shadow.color.a > 0.0
+        {
+            Some(clip_mask.mask())
+        } else {
+            None
+        };
         let clip_mask =
-            (!physical_bounds.is_within(&clip_bounds)).then_some(mask);
+            mask.filter(|_| !physical_bounds.is_within(&clip_bounds));
 
         let transform = into_transform(transformation);
 
@@ -145,7 +152,9 @@ impl Engine {
                     // The shadow is its own rectangle: a quad inside the clip
                     // can carry one that reaches outside it, and drawing that
                     // unmasked paints over whatever owns those pixels.
-                    (!shadow_bounds.is_within(&clip_bounds)).then_some(mask),
+                    (!shadow_bounds.is_within(&clip_bounds))
+                        .then_some(mask)
+                        .flatten(),
                 );
             }
         }
@@ -356,7 +365,7 @@ impl Engine {
         text: &Text,
         transformation: Transformation,
         pixels: &mut tiny_skia::PixmapMut<'_>,
-        clip_mask: &mut tiny_skia::Mask,
+        clip_mask: &mut ClipMask,
         clip_bounds: Rectangle,
     ) {
         match text {
@@ -382,12 +391,11 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = match physical_bounds.is_within(&clip_bounds) {
-                    true => None,
-                    false => {
-                        adjust_clip_mask(clip_mask, clip_bounds);
-                        Some(clip_mask as &_)
-                    }
+                let clip_mask = if physical_bounds.is_within(&clip_bounds) {
+                    None
+                } else {
+                    clip_mask.want(clip_bounds);
+                    Some(&mut *clip_mask)
                 };
 
                 self.text_pipeline.draw_paragraph(
@@ -421,12 +429,11 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = match physical_bounds.is_within(&clip_bounds) {
-                    true => None,
-                    false => {
-                        adjust_clip_mask(clip_mask, clip_bounds);
-                        Some(clip_mask as &_)
-                    }
+                let clip_mask = if physical_bounds.is_within(&clip_bounds) {
+                    None
+                } else {
+                    clip_mask.want(clip_bounds);
+                    Some(&mut *clip_mask)
                 };
 
                 self.text_pipeline.draw_editor(
@@ -457,12 +464,11 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = match physical_bounds.is_within(&clip_bounds) {
-                    true => None,
-                    false => {
-                        adjust_clip_mask(clip_mask, clip_bounds);
-                        Some(clip_mask as &_)
-                    }
+                let clip_mask = if physical_bounds.is_within(&clip_bounds) {
+                    None
+                } else {
+                    clip_mask.want(clip_bounds);
+                    Some(&mut *clip_mask)
                 };
 
                 self.text_pipeline.draw_cached(
@@ -504,8 +510,11 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&clip_bounds))
-                    .then_some(clip_mask as &_);
+                let clip_mask = if physical_bounds.is_within(&clip_bounds) {
+                    None
+                } else {
+                    Some(&mut *clip_mask)
+                };
 
                 self.text_pipeline.draw_raw(
                     &buffer,
@@ -527,7 +536,7 @@ impl Engine {
         primitive: &Primitive,
         transformation: Transformation,
         pixels: &mut tiny_skia::PixmapMut<'_>,
-        clip_mask: &mut tiny_skia::Mask,
+        clip_mask: &mut ClipMask,
         clip_bounds: Rectangle,
     ) {
         match primitive {
@@ -547,8 +556,11 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&clip_bounds))
-                    .then_some(clip_mask as &_);
+                let clip_mask = if physical_bounds.is_within(&clip_bounds) {
+                    None
+                } else {
+                    Some(clip_mask.mask())
+                };
 
                 pixels.fill_path(
                     path,
@@ -578,8 +590,11 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&clip_bounds))
-                    .then_some(clip_mask as &_);
+                let clip_mask = if physical_bounds.is_within(&clip_bounds) {
+                    None
+                } else {
+                    Some(clip_mask.mask())
+                };
 
                 pixels.stroke_path(
                     path,
@@ -597,7 +612,7 @@ impl Engine {
         image: &Image,
         _transformation: Transformation,
         _pixels: &mut tiny_skia::PixmapMut<'_>,
-        _clip_mask: &mut tiny_skia::Mask,
+        _clip_mask: &mut ClipMask,
         _clip_bounds: Rectangle,
     ) {
         match image {
@@ -609,8 +624,11 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
-                    .then_some(_clip_mask as &_);
+                let clip_mask = if physical_bounds.is_within(&_clip_bounds) {
+                    None
+                } else {
+                    Some(_clip_mask.mask())
+                };
 
                 let center = physical_bounds.center();
                 let radians = f32::from(image.rotation);
@@ -639,8 +657,11 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
-                    .then_some(_clip_mask as &_);
+                let clip_mask = if physical_bounds.is_within(&_clip_bounds) {
+                    None
+                } else {
+                    Some(_clip_mask.mask())
+                };
 
                 let center = physical_bounds.center();
                 let radians = f32::from(svg.rotation);
@@ -906,28 +927,72 @@ fn rounded_box_sdf(
     (x.powf(2.0) + y.powf(2.0)).sqrt() - radius
 }
 
-pub fn adjust_clip_mask(clip_mask: &mut tiny_skia::Mask, bounds: Rectangle) {
-    clip_mask.clear();
+/// The window-sized clip mask, and the rectangle it is being asked to hold.
+///
+/// Filling it costs a `clear` over the whole window whatever the rectangle
+/// is, and the draw loop names a rectangle far more often than anything
+/// reads one: once per layer per damage region, most of which draw nothing
+/// inside that region, and twice more around every group of primitives. A
+/// clipped run of glyphs names one too, and then skips the mask for every
+/// glyph that turns out to sit inside the rectangle anyway.
+///
+/// So naming a rectangle only records it. The fill happens on the first read
+/// that follows, and a rectangle already held is answered without touching a
+/// byte.
+pub struct ClipMask {
+    mask: tiny_skia::Mask,
+    /// The rectangle a read must be clipped to, and the one already filled.
+    wanted: Rectangle,
+    held: Option<Rectangle>,
+}
 
-    let path = {
-        let mut builder = tiny_skia::PathBuilder::new();
-        builder.push_rect(
-            tiny_skia::Rect::from_xywh(
-                bounds.x,
-                bounds.y,
-                bounds.width,
-                bounds.height,
-            )
-            .unwrap(),
-        );
+impl ClipMask {
+    pub fn new(width: u32, height: u32) -> Option<Self> {
+        Some(Self {
+            mask: tiny_skia::Mask::new(width, height)?,
+            // A new mask is all zeros, which is the empty rectangle already
+            // held: a read before anything names one clips everything away,
+            // rather than asking `tiny_skia` for a rectangle with no shape.
+            wanted: Rectangle::default(),
+            held: Some(Rectangle::default()),
+        })
+    }
 
-        builder.finish().unwrap()
-    };
+    /// The rectangle every later read of this mask is clipped to.
+    pub fn want(&mut self, bounds: Rectangle) {
+        self.wanted = bounds;
+    }
 
-    clip_mask.fill_path(
-        &path,
-        tiny_skia::FillRule::EvenOdd,
-        false,
-        tiny_skia::Transform::default(),
-    );
+    /// The mask, filled with the rectangle it was last asked for.
+    pub fn mask(&mut self) -> &tiny_skia::Mask {
+        if self.held != Some(self.wanted) {
+            self.mask.clear();
+
+            let path = {
+                let mut builder = tiny_skia::PathBuilder::new();
+                builder.push_rect(
+                    tiny_skia::Rect::from_xywh(
+                        self.wanted.x,
+                        self.wanted.y,
+                        self.wanted.width,
+                        self.wanted.height,
+                    )
+                    .unwrap(),
+                );
+
+                builder.finish().unwrap()
+            };
+
+            self.mask.fill_path(
+                &path,
+                tiny_skia::FillRule::EvenOdd,
+                false,
+                tiny_skia::Transform::default(),
+            );
+
+            self.held = Some(self.wanted);
+        }
+
+        &self.mask
+    }
 }

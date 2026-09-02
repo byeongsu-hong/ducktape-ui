@@ -18,6 +18,10 @@ mod vector;
 #[cfg(feature = "geometry")]
 pub mod geometry;
 
+// Public so a renderer driven without a window (a test, a headless
+// capture) can hand `draw` the mask it fills.
+pub use engine::ClipMask;
+
 use iced_debug as debug;
 pub use iced_graphics as graphics;
 pub use iced_graphics::core;
@@ -68,7 +72,7 @@ impl Renderer {
     pub fn draw(
         &mut self,
         pixels: &mut tiny_skia::PixmapMut<'_>,
-        clip_mask: &mut tiny_skia::Mask,
+        clip_mask: &mut engine::ClipMask,
         viewport: &Viewport,
         damage: &[Rectangle],
         background_color: Color,
@@ -112,7 +116,7 @@ impl Renderer {
                     continue;
                 };
 
-                engine::adjust_clip_mask(clip_mask, layer_bounds);
+                clip_mask.want(layer_bounds);
 
                 if !layer.quads.is_empty() {
                     let render_span = debug::render(debug::Primitive::Quad);
@@ -140,7 +144,7 @@ impl Renderer {
                             continue;
                         };
 
-                        engine::adjust_clip_mask(clip_mask, group_bounds);
+                        clip_mask.want(group_bounds);
 
                         for primitive in group.as_slice() {
                             self.engine.draw_primitive(
@@ -153,7 +157,7 @@ impl Renderer {
                             );
                         }
 
-                        engine::adjust_clip_mask(clip_mask, layer_bounds);
+                        clip_mask.want(layer_bounds);
                     }
 
                     render_span.finish();

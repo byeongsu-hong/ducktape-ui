@@ -42,7 +42,7 @@ impl Pipeline {
         position: Point,
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
-        clip_mask: Option<&tiny_skia::Mask>,
+        clip_mask: Option<&mut crate::engine::ClipMask>,
         clip_region: Option<Rectangle>,
         transformation: Transformation,
     ) {
@@ -71,7 +71,7 @@ impl Pipeline {
         position: Point,
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
-        clip_mask: Option<&tiny_skia::Mask>,
+        clip_mask: Option<&mut crate::engine::ClipMask>,
         clip_region: Option<Rectangle>,
         transformation: Transformation,
     ) {
@@ -106,7 +106,7 @@ impl Pipeline {
         align_y: alignment::Vertical,
         shaping: Shaping,
         pixels: &mut tiny_skia::PixmapMut<'_>,
-        clip_mask: Option<&tiny_skia::Mask>,
+        clip_mask: Option<&mut crate::engine::ClipMask>,
         clip_region: Option<Rectangle>,
         transformation: Transformation,
     ) {
@@ -163,7 +163,7 @@ impl Pipeline {
         position: Point,
         color: Color,
         pixels: &mut tiny_skia::PixmapMut<'_>,
-        clip_mask: Option<&tiny_skia::Mask>,
+        clip_mask: Option<&mut crate::engine::ClipMask>,
         clip_region: Option<Rectangle>,
         transformation: Transformation,
     ) {
@@ -201,7 +201,7 @@ fn draw(
     position: Point,
     color: Color,
     pixels: &mut tiny_skia::PixmapMut<'_>,
-    clip_mask: Option<&tiny_skia::Mask>,
+    mut clip_mask: Option<&mut crate::engine::ClipMask>,
     clip_region: Option<Rectangle>,
     transformation: Transformation,
 ) {
@@ -240,7 +240,7 @@ fn draw(
                     + (run.line_y * transformation.scale_factor()).round()
                         as i32;
 
-                let clip_mask = match (clip_mask, clip_region) {
+                let clip_mask = match (&mut clip_mask, clip_region) {
                     (Some(mask), Some(region)) => {
                         let bounds = Rectangle {
                             x: x as f32,
@@ -254,10 +254,11 @@ fn draw(
                         } else if !region.intersects(&bounds) {
                             continue;
                         } else {
-                            Some(mask)
+                            Some(mask.mask())
                         }
                     }
-                    (clip_mask, _) => clip_mask,
+                    (Some(mask), None) => Some(mask.mask()),
+                    (None, _) => None,
                 };
 
                 pixels.draw_pixmap(

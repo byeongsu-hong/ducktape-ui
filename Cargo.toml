@@ -27,7 +27,7 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 
 # `vendor/iced_tiny_skia` is the published 0.14.0 source with the changes
 # below: four defects fixed, one module opened, one present shortened and
-# three repaints narrowed. Every one of them reaches every software render,
+# four repaints narrowed. Every one of them reaches every software render,
 # which is what every headless capture, `cargo ice inspect` and any
 # `tiny-skia` window draws with. Drop the directory and this patch when a
 # release carries all of them.
@@ -97,6 +97,16 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 # rectangle before it is clipped; a text of unbounded extent still reaches
 # past its clip rectangle on both sides and so is worth all of it. Pinned by
 # `crates/ui-lang-runtime/tests/text_anchor_damage.rs`.
+#
+# 10. The clip mask is filled when something reads it, not when the draw loop
+# names a rectangle. Filling costs a `clear` over the whole window whatever
+# the rectangle is, and the loop names one far more often than anything reads
+# one: once per layer per damaged region — most of which draw nothing inside
+# it — twice more around every group of primitives, and once per clipped run
+# of glyphs, which then skips the mask for every glyph that sits inside the
+# rectangle anyway. A rectangle already held is answered without touching a
+# byte. Pinned by `crates/ui-lang-runtime/tests/partial_repaint_quad.rs`,
+# whose quad crosses the repainted region and so is drawn through the mask.
 #
 # `vendor/iced_winit` is the published 0.14.0 source with one line changed:
 # the event loop no longer keeps a `WaitUntil` deadline that has already

@@ -18,7 +18,7 @@ pub struct Surface {
         Box<dyn compositor::Display>,
         Box<dyn compositor::Window>,
     >,
-    clip_mask: tiny_skia::Mask,
+    clip_mask: crate::engine::ClipMask,
     layer_stack: VecDeque<Vec<Layer>>,
     background_color: Color,
     max_age: u8,
@@ -69,7 +69,8 @@ impl crate::graphics::Compositor for Compositor {
 
         let mut surface = Surface {
             window,
-            clip_mask: tiny_skia::Mask::new(1, 1).expect("Create clip mask"),
+            clip_mask: crate::engine::ClipMask::new(1, 1)
+                .expect("Create clip mask"),
             layer_stack: VecDeque::new(),
             background_color: Color::BLACK,
             max_age: 0,
@@ -96,8 +97,8 @@ impl crate::graphics::Compositor for Compositor {
             )
             .expect("Resize surface");
 
-        surface.clip_mask =
-            tiny_skia::Mask::new(width, height).expect("Create clip mask");
+        surface.clip_mask = crate::engine::ClipMask::new(width, height)
+            .expect("Create clip mask");
         surface.layer_stack.clear();
     }
 
@@ -275,8 +276,9 @@ pub fn screenshot(
     let mut offscreen_buffer: Vec<u32> =
         vec![0; size.width as usize * size.height as usize];
 
-    let mut clip_mask = tiny_skia::Mask::new(size.width, size.height)
-        .expect("Create clip mask");
+    let mut clip_mask =
+        crate::engine::ClipMask::new(size.width, size.height)
+            .expect("Create clip mask");
 
     renderer.draw(
         &mut tiny_skia::PixmapMut::from_bytes(
