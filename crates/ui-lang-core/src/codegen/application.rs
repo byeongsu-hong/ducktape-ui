@@ -12,24 +12,11 @@ use super::*;
 /// nothing until `ICE_PERF` names a budget, which is why this is not gated on
 /// `debug_assertions`: the app that stutters in front of a user is the
 /// release one.
-fn turn_timer_code(
-    program: &LoweredProgram,
-    handler: &ResolvedHandler,
-    source_path: &str,
-) -> String {
-    // A fragment's origin carries its path; a root-document line carries
-    // none and is the root source itself.
-    let origin = program.origin(handler.origin);
-    let at = match &origin.path {
-        Some(path) => format!("{}:{}", path.display(), origin.line),
-        None => match program.source_origin(origin.line) {
-            Some((path, line)) => format!("{}:{line}", path.display()),
-            None => format!("{source_path}:{}", origin.line),
-        },
-    };
+fn turn_timer_code(program: &LoweredProgram, handler: &ResolvedHandler) -> String {
     format!(
-        "let __ice_turn = ::ui_lang_runtime::dev::Turn::start({:?}, {at:?});",
-        handler.name
+        "let __ice_turn = ::ui_lang_runtime::dev::Span::handler({:?}, {});",
+        handler.name,
+        span_location_code(program, handler.origin)
     )
 }
 
@@ -654,7 +641,6 @@ pub(in crate::codegen) fn generate_update(
     out: &mut String,
     program: &LoweredProgram,
     message: &str,
-    source_path: &str,
 ) -> Result<(), Error> {
     let accessibility_root = rust_string(program.app_name());
     let has_fallthrough_arm = program
@@ -770,7 +756,7 @@ pub(in crate::codegen) fn generate_update(
         // Keep statement-level `return` inside this arm so every user update
         // reaches the post-state accessibility snapshot below.
         writeln!(out, "{pattern} => (|| {{").unwrap();
-        writeln!(out, "{}", turn_timer_code(program, handler, source_path)).unwrap();
+        writeln!(out, "{}", turn_timer_code(program, handler)).unwrap();
         for param in &handler.params {
             writeln!(out, "let _ = &{};", param.name).unwrap();
         }
@@ -901,7 +887,7 @@ pub(in crate::codegen) fn generate_update(
                 bindings.join(", ")
             )
             .unwrap();
-            writeln!(out, "{}", turn_timer_code(program, handler, source_path)).unwrap();
+            writeln!(out, "{}", turn_timer_code(program, handler)).unwrap();
             for param in &handler.params {
                 writeln!(out, "let _ = &{};", param.name).unwrap();
             }

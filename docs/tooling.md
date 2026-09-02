@@ -220,11 +220,20 @@ refresh the metadata inventory before hashing new or affected files. A changed
 snapshot must remain identical across two reads before the background rebuild
 starts.
 
-Every generated handler arm is timed: a turn that runs longer than the frame
-budget prints ``ice: handler `name` took Nms, over the 16ms frame budget, at
-path.ice:line`` on the app's stderr, which `cargo ice dev` shows. It prevents
-nothing; it attributes the stall a `sync` extern or a heavy handler body hides
-behind the extern boundary, the way `W021` names the risk ahead of time.
+Every generated handler arm is timed, and so is every extern call inside one: a
+span that runs longer than the frame budget prints ``ice: handler `name` took
+Nms, over the 16ms frame budget, at path.ice:line`` — or ``ice: extern `name`
+…`` — on the app's stderr, which `cargo ice dev` shows. The extern line names
+the call that spent the turn the handler line reports, which is what the extern
+boundary otherwise hides; `W021` names the same risk ahead of time.
+
+Timed extern kinds are every kind but `pure`: a `sync` call in full, and the
+inline construction of a `future`, `task`, `stream` or `sip` — the part of an
+async extern that still runs on the loop thread. A `pure` extern is left bare
+because a view calls one per node per frame and its cost is view time, which
+`cargo ice inspect --frames` already prices. The location is where the extern is
+declared, not the call site: a program has one extern of a name, and the handler
+span says which turn it ran in.
 
 A debug build measures against 16ms with nothing to turn on. A release build —
 the one a user runs, and the only one whose timings are the app's own — measures

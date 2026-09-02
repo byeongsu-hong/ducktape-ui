@@ -11,6 +11,8 @@ const SOURCE_MARKER: &str = "// __ICE_SOURCE ";
 const SOURCE_MARKER_END: &str = "// __ICE_SOURCE_END";
 const RENDER_SOURCE_MARKER: &str = "__ICE_RENDER_SOURCE_";
 const RENDER_SOURCE_MARKER_END: &str = "__";
+const SPAN_LOCATION_MARKER: &str = "__ICE_SPAN_AT_";
+const SPAN_LOCATION_MARKER_END: &str = "__";
 const ASSET_PATH_MARKER: &str = "__ICE_ASSET_PATH_";
 const ASSET_PATH_MARKER_END: &str = "__";
 /// Fences around each per-fragment `mod` of outlined methods. The fenced
@@ -123,6 +125,55 @@ fn source_mapped_expression_origin(
     )
 }
 
+/// The `.ice` location a runtime span reports (`dev::Span`), as a Rust string
+/// literal. A fragment origin carries its own path; a root-document origin
+/// still holds a merged line here, so it defers to
+/// [`resolve_span_location_markers`], which runs once [`generate`] knows the
+/// root source path.
+pub(in crate::codegen) fn span_location_code(
+    program: &LoweredProgram,
+    origin: crate::hir::OriginId,
+) -> String {
+    let origin = program.origin(origin);
+    match &origin.path {
+        Some(path) => rust_string(&format!("{}:{}", path.display(), origin.line)),
+        None => format!(
+            "{SPAN_LOCATION_MARKER}{}{SPAN_LOCATION_MARKER_END}",
+            origin.line
+        ),
+    }
+}
+
+fn resolve_span_location_markers(
+    line: &str,
+    document: &LoweredProgram,
+    source_path: &str,
+) -> String {
+    let mut output = String::with_capacity(line.len());
+    let mut remaining = line;
+    while let Some(start) = remaining.find(SPAN_LOCATION_MARKER) {
+        output.push_str(&remaining[..start]);
+        let marker = &remaining[start + SPAN_LOCATION_MARKER.len()..];
+        let Some(end) = marker.find(SPAN_LOCATION_MARKER_END) else {
+            output.push_str(&remaining[start..]);
+            return output;
+        };
+        let Some(merged_line) = marker[..end].parse::<usize>().ok() else {
+            output.push_str(&remaining[start..start + SPAN_LOCATION_MARKER.len() + end]);
+            remaining = &marker[end..];
+            continue;
+        };
+        let (path, line) = document.source_origin(merged_line).map_or_else(
+            || (source_path.to_owned(), merged_line),
+            |(path, line)| (path.display().to_string(), line),
+        );
+        output.push_str(&rust_string(&format!("{path}:{line}")));
+        remaining = &marker[end + SPAN_LOCATION_MARKER_END.len()..];
+    }
+    output.push_str(remaining);
+    output
+}
+
 pub(crate) fn encode_source_path(path: &str) -> String {
     let mut encoded = String::with_capacity(path.len() * 2);
     for byte in path.bytes() {
@@ -191,6 +242,7 @@ fn resolve_source_markers(
     for line in generated.lines() {
         if !line.starts_with(SOURCE_MARKER)
             && !line.contains(RENDER_SOURCE_MARKER)
+            && !line.contains(SPAN_LOCATION_MARKER)
             && !line.contains(ASSET_PATH_MARKER)
         {
             output.push_str(line);
@@ -217,6 +269,7 @@ fn resolve_source_markers(
             })
             .unwrap_or_else(|| line.to_owned());
         let resolved = resolve_render_source_markers(&resolved_marker, document, source_path);
+        let resolved = resolve_span_location_markers(&resolved, document, source_path);
         output.push_str(&resolve_asset_path_markers(&resolved, source_path));
         output.push('\n');
     }
@@ -1292,7 +1345,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     // that to matter. Each gets its own group, hence its own file, so an edit
     // to one leaves the other's type check reusable.
     let mut update = String::new();
-    generate_update(&mut update, program, &message, source_path)?;
+    generate_update(&mut update, program, &message)?;
     generate_subscription(&mut out, program, &message)?;
     writeln!(out, "{phase}").unwrap();
     let outline_guard = outline::enable_for_view();

@@ -635,7 +635,9 @@ fn lowers_every_native_redraw_request_operation() {
     let generated = compile(source, "redraw_request.ice").unwrap();
     for expected in [
         "::iced::window::RedrawRequest::NextFrame",
-        "::iced::window::RedrawRequest::At(crate::backend::redraw_now())",
+        "::iced::window::RedrawRequest::At(({ let __ice_call = \
+         ::ui_lang_runtime::dev::Span::extern_call(\"redraw_now\", \
+         \"redraw_request.ice:5\"); crate::backend::redraw_now() }))",
         "::iced::window::RedrawRequest::Wait",
         "crate::backend::redraw_round_trip(self.at)",
         "::iced::window::RedrawRequest::At(_) => \"at\"",
@@ -1289,7 +1291,7 @@ view
         ".presets([::iced::Preset::new(\"ready\", Self::__preset_0)])",
         "fn __preset_0()",
         "state_changed!(self.ready, __ice_next) { self.ready = __ice_next; self.__ice_rev[",
-        "crate::backend::seed().map(|value| __ConfiguredMessage::Seeded(value))",
+        "({ let __ice_call = ::ui_lang_runtime::dev::Span::extern_call(\"seed\", \"configured.ice:48\"); crate::backend::seed() }).map(|value| __ConfiguredMessage::Seeded(value))",
         "id: ::std::option::Option::Some(\"dev.example.configured\".to_owned())",
         ".font(include_bytes!(\"fonts/Brand.ttf\").as_slice())",
         ".font(include_bytes!(\"fonts/Icons.otf\").as_slice())",

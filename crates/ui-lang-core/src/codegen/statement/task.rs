@@ -42,16 +42,11 @@ fn resolved_effect_call(
         )),
         ResolvedEffectTarget::Extern(id) => {
             let action = program.extern_function(*id);
+            let call = extern_call_code(program, action, format!("{}({args})", action.rust_path));
             Ok(match kind {
-                EffectKind::Future => format!(
-                    "::iced::Task::perform({}({args}), |value| value)",
-                    action.rust_path
-                ),
-                EffectKind::Task => format!("{}({args})", action.rust_path),
-                EffectKind::Stream => format!(
-                    "::iced::Task::run({}({args}), |value| value)",
-                    action.rust_path
-                ),
+                EffectKind::Future => format!("::iced::Task::perform({call}, |value| value)"),
+                EffectKind::Task => call,
+                EffectKind::Stream => format!("::iced::Task::run({call}, |value| value)"),
             })
         }
     }
