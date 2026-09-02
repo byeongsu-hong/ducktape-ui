@@ -208,6 +208,7 @@ mod perf {
             let _ = app.__update(__AiChatMessage::Streamed(Chunk {
                 answer: "token ".to_owned(),
                 thinking: String::new(),
+                thinking_ended: false,
                 status: "Responding".to_owned(),
             }));
             let _ = app.__view();
@@ -264,6 +265,64 @@ mod perf {
         );
     }
 
+    /// A summary reads like prose in short blocks, and the cost of an append
+    /// answers to the block a piece lands in, so the shape has to be a real one.
+    const SUMMARY: &str = "**Checking the append path**\n\nThe question is whether \
+        the tail alone is reparsed, or the whole document every time a piece \
+        lands.\n\n";
+
+    /// One reasoning piece arriving, against `written` bytes of summary already
+    /// streamed the way the wire streams it.
+    fn summary(written: usize) -> Duration {
+        let mut app = mid_turn(1);
+        let mut pieces = SUMMARY.split_inclusive(' ').cycle();
+        let mut sent = 0;
+        while sent < written {
+            let piece = pieces.next().expect("an endless summary");
+            sent += piece.len();
+            let _ = app.__update(thought(piece));
+        }
+        measure(move || {
+            let _ = app.__update(thought(pieces.next().expect("an endless summary")));
+            let _ = app.__view();
+        })
+    }
+
+    fn thought(piece: &str) -> __AiChatMessage {
+        __AiChatMessage::Streamed(Chunk {
+            answer: String::new(),
+            thinking: piece.to_owned(),
+            thinking_ended: false,
+            status: "Thinking".to_owned(),
+        })
+    }
+
+    /// The same claim as above for the other live surface: a token must not pay
+    /// for the reasoning summary already written.
+    ///
+    /// A summary is handed over in pieces like the answer (`codex.rs`), so it
+    /// extends a parsed document rather than being reparsed from the top.
+    /// Handing it over whole made a long reasoning trace cost more per token the
+    /// longer it ran — worst on exactly the turns that reason the most.
+    ///
+    /// The margin is the neighbour's, for the neighbour's reason: 64x the
+    /// summary for well under 5x the cost is a property that holds with room to
+    /// spare, while the difference between two appends is timing noise.
+    #[test]
+    #[ignore = "timing evidence; run explicitly in release mode"]
+    fn a_streamed_token_does_not_pay_for_the_summary_already_written() {
+        if cfg!(debug_assertions) {
+            eprintln!("skipped: run with --release");
+            return;
+        }
+        let (short, long) = (summary(0), summary(64 * 1024));
+        eprintln!("summary piece   0KB written {short:>10?}   64KB written {long:>10?}");
+        assert!(
+            long < short * 5,
+            "per-token cost tracked the summary already written: {short:?} -> {long:?}"
+        );
+    }
+
     /// A turn that is still being written, with the live surfaces on screen.
     ///
     /// The `streaming` preset is what puts `busy` on; without it the reply
@@ -283,6 +342,7 @@ mod perf {
         __AiChatMessage::Streamed(Chunk {
             answer: answer.to_owned(),
             thinking: String::new(),
+            thinking_ended: false,
             status: "Responding".to_owned(),
         })
     }

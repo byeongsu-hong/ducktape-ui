@@ -23,14 +23,24 @@ on send
       error -> failed _
     stream replace lane=turn_rows codex_entries(session) -> rows _
 
-// Two appends and a scroll, once per token. Nothing above is rebuilt: settled
-// rows sit behind `lazy`, and Markdown is appended into the parsed document
-// rather than reparsed from the top.
+// Two appends, once per token. Nothing above is rebuilt: settled rows sit
+// behind `lazy`, and Markdown is appended into both parsed documents rather
+// than reparsed from the top — the reasoning summary included, which is why a
+// long trace costs the same per token as a short one.
+//
+// Nothing scrolls here. `#transcript` is `anchor-y=end`, so it already rests on
+// its newest row and follows the reply as it is written; snapping per token
+// only took the scroll away from a reader who had moved it.
 on streamed(part)
   status = part.status
   markdown live append part.answer
-  live_thinking = markdown(part.thinking)
-  task widget snap-end #shell/app/transcript
+  markdown live_thinking append part.thinking
+  // A summary is replaced rather than extended, and the stream says when: the
+  // reasoning item it was building settles into a row of its own, and the live
+  // box lets go of it rather than carrying it under the next one. Nothing here
+  // reads the text to find that boundary.
+  return if !part.thinking_ended
+  live_thinking = markdown("")
 
 // A block settled, or a tool started or finished. The live surfaces are left
 // alone: they are cleared once, when the turn ends, so a late chunk can never
