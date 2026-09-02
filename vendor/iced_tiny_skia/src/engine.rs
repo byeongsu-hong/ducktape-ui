@@ -385,6 +385,7 @@ impl Engine {
                     *color,
                     pixels,
                     clip_mask,
+                    Some(clip_bounds),
                     transformation,
                 );
             }
@@ -423,6 +424,7 @@ impl Engine {
                     *color,
                     pixels,
                     clip_mask,
+                    Some(clip_bounds),
                     transformation,
                 );
             }
@@ -464,6 +466,7 @@ impl Engine {
                     *shaping,
                     pixels,
                     clip_mask,
+                    Some(clip_bounds),
                     transformation,
                 );
             }
@@ -499,6 +502,9 @@ impl Engine {
                     raw.color,
                     pixels,
                     clip_mask,
+                    // The mask is whatever the layer left behind, so no
+                    // glyph can be told it lies outside of it.
+                    None,
                     transformation,
                 );
             }
