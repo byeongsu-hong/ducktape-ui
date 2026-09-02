@@ -160,63 +160,109 @@ pub fn present(
         .buffer_mut()
         .map_err(|_| compositor::SurfaceError::Lost)?;
 
-    let last_layers = {
-        let age = buffer.age();
+    let age = buffer.age();
+    surface.max_age = surface.max_age.max(age);
+    surface.layer_stack.truncate(surface.max_age as usize);
 
-        surface.max_age = surface.max_age.max(age);
-        surface.layer_stack.truncate(surface.max_age as usize);
-
-        if age > 0 {
-            surface.layer_stack.get(age as usize - 1)
-        } else {
-            None
-        }
+    let bounds = Rectangle::with_size(viewport.logical_size());
+    let mut damage_since = |layers: Option<&Vec<Layer>>| {
+        layers
+            .and_then(|layers| {
+                (surface.background_color == background_color).then(|| {
+                    damage::diff(
+                        layers,
+                        renderer.layers(),
+                        |layer| vec![layer.bounds],
+                        Layer::damage,
+                    )
+                })
+            })
+            .unwrap_or_else(|| vec![bounds])
     };
 
-    let damage = last_layers
-        .and_then(|last_layers| {
-            (surface.background_color == background_color).then(|| {
-                damage::diff(
-                    last_layers,
-                    renderer.layers(),
-                    |layer| vec![layer.bounds],
-                    Layer::damage,
-                )
-            })
-        })
-        .unwrap_or_else(|| vec![Rectangle::with_size(viewport.logical_size())]);
-
-    if damage.is_empty() {
-        if let Some(last_layers) = last_layers {
-            surface.layer_stack.push_front(last_layers.clone());
-        }
+    // The buffer holds the frame from `age` presents ago; the display shows
+    // the last one presented. They are the same buffer on X11 (age 1) and
+    // never on Wayland, which hands out the back buffer (age 2).
+    let damage = damage_since(match age {
+        0 => None,
+        age => surface.layer_stack.get(age as usize - 1),
+    });
+    let on_screen = if age == 1 {
+        damage.clone()
     } else {
-        surface.layer_stack.push_front(renderer.layers().to_vec());
-        surface.background_color = background_color;
+        damage_since(surface.layer_stack.front())
+    };
 
-        let damage = damage::group(
-            damage,
-            Rectangle::with_size(viewport.logical_size()),
-        );
-
-        let mut pixels = tiny_skia::PixmapMut::from_bytes(
-            bytemuck::cast_slice_mut(&mut buffer),
-            physical_size.width,
-            physical_size.height,
-        )
-        .expect("Create pixel map");
-
-        renderer.draw(
-            &mut pixels,
-            &mut surface.clip_mask,
-            viewport,
-            &damage,
-            background_color,
-        );
+    // The display already shows this frame. Presenting would copy the whole
+    // window to the display server for no pixel — and a multi-window program
+    // redraws every window after every update.
+    if on_screen.is_empty() {
+        return Ok(());
     }
 
+    surface.layer_stack.push_front(renderer.layers().to_vec());
+    surface.background_color = background_color;
+
+    let damage = damage::group(damage, bounds);
+
+    let mut pixels = tiny_skia::PixmapMut::from_bytes(
+        bytemuck::cast_slice_mut(&mut buffer),
+        physical_size.width,
+        physical_size.height,
+    )
+    .expect("Create pixel map");
+
+    renderer.draw(
+        &mut pixels,
+        &mut surface.clip_mask,
+        viewport,
+        &damage,
+        background_color,
+    );
+
+    // Only the pixels that differ from the display cross to it: a backend
+    // that can (X11 with shared memory, Wayland) puts each rectangle alone.
+    let on_screen = physical_rects(
+        &damage::group(on_screen, bounds),
+        viewport.scale_factor() as f32,
+        physical_size,
+    );
+
     on_pre_present();
-    buffer.present().map_err(|_| compositor::SurfaceError::Lost)
+    if on_screen.is_empty() {
+        buffer.present()
+    } else {
+        buffer.present_with_damage(&on_screen)
+    }
+    .map_err(|_| compositor::SurfaceError::Lost)
+}
+
+/// Snaps logical regions outward to whole physical pixels, dropping any that
+/// end up empty and cutting them to the buffer so the backend never sees a
+/// rectangle past its edge.
+fn physical_rects(
+    regions: &[Rectangle],
+    scale: f32,
+    size: Size<u32>,
+) -> Vec<softbuffer::Rect> {
+    regions
+        .iter()
+        .filter_map(|region| {
+            let x0 = (region.x * scale).floor().max(0.0) as u32;
+            let y0 = (region.y * scale).floor().max(0.0) as u32;
+            let x1 = (((region.x + region.width) * scale).ceil() as u32)
+                .min(size.width);
+            let y1 = (((region.y + region.height) * scale).ceil() as u32)
+                .min(size.height);
+
+            Some(softbuffer::Rect {
+                x: x0,
+                y: y0,
+                width: NonZeroU32::new(x1.saturating_sub(x0))?,
+                height: NonZeroU32::new(y1.saturating_sub(y0))?,
+            })
+        })
+        .collect()
 }
 
 pub fn screenshot(
@@ -265,4 +311,32 @@ pub fn screenshot(
             acc
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_rects_snap_outward_clip_and_drop_empty() {
+        let rects = physical_rects(
+            &[
+                Rectangle::new((10.2, 3.0).into(), (5.5, 4.0).into()),
+                Rectangle::new((95.0, 0.0).into(), (20.0, 10.0).into()),
+                Rectangle::new((150.0, 0.0).into(), (1.0, 1.0).into()),
+            ],
+            1.5,
+            Size::new(160, 30),
+        );
+
+        let rects: Vec<_> = rects
+            .iter()
+            .map(|rect| (rect.x, rect.y, rect.width.get(), rect.height.get()))
+            .collect();
+        assert_eq!(
+            rects,
+            vec![(15, 4, 9, 7), (142, 0, 18, 15)],
+            "15.3..23.55 spans 15..24, 142.5..172.5 clips at 160, 225 is past the edge"
+        );
+    }
 }
