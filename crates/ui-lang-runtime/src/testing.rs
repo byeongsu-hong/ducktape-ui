@@ -4701,32 +4701,10 @@ where
 
     fn settle(&mut self, source: Option<Location>) {
         let start = Instant::now();
+        let deadline = start + self.timeout;
         loop {
             while let Ok(event) = self.receiver.try_recv() {
-                match event {
-                    DriverEvent::Action(action) => self.perform_runtime_action(action, source),
-                    DriverEvent::Finished => {
-                        self.pending_tasks = self.pending_tasks.saturating_sub(1);
-                    }
-                    DriverEvent::Panicked(payload) => {
-                        resume_panic_with_context(payload, self.test_name, source)
-                    }
-                    DriverEvent::SubscriptionStarted(key) => {
-                        self.pending_subscription_starts.remove(&key);
-                    }
-                    DriverEvent::SubscriptionEventHandled(key) => {
-                        if let Some(pending) = self.pending_subscription_events.get_mut(&key) {
-                            *pending = pending.saturating_sub(1);
-                            if *pending == 0 {
-                                self.pending_subscription_events.remove(&key);
-                            }
-                        }
-                    }
-                    DriverEvent::SubscriptionStopped(key) => {
-                        self.pending_subscription_starts.remove(&key);
-                        self.pending_subscription_events.remove(&key);
-                    }
-                }
+                self.handle_driver_event(event, source);
             }
 
             if self.pending_tasks == 0
@@ -4753,7 +4731,76 @@ where
                     pending_subscription_events,
                 );
             }
-            std::thread::sleep(Duration::from_millis(1));
+            if let Some(event) = self.wait_for_event(deadline) {
+                self.handle_driver_event(event, source);
+            }
+        }
+    }
+
+    fn handle_driver_event(&mut self, event: DriverEvent<P::Message>, source: Option<Location>) {
+        match event {
+            DriverEvent::Action(action) => self.perform_runtime_action(action, source),
+            DriverEvent::Finished => {
+                self.pending_tasks = self.pending_tasks.saturating_sub(1);
+            }
+            DriverEvent::Panicked(payload) => {
+                resume_panic_with_context(payload, self.test_name, source)
+            }
+            DriverEvent::SubscriptionStarted(key) => {
+                self.pending_subscription_starts.remove(&key);
+            }
+            DriverEvent::SubscriptionEventHandled(key) => {
+                if let Some(pending) = self.pending_subscription_events.get_mut(&key) {
+                    *pending = pending.saturating_sub(1);
+                    if *pending == 0 {
+                        self.pending_subscription_events.remove(&key);
+                    }
+                }
+            }
+            DriverEvent::SubscriptionStopped(key) => {
+                self.pending_subscription_starts.remove(&key);
+                self.pending_subscription_events.remove(&key);
+            }
+        }
+    }
+
+    /// Waits for the runtime thread rather than polling it.
+    ///
+    /// Everything that can end a settle — a task finishing, a subscription
+    /// starting or handing off an event, an action to perform — arrives on this
+    /// channel, so a driver with nothing left to drain has nothing to do but
+    /// wait for one. It parks until the next event or until `deadline`, which
+    /// is the timeout the settle already carries: no interval is chosen here,
+    /// because there is no interval that is both short enough not to be most of
+    /// a headless frame and long enough not to spin. Polling on a one
+    /// millisecond sleep was 92% of what `Driver::redraw` cost an ai-chat probe
+    /// (#860), and every probe in the repo was reading that as the app.
+    fn wait_for_event(&mut self, deadline: Instant) -> Option<DriverEvent<P::Message>> {
+        struct Unpark(std::thread::Thread);
+
+        impl std::task::Wake for Unpark {
+            fn wake(self: Arc<Self>) {
+                self.0.unpark();
+            }
+
+            fn wake_by_ref(self: &Arc<Self>) {
+                self.0.unpark();
+            }
+        }
+
+        let waker = std::task::Waker::from(Arc::new(Unpark(std::thread::current())));
+        // Polling is what registers this thread for the wake, so it has to come
+        // before the park or an event landing in between is one nobody is
+        // waiting for any more.
+        match self
+            .receiver
+            .poll_next_unpin(&mut Context::from_waker(&waker))
+        {
+            Poll::Ready(event) => event,
+            Poll::Pending => {
+                std::thread::park_timeout(deadline.saturating_duration_since(Instant::now()));
+                None
+            }
         }
     }
 

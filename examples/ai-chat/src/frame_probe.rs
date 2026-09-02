@@ -18,19 +18,19 @@
 //!   times the generated view, `UserInterface::build` and the event walk and
 //!   stops there. A test build forces the accessibility snapshot, so they do
 //!   carry an a11y tree walk a shipped release build does not.
-//! * **`idle redraw` is not the app's frame**, and neither is any row whose
-//!   label says `+ redraw`. Each of those is a whole `Driver` call, which
-//!   broadcasts to the subscriptions and then settles the task queue — and
-//!   `Driver::settle` waits on the runtime thread by polling, one
-//!   `thread::sleep(1ms)` a round, so a settle that is not already quiescent
-//!   costs about a millisecond of sleep whatever the app did. Measured here:
-//!   `idle redraw` is 1169us against a 93us frame at 8 rows and 1408us against
-//!   317us at 500 rows; dropping that poll to 100us takes the same two rows to
-//!   244us and 499us. The overhead is the sleep, it is roughly constant in the
-//!   app, and a row that makes two `Driver` calls carries it twice.
-//! * So read an absolute `redraw` row as an upper bound with a large fixed term
-//!   added, and take every result from a difference: the paired ablations, the
-//!   per-row slopes, and the phase rows above.
+//! * **`idle redraw` is still not the app's frame**, and neither is any row
+//!   whose label says `+ redraw`. Each of those is a whole `Driver` call, which
+//!   also broadcasts to the subscriptions and settles the task queue. That used
+//!   to be the larger half of the number by far — `Driver::settle` polled the
+//!   runtime thread on a `thread::sleep(1ms)`, which measured 1162us of a
+//!   1162us `idle redraw` against a 88us frame at 8 rows. It now waits on the
+//!   channel instead, and the same two rows read 96us and 359us against frames
+//!   of 70us and 288us. What is left — 26us and 71us — is the broadcast and the
+//!   settle's own bookkeeping.
+//! * So an absolute `redraw` row is an upper bound on the app's frame, and a
+//!   row that makes two `Driver` calls carries that term twice. Take results
+//!   from differences where you can: the paired ablations, the per-row slopes,
+//!   and the phase rows above.
 //! * `push_user` / `recent_chats` are direct calls to the app's own Rust, with
 //!   no view in them at all.
 //!
