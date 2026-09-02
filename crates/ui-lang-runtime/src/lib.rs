@@ -234,7 +234,7 @@ enum FocusBehavior {
     Descendant,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct SemanticSnapshot {
     // This metadata stays independent of `Message` so test inspection can
     // retain it through `Element::map`, whose wrapper changes the message type
@@ -645,7 +645,17 @@ where
     fn diff(&self, tree: &mut widget::Tree) {
         let state = tree.state.downcast_mut::<SemanticState<Message>>();
         let focused = state.semantics.focused;
-        state.semantics = self.semantics.clone();
+        // The snapshot owns the node's strings, and the tree keeps a copy. A
+        // pass that hands over the same snapshot compares it against that
+        // copy instead of cloning it and dropping the old one — a few
+        // `String`s per node per frame, on a screen where most nodes hold.
+        if state.semantics.snapshot != self.semantics.snapshot {
+            state.semantics.snapshot = self.semantics.snapshot.clone();
+        }
+        if state.semantics.focus_id != self.semantics.focus_id {
+            state.semantics.focus_id = self.semantics.focus_id.clone();
+        }
+        state.semantics.activate = self.semantics.activate.clone();
         state.semantics.focused = focused;
         if state.semantics.disabled {
             state.semantics.focused = false;
