@@ -360,6 +360,21 @@ impl<Message> Focusable for SemanticState<Message> {
 
 struct SemanticEnd;
 
+/// "The next semantic node is item `position` of `size`."
+///
+/// A column that mounts only part of its children cannot reach into their
+/// semantics — it is handed built elements — but it can say this on the way
+/// past, and the first node the child publishes takes it. That is what lets a
+/// virtualized list read as a list: a screen reader is told the whole set even
+/// though the tree holds one screenful of it.
+///
+/// An explicit `position_in_set` on the child wins, since the child knows more
+/// about itself than the column does.
+struct SetPosition {
+    position: usize,
+    size: usize,
+}
+
 struct WithoutFocus<'a> {
     inner: &'a mut dyn Operation,
 }
@@ -1586,6 +1601,7 @@ struct SnapshotOperation<Message> {
     root_label: String,
     translation: Vector,
     pending_translation: Option<Vector>,
+    pending_set: Option<SetPosition>,
 }
 
 struct SemanticFrame {
@@ -1627,6 +1643,7 @@ impl<Message> Default for SnapshotOperation<Message> {
             root_label: "Ice application".into(),
             translation: Vector::ZERO,
             pending_translation: None,
+            pending_set: None,
         }
     }
 }
@@ -1660,6 +1677,13 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
     }
 
     fn custom(&mut self, _id: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Any) {
+        if let Some(set) = state.downcast_mut::<SetPosition>() {
+            self.pending_set = Some(SetPosition {
+                position: set.position,
+                size: set.size,
+            });
+            return;
+        }
         if state.downcast_mut::<SemanticEnd>().is_some() {
             let Some(frame) = self.frames.pop() else {
                 return;
@@ -1698,6 +1722,7 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         let Some(semantics) = state.downcast_mut::<SemanticSnapshot>() else {
             return;
         };
+        let pending_set = self.pending_set.take();
         if self.frames.iter().any(|frame| frame.atomic) {
             self.frames.push(SemanticFrame {
                 node_index: None,
@@ -1762,10 +1787,16 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         if let Some(sort_direction) = semantics.sort_direction {
             node.set_sort_direction(sort_direction);
         }
-        if let Some(position) = semantics.position_in_set {
+        if let Some(position) = semantics
+            .position_in_set
+            .or_else(|| pending_set.as_ref().map(|set| set.position))
+        {
             node.set_position_in_set(position);
         }
-        if let Some(size) = semantics.size_of_set {
+        if let Some(size) = semantics
+            .size_of_set
+            .or_else(|| pending_set.as_ref().map(|set| set.size))
+        {
             node.set_size_of_set(size);
         }
         if let Some(active_descendant) = semantics.active_descendant {
