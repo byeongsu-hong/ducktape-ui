@@ -115,7 +115,16 @@ component Sidebar(bind query:str, notes:[Note], path:str, dark:bool, blocked:boo
         w=fill
         h=fill
         bar=hidden
-      col #rows w=fill gap=2.0
+      // A NoteRow is a fixed 72.8px: 10px of button padding either side of
+      // three `wrap=none` lines at 13, 12 and 11px with 3px between them, so
+      // its height does not follow its content. A library is as long as the
+      // reader's folder, and this pane shows about eight rows of it, so mount
+      // the rows the viewport reaches rather than all of them.
+      col #rows
+        with
+          w=fill
+          gap=2.0
+          virtual-row=72.8
         if empty(notes)
           box #empty
             with
