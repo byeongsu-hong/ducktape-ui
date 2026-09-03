@@ -7,7 +7,7 @@ use super::*;
 // of those costs nothing, while re-emitting a parameter is a use after move
 // that surfaces as an E0382 on the `include_app!` line with no usable span.
 /// A timer on the handler arm: a turn over the frame budget is reported with
-/// the handler's `.ice` location (ADR 0011, G3). The guard drops when the
+/// the handler's `.ice` location. The guard drops when the
 /// arm's closure returns, early `return`s included. A release build measures
 /// nothing until `ICE_PERF` names a budget, which is why this is not gated on
 /// `debug_assertions`: the app that stutters in front of a user is the

@@ -3,7 +3,7 @@
 pub mod window;
 
 mod engine;
-// Public so a recording renderer (docs/decisions/0010) can walk `Item` lists.
+// Public so a recording renderer can walk `Item` lists.
 pub mod layer;
 mod primitive;
 mod settings;

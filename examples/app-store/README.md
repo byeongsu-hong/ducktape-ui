@@ -455,4 +455,3 @@ An honest inventory, grouped by where the work would land. Items marked
 - Typed intents between apps instead of a broadcast bus, notifications,
   badges, detached windows, background (daemon) apps, suspend when hidden.
 
-Numbers behind the design are in `docs/decisions/0010-view-in-wasm-spike.md`.

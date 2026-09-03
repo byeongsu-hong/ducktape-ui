@@ -13,8 +13,8 @@ then prove that its oracle can reject a plausible regression.
 1. Read the changed production source, its complete Ice `use` graph, and the
    nearest existing test file before writing assertions.
 2. Read the relevant sections of `docs/testing.md` for driver, target,
-   determinism, capture, or performance behavior. Treat `SPEC.md` as the
-   grammar of record when syntax is uncertain.
+   determinism, capture, or performance behavior. Run `cargo ice schema` when
+   syntax is uncertain.
 3. State this contract before editing the test:
 
 ```text

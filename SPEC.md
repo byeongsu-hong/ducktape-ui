@@ -1,6 +1,6 @@
-# Ice Language Specification 2.0 Preview
+# Ice Language Specification 2.0
 
-Status: implemented candidate
+Status: implemented candidate.
 
 Ice is a statically checked declarative frontend language for iced. It covers
 the pinned public, application-facing iced surface without embedding Rust
@@ -8,10 +8,31 @@ syntax, JSX, or a token shortcut around a procedural macro. A frontend parses
 `.ice` source, resolves names and types, checks UI semantics, and lowers a typed
 tree to backend code.
 
-This document describes what the repository implements. A section explicitly
-marked “planned” is a design constraint, not accepted candidate syntax.
+This document is the contract: the rules the language is designed to, the
+invariants that cannot be read off a construct listing, and the typed boundary
+to Rust. It does not restate what the compiler already publishes.
 
-## 1. Design contract
+## 1. Sources of truth
+
+| Question | Authority |
+| --- | --- |
+| Which constructs exist, and their syntax, properties, children, and routes | `cargo ice schema` → `core.constructs` |
+| Which types, utilities, recipes, and status cascades are accepted | `cargo ice schema` → `core.types`, `core.style` |
+| Which iced surface is covered, and the evidence for it | [`COVERAGE.md`](COVERAGE.md) |
+| What a diagnostic means and how to fix it | the diagnostic itself; `cargo ice check` |
+| How to author a screen | `skills/design-ice-ui/` |
+| How to test one | [`docs/testing.md`](docs/testing.md) |
+| Tooling, the LSP, and the development runner | [`docs/tooling.md`](docs/tooling.md) |
+
+`cargo ice schema` is generated from the compiler and cannot drift. Prefer it to
+any prose listing, including this one.
+
+Language revisions and Cargo package versions use separate schemes. This
+document specifies language revision 2.0. The workspace packages are pre-1.0
+SemVer `0.1.0`; their package version does not claim language 0.1. The resolved
+iced/iced_widget versions are a third, independent backend baseline.
+
+## 2. Design contract
 
 Ice optimizes for two readers:
 
@@ -26,11 +47,11 @@ The language therefore follows these rules:
    not.
 3. Expressions are a small closed language, not embedded Rust.
 4. Style utilities are a checked vocabulary. Unknown or ineffective utilities
-   are errors.
+   are errors — silent CSS-like no-ops are not allowed.
 5. Domain work crosses a typed `extern` boundary.
 6. The compiler has one parser and checker shared by every frontend.
-7. Every public, application-facing capability in the pinned iced baseline has
-   a checked representation through canonical Ice syntax or a typed boundary.
+7. Every public, application-facing capability in the pinned iced baseline has a
+   checked representation through canonical Ice syntax or a typed boundary.
 
 Ice owns transient/display state, layout, style, event routing, and calls to
 actions. Rust owns validation, invariants, persistence, networking, security,
@@ -43,110 +64,26 @@ interaction -> handler -> extern async Rust fn -> result handler -> state -> vie
 UI validation such as disabling an empty submit button is only a convenience.
 The Rust action must still validate its input.
 
-### Complete authoring surface and backend boundary
-
-The stable authoring surface combines direct declarative syntax with typed Rust
-boundaries. Ice Core provides `app`, `use`, `enum`, `state`, `derived`,
-`component`, `slot`, `on`, `view`, `if`, `match`, `for`, `keyed`, and `lazy`;
-common row, column, stack, scroll, and box layout; text, input, button,
-checkbox, and image widgets; bindings, routes, payloads, scoped IDs, typed
-extern calls, and basic async success/failure routing. The extended native
-surface and typed boundaries complete the application-facing iced baseline.
+### Vocabulary evolution
 
 A new Core construct must be common UI authoring, have one canonical source
-form, and be meaningfully more declarative than an existing typed Rust
-boundary. Completeness does not require a dedicated keyword for every iced
-method, but every coverage gap must close through one of those two checked
-representations. The implemented 2.0 vocabulary is frozen during preview
-stabilization. Spellings removed in this revision are syntax errors and the
-formatter never translates old vocabulary. Vocabulary changes require an
-explicit language design decision and revision; removed forms and their callers
-are deleted in the same change rather than retained behind compatibility paths.
+form, and be meaningfully more declarative than an existing typed Rust boundary.
+Completeness does not require a dedicated keyword for every iced method, but
+every coverage gap must close through one of those two checked representations.
 
-Canvas paths, complete PaneGrid mutation, raw window/platform values, shaders,
-custom renderers, task-composition variants, and exhaustive native status styles
-are the extended surface. They are first-class parts of the complete authoring
-contract. A new iced type or method does not automatically require new syntax;
-the coverage decision chooses direct syntax or a typed boundary while preserving
-the native behavior and static guarantees.
+The implemented 2.0 vocabulary is frozen during preview stabilization. Removed
+spellings are syntax errors; the formatter never translates old vocabulary, and
+removed forms and their callers are deleted in the same change rather than
+retained behind compatibility paths.
 
-Language revisions and Cargo package versions use separate schemes. This
-document specifies language revision 2.0. The workspace packages are
-pre-1.0 SemVer `0.1.0`; their package version does not claim language 0.1. The
-resolved iced/iced_widget versions are a third, independent backend baseline.
+When the pinned iced baseline changes, every new or changed public,
+application-facing behavior is a coverage obligation. The upgrade is not
+complete until [`COVERAGE.md`](COVERAGE.md) records a native checked
+representation and its evidence rule passes. That obligation may extend direct
+syntax or an existing typed boundary; it does not by itself justify another
+keyword.
 
-### Accessibility contract
-
-Ice owns a checked accessibility layer above stock Iced. Generated Core nodes
-produce a deterministic AccessKit tree with these mappings:
-
-| Ice node | AccessKit role | Semantic state |
-| --- | --- | --- |
-| `text` | `Label` | the visible text is its value |
-| `input` | `TextInput` | label, optional description, value, disabled/focus state |
-| secure or `secret` `input` | `PasswordInput` | label, optional description, disabled/focus state; no value is exported |
-| `button` | `Button` | label, optional description, toggled/expanded state, disabled/focus state, click action |
-| `checkbox` | `CheckBox` | label, optional description, toggled/disabled/focus state, click action |
-| `toggler` | `Switch` | label, optional description, toggled/disabled/focus state, click action |
-| `radio` | `RadioButton` | label, optional description, selected/checked state, disabled/focus state, click action |
-| `slider` | `Slider` | default `Slider` label, current value, focus state |
-| `progress` | `ProgressIndicator` | default `Progress` label and current value |
-| `pick` | `ComboBox` | placeholder/default label, selected value, focus state |
-| `combo` | `ComboBox` | search placeholder label, selected value, focus state |
-| `editor` | `MultilineTextInput` | placeholder/default label, current value, disabled/focus state |
-| labeled `image` | `Image` | label and optional description |
-
-`label=` and `description=` are checked `str` expressions. The positional input
-label, compact button string, and visible checkbox or toggler label are default
-accessible names; an explicit `label=` overrides them. Pick and combo controls
-use their placeholder, while editors use their placeholder or `Editor` when it
-is absent. Slider and progress use the stable defaults `Slider` and `Progress`.
-A button's optional `checked=` expression is checked as `bool` and publishes an
-AccessKit toggled state; `expanded=` similarly publishes expanded/collapsed
-state. Neither changes the click route or visual styling.
-A button whose content is a child node requires `label=` (`E105`). An image
-without `label=` is decorative and is omitted from the semantic tree; media
-`description=` without `label=` is also `E105`. Secure inputs use
-`PasswordInput` and never copy their state value into the accessibility tree.
-
-Semantic read order and keyboard focus order follow source/view-tree order.
-Tab and Shift+Tab traverse enabled interactive controls; disabled controls
-expose disabled state but no focus/click action and are skipped. Enter and Space
-activate a focused button, while Space activates a focused checkbox or toggler.
-Wrapper-focused controls draw a two-pixel outline only while their focus is
-visible, matching the web's `:focus-visible` semantics: keyboard traversal,
-accessibility focus, and programmatic focus operations show the outline, a
-pointer press acquires focus without it, and a key press on a pointer-focused
-control restores it. Inputs, editors, sliders, pick lists, and combo boxes
-retain their native focused rendering, which follows the web's text-entry
-heuristic instead: a control that accepts text is focus-visible whenever it is
-focused, so their `focused` status already carries `:focus-visible` meaning.
-The `focus-visible:border-*` button utility restyles the outline. There is no
-numeric focus-order syntax. In a daemon, Tab traverses the controls of the
-window it was pressed in, and every window keeps a focus of its own.
-
-Tree construction, focus updates, duplicate-ID disambiguation, and action
-routing are deterministic across platforms. Native screen-reader export is a
-separate, narrower contract: `accesskit_unix` exports a single-window Linux
-application over AT-SPI, while `accesskit_windows` exports a single-window
-Windows application through UI Automation. The Windows bootstrap forces
-Iced's automatically created initial main window to start hidden, windowed,
-and non-maximized, then resolves its ID with `window::oldest()`. Boot or preset
-work and received messages are held until AccessKit subclasses the Win32
-handle; it then restores the configured main-window mode and releases the
-selected initial task alongside queued messages, preserving queue order.
-Fullscreen takes precedence over maximized, matching Winit creation semantics;
-`visible=false`
-takes precedence over both and does not retain their latent state because Iced
-cannot preserve it without showing the window. Named windows retain their
-configured settings and remain outside native export. Stock Iced 0.14.0 does
-not expose the window-scoped operations or desktop transform needed for
-daemon/multi-window adapters or exact screen-coordinate bounds. Other targets
-retain the deterministic tree/action behavior without a native screen-reader
-adapter. Rich text and advanced widgets are outside this Core semantic
-contract.
-
-## 2. Compiler model
+## 3. Compiler model
 
 ```text
 UTF-8 .ice source graph
@@ -167,6 +104,8 @@ format the backend writes and the runtime reads, and `cargo-ice` owns workspace
 tooling. There is no runtime parser: the runtime deserializes that template,
 never Ice source.
 
+### Build contract
+
 A consuming package declares `ui-lang-build` as a build dependency and compiles
 its Ice source directory through Cargo's standard build-script phase:
 
@@ -177,65 +116,6 @@ fn main() {
 }
 ```
 
-The build helper discovers every top-level `app` or `daemon` root below that
-directory, checks each complete import graph, emits dependency tracking for all
-root and imported `.ice` files, and writes generated Rust below
-`OUT_DIR/ui-lang-generated`. Cargo therefore isolates output by consuming
-package, profile, and target and removes it with `cargo clean`. A generated
-Rust filename is the lowercase full SHA-256 of the normalized
-manifest-relative Ice root plus `.rs`; its component length never grows with
-the source path. `OUT_DIR/ui-lang-generated/manifest.json` is the canonical
-versioned mapping from those filenames back to source roots and generated
-content digests. A generation-directory lock serializes publishers. Each
-changed output and the next manifest are staged, flushed, and synced before
-outputs are atomically replaced and the manifest is atomically replaced last.
-Missing, malformed, unsupported, incomplete, or digest-mismatched cache state
-is disposable and triggers full regeneration; stale transaction files are
-removed automatically. A hash collision remains a hard build error, and
-byte-identical output is not replaced so its mtime remains stable.
-
-Successful semantic analysis returns the nominal `CheckedDocument` boundary;
-only the checker can construct it. Lowering consumes that value and publishes
-an owned `LoweredProgram`, which is the only input accepted by Rust generation.
-Neither compiler representation contains Iced values or generated Rust
-fragments.
-
-The release `LoweredProgram` contains no source `Document` and no checker-fact
-arena. Test builds retain poisonable sidecars only to prove that post-lowering
-source or fact mutation cannot affect production emission. The normalized
-program owns typed arenas and stable IDs for declarations, expressions, values,
-locals, handlers, statements, tasks, views, routes, subscriptions, tests,
-components, styles, themes, and physical origins. Lowering fixes defaults,
-ownership, lexical scope, coercions, static topology, route payloads, extern and
-named-type identities, Rust targets, and source locations before the backend
-runs.
-
-Expression emission reads the owned `ResolvedExpressionProgram`; release code
-generation cannot reach `CheckedFacts`, repeat checker analysis, resolve an
-extern by source name, or fall back to a raw expression. Builtins, enum owners
-and variants, calls, projections, locals, and coercions are already resolved.
-The backend still shares canonical semantic value types such as `Type` and
-`Span` with the frontend. Those values describe type and source-location
-semantics, not source-AST topology or checker state.
-
-Component contracts, calls, slots, bindings, storage, output forwarding,
-handler flow, subscription delivery, view control flow, widget options, styles,
-themes, Canvas commands, test actions, and application settings all use the
-same normalized ownership model. `OriginId` values index one physical origin
-arena, so imported diagnostics and generated source markers do not recover
-locations from AST nodes.
-
-The `hir_boundary` integration ratchet keeps the production code-generation
-inventory empty for source-AST imports and semantic references, checked-document
-and checker-fact escapes, declaration-index access, type re-analysis, extern
-re-resolution, raw-expression fallback, and direct `Document`, `Expr`, `Route`,
-or `Statement` references. Structural snapshots, invalid-ID and ownership
-corruption tests, post-check and post-lowering poisoning tests, imported-source
-diagnostics, generated-Rust fixtures, and scale contracts provide executable
-evidence for that boundary.
-
-The Rust adapter is one manifest-relative include:
-
 ```rust
 ui_lang::include_app!("src/ui/tasks.ice");
 
@@ -244,28 +124,58 @@ fn main() -> iced::Result {
 }
 ```
 
-The macro performs no parsing, code generation, or filesystem writes. It maps
-the manifest-relative literal to the corresponding file in `OUT_DIR` and
-expands one `include!`. Generated Rust emits probes for every declared extern
-struct field and async function. Rustc therefore rejects missing, private, or
-shape-incompatible Rust items even when an extern declaration is not reached
-at runtime. Component probes are emitted from normalized declaration HIR,
-including declarations with no view call site. Generated items suppress
-backend-only Rust and Clippy warnings at their item boundary without changing
-their enclosing module, visibility, or name resolution; compile errors remain
-unsuppressed.
+The build helper discovers every top-level `app` or `daemon` root below that
+directory, checks each complete import graph, emits dependency tracking for all
+root and imported `.ice` files, and writes generated Rust below
+`OUT_DIR/ui-lang-generated`. Cargo therefore isolates output by consuming
+package, profile, and target, and removes it with `cargo clean`.
+`OUT_DIR/ui-lang-generated/manifest.json` is the canonical versioned mapping
+from generated filenames back to source roots and content digests.
 
-Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so
-a consuming application must declare `iced = "=0.14.0"` and
-`ui-lang-runtime = "=0.1.0"` as direct dependencies. It must also declare
-`ui-lang-build = "=0.1.0"` as a direct build dependency. The headless test
-driver is not a default feature of the runtime; test builds require
-`ui-lang-runtime` with the `test-runtime` feature as a dev dependency.
-The runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
-on Windows; the reference application uses workspace paths with exact
-versions. `cargo ice compat` verifies the lockfile and direct-manifest contract.
+Publication is a directory-locked transaction: each changed output and the next
+manifest are staged, flushed, and synced before outputs are atomically replaced
+and the manifest is replaced last. Missing, malformed, unsupported, incomplete,
+or digest-mismatched cache state is disposable and triggers full regeneration.
+A hash collision is a hard build error, and byte-identical output is not
+replaced, so its mtime stays stable.
 
-## 3. Source rules
+The macro performs no parsing, code generation, or filesystem writes: it maps
+the manifest-relative literal to the corresponding `OUT_DIR` file and expands one
+`include!`. Generated Rust emits probes for every declared extern struct field,
+function, and component, including declarations with no view call site, so rustc
+rejects missing, private, or shape-incompatible Rust items even when a
+declaration is never reached at runtime.
+
+Generated Rust refers to the public `::iced` and `::ui_lang_runtime` paths, so a
+consuming application must declare `iced`, `ui-lang-runtime`, and the
+`ui-lang-build` build dependency directly at their exact pinned versions. The
+headless test driver is not a default runtime feature; test builds require
+`ui-lang-runtime` with `test-runtime` as a dev dependency. `cargo ice compat`
+verifies the lockfile and direct-manifest contract.
+
+### Representation boundary
+
+Successful semantic analysis returns the nominal `CheckedDocument`; only the
+checker can construct it. Lowering consumes that value and publishes an owned
+`LoweredProgram`, the only input Rust generation accepts. Neither representation
+contains iced values or generated Rust fragments.
+
+The release `LoweredProgram` contains no source `Document` and no checker-fact
+arena. It owns typed arenas and stable IDs for declarations, expressions,
+values, locals, handlers, statements, tasks, views, routes, subscriptions,
+tests, components, styles, themes, and physical origins. Lowering fixes
+defaults, ownership, lexical scope, coercions, static topology, route payloads,
+extern and named-type identities, Rust targets, and source locations before the
+backend runs. `OriginId` values index one physical origin arena, so imported
+diagnostics and generated source markers never recover locations from AST nodes.
+
+Expression emission reads the owned `ResolvedExpressionProgram`. Release code
+generation cannot reach `CheckedFacts`, repeat checker analysis, resolve an
+extern by source name, or fall back to a raw expression. The `hir_boundary`
+integration ratchet keeps that inventory empty and is the executable statement
+of this section.
+
+## 4. Source rules
 
 - Files are UTF-8 and use the `.ice` extension.
 - Tabs are errors. `cargo ice fmt` prints two spaces per indentation level.
@@ -275,2291 +185,38 @@ versions. `cargo ice compat` verifies the lockfile and direct-manifest contract.
 - A line whose first non-space characters are `//` is a comment. Inline and
   block comments are not part of 2.0.
 - Identifiers use ASCII letters, digits, and `_`; they cannot begin with a digit
-  or `__`, and `_`, `none`, and Rust keywords are reserved.
-- Rust path segments use Rust identifier rules; the Ice-only `none` and `__`
-  reservations do not apply to them.
-- App, extern-struct, and component names conventionally use `PascalCase`.
-- State, field, function, handler, and parameter names conventionally use
-  `snake_case`.
-- Static IDs use kebab case after `#`, for example `#task-list`.
+  or `__`, and `_`, `none`, and Rust keywords are reserved. Rust path segments
+  follow Rust identifier rules instead.
+- App, extern-struct, and component names use `PascalCase`; state, field,
+  function, handler, and parameter names use `snake_case`; static IDs use kebab
+  case after `#`, for example `#task-list`.
 - Strings use double quotes and support `\n`, `\r`, `\t`, `\"`, and `\\`.
-- A top-level `use "relative/file.ice"` includes declarations relative to the
-  importing file. Paths must end in `.ice`, use `/`, and cannot be absolute.
+- `use "relative/file.ice"` includes declarations relative to the importing
+  file. Paths must end in `.ice`, use `/`, and cannot be absolute.
 - `use "relative/file.ice" as ui` imports components, recipes, extern items,
-  fonts, and named types under `ui::`. Theme tokens remain app-global. Bare
-  imports keep the fragment-merging behavior above.
+  fonts, and named types under `ui::`. Theme tokens remain app-global.
 - Imports may be nested. Re-importing the same canonical file is idempotent;
   aliased instances are unique by canonical file and namespace. Import cycles
   and missing files are errors.
 
-Top-level declarations are order-independent, but canonical source uses:
-
-```text
-app | daemon
-use
-extern
-theme contract
-palette
-recipe
-state
-preset
-component
-on
-subscribe
-view
-test
-```
-
-An Ice source graph has exactly one `app` or `daemon` root and one `view`.
-It may have multiple `extern` namespaces; imported plugin fragments can
-therefore bind their own Rust modules beside the application's backend.
-Bare extern type and function names remain graph-global and duplicates are
-errors. Aliased imports retain their namespace identity instead of flattening
-those declarations into the graph-global name set.
-The root file declares the app and normally the view; imported fragments may
-hold any other top-level declarations. The graph may have multiple components,
-handlers, and graph-unique tests. The view and each component have exactly one
-root node.
-
-## 4. Compact grammar
-
-The grammar below uses indentation (`INDENT`) as a block delimiter. `expr` is
-defined in section 6, the `utility` vocabulary in section 10, and the
-`mouse_cursor` names in section 8. Bare `name`, `PascalName`, `kebab_name`,
-`string`, `number`, `bool`, unsigned-integer, and `rust_path` tokens follow
-section 3.
-
-```text
-source_graph   = root_file imported_file*
-root_file      = (root_decl | use_decl | declaration)*
-imported_file  = (use_decl | declaration)*
-use_decl       = "use" string ("as" name)?
-declaration    = extern_decl | theme_contract_decl | palette_decl
-               | style_recipe_decl | font_decl
-               | enum_decl | state_decl | secret_decl | derived_decl | preset_decl
-               | component_decl
-               | handler_decl | subscribe_decl | view_decl | test_decl
-document       = root_decl extern_decl* theme_contract_decl palette_decl+
-                 style_recipe_decl* enum_decl* state_decl? secret_decl* derived_decl?
-                 preset_decl* component_decl*
-                 handler_decl*
-                 subscribe_decl? view_decl test_decl*
-
-root_decl      = ("app" | "daemon") PascalName (INDENT app_setting*)?
-app_setting    = "title" expr | "theme" expr | "palette" expr
-               | ("bg" | "fg") expr
-               | "id" string | "font" string
-               | ("executor" | "renderer") rust_path
-               | "text-size" number | "scale" expr
-               | ("antialiasing" | "vsync") bool
-               | window_decl
-               | tray_decl
-tray_decl      = "tray" INDENT tray_setting*
-tray_setting   = "icon-rgba" string u32 u32 ("when" expr)?
-               | "icon-template" bool
-               | ("label" | "tooltip") expr
-               | tray_menu
-tray_menu      = "menu" INDENT tray_row+
-tray_row       = "separator" | expr ("->" name)? ("when" expr)? (INDENT tray_row+)?
-window_decl    = "window" name? INDENT window_setting*
-window_setting = ("size" | "min-size" | "max-size") number number
-               | "icon-rgba" string u32 u32
-               | "position" ("default" | "centered" | number number)
-               | "level" ("normal" | "always-on-bottom" | "always-on-top")
-               | ("maximized" | "fullscreen" | "visible" | "resizable"
-                 | "closeable" | "minimizable" | "decorations" | "transparent"
-                 | "blur" | "exit-on-close") bool
-               | window_platform
-window_platform = "platform" "linux" INDENT
-                    (("app-id" string) | ("override-redirect" bool))*
-                | "platform" "windows" INDENT
-                    (("drag-and-drop" | "skip-taskbar" | "undecorated-shadow") bool
-                    | "corner" ("default" | "do-not-round" | "round" | "round-small"))*
-                | "platform" "macos" INDENT
-                    (("title-hidden" | "titlebar-transparent"
-                    | "fullsize-content-view") bool)*
-                | "platform" "wasm" INDENT ("target" (string | "none"))?
-
-extern_decl    = "extern" rust_path INDENT extern_item+
-extern_item    = struct_sig | function_sig | extern_component_sig
-               | extern_selector_sig
-               | extern_shader_sig | extern_task_sig | extern_stream_sig
-               | extern_sip_sig | extern_recipe_sig | extern_event_filter_sig
-               | extern_pure_sig | extern_sync_sig | extern_subscription_sig
-               | extern_theme_sig | extern_themer_sig
-               | extern_window_sig | extern_markdown_viewer_sig
-               | extern_text_style_sig | extern_slider_style_sig
-               | extern_progress_style_sig
-               | extern_button_style_sig
-               | extern_checkbox_style_sig | extern_toggler_style_sig
-               | extern_radio_style_sig | extern_container_style_sig
-               | extern_svg_style_sig | extern_input_style_sig
-               | extern_scroll_style_sig
-               | extern_pick_list_style_sig | extern_menu_style_sig
-               | extern_pane_grid_style_sig
-               | extern_editor_binding_sig | extern_editor_action_sig
-               | extern_editor_highlighter_sig | extern_editor_style_sig
-struct_sig     = PascalName "(" field_list? ")"
-field_list     = field ("," field)*
-field          = name ":" type
-extern_component_field_list
-               = extern_component_field ("," extern_component_field)*
-extern_component_field = name ":" "&"? type
-type           = "bool" | "i64" | "f64" | "str" | "secret" | "bytes" | "image"
-               | "image-allocation" | "image-memory" | "image-error"
-               | "debug-span"
-               | "markdown" | "editor" | "event" | "event-status"
-               | "instant" | "window-id" | "window-screenshot"
-               | "key" | "key-press" | "physical-key" | "key-location" | "key-modifiers"
-               | "pixels" | "padding" | "degrees" | "radians"
-               | "rotation"
-               | "content-fit"
-               | "color"
-               | "background" | "gradient" | "linear-gradient" | "color-stop"
-               | "font" | "font-family" | "font-weight"
-               | "font-stretch" | "font-style" | "theme-mode"
-               | "text-alignment" | "text-shaping" | "text-wrapping"
-               | "text-line-height"
-               | "length"
-               | "alignment" | "horizontal-alignment" | "vertical-alignment"
-               | "border" | "radius"
-               | "shadow"
-               | "point" | "point-u32" | "vector" | "size" | "size-u32"
-               | "rectangle" | "rectangle-u32"
-               | "transformation" | "mouse-interaction"
-               | "scroll-delta" | "mouse-button" | "mouse-cursor"
-               | "mouse-click" | "touch-finger"
-               | "window-position" | "redraw-request" | "window-direction"
-               | "window-level" | "window-mode"
-               | "window-attention"
-               | "widget-id" | "widget-target"
-               | "task-handle" | "unit"
-               | qualified_type
-               | "[" type "]" | type "?" | "result[" type "," type "]"
-               | "combo[" type "]"
-               | "animation[" ("bool" | "f64" | qualified_type) "]"
-qualified_type = PascalName | name ("::" name)* "::" PascalName
-function_sig   = name "(" field_list? ")" "->" type ("!" type)?
-extern_component_sig
-               = "component" name "(" extern_component_field_list? ")" "->" type
-extern_selector_sig
-               = "selector" name "(" field_list? ")" "->" type
-extern_shader_sig
-               = "shader" name "(" field_list? ")" "->" type
-extern_task_sig = "task" name "(" field_list? ")" "->" type ("!" type)?
-extern_stream_sig = "stream" name "(" field_list? ")" "->" type ("!" type)?
-extern_sip_sig = "sip" name "(" field_list? ")" "progress=" type
-                 "->" type ("!" type)?
-extern_recipe_sig = "recipe" name "(" field_list? ")" "->" type
-extern_event_filter_sig = "event-filter" name "()" "->" type
-extern_pure_sig = "pure" name "(" field_list? ")" "->" type
-extern_sync_sig = "sync" name "(" field_list? ")" "->" type
-extern_subscription_sig
-               = "subscription" name "(" field_list? ")" "->" type
-extern_theme_sig = "theme" name "(" field_list? ")"
-extern_themer_sig = "themer" name "(" field_list? ")" "->" type
-extern_window_sig = "window" name "(" field_list? ")" "->" type
-extern_markdown_viewer_sig
-               = "markdown-viewer" name "(" field_list? ")" "->" type
-extern_editor_binding_sig
-               = "editor-binding" name "(" field_list? ")" "->" type
-extern_editor_action_sig
-               = "editor-action" name "()"
-extern_editor_highlighter_sig
-               = "editor-highlighter" name "(" field_list? ")"
-extern_editor_style_sig
-               = "editor-style" name "(" field_list? ")"
-extern_text_style_sig
-               = "text-style" name "(" field_list? ")"
-extern_slider_style_sig
-               = "slider-style" name "(" field_list? ")"
-extern_progress_style_sig
-               = "progress-style" name "(" field_list? ")"
-extern_button_style_sig
-               = "button-style" name "(" field_list? ")"
-extern_checkbox_style_sig
-               = "checkbox-style" name "(" field_list? ")"
-extern_toggler_style_sig
-               = "toggler-style" name "(" field_list? ")"
-extern_radio_style_sig
-               = "radio-style" name "(" field_list? ")"
-extern_container_style_sig
-               = "box-style" name "(" field_list? ")"
-extern_svg_style_sig
-               = "svg-style" name "(" field_list? ")"
-extern_input_style_sig
-               = "input-style" name "(" field_list? ")"
-extern_scroll_style_sig
-               = "scroll-style" name "(" field_list? ")"
-extern_pick_list_style_sig
-               = "pick-list-style" name "(" field_list? ")"
-extern_menu_style_sig
-               = "menu-style" name "(" field_list? ")"
-extern_pane_grid_style_sig
-               = "panes-style" name "(" field_list? ")"
-
-theme_contract_decl
-               = "theme" "contract" PascalName INDENT theme_token+
-theme_token    = name
-palette_decl   = "palette" name "for" PascalName INDENT color_entry+
-color_entry    = name color
-
-style_recipe_decl
-               = "recipe" name "for" style_recipe_target ("extends" name)?
-                 INDENT style_recipe_line+
-style_recipe_target
-               = "col" | "row" | "flex" | "grid" | "stack" | "box"
-               | "text" | "input" | "button"
-style_recipe_line
-               = "@" utility+
-
-font_decl      = "font" name font_property*
-font_property  = "family=" (string | "serif" | "sans" | "cursive" | "fantasy" | "mono")
-               | "weight=" ("thin" | "extra-light" | "light" | "normal"
-                 | "medium" | "semibold" | "bold" | "extra-bold" | "black")
-               | "stretch=" ("ultra-condensed" | "extra-condensed" | "condensed"
-                 | "semi-condensed" | "normal" | "semi-expanded" | "expanded"
-                 | "extra-expanded" | "ultra-expanded")
-               | "style=" ("normal" | "italic" | "oblique")
-               | "default=" bool
-font_ref       = "default" | "mono" | name
-
-state_decl     = "state" INDENT state_entry+
-state_entry    = name (":" type)? "=" expr (INDENT animation_setting*)?
-secret_decl    = "secret" name
-derived_decl   = "derived" INDENT derived_entry+
-derived_entry  = name "=" expr
-enum_decl      = "enum" PascalName INDENT enum_variant+
-enum_variant   = name ("(" type ")")?
-animation_setting = "easing" name
-                  | "duration" (duration | "very-quick" | "quick" | "slow" | "very-slow")
-                  | "delay" duration
-                  | "repeat" (u32 | "forever")
-                  | "auto-reverse" bool
-                  | "from" (bool | number)
-
-preset_decl    = "preset" name (INDENT preset_section*)?
-preset_section = preset_state | preset_boot
-preset_state   = "state" INDENT preset_override*
-preset_override = name "=" expr
-preset_boot    = "boot" INDENT statement*
-
-component_decl = "component" component_name "(" component_param_list? ")"
-                 ("->" type)?
-                 INDENT component_member+
-component_param_list = component_param ("," component_param)*
-component_param = ("bind")? name ":" type ("=" expr)?
-component_member = component_lifetime | component_state | component_events
-                 | component_boot | component_handler | node
-component_lifetime = "lifetime" ("retained" | "mounted")
-component_state = "state" INDENT state_entry+
-component_events = "emits" INDENT component_event+
-component_event = name ("(" type_list? ")")?
-component_boot = "boot" INDENT component_statement+
-component_handler = "on" name ("(" name_list? ")")?
-                    INDENT component_statement*
-component_statement = "let" name "=" expr | name "=" expr | "return if" expr
-                    | invalidate_statement | run_statement
-                    | component_stream_statement
-                    | component_task_group | component_widget_task
-                    | handler_match
-component_task_group = ("parallel" | "sequential") INDENT component_task_member+
-component_task_member = component_task_group | run_statement
-                      | component_stream_statement | component_widget_task
-component_widget_task = "task widget" component_widget_operation ("->" route)?
-component_widget_operation = ("focus" | "focused" | "cursor-front" | "cursor-end"
-                             | "select-all" | "snap-end") widget_target
-                           | "cursor" widget_target expr
-                           | "select" widget_target expr expr
-                           | ("snap" | "scroll-to" | "scroll-by") widget_target expr expr
-                           | "find" "id" widget_target
-
-run_statement = "run" ("every" | (("latest" | "replace") "lane=" qualified_name))
-                call "->" route ("|" route)?
-stream_statement = "stream" ("every" | ("replace" "lane=" qualified_name))
-                   call "->" route ("|" route)?
-component_stream_statement = "stream" "replace" "lane=" qualified_name
-                             call "->" route ("|" route)?
-invalidate_statement = "invalidate" "lane=" qualified_name
-qualified_name = name ("::" name)*
-
-handler_decl   = "on" name ("(" name_list? ")")?
-                 INDENT statement*
-statement      = "let" name "=" expr
-               | name "=" expr ("at" expr)?
-               | "markdown" name "append" expr
-               | "combo" name "push" expr
-               | "return if" expr
-               | "exit"
-               | task_group
-               | abortable_task
-               | "abort" name
-               | "debug start" expr "->" name
-               | "debug finish" name
-               | invalidate_statement
-               | run_statement
-               | "task" call "->" route ("|" route)?
-               | stream_statement
-               | sip_task
-               | task_flow
-               | "task time now" "->" route
-               | "task system" ("info" | "theme") "->" route
-               | "task clipboard" ("read" | "read-primary") "->" route
-               | "task clipboard" ("write" | "write-primary") expr
-               | "task font load" expr "->" route
-               | "task image allocate" expr "->" route "|" route
-               | "task widget" widget_operation ("->" route)?
-               | "pane" "#" name pane_operation ("->" route)?
-               | window_task
-               | emit_statement
-               | slice_statement
-               | handler_match
-emit_statement = "emit" "(" name ("," expr)* ")"
-slice_statement = "slice" name "." name "(" (expr ("," expr)*)? ")" "at" expr
-handler_match  = "match" expr INDENT handler_match_arm+
-handler_match_arm = qualified_name "." name INDENT statement+
-task_group     = ("parallel" | "sequential") INDENT task_member+
-abortable_task = "abortable" name ("abort-on-drop")? INDENT task_member
-sip_task       = "sip" call INDENT sip_route+
-sip_route      = sip_progress | sip_done | sip_error
-sip_progress   = "progress" "->" route
-sip_done       = "done" "->" route
-sip_error      = "error" "->" route
-task_flow      = "flow" INDENT flow_source flow_item+
-flow_source    = "from" task_source
-task_source    = ("run" | "task" | "stream") call
-               | "done" expr | "none" type
-               | "task time now"
-               | "task system" ("info" | "theme")
-               | "task clipboard" ("read" | "read-primary")
-               | "task font load" expr
-               | "task image allocate" expr
-flow_item      = "map" name "->" expr
-               | ("then" | "try") name "->" task_source
-               | "map-err" name "->" expr
-               | "collect" | "discard"
-               | ("done" | "error" | "units") "->" route
-task_member    = task_group | abortable_task
-               | "exit"
-               | run_statement
-               | "task" call "->" route ("|" route)?
-               | stream_statement
-               | sip_task
-               | task_flow
-               | native_task
-native_task    = "task time now" "->" route
-               | "task system" ("info" | "theme") "->" route
-               | "task clipboard" ("read" | "read-primary") "->" route
-               | "task clipboard" ("write" | "write-primary") expr
-               | "task font load" expr "->" route
-               | "task image allocate" expr "->" route "|" route
-               | "task widget" widget_operation ("->" route)?
-               | "pane" "#" name pane_operation ("->" route)?
-               | window_task
-widget_operation = ("focus-prev" | "focus-next"
-                 | ("focus" | "focused" | "cursor-front" | "cursor-end"
-                   | "select-all" | "snap-end") widget_target
-                 | "cursor" widget_target expr
-                 | "select" widget_target expr expr
-                 | ("snap" | "scroll-to" | "scroll-by") widget_target expr expr
-                 | ("find" | "find-all") widget_selector) widget_window?
-widget_selector = "id" widget_target | "text" expr | "point" expr expr
-                | "focused" | call
-widget_window  = "window=" expr
-widget_target  = "#" widget_target_segment
-                 ("/" "#"? widget_target_segment)*
-widget_target_segment = kebab_name | component_name | name "(" expr ")"
-pane_operation = "maximize" name | "restore" | "maximized"
-               | "adjacent" name pane_edge
-               | "swap" name name | "close" name
-               | "move" name pane_edge | "resize" (name expr | expr)
-               | "drop" name name ("center" | pane_edge)
-               | "split" name name ("horizontal" | "vertical")
-                 ("ratio=" expr)?
-pane_edge      = "top" | "left" | "right" | "bottom"
-window_task    = "task window" window_operation ("target=" expr)? ("->" route)?
-window_operation = "open" name? | "oldest" | "latest"
-                 | "close" | "drag" | "toggle-maximize" | "toggle-decorations"
-                 | "focus" | "system-menu" | "raw-id" | "screenshot"
-                 | "drag-resize" direction
-                 | ("resize" | "move") expr expr
-                 | ("resizable" | "maximize" | "minimize" | "mouse-passthrough"
-                   | "auto-tabs") expr
-                 | ("min-size" | "max-size" | "resize-step")
-                   ("none" | expr expr)
-                 | "set-mode" ("windowed" | "fullscreen" | "hidden")
-                 | "attention" ("none" | "critical" | "informational")
-                 | "level" ("normal" | "always-on-bottom" | "always-on-top")
-                 | "size" | "maximized" | "minimized" | "position"
-                 | "scale" | "mode" | "monitor-size"
-                 | "icon" expr expr expr
-                 | call
-direction      = "north" | "south" | "east" | "west"
-               | "north-east" | "north-west" | "south-east" | "south-west"
-
-subscribe_decl = "subscribe" INDENT subscription_use+
-subscription_use = subscription_source ("with=" expr)? ("filter=" name)?
-                   ("status=" event_status)? ("when" expr)? "->" route
-subscription_source
-               = call
-               | "every" duration
-               | "repeat" call "every" duration
-               | "run" call
-               | "recipe" call
-               | "events" expr "using=" name
-               | "event" ("raw")? ("with-id")?
-               | "input-method" input_method_event
-               | "keyboard" ("press" | "release" | "modifiers")
-               | "mouse" mouse_event
-               | "touch" touch_event
-               | "window" window_event ("with-id")?
-               | "system theme"
-input_method_event
-               = "opened" | "preedit" | "commit" | "closed"
-mouse_event    = "entered" | "left" | "moved" | "pressed" | "released"
-               | "wheel"
-touch_event    = "pressed" | "moved" | "lifted" | "lost"
-duration       = positive_integer ("ms" | "s")
-event_status   = "any" | "captured" | "ignored"
-window_event   = "frame" | "opened" | "closed" | "moved" | "resized"
-               | "rescaled" | "close-request" | "focused" | "unfocused"
-               | "file-hovered" | "file-dropped" | "files-hovered-left"
-
-view_decl      = "view" INDENT node
-
-test_decl      = "test" name
-                 (INDENT (test_configuration | target_decl)* test_step*)?
-test_configuration
-               = "preset" name
-               | "viewport" number number
-               | "timeout" positive_integer ("ms" | "s")
-               | "theme" ("light" | "dark" | "none")
-               | "scale" number
-               | "locale" string
-               | "platform" ("linux" | "windows" | "macos" | "wasm")
-               | "reduced-motion" ("true" | "false")
-               | "mount" INDENT node
-target_decl    = "target" name "=" (widget_target | relative_test_target)
-relative_test_target = name "/" widget_target_segment
-                       ("/" "#"? widget_target_segment)*
-test_target    = name | widget_target
-test_step      = "click" test_target test_pointer_button?
-               | "double-click" test_target test_pointer_button?
-               | "click-at" expr expr test_pointer_button?
-               | "leave"
-               | "move" (test_target | expr expr)
-               | "press" test_target test_pointer_button?
-               | "release" test_pointer_button?
-               | "wheel" ("pixels" | "lines")? expr expr
-               | "scroll-to" test_target expr expr
-               | "scroll-by" test_target expr expr
-               | "snap" test_target expr expr
-               | "snap-end" test_target
-               | "drag" test_target test_target
-               | "drop" test_target
-               | "focus" test_target
-               | "focus-next"
-               | "focus-previous"
-               | "blur"
-               | "window" ("focus" | "blur" | "close-request"
-                            | "opened" | "closed" | "redraw")
-               | "window" "move" expr expr
-               | "window" "resize" expr expr
-               | "window" "rescale" expr
-               | "type" expr
-               | "clear"
-               | "replace" expr
-               | "select" expr expr
-               | "select-all"
-               | "cursor" (expr | "front" | "end")
-               | "composition" ("start" | "cancel")
-               | "composition" "update" expr (expr expr)?
-               | "composition" "commit" expr
-               | "key" test_key
-               | "key-down" test_key test_key_down_option*
-               | "key-up" test_key test_key_up_option*
-               | "modifiers" test_modifier*
-               | "chord" test_modifier* test_key
-               | "repeat" test_key expr
-               | "tap" test_target positive_integer?
-               | "touch" ("down" | "move" | "up" | "cancel")
-                 expr expr expr
-               | "system-theme" ("light" | "dark" | "none")
-               | "file-hover" expr
-               | "file-drop" expr
-               | "file-leave"
-               | "wait" duration
-               | "advance" duration
-               | "idle"
-               | "capture" name
-               | "a11y" ("activate" | "focus") test_target
-               | "dispatch" name ("(" expr_list? ")")?
-               | "tray" "choose" expr
-               | "expect" expr
-               | "expect" expr "~=" expr
-               | "expect" ("exists" | "missing") test_target
-               | "expect" "no"? "text" expr ("within" test_target)?
-               | "expect" "no"? "tray"
-                 ("label" | "icon" | "item" | "command") expr
-               | "expect" "a11y" test_target
-                 ("role" | "name" | "value") expr
-               | "expect" "a11y" test_target
-                 ("checked" | "expanded" | "disabled" | "focused") expr
-               | "expect" "a11y" test_target "action"
-                 ("click" | "focus") expr?
-test_pointer_button = "left" | "right" | "middle" | "back" | "forward"
-test_modifier = "shift" | "control" | "alt" | "logo"
-test_key       = test_key_name | string
-test_key_name  = kebab_name | PascalName
-test_key_down_option
-               = test_key_up_option
-               | "text=" string
-               | "repeat=" ("true" | "false")
-test_key_up_option
-               = "modified=" test_key
-               | "location=" ("standard" | "left" | "right" | "numpad")
-               | "physical=" test_key_name
-
-node           = node_form (INDENT node_metadata)?
-node_form      = layout | text | input | button | checkbox | toggler
-               | slider | progress | radio | pick_list | combo_box
-               | rule | qr_code | space | float | pin | sensor | responsive
-               | media | tooltip | mouse_area | resize_handle | canvas
-               | theme_boundary | hover_area
-               | component_call | slot | extern_component_call | themer_view
-               | shader_view
-               | if_node | match_node | for_node
-               | keyed_column | lazy_node | markdown_view | table_view
-               | editor_view | box | overlay | rich_text | pane_grid
-node_metadata  = "with" INDENT (node_property | styles)+
-node_property  = any property or id the node's own form accepts, one per line
-layout         = "col" id? column_property* styles? (INDENT node+)?
-               | "row" id? flex_property* styles? (INDENT node+)?
-               | "flex" id? css_flex_property* styles? (INDENT node+)?
-               | "scroll" id? scroll_property* styles?
-                 INDENT scroll_status* node scroll_status*
-               | "grid" id? grid_property* styles? (INDENT node+)?
-               | "stack" id? stack_property* styles? (INDENT node+)?
-box            = "box" id? box_property* styles? INDENT node
-box_property   = ("w=" | "h=") length
-                   | "border-dash=" "(" expr_list ")"
-                   | ("max-w=" | "max-h=") expr
-                   | ("align-x=" | "align-y=") ("start" | "center" | "end")
-                   | "clip=" expr
-                   | ("p=" | "px=" | "py="
-                     | "pt=" | "pr=" | "pb="
-                     | "pl=") expr
-                   | flex_item_property
-                   | surface_style_property
-flex_item_property = "order=" expr
-                   | ("grow=" | "shrink=") expr
-                   | "basis=" ("auto" | "content" | expr
-                     | "percent(" expr ")")
-                   | "flex=" ("none" | "auto" | "initial"
-                     | expr ("," expr ("," (expr | "auto" | "content"
-                       | "percent(" expr ")"))?)?)
-                   | "self=" ("auto" | flex_item_alignment)
-                   | ("m=" | "mx=" | "my="
-                     | "mt=" | "mr=" | "mb="
-                     | "ml=") ("auto" | expr | "percent(" expr ")")
-overlay        = "overlay" id? "when=" expr overlay_property*
-                 INDENT "content" INDENT node
-                 INDENT "layer" INDENT node
-overlay_property = "dismiss=" route | "backdrop=" name ("/" u8)?
-                 | "p=" expr
-                 | ("align-x=" | "align-y=") ("start" | "center" | "end")
-rich_text      = "rich-text" id? rich_text_property* styles? ("->" route)?
-                 INDENT rich_text_child*
-rich_text_child = rich_span | rich_text_for
-rich_text_for  = "for" name "in" expr INDENT rich_span*
-rich_text_property = ("w=" | "h=") length | "size=" expr
-                   | ("line-h=" | "line-h-px=") expr
-                   | "font=" font_ref | "align-x=" text_alignment
-                   | "align-y=" ("top" | "center" | "bottom")
-                   | "wrap=" text_wrapping | "color=" color_ref
-                   | "style=" call
-rich_span      = "span" expr rich_span_property* styles?
-rich_span_property = ("size=" | "line-h=" | "line-h-px=") expr
-                   | "font=" font_ref | "color=" color_ref | "link=" expr
-                   | "bg=" background_value | "border=" color_ref
-                   | "border-w=" expr
-                   | ("r=" | "r-tl=" | "r-tr="
-                     | "r-br=" | "r-bl=") expr
-                   | ("p=" | "px=" | "py=" | "pt=" | "pr=" | "pb="
-                     | "pl=") expr
-                   | "underline" | "underline=" expr
-                   | "strike" | "strike=" expr
-pane_grid      = "panes" "#" name pane_grid_property*
-                 INDENT pane_grid_style? pane_configuration pane_declaration*
-pane_grid_property = ("w=" | "h=") length
-                   | ("gap=" | "min-size=" | "resize=") expr
-                   | "drag" | "click=" route | "style=" call
-pane_grid_style = "style" INDENT pane_grid_style_status+
-pane_grid_style_status
-               = "hovered-region" pane_region_style_property+
-               | ("hovered-split" | "picked-split") pane_line_style_property+
-pane_region_style_property
-               = "bg=" background_value | "border=" color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl=") expr
-pane_line_style_property = "color=" name ("/" u8)? | "w=" expr
-pane_configuration = pane_view
-                   | "split" name? pane_axis ("ratio=" number)?
-                     INDENT pane_configuration pane_configuration
-pane_view      = "pane" name pane_property* styles?
-                 INDENT pane_section* node
-closed_pane    = "pane" name "closed" pane_property* styles?
-                 INDENT pane_section* node
-pane_template  = "pane" name "in" name "by=" expr
-                 pane_property* styles? INDENT pane_section* node
-pane_declaration = closed_pane | pane_template
-pane_property  = surface_style_property | "maximized=" name
-pane_section   = "title" pane_title_property* styles? INDENT node
-               | "controls" INDENT node
-               | "compact" INDENT node
-pane_title_property
-               = ("p=" | "px=" | "py="
-                 | "pt=" | "pr=" | "pb="
-                 | "pl=") expr
-               | "always-controls" | surface_style_property
-surface_style_property
-               = "bg=" background_value
-               | ("text=" | "border=" | "shadow=") color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl="
-                 | "shadow-x=" | "shadow-y=" | "shadow-blur="
-                 | "px-snap=") expr
-background_value = surface_color
-                 | "linear(" expr ("," color_ref "@" expr){0,8} ")"
-pane_axis      = "horizontal" | "vertical"
-keyed_column   = "keyed" name "in" expr "by=" expr id? keyed_property*
-                 INDENT node
-keyed_property = ("w=" | "h=") length | "gap=" expr
-               | ("p=" | "px=" | "py="
-                 | "pt=" | "pr=" | "pb="
-                 | "pl=") expr
-               | "max-w=" expr | "virtual-row=" expr
-               | "align=" ("start" | "center" | "end")
-lazy_node      = "lazy" expr ("," name)* "as" name id?
-                 INDENT node
-               | "lazy" expr "by" expr ("," expr)* "as" name id?
-                 INDENT node
-markdown_view  = "markdown" name id? markdown_property* "->" route
-                 (INDENT markdown_style)?
-markdown_property = ("text-size=" | "h1-size=" | "h2-size="
-                  | "h3-size=" | "h4-size=" | "h5-size=" | "h6-size="
-                  | "code-size=" | "gap=") expr
-                  | "viewer=" call
-markdown_style = "style" markdown_style_property+
-markdown_style_property
-               = ("font=" | "inline-code-font=" | "code-block-font=") font_ref
-               | "inline-code-bg=" background_value
-               | ("inline-code-fg=" | "link=" | "inline-code-border=") color_ref
-               | ("inline-code-p=" | "inline-code-px="
-                 | "inline-code-py=" | "inline-code-pt="
-                 | "inline-code-pr=" | "inline-code-pb="
-                 | "inline-code-pl=" | "inline-code-border-w="
-                 | "inline-code-r=" | "inline-code-r-tl="
-                 | "inline-code-r-tr=" | "inline-code-r-br="
-                 | "inline-code-r-bl=") expr
-table_view     = "table" name "in" expr id? table_property* INDENT table_column+
-table_property = "w=" length
-               | ("p=" | "px=" | "py="
-                 | "sep=" | "sep-x=" | "sep-y=") expr
-table_column   = "col" table_column_property* INDENT
-                 "header" INDENT node
-                 "cell" INDENT node
-table_column_property = "w=" length
-                      | "align-x=" ("left" | "center" | "right")
-                      | "align-y=" ("top" | "center" | "bottom")
-editor_view    = "editor" id? "<->" name editor_property*
-                 ("->" route)? (INDENT editor_status*)?
-editor_property = "hint=" expr | "w=" expr | "h=" length
-                | ("min-h=" | "max-h=" | "size="
-                  | "line-h=" | "line-h-px=" | "p=") expr
-                | "wrap=" text_wrapping
-                | "font=" font_ref
-                | "highlight=" string
-                | "highlight-theme=" ("solarized-dark" | "base16-mocha"
-                  | "base16-ocean" | "base16-eighties" | "inspired-github")
-                | ("highlighter=" | "key-binding=" | "action=" | "style=") call
-                | "disabled=" expr
-editor_status  = ("active" | "hovered" | "focused"
-               | "focused-hovered" | "disabled") editor_style_property*
-editor_style_property
-               = "bg=" background_value
-               | ("border=" | "placeholder=" | "value=" | "selection=") color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl=") expr
-column_property = flex_property | "max-w=" expr | "virtual-row=" expr
-flex_property  = ("w=" | "h=") length | "gap=" expr
-               | ("p=" | "px=" | "py="
-                 | "pt=" | "pr=" | "pb="
-                 | "pl=") expr
-               | "align=" ("start" | "center" | "end") | "clip=" expr
-               | "wrap" | "wrap-gap=" expr
-               | "wrap-align=" ("start" | "center" | "end")
-css_flex_property = ("w=" | "h=") length | "clip=" expr
-                  | ("p=" | "px=" | "py="
-                    | "pt=" | "pr=" | "pb=" | "pl=") expr
-                  | "dir=" ("row" | "row-reverse" | "column" | "column-reverse")
-                  | "flow=" ("row" | "row-reverse" | "column"
-                    | "column-reverse") "," ("nowrap" | "wrap"
-                    | "wrap-reverse")
-                  | "wrap=" ("nowrap" | "wrap" | "wrap-reverse")
-                  | "justify=" flex_content_alignment
-                  | "items=" flex_item_alignment
-                  | "content=" flex_content_alignment
-                  | ("gap=" | "gap-y=" | "gap-x="
-                    | "max-w=" | "max-h=") expr
-flex_item_alignment = "start" | "end" | "flex-start" | "flex-end" | "center"
-                    | "baseline" | "stretch"
-flex_content_alignment = "start" | "end" | "flex-start" | "flex-end"
-                       | "center" | "stretch" | "space-between"
-                       | "space-around" | "space-evenly"
-stack_property = ("w=" | "h=") length | "clip=" expr
-               | "under=" u16
-grid_property  = "cols=" expr | "min-cell=" expr | "max-cell=" expr | "w=" expr
-               | "gap=" expr | "h=" grid_sizing
-grid_sizing    = length | "aspect(" expr "," expr ")"
-scroll_property = "dir=" ("vertical" | "horizontal" | "both")
-                | ("w=" | "h=") length
-                | "bar=" ("visible" | "hidden")
-                | ("bar-w=" | "bar-m=" | "scroller-w="
-                  | "bar-gap=") expr
-                | "anchor-x=" ("start" | "end")
-                | "anchor-y=" ("start" | "end" | "keep")
-                | "auto=" expr | ("scroll=" | "viewport=") route
-                | "style=" call
-scroll_status  = ("active" | "hovered" | "dragged")
-                 scroll_selector*
-                 (INDENT scroll_style_section*)?
-scroll_selector = ("x-disabled=" | "y-disabled=") bool
-                | ("x-hovered=" | "y-hovered=") bool
-                | ("x-dragged=" | "y-dragged=") bool
-scroll_bar_surface_property
-               = "bg=" background_value | "border=" color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl=") expr
-scroll_auto_property
-               = scroll_bar_surface_property | "shadow=" color_ref
-               | ("shadow-x=" | "shadow-y=" | "shadow-blur=") expr
-               | "icon=" color_ref
-scroll_style_section
-               = "box" surface_style_property*
-               | ("x-rail" | "y-rail"
-                 | "x-scroller" | "y-scroller")
-                 scroll_bar_surface_property*
-               | "gap" "bg=" background_value
-               | "auto" scroll_auto_property*
-text           = "text" expr id? text_property* styles?
-text_property  = ("w=" | "h=") length | "size=" expr
-               | ("line-h=" | "line-h-px=") expr
-               | "font=" font_ref
-               | "align-x=" text_alignment
-               | "align-y=" ("top" | "center" | "bottom")
-               | "shape=" ("auto" | "basic" | "advanced")
-               | "wrap=" ("none" | "word" | "glyph" | "word-or-glyph")
-               | "tracking=" number
-               | "style=" call
-               | "underline" | "underline=" expr
-               | "strike" | "strike=" expr
-accessibility_property = ("label=" | "description=") expr
-input          = "input" string id? accessibility_property* "<->" name
-                 input_property* styles?
-                 (INDENT input_child*)?
-input_property = "hint=" expr | ("disabled=" | "secure=") expr
-               | ("change=" | "submit=" | "paste=") route | "w=" length
-               | ("p=" | "text-size=" | "line-h=") expr
-               | "align=" ("left" | "center" | "right")
-               | "font=" font_ref | "style=" call
-input_child    = input_status | input_icon
-input_status   = ("active" | "hovered" | "focused"
-               | "focused-hovered" | "disabled") input_style_property*
-input_style_property
-               = "bg=" background_value
-               | ("border=" | "icon=" | "placeholder="
-                 | "value=" | "selection=") color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl=") expr
-input_icon     = "icon" combo_icon_property+
-button         = "button" string? id? button_property*
-                 styles? "->" route
-                 (INDENT (node | button_status_style)*)?
-button_property = accessibility_property | ("disabled=" | "checked=" | "expanded=") expr
-                | ("w=" | "h=") length
-                | ("p=" | "clip=") expr
-                | "style=" (("primary" | "secondary" | "success" | "warning"
-                  | "danger" | "text" | "bg" | "subtle") | call)
-button_status_style = ("active" | "hovered" | "pressed" | "disabled")
-                      surface_style_property*
-checkbox       = "checkbox" expr id? accessibility_property* "checked=" expr
-                 bool_property*
-                 checkbox_icon_property* checkbox_style? styles? "->" route
-                 (INDENT checkbox_status_style*)?
-toggler        = "toggler" expr id? accessibility_property* "checked=" expr bool_property*
-                 ("align=" text_alignment)? ("style=" call)? styles? "->" route
-                 (INDENT toggler_status_style*)?
-bool_property  = "disabled=" expr | "size=" expr | "w=" length
-               | ("gap=" | "text-size=" | "line-h=") expr
-               | "shape=" ("auto" | "basic" | "advanced")
-               | "wrap=" ("none" | "word" | "glyph" | "word-or-glyph")
-               | "font=" font_ref
-checkbox_icon_property = "icon=" string
-                       | ("icon-size=" | "icon-line-h=") expr
-                       | "icon-shape=" ("auto" | "basic" | "advanced")
-checkbox_style = "style=" ("primary" | "secondary" | "success" | "danger")
-checkbox_status_style = ("active" | "hovered" | "disabled")
-                        ("checked" | "unchecked") checkbox_style_property*
-checkbox_style_property = "bg=" background_value
-                        | ("icon=" | "text=" | "border=") color_ref
-                        | ("border-w=" | "r=" | "r-tl="
-                          | "r-tr=" | "r-br=" | "r-bl=") expr
-toggler_status_style = ("active" | "hovered" | "disabled")
-                       ("checked" | "unchecked") toggler_style_property*
-toggler_style_property = ("bg=" | "fg=") background_value
-                       | ("bg-border=" | "fg-border="
-                         | "text=") color_ref
-                       | ("bg-border-w="
-                         | "fg-border-w=" | "r="
-                         | "r-tl=" | "r-tr=" | "r-br="
-                         | "r-bl=" | "p-ratio=") expr
-text_alignment = "default" | "left" | "center" | "right" | "justified"
-text_wrapping  = "none" | "word" | "glyph" | "word-or-glyph"
-color_ref      = name ("/" u8)?
-surface_color  = name ("/" (u8 | "(" expr ")"))?
-slider         = "slider" expr id? "min=" expr "max=" expr slider_property*
-                 styles? "->" route (INDENT slider_status+)?
-slider_property = ("step=" | "default=" | "shift-step=") expr
-                | ("w=" | "h=") length
-                | "vertical" | "release=" route | "style=" call
-slider_status  = ("active" | "hovered" | "dragged") slider_style_property*
-slider_style_property
-               = ("rail-start=" | "rail-end=" | "handle-color=")
-                 background_value
-               | ("rail-border=" | "handle-border=") color_ref
-               | ("rail-w=" | "rail-border-w="
-                 | "handle-border-w=") expr
-               | ("rail-r=" | "rail-r-tl=" | "rail-r-tr="
-                 | "rail-r-br=" | "rail-r-bl=") expr
-               | "handle=" ("circle(" expr ")" | "rect(" u16 ")")
-               | ("handle-r=" | "handle-r-tl="
-                 | "handle-r-tr=" | "handle-r-br="
-                 | "handle-r-bl=") expr
-progress       = "progress" expr id? progress_property* styles?
-progress_property
-               = ("min=" | "max=") expr
-               | ("length=" | "girth=") length | "vertical"
-               | "style=" (("primary" | "secondary" | "success"
-                 | "warning" | "danger") | call)
-               | ("bg=" | "bar=") background_value
-               | "border=" color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl=") expr
-radio          = "radio" expr id? "value=" expr "selected=" expr
-                 radio_property* styles? "->" route
-                 (INDENT radio_status_style*)?
-radio_property = ("size=" | "gap=" | "text-size=" | "line-h=") expr
-               | "w=" length
-               | "shape=" ("auto" | "basic" | "advanced")
-               | "wrap=" ("none" | "word" | "glyph" | "word-or-glyph")
-               | "font=" font_ref | "style=" call
-radio_status_style = ("active" | "hovered")
-                     ("selected" | "unselected") radio_style_property*
-radio_style_property = "bg=" background_value
-                     | ("dot=" | "border=" | "text=") color_ref
-                     | "border-w=" expr
-pick_list      = "pick" expr expr id? pick_property* "->" route
-                 (INDENT pick_child*)?
-pick_property  = "hint=" expr | "w=" length
-               | "menu-h=" length | "p=" expr
-               | ("text-size=" | "line-h=") expr
-               | "shape=" ("auto" | "basic" | "advanced")
-               | "font=" font_ref | "open=" route | "close=" route
-               | ("style=" | "menu-style=") call
-pick_child     = pick_status | menu_style | pick_handle
-pick_status    = ("active" | "hovered" | "opened" | "opened-hovered")
-                 pick_status_property*
-pick_status_property
-               = "bg=" background_value
-               | ("text=" | "placeholder=" | "handle=" | "border=") color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl=") expr
-menu_style     = "menu" menu_style_property*
-menu_style_property
-               = ("bg=" | "selected-bg=") background_value
-               | ("text=" | "selected-text=" | "border=" | "shadow=") color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl="
-                 | "shadow-x=" | "shadow-y=" | "shadow-blur=") expr
-pick_handle    = "handle" ("arrow" ("size=" expr)?
-               | "static" pick_icon_property+
-               | "dynamic" INDENT pick_closed_icon pick_open_icon
-               | "none")
-pick_closed_icon = "closed" pick_icon_property+
-pick_open_icon = "open" pick_icon_property+
-pick_icon_property
-               = "code=" string | "font=" font_ref
-               | ("size=" | "line-h=") expr
-               | "shape=" ("auto" | "basic" | "advanced")
-combo_box      = "combo" name expr expr id? combo_property* "->" route
-                 (INDENT combo_child*)?
-combo_property = "w=" length | "menu-h=" length
-               | "p=" expr | ("text-size=" | "line-h=") expr
-               | "shape=" ("auto" | "basic" | "advanced")
-               | "font=" font_ref
-               | "input=" route | "hover=" route
-               | "open=" route | "close=" route
-               | ("style=" | "menu-style=") call
-combo_child    = combo_status | menu_style | combo_icon
-combo_status   = ("active" | "hovered" | "focused"
-               | "focused-hovered" | "disabled") combo_style_property*
-combo_style_property
-               = "bg=" background_value
-               | ("border=" | "icon=" | "placeholder="
-                 | "value=" | "selection=") color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl=") expr
-combo_icon     = "icon" combo_icon_property+
-combo_icon_property
-               = "code=" string | "font=" font_ref
-               | ("size=" | "gap=") expr
-               | "side=" ("left" | "right")
-float          = "float" id? float_property* INDENT node
-float_property = ("scale=" | "x=" | "y=" | "shadow-x="
-                 | "shadow-y=" | "shadow-blur=" | "r="
-                 | "r-tl=" | "r-tr=" | "r-br="
-                 | "r-bl=") expr
-               | "shadow=" color_ref
-pin            = "pin" id? (("w=" | "h=") length)*
-                 ("x=" expr)? ("y=" expr)? INDENT node
-sensor         = "sensor" id? sensor_property* sensor_event sensor_property*
-                 INDENT node
-sensor_property = sensor_event
-                | "key=" expr | "anticipate=" expr | "delay=" expr
-sensor_event   = ("show=" | "resize=" | "hide=") route
-responsive     = "responsive" id? "size=(" name "," name ")"
-                 (("w=" | "h=") length)* INDENT node
-rule           = "rule" ("horizontal" | "vertical") id? rule_property* styles?
-rule_property  = "thickness=" expr | "style=" ("default" | "weak")
-               | "fill=" rule_fill | "color=" name ("/" u8)?
-               | ("r=" | "r-tl=" | "r-tr="
-                 | "r-br=" | "r-bl=") expr
-               | "snap=" expr
-rule_fill      = "full" | "percent(" expr ")" | "pad(" u16 ")"
-               | "pad(" u16 "," u16 ")"
-qr_code        = "qr" expr id? qr_property*
-qr_property    = ("cell-size=" | "size=") expr
-               | "correction=" ("low" | "medium" | "quartile" | "high")
-               | "version=" ("normal(" u8 ")" | "micro(" u8 ")")
-               | ("cell=" | "bg=") name ("/" u8)?
-space          = "space" id? ("w=" length)? ("h=" length)? styles?
-media          = ("image" | "svg" | "viewer") expr id? media_property*
-media_property = accessibility_property | ("w=" | "h=") length
-               | "fit=" ("contain" | "cover" | "fill" | "none" | "scale-down" | expr)
-               | "rotate=" expr | "opacity=" expr
-               | "memory" | "color=" (color_ref | "inherit")
-               | "hover=" (color_ref | "none")
-               | "style=" name "(" expr_list? ")"
-               | "filter=" ("linear" | "nearest")
-               | "scale=" expr | "expand=" expr
-               | ("r=" | "r-tl=" | "r-tr="
-                 | "r-br=" | "r-bl=") expr
-               | "crop=(" expr "," expr "," expr "," expr ")"
-               | ("p=" | "min-scale=" | "max-scale="
-                 | "scale-step=") expr
-length         = "fill" | "fill(" u16 ")" | "shrink" | expr
-tooltip        = "tooltip" id? tooltip_property* INDENT node node
-tooltip_property
-               = "position=" ("top" | "bottom" | "left" | "right" | "cursor")
-               | "gap=" expr | "p=" expr | "delay=" expr | "snap=" expr
-               | "style=" (("transparent" | "rounded" | "bordered" | "dark"
-                 | "primary" | "secondary" | "success" | "warning" | "danger")
-                 | name "(" expr_list? ")")
-               | "bg=" background_value
-               | ("text=" | "border=" | "shadow=") color_ref
-               | ("border-w=" | "r=" | "r-tl="
-                 | "r-tr=" | "r-br=" | "r-bl="
-                 | "shadow-x=" | "shadow-y=" | "shadow-blur=") expr
-               | "px-snap=" expr
-hover_area     = "hover" id? ("tint=" name ("/" u8)?)? ("r=" number)?
-                 ("open=" expr)? INDENT node node
-mouse_area     = "mouse" id? mouse_property+ INDENT node
-mouse_property = ("press=" | "press-at=" | "release=" | "double="
-               | "right-press=" | "right-release=" | "middle-press="
-               | "middle-release=" | "enter=" | "move=" | "scroll="
-               | "exit=") route
-               | "cursor=" mouse_cursor
-resize_handle  = "resize-handle" id? "drag=" route
-                 (("press=" | "release=") route)*
-                 ("cursor=" mouse_cursor)? INDENT node
-canvas         = "canvas" id? canvas_property* INDENT canvas_item*
-canvas_property = ("w=" | "h=") length
-                | "cache=" expr | "cache-group=" name | "capture=" expr
-                | ("press=" | "release=" | "right-press=" | "right-release="
-                  | "middle-press=" | "middle-release=" | "enter=" | "move="
-                  | "scroll=" | "exit=") route
-                | "cursor=" (mouse_cursor | "(" expr ")")
-                | "cursor-outside=" expr
-canvas_item    = canvas_state | canvas_event | canvas_command
-canvas_state   = "state" INDENT state_entry+
-canvas_event   = "event" canvas_event_source "->" route
-               | "event" canvas_event_source ("as" name_list)?
-                 INDENT canvas_event_action+
-               | "capture" canvas_event_source
-               | "redraw" canvas_event_source ("after=" duration)?
-canvas_event_source
-               = "input-method" input_method_event
-               | "keyboard" ("press" | "release" | "modifiers")
-               | "mouse" mouse_event | "touch" touch_event
-               | "window" window_event
-canvas_event_action
-               = "set" name "=" expr | "emit" route | "capture"
-               | "redraw" ("after=" duration)?
-canvas_command = canvas_rect | canvas_circle | canvas_line | canvas_text
-               | canvas_path | canvas_group | canvas_if | canvas_for
-canvas_rect    = "rect" point size canvas_radius* canvas_paint+
-canvas_circle  = "circle" point "r=" expr canvas_paint+
-canvas_line    = "line" "x1=" expr "y1=" expr "x2=" expr "y2=" expr
-                 canvas_stroke
-canvas_text    = "text" expr "x=" expr "y=" expr canvas_text_property*
-canvas_text_property = ("max-w=" | "size=" | "line-h="
-                       | "line-h-px=") expr
-                     | "color=" color_ref | "font=" name
-                     | "align-x=" ("default" | "left" | "center" | "right"
-                       | "justified")
-                     | "align-y=" ("top" | "center" | "bottom")
-                     | "shape=" ("auto" | "basic" | "advanced")
-canvas_path    = "path" canvas_paint+ INDENT canvas_path_segment+
-canvas_group   = "group" canvas_transform* INDENT canvas_command*
-canvas_if      = "if" expr INDENT canvas_command*
-canvas_for     = "for" name "in" expr INDENT canvas_command*
-point          = "x=" expr "y=" expr
-size           = "w=" expr "h=" expr
-canvas_radius  = ("r=" | "r-tl=" | "r-tr="
-                 | "r-br=" | "r-bl=") expr
-canvas_paint   = "fill=" background_value | "fill-rule=" ("non-zero" | "even-odd")
-               | canvas_stroke
-canvas_stroke  = "stroke=" background_value ("stroke-w=" expr)?
-                 ("cap=" ("butt" | "square" | "round"))?
-                 ("join=" ("miter" | "round" | "bevel"))?
-                 ("dash=" "(" expr_list ")")? ("dash-offset=" expr)?
-canvas_transform = ("x=" | "y=" | "rotate=" | "scale="
-                   | "scale-x=" | "scale-y=") expr
-                 | "clip=(" expr "," expr "," expr "," expr ")"
-canvas_path_segment = "move" point | "line" point
-                    | "arc" point "r=" expr "start=" expr "end=" expr
-                    | "arc-to" "ax=" expr "ay=" expr "bx=" expr "by=" expr
-                      "r=" expr
-                    | "ellipse" point "r-x=" expr "r-y=" expr
-                      "rotate=" expr "start=" expr "end=" expr
-                    | "bezier" "ax=" expr "ay=" expr "bx=" expr "by=" expr point
-                    | "quadratic" "cx=" expr "cy=" expr point
-                    | "rect" point size
-                    | "rounded" point size canvas_radius+
-                    | "circle" point "r=" expr | "close"
-theme_boundary = "theme" id? theme_preset? theme_property* INDENT node
-theme_preset   = "default" | "app" | built_in_iced_theme | theme_call
-theme_call     = name "(" expr_list? ")"
-built_in_iced_theme
-               = "light" | "dark" | "dracula" | "nord"
-               | "solarized-light" | "solarized-dark"
-               | "gruvbox-light" | "gruvbox-dark"
-               | "catppuccin-latte" | "catppuccin-frappe"
-               | "catppuccin-macchiato" | "catppuccin-mocha"
-               | "tokyo-night" | "tokyo-night-storm" | "tokyo-night-light"
-               | "kanagawa-wave" | "kanagawa-dragon" | "kanagawa-lotus"
-               | "moonfly" | "nightfly" | "oxocarbon" | "ferra"
-theme_property = "fg=" color_ref | "bg=" background_value
-component_name = PascalName ("." PascalName)*
-component_call = component_name component_item* ("->" route)?
-                 (INDENT component_child_block)?
-component_child_block = component_route_block? component_forward_block?
-                        (node | named_slot+ | component_call+)?
-component_item = named_prop | bound_prop | name | id
-component_route_block = "events" INDENT component_route+
-component_forward_block = "forward" INDENT name+
-component_route = name "->" route
-named_prop     = name "=" expr
-bound_prop     = name "<->" name
-named_slot     = name ":" INDENT node
-slot           = "slot" name?
-extern_component_call
-               = "extern" name "(" expr_list? ")" id? ("->" route)?
-themer_view    = "themer" name "(" expr_list? ")" id? ("->" route)?
-shader_view    = "shader" name "(" expr_list? ")"
-                 id? (("w=" | "h=") length)* ("->" route)?
-if_node        = "if" expr INDENT node+
-match_node     = "match" expr INDENT match_arm+
-match_arm      = (expr | option_pattern | result_pattern | enum_pattern | "_")
-                 INDENT node+
-option_pattern = "some" "(" name ")" | "none"
-result_pattern = "ok" "(" name ")" | "err" "(" name ")"
-enum_pattern   = PascalName "." name ("(" name ")")?
-for_node       = "for" name "in" expr INDENT node+
-
-styles         = "@" utility+
-id             = static_id | "#" kebab_name "(" expr ")"
-static_id      = "#" kebab_name
-route          = name (route_arg* | "(" (route_arg ("," route_arg)*)? ")")
-route_arg      = expr | "_"
-call           = qualified_name "(" expr_list? ")"
-expr_list      = expr ("," expr)*
-name_list      = name ("," name)*
-type_list      = type ("," type)*
-color          = "#RRGGBB" | "#RRGGBBAA"
-```
-
-Plain `text` nodes support mouse drag selection across explicit and wrapped
-lines. The active selection supports the platform copy and select-all
-shortcuts; Escape clears it.
-
-Application configuration lives under the app declaration. The four iced
-callbacks accept state expressions directly:
-
-```ice
-app Tasks
-  title window_title
-  theme app_theme
-  palette active_palette
-  bg app_background
-  fg app_text
-  id "dev.ducktape.ice.tasks"
-  executor iced::executor::Default
-  renderer crate::backend::AppRenderer
-  font "assets/Inter-Regular.ttf"
-  font "assets/Inter-Bold.ttf"
-  text-size 16
-  antialiasing true
-  vsync true
-  scale ui_scale
-  window
-    icon-rgba "assets/app.rgba" 32 32
-    size 960 720
-    min-size 480 360
-    max-size 1920 1080
-    position centered
-    level normal
-    platform linux
-      app-id "dev.ducktape.ice.tasks"
-      override-redirect false
-    platform windows
-      drag-and-drop true
-      skip-taskbar false
-      undecorated-shadow true
-      corner round-small
-    platform macos
-      title-hidden false
-      titlebar-transparent true
-      fullsize-content-view true
-    platform wasm
-      target "iced"
-  window child
-    size 640 480
-    min-size 320 240
-    position centered
-
-state
-  window_title = "Ice Tasks"
-  app_theme = "app"
-  active_palette:palette[ProductTheme] = ProductTheme.light
-  app_background = "#0f172a"
-  app_text = "#f8fafc"
-  ui_scale = 1.0
-```
-
-`title`, `theme`, `palette`, `bg`, `fg`, and `scale` are recomputed
-from current state through iced's native callbacks. Title/theme/style values are
-typed `str`; scale is `f64`. Theme accepts `app`, `default`, or any of iced's 22
-kebab-case built-ins. Palette accepts only `palette[Contract]`; each declared
-palette is a compiler-generated `Contract.name` variant. Unknown names and
-values from a different contract are compile-time errors, and generated
-selection is exhaustive with no runtime fallback.
-Application colors accept 3/4/6/8 digit hexadecimal strings. Invalid dynamic
-theme/color values safely retain the generated app theme or selected theme base
-style, and a non-positive dynamic scale is clamped to `f32::EPSILON`. Literal
-mistakes are rejected during analysis.
-
-The remaining application values lower to iced `Settings` and builder
-configuration. Generated `run` delegates to one internal typed program builder;
-first-class tests use that same program contract—presets, theme, settings,
-update, view, tasks, and subscriptions—without reconstructing application
-wiring. A test `mount` substitutes one checked view root while retaining the
-same generated state/update program. Section 9 defines the complete test mode.
-`executor` is a Rust type path passed to iced's typed `Application::executor`;
-rustc reports a local generated-code error when the type is missing or does not
-implement `iced::Executor`.
-`renderer` selects the app's concrete `iced::program::Renderer` type. It
-defaults to `iced::Renderer`; generated view and extern `Element` signatures
-use the selected type, so rustc checks its renderer, compositor, text, and
-headless contracts at the generated boundary.
-Each `font` path is relative to the root `.ice` file, must name an existing
-file during `cargo ice check`, and lowers to iced's startup
-`.font(include_bytes!(...))` builder. Repeating the same path is rejected;
-different files may be loaded in declaration order.
-The unnamed `window` block configures the initial window. A named block such
-as `window child` declares a checked settings template that `task window open`
-can instantiate; names must be unique. Both forms cover every cross-platform
-`window::Settings` field:
-initial/minimum/maximum size, maximized/fullscreen state,
-default/centered/fixed position, visibility, resizability, close/minimize
-buttons, decorations, transparency, blur, level, and close-request behavior.
-Nested `platform linux`, `platform windows`, `platform macos`, and
-`platform wasm` blocks expose every field of iced's target-specific settings.
-All four may coexist in one source; generated `cfg` blocks select only the
-current compilation target. Wasm `target none` appends to the document body.
-Sizes, text size, and scale factor must be positive; minimum size cannot exceed
-maximum size. `icon-rgba` embeds a relative raw RGBA file without an image
-codec; width and height are positive integers whose product fits the native
-`u32` pixel count, and generated Rust rejects a byte length other than
-`width × height × 4`. `cargo ice check` reports a missing file or a mismatched
-length at the icon declaration — for tray icons as well as window icons, which
-are embedded by the same line under the same rule — and generated Rust repeats
-the length check at compile time. Encoded icon formats remain outside 2.0.
-
-The `tray` block declares a system status item — on macOS, an `NSStatusItem`
-in the menu bar. `icon-rgba` is required and follows the window icon
-convention exactly: a relative raw RGBA file embedded without an image codec,
-byte length checked as `width × height × 4` at both check and compile time. It
-is repeatable with a trailing `when` guard; guards are tried in declaration
-order and the first match wins, so the last line must carry no guard and is
-what the item shows when nothing else applies. Every path in one block must be
-distinct, because the path is the icon's identity in `expect tray icon`. The
-icon is the only part of a status item visible without a click and the only
-part that exists on every platform, so it is the channel a program uses to say
-something is wrong. `icon-template true` marks every icon as a macOS template
-image (black plus alpha, recolored by the system for light and dark menu bars;
-ignored elsewhere).
-
-`label`, `tooltip`, every `menu` row and every `when` guard are expressions
-with app-`title` semantics: re-evaluated after every update, applied natively
-only when the value changed. There is a second rule beside that one: an
-expression that is a string literal is applied once at startup and never
-re-evaluated, because a constant cannot become stale — and a `tray` whose
-strings are all literals and whose icons are all unguarded generates no
-re-evaluation at all.
-
-`menu` declares the item's native menu and needs at least one row. Each row is
-a `str` expression; `separator` draws a divider. A row with `-> route` is a
-command that calls a zero-parameter handler when chosen, through the same path
-a `subscribe` source uses. A row without one is created disabled, which is how
-the platform draws a figure you read rather than press. The menu is the
-platform's own surface: it opens, positions itself on the right display and
-dismisses itself.
-
-A row that carries an indented block is a submenu, to any depth. It is a third
-thing beside a command and a stat: the platform opens it rather than delivering
-it, so it is drawn enabled without being choosable, and it cannot name a route
-— a handler there could never be reached. Its title is a row expression like
-every other, re-evaluated and diffed the same way, and the rows it owns are
-ordinary rows: routed ones are commands, unrouted ones are stats, and
-`separator` divides them.
-
-A menu is one flat declaration-ordered table however deep it is drawn. A
-submenu is a row that says how many of the rows after it are its own, rather
-than a row that contains them, which is why the row index means the same thing
-at every depth — it is the checked-expression id, the snapshot slot, the native
-item and the row-to-handler entry all at once, and nesting the storage would
-have made four places agree on a tree walk instead of on a number.
-
-A row may carry a trailing `when` guard, a `bool` expression re-evaluated and
-diffed like its text. While the guard is false the row is not in the menu: the
-native item is removed, not disabled, so a reader sees neither a grey stat nor
-a dead command, and a submenu row takes the rows it owns with it. When the
-guard holds again the item is put back at its place among the siblings that
-are showing. `separator` takes no guard — a divider has nothing to hide; guard
-the rows it separates. `expect tray item`, `expect tray command` and
-`tray choose` see only rows that are present: a hidden row fails them as a
-missing one, and the failure names the guard.
-
-The row set is fixed when the program compiles; only the text changes, and
-whether a declared row is present. A guard chooses among declared rows, it
-does not generate one, which is what keeps the diff above the platform seam
-whole: the platform hears one removal or one insertion when a guard flips, and
-nothing while it holds. There is deliberately no way to generate rows from a
-list. Rows whose number varies
-would make every update rebuild the native menu, since the platform has no
-cheap reordering, and that is the whole of what the diff above the platform
-seam buys. A figure about a collection is composed by a `pure` extern into the
-rows a menu declares, the way a price already is.
-
-The menu is the only surface a status item raises. A tray declares no window
-for it, so `tray` works identically under `app` and `daemon`, and a program
-with a tray carries no tray state and no tray message variants of its own. A
-tray also installs no event source a program did not declare: with no routed
-row there is no subscription at all. Only the left click is wired; right and
-middle clicks are ignored.
-
-What that is worth is narrower than "simpler", and the honest measure is that
-one number. Everything else grew — the grammar, the checker, the generator and
-the runtime are all larger than the popover window they replaced. The trade is
-more compiler for less program.
-
-`expect tray label`, `expect tray icon`, `expect tray item` and
-`expect no tray item` assert what the program last decided the item should
-show. They read the runtime's record, which every platform keeps whether or
-not it has a status item, so the same assertion runs and means the same thing
-where the tray is native and where it is a no-op. `label` and `item` match by
-substring, unlike `expect text`, which matches a drawn run exactly: a row is
-one composed string rather than a tree of runs, so the assertion names the
-fragment that carries the meaning. `expect tray item` matching by text rather
-than by index is what makes reordering rows harmless and deleting one fatal.
-`icon` matches the declared path exactly.
-
-`expect tray command` and `expect no tray command` assert the distinction the
-menu is built on: the row carrying that text is a command the reader chooses,
-or a stat the platform draws disabled. Both fail when no row carries the text
-at all, because a `no tray command` that passed on a misspelling would record
-nothing.
-
-`tray choose` picks the command row carrying that text and runs it, the way
-the platform reports one: by row, through the generated row-to-handler table
-the live subscription maps a chosen row through. It fails on a row that is not
-there, on a stat, which is exactly what macOS refuses to let anyone press, and
-on a submenu, which macOS opens instead.
-
-A row inside a submenu is named by its text like any other, with no path to
-spell: the table is flat, so depth is not part of a row's address. What depth
-does change is how easily two rows share a word — grouping is what puts a
-`Close` under each of two coins — so a text carried by more than one row fails
-`tray choose` and `expect tray command` naming every row it matched, rather
-than silently taking the first. Running the wrong handler while the test passed
-is the failure the row-to-handler table exists to stop, and it would return
-through this door otherwise. `expect tray item` still matches any row, because
-whether a text is shown is a question two rows have the same answer to and
-whether "the" row is choosable is not.
-It is the only step that covers a menu row end to end, so a row index that
-drifts in code generation fails a test instead of going quietly dead in the
-menu bar.
-
-Platform mapping: macOS is fully implemented. On every other target the same
-program compiles and runs with the tray as a runtime no-op; the native tray on
-Windows has no label text, so `label` is a macOS surface by nature. Every icon
-the runtime installs carries the template flag, not only the first: a swap that
-dropped it would leave a menu bar that recolored correctly until the first
-guard fired and wrong from then on. What a Mac must still show, and what no
-other machine can check: that a left click raises the menu, that a stat row
-reads as a legible disabled figure rather than something broken, and that the
-template icons read on both a light and a dark menu bar — before and after a
-guard has swapped one.
-
-Setting `ICE_TRAY_DEBUG` traces the native boundary — status item creation,
-each platform event, and whether the chosen row reached the subscription —
-because a status item that does nothing looks the same whether the platform
-never delivered the event or the bridge dropped it.
-
-Use `daemon Name` instead of `app Name` for an iced daemon that starts without
-an initial window and remains alive after all windows close. A daemon rejects
-the unnamed `window` block; declare named window templates and open them from
-`on mount` or another handler. The read-only `window:window-id` binding names
-the window currently being rendered and is available to the root view, title,
-theme, and scale expressions. Pure components receive it explicitly as
-a typed prop. Standalone `exit` is a native `iced::exit()` task and must be the
-final statement in a handler (or a task-group member):
-
-```ice
-daemon BackgroundAgent
-  title daemon_title(window)
-  window dashboard
-
-on mount
-  task window open dashboard -> opened _
-
-on quit
-  exit
-
-view
-  AgentWindow id=window
-```
-
-Application boot presets are structured top-level declarations:
-
-```ice
-preset pristine
-
-preset seeded
-  state
-    draft = "Preset task"
-    loading = true
-  boot
-    run every list_tasks() -> loaded _ | failed _
-```
-
-Each preset starts from declared state and internal widget layout state without
-running `on mount`. The optional `state` section applies checked assignments in
-order. The optional `boot` section accepts the same checked statements, task
-composition, and routes as a handler. With no task it returns `Task::none`.
-Generated code passes each strategy to iced `Preset::new`; an empty preset is a
-side-effect-free default-state fixture.
-
-Media fixed lengths, opacity, scale, and radius are `f64`. `fit=` accepts its
-compact contain/cover/fill/none/scale-down names or a first-class `content-fit`
-expression. `rotate=` requires a first-class `rotation` expression. Opacity is
-`0.0..=1.0`, scale is positive, and
-sizes/radius are non-negative. `filter`, `scale`, `expand`, `radius`, and `crop` are image-only.
-Crop is `(x, y, width, height)` in non-negative `i64` source-pixel coordinates.
-`memory`, `color`, and `hover` are SVG-only. `memory` accepts UTF-8 SVG text or
-raw `bytes`; `color` filters both statuses and `hover` overrides the
-hovered status with a checked theme color or `none`.
-`color=inherit` is reserved: the svg draws with the enclosing BUTTON's
-status-resolved text color — the same inherited ink a color-less text child
-reads — so its hover ink keys on the button's bounds and its disabled ink on
-the button's status, including the button's `disabled` pass. It requires the
-svg to be button content in the same view body (component calls, slot fills,
-and lazy children are outside that body), and it excludes `hover=` and
-`style=`, which would be a second owner of the same ink.
-Core `image` accepts checked `label=` and `description=` text. A labeled image
-is an AccessKit `Image`; an unlabeled image is decorative, and a description
-without a label is rejected.
-`viewer` wraps an image path or handle in iced's stateful zoom/pan widget. It
-accepts width, height, fit, filter, non-negative padding, positive minimum and
-maximum scales, and a positive scale step; the minimum cannot exceed the
-maximum. Dynamic numeric values are bounded to their documented finite ranges,
-and dynamic viewer scale bounds are ordered before reaching iced's pan/zoom
-clamp. The widget owns gesture state in iced's tree, so no app state or event
-handler is needed:
-
-```ice
-viewer memory_image w=fill h=240.0 fit=contain filter=nearest p=8.0 min-scale=0.5 max-scale=8.0 scale-step=0.1
-```
-Every `length` position accepts fixed `f64`, `fill`, `fill(N)` portions with a
-decimal `u16`, `shrink`, or a checked first-class `length` expression;
-out-of-range compact portions fail during parsing. Grid width and the short
-axis of a horizontal/vertical slider remain fixed pixels because those iced
-builders accept `Pixels`, not `Length`.
-`rule` exposes all four iced fill modes. Percent is checked in `0.0..=100.0`;
-padding is `u16`. Its default/weak preset can be overridden by a checked theme
-color token (including `/0..100` opacity), uniform or per-corner non-negative
-radius, and bool pixel snapping.
-`qr` takes its payload as its first expression: a `str` or `bytes` value, most
-often a literal but equally a state field holding a link minted at runtime.
-Normal versions are `1..=40`, micro versions are `1..=4`, and omitted correction
-uses iced's medium default. A QR view accepts one of `cell-size=` or `size=`
-plus checked cell/background colors. A literal payload is encoded during
-checking, so one that cannot fit the requested version and correction fails the
-build; a payload that is only known at runtime cannot be, and the widget draws
-nothing when its matrix does not fit. The matrix is built where the widget is
-rendered rather than once at startup, because the payload is an expression and a
-matrix cached in application state would outlive its own input.
-Tooltip gap/padding are non-negative `f64`, delay is non-negative `i64`
-milliseconds, and snap is bool.
-
-The consuming Rust crate must enable iced's `image-without-codecs` or `image`
-feature for `image` and `svg` for `svg`. Raster
-decoder features remain a Cargo choice; the reference app enables only the PNM
-decoder used by its tiny checked-in sample.
-
-Mouse routes do not carry a payload. `cursor=` accepts the iced interaction
-names in kebab case: `none`, `hidden`, `idle`, `context-menu`, `help`,
-`pointer`, `progress`, `wait`, `cell`, `crosshair`, `text`, `alias`, `copy`,
-`move`, `no-drop`, `not-allowed`, `grab`, `grabbing`, `resize-horizontal`,
-`resize-vertical`, `resize-diagonal-up`, `resize-diagonal-down`,
-`resize-column`, `resize-row`, `all-scroll`, `zoom-in`, and `zoom-out`.
-
-`hover` is the DRAW-TIME hover container: exactly two children — the base,
-then a reveal drawn (and interactive) only while the cursor is over the
-widget — with `tint=` painted under both while hovered. No application state
-is involved: hovering dispatches no messages and rebuilds nothing, so a
-cached `lazy` row keeps a hover toolbar at native latency. Prefer it over
-`mouse enter=`/`exit=` routes whenever the hover only changes what is DRAWN;
-the routes remain for hover state the application itself must know.
-
-`open=` (a `bool`) holds the reveal up whatever the cursor is doing. Pass it
-whenever a control INSIDE the reveal opens something that outlives the hover
-— a menu, a picker, a confirm — using that thing's own openness. Without it
-the trigger disappears the moment the pointer moves and the popover is left
-floating over nothing, pointing at a button that is no longer there.
-
-The mouse `move=` route is the exception and receives `(x:f64, y:f64)` in
-local widget coordinates. `press-at=` receives the same `(x:f64, y:f64)` local
-position once per left press — and, unlike every other mouse route, fires even
-when a child widget captured the press, so a click on a nested button still
-reports where it landed. Prefer it over streaming `move=` into state when the
-position is only read at interaction time: `move=` republishes on every cursor
-pixel and rebuilds the view each time. `scroll=` receives
-`(x:f64, y:f64, pixels:bool)`; `pixels=false` identifies iced line units. Bare
-handler names receive these payloads automatically.
-
-`scroll` accepts every native direction, all four iced length variants, visible
-or hidden scrollbars, scrollbar dimensions/spacing, axis anchors, and bool
-auto-scroll. Its `scroll=` handler receives absolute x/y followed by relative
-x/y as four f64 payloads. `viewport=` is the complete alternative and receives
-14 f64 values in this order: absolute x/y, reversed absolute x/y, relative x/y,
-viewport x/y/width/height, then content x/y/width/height. The two routes are
-mutually exclusive. Bare handler names receive every payload automatically.
-
-`style=task_scroll(loading)` may call a declared `scroll-style`. Its Rust
-function receives `&iced::Theme`, the current `scrollable::Status`, then its
-owned arguments and returns `scrollable::Style`.
-
-Optional `active`, `hovered`, and `dragged` lines expose every concrete
-scrollable Style field: its container, both rails and scrollers, corner gap,
-and auto-scroll overlay. Bool selectors match iced's horizontal/vertical
-hovered, dragged, and disabled status fields. Omitted selectors are wildcards;
-the `active` line applies first as the shared base, then matching hovered or
-dragged lines apply in source order after the typed callback:
-
-```ice
-scroll dir=both viewport=viewport_changed style=task_scroll(loading)
-  col
-    text "Scrollable"
-  active
-    box bg=bg
-    x-scroller bg=primary
-    y-scroller bg=primary
-    auto bg=surface icon=fg
-  hovered x-hovered=true
-    x-scroller bg=fg
-  dragged y-dragged=true
-    y-scroller bg=danger
-```
-
-`text` accepts str, i64, and f64 values plus typed width/height, positive size,
-relative `line-h=` or absolute `line-h-px=`, horizontal and vertical
-alignment, shaping, wrapping, and declared or built-in fonts.
-`font=mono @font-semibold` preserves both choices. Weight utilities select
-exact iced weights: `font-medium` is 500, `font-semibold` is 600, and
-`font-bold` is 700.
-
-`tracking=` is letter spacing in pixels, as a non-negative number literal — not
-an expression, because it decides how the text is lowered. iced carries no
-letter spacing (`iced::advanced::text` has no such field), so a tracked text
-becomes one text widget per grapheme cluster inside a row whose spacing is the
-tracking, and the properties that describe the run as a whole — `w=`, `h=`,
-`align-x=`, `align-y=` — move to a container around that row. Absent tracking,
-and `tracking=0.0`, emit exactly the untracked single-widget text.
-
-That lowering discards shaping and kerning between graphemes, so `tracking=` is
-only correct for short uppercase latin runs — the design-system convention it
-exists for. The checker rejects what it can prove is broken by it: a non-ASCII
-string literal is `E175`. It cannot prove anything about a runtime value, which
-stays the author's contract; splitting is by grapheme cluster rather than by
-`char` so a combining mark or emoji sequence is at least never torn apart. The
-run also has no line, so `wrap=` and `align-x=justified` are `E174`, as is
-`style=`, whose closure a tracked text would have to repeat per grapheme —
-color a tracked label with a `@text-*` utility instead. Unlike CSS
-`letter-spacing`, tracking adds no trailing space after the last grapheme. A
-tracked run is not mouse-selectable because it is a row rather than the single
-text paragraph required by the selection widget; its accessibility value is
-still the complete unsplit text.
-
-`underline`/`strike` draw a rule through the text, bare for `true` or with a
-bool expression. iced's plain `Text` cannot draw a rule, so a ruled text
-renders as a one-span paragraph (`rich_text` with a single span) carrying the
-same options; like a tracked run it is not mouse-selectable, and its
-accessibility value is still the complete text. The two options a paragraph
-cannot express are rejected: `tracking=` with a rule and `shape=` with a rule
-are both `E174`.
-
-`input` binds either `str` state or a declared `secret`, and additionally supports a checked
-`str` placeholder (`hint="Find"`, `hint=t(locale, "Find")`, or a state field), checked
-`label=`/`description=` accessibility text, bool secure mode, submit routes,
-str-payload change/paste routes, typed width/padding/text size, relative line height,
-horizontal alignment, complete font descriptors, and a complete text-input
-icon. Its five optional status lines expose every concrete iced text-input Style
-field. Without `change=`, typing writes the bound state directly. With
-`change=handler _`, the handler receives the new text and owns that assignment,
-which lets one state transition also launch validation or autosave. A disabled
-input suppresses typing, submit, paste, and accessibility focus together. The
-canonical icon form is the `icon` child block shown below. Removed inline
-`icon=`, `icon-font=`, `icon-size=`, `icon-gap=`, and `icon-side=` spellings are
-errors; there is no compatibility alias.
-
-```ice
-input "Search" #query <-> query hint="Find anything" font=ui
-  active bg=surface border=border icon=primary placeholder=muted value=fg selection=primary
-  focused-hovered bg=surface border=primary border-w=2.0 r=8.0
-  disabled bg=bg border=border value=muted
-  icon code="⌕" font=ui size=14.0 gap=6.0 side=left
-```
-
-`style=form_input(disabled)` may call a declared `input-style`. Its Rust
-function receives `&iced::Theme`, the current `text_input::Status`, then its
-owned arguments and returns `text_input::Style`. Checked utilities apply next,
-and status lines are the final overrides.
-
-A `secret <name>` declaration creates a runtime-held text buffer instead of
-application state. Nothing constructs it, clones it, or serializes it: it is a
-field on the generated application struct that no Ice name reaches except the
-declared one, so a `preset` cannot set it, a capture manifest cannot record it,
-and a first-class test has no typed state field to read. Its buffer is
-`zeroize`-backed and wiped when it is replaced, cleared, or dropped.
-
-Ice may do exactly four things with a secret name, and the type system refuses
-everything else with `E101` naming `secret` as the type it got:
-
-- bind one `input` to it with `<-> name`, which makes that input permanently
-  masked and gives it the `PasswordInput` role;
-- ask `empty(name)` or `len(name)` — the two facts the mask already shows,
-  because it draws one bullet per character;
-- clear it with `name = ""`, the only assignment it accepts (`E140`);
-- pass it to an extern function parameter declared `secret`, which arrives in
-  Rust as a `ui_lang_runtime::Secret`: not `Clone`, `Debug`-redacted, readable
-  once through `expose`, and wiped when the receiving function returns.
-
-`secret` is legal only as an extern function parameter type. As state, an
-extern struct field, an enum payload, a component input, an extern return or
-error type it is `E103`, because each of those is a place a reading could be
-kept.
-
-A secret input refuses `change=` and `paste=` with `E139`, because both routes
-hand the typed text to a handler, and refuses `secure=` for the same code,
-because there is nothing left for it to decide. `submit=` is accepted; it
-carries no payload. There is no reveal affordance, and adding one is not a
-matter of a missing property: a reveal is a second path out of the buffer, and
-"the content leaves only into a `secret` parameter" stops being a property of
-the language the moment there is one exception to it. A recovery phrase, the
-case this exists for, is also the case where reveal is the wrong convention.
-
-One declared name is one buffer. Binding it from an `input` under `for`,
-`keyed`, or a repeated component therefore gives every row the same buffer —
-a consequence of the declaration being a name rather than a widget, not a
-defect to work around by declaring more.
-
-The typed text does cross one iced `Message` on its way in, because
-`text_input` hands back an owned `String` and there is no narrower signature to
-receive it; `update` moves it into the buffer and drops it there. What the
-feature removes is the *stored* copy, which is the one a preset, a snapshot, a
-test, and the accessibility tree could otherwise reach.
-
-`button` accepts either its compact string label or exactly one arbitrary child
-node. The compact string is its default accessible name; child content requires
-an explicit checked `label=`, and either form may add `description=`. It also
-supports typed width/height, non-negative padding, bool clipping, disabled
-routes, all eight iced presets, and checked style utilities. Text size,
-line-height, family, and weight utilities style the generated text of a compact
-string label. Arbitrary child content owns its own typography, so those button
-utilities do not cascade into child nodes. Optional `active`,
-`hovered`, `pressed`, and `disabled` child lines override every concrete button
-style field with solid/linear backgrounds, text, per-corner border, shadow, and
-pixel snapping. A structured content node may appear beside these status lines.
-
-`style=action_button(loading)` may instead call a declared `button-style`.
-Its Rust function receives `&iced::Theme`, the current `button::Status`, then
-its declared owned arguments and returns `button::Style`. Ice installs it as
-the native runtime style callback; utilities and status lines still override
-that returned base style.
-
-`checkbox` and `toggler` share typed control size/width/spacing, text size and
-relative line height, shaping, wrapping, and default/mono font properties.
-Togglers add full text alignment. Checkboxes use their visible label as the
-default accessible name and accept checked `label=` and `description=`
-overrides. They also add a single-character icon with size, relative line
-height, and shaping. A checkbox may start from any of iced's primary,
-secondary, success, or danger presets and override each checked and unchecked
-form of its active, hovered, and disabled statuses independently:
-
-```ice
-checkbox "Complete" checked=done style=success -> changed _
-  active checked bg=linear(1.57, primary@0.0, surface@1.0) icon=fg text=fg border=primary border-w=1.0 r=4.0
-  active unchecked bg=surface icon=primary border=border
-  hovered checked bg=primary icon=fg border=fg
-  hovered unchecked bg=bg icon=primary border=primary
-  disabled checked bg=surface icon=muted text=muted border=border
-  disabled unchecked bg=bg icon=muted text=muted border=border
-```
-
-`style=task_checkbox(loading)` may instead call a declared `checkbox-style`.
-Its Rust function receives `&iced::Theme`, the current `checkbox::Status`, then
-its declared owned arguments and returns `checkbox::Style`. Status lines still
-override the returned base style.
-
-Each status starts from the selected preset, applies its matching `active
-checked|unchecked` line, then applies the more-specific hovered or disabled
-line. Listed solid/linear background, icon/text color, border color, width, and
-uniform/per-corner radius fields override that base. Metrics are checked
-non-negative f64 expressions.
-
-A toggler uses the same six checked-aware status selectors and the same active
-checked/unchecked base cascade. Each line may override every concrete field:
-
-```ice
-toggler "Notifications" checked=enabled -> changed _
-  active checked bg=linear(1.57, primary@0.0, surface@1.0) bg-border=primary bg-border-w=1.0 fg=fg fg-border=border fg-border-w=1.0 text=fg r=8.0 p-ratio=0.125
-  active unchecked bg=surface fg=fg text=muted
-  hovered checked bg=primary fg=fg text=fg
-  hovered unchecked bg=bg fg=primary text=fg
-  disabled checked bg=surface fg=muted text=muted
-  disabled unchecked bg=bg fg=muted text=muted
-```
-
-Background and foreground accept checked solid or linear values. Both borders,
-optional uniform/per-corner radius, and text color map directly to
-`toggler::Style`; widths and radii are non-negative, while `p-ratio=` is
-checked in `0.0..=0.5` to keep the foreground dimensions non-negative.
-`style=notification_toggler(loading)` may call a declared `toggler-style` whose
-Rust function receives `&iced::Theme`, `toggler::Status`, then its owned
-arguments and returns `toggler::Style`. Status lines override that base.
-
-`slider` accepts `f64` or one extern named numeric type consistently across its
-value, range, step, optional default, and optional shift step. The route carries
-that exact type. `f64` steps are statically positive and literal defaults stay
-inside literal ranges. A generic slider supplies an explicit same-type step;
-generated Rust verifies iced's native `Copy`, `From<u8>`, `PartialOrd`,
-`Into<f64>`, and `FromPrimitive` bounds. A zero-field extern declaration can
-name a Rust numeric alias without exposing fake fields:
-
-```ice
-extern crate::backend
-  SliderNumber()
-  pure slider_number(value:f64) -> SliderNumber
-
-state
-  precise:SliderNumber = slider_number(50.0)
-
-on precise_changed(next)
-  precise = next
-
-view
-  slider precise min=slider_number(0.0) max=slider_number(100.0) step=slider_number(0.5) -> precise_changed _
-```
-
-The optional default handles command/control-click reset and an optional release
-route reports interaction completion. Horizontal
-sliders accept any length for width and fixed height; vertical sliders accept
-fixed width and any length for height. For `f64`, literal reversed ranges and
-invalid defaults are rejected before code generation; fluid cross-axis sizes
-are rejected for every slider type.
-
-A slider may own one nested `active`, `hovered`, and `dragged` style block.
-`style=volume_slider(loading)` may call a declared `slider-style` whose Rust
-function receives `&iced::Theme`, `slider::Status`, then its owned arguments
-and returns `slider::Style`. Every status starts from that callback result, or
-iced's default style, applies the `active` block, then its hovered or dragged
-delta. Blocks override any listed rail backgrounds/width/border/radius or
-handle shape/background/border.
-Rail and handle backgrounds accept checked solid or linear values; borders stay
-checked theme colors. Rectangle widths are `u16`; every other metric is a
-non-negative f64. Handle corner radii require a rectangle handle in the same
-status block.
-
-`progress` supports all iced length variants for its main `length` and cross-axis
-`girth`, horizontal or vertical direction, and primary/secondary/success/warning/
-danger presets. Checked solid or linear backgrounds can override the track and
-filled bar; a checked theme color overrides the border. Border width and
-uniform/per-corner radii are non-negative f64 values.
-Literal reversed ranges are rejected before generation; dynamic ranges are
-converted to finite `f32`, ordered, and used to bound the current value before
-the native constructor.
-
-A declared progress style call may replace the preset while keeping those
-field overrides:
-
-```ice
-extern crate::backend
-  progress-style loading_progress(active:bool)
-
-progress amount style=loading_progress(loading) bar=primary
-```
-
-Its Rust function receives the current `&iced::Theme` before its declared
-owned arguments and returns `iced::widget::progress_bar::Style`. Ice installs
-it as the native runtime style callback, which is also the default Theme's
-advanced class representation.
-
-`radio` accepts bool, i64, f64, str, or extern values and sends that typed value
-to its route. `selected=` remains an explicit bool expression, so groups can use
-any selection model without requiring a second optional state. The backend uses
-a private bool as iced's `Eq + Copy` radio identity and puts the original owned
-Ice value in the generated message; string and extern values therefore keep the
-same click semantics without pretending they are Rust `Copy` types.
-
-Size, every width `Length`, spacing, text size, relative line height, shaping,
-wrapping, and complete font descriptors map to the corresponding radio setters.
-Four optional `active|hovered × selected|unselected` child lines override every
-concrete field. Hovered styles inherit the matching active selected/unselected
-base:
-
-```ice
-radio "Summary" value="summary" selected=(mode == "summary") size=18.0 w=fill font=ui -> mode_changed _
-  active selected bg=linear(1.57, primary@0.0, surface@1.0) dot=fg border=primary border-w=2.0 text=fg
-  active unselected bg=surface dot=primary border=border text=muted
-  hovered selected bg=primary dot=fg border=fg text=fg
-  hovered unselected bg=bg dot=primary border=primary text=fg
-```
-
-Background accepts checked solid or linear values; dot, border, and text are
-checked colors, and border width is a non-negative f64 expression.
-`style=view_radio(loading)` may call a declared `radio-style` whose Rust
-function receives `&iced::Theme`, `radio::Status`, then its owned arguments and
-returns `radio::Style`. Status lines override that returned base.
-
-`tooltip` styles start from transparent, rounded, bordered, dark, primary,
-secondary, success, warning, or danger iced container presets. A checked solid
-or linear background plus theme colors can override the preset's background,
-text, border, and shadow. Border width, shadow
-blur, and uniform/per-corner radii are non-negative f64 values; shadow x/y may
-be negative. `px-snap=` controls the box style's pixel-grid snap and is
-separate from the tooltip overlay's viewport `snap=` behavior.
-
-`box border-dash=(on, off, ...)` draws the border as a dash pattern in pixels.
-`iced::Border` is colour, width and radius only, so a dashed border cannot be
-part of the surface quad: the dash lowers to a canvas stroke layered over the
-box, using the same `border=` colour, `border-w=` width and uniform or
-per-corner radius the solid border would have used. It replaces that solid
-border rather than adding to it, and it changes no layout — the box is the base
-layer of the stack it is drawn in, so the stack measures exactly the box. The
-stroke is inset by half the border width and its corners are tightened by the
-same inset, the way a CSS inner border is. Segments are non-negative `f64`, at
-least one must be positive, and an odd sequence repeats once to form complete
-on/off pairs on every renderer. A dynamically computed all-zero pattern draws
-nothing. The colour has to be named by `border=` (`E176`), because that is the
-colour the stroke draws. A box without `border-dash=` emits byte-identical code
-to one that never knew about dashes. A declared
-`box-style` call may replace the preset because iced uses the same
-`container::Style` callback for tooltip surfaces; concrete tooltip properties
-override the callback result.
-
-`pick` requires a homogeneous `[T]` options expression and a matching optional
-`T?` selection. Its main route carries `T`; `open=` and `close=` routes carry no
-payload. Pick values may be bool, i64, f64, str, or an extern type. Fixed
-width/menu height, padding, text size, relative line height, complete font
-descriptors, and shaping map directly to iced's setters. All concrete field
-styles are structured children: `active`, `hovered`, `opened`, and
-`opened-hovered` cover the field statuses, while `menu` covers its overlay.
-Every field status starts from iced's status default and the `active` base;
-`opened-hovered` additionally inherits `opened`. Lines accept checked
-solid/linear backgrounds, colors, border/per-corner radius, and menu shadow fields.
-`style=view_picker(loading)` and `menu-style=view_menu(loading)` may instead
-start from declared native callbacks; the structured status and menu fields
-remain final overrides.
-
-```ice
-pick modes mode hint="Choose" font=ui shape=advanced style=view_picker(loading) menu-style=view_menu(loading) -> changed _
-  active text=fg placeholder=muted handle=primary bg=surface border=border r=6.0
-  opened-hovered text=fg bg=bg border=primary
-  menu text=fg selected-text=fg selected-bg=primary bg=surface shadow=black/50 shadow-y=4.0
-  handle dynamic
-    closed code="⌄" font=ui size=12.0
-    open code="⌃" font=ui size=12.0 shape=advanced
-```
-
-Handles support iced's arrow with optional size, one static icon, distinct
-closed/open dynamic icons, or no handle. Icon code points contain exactly one
-Unicode scalar; icon size and relative line height are non-negative `f64`.
-
-`combo` requires a `combo[T]` search state, a matching `T?` selection, and a
-`str` search placeholder expression. Its main and `hover=` routes carry `T`;
-`input=` carries str; `open=` and `close=` carry no payload. A bare input/hover
-handler name receives the payload automatically. Width/menu height, padding,
-text size, relative line height, shaping, and complete fonts map to every
-native builder setter. A structured `icon` line covers the complete text-input
-icon: one Unicode scalar, font, size, spacing, and side.
-
-The five `active`, `hovered`, `focused`, `focused-hovered`, and `disabled`
-lines expose every concrete input Style field. Every status inherits `active`,
-and `focused-hovered` additionally inherits `focused`. The shared `menu` line
-exposes every menu overlay Style field:
-`style=form_input(loading)` reuses the native `input-style` ABI, and
-`menu-style=view_menu(loading)` reuses the same menu callback as `pick`.
-Structured lines override both callback results.
-
-```ice
-combo modes mode "Search views" font=ui shape=advanced style=form_input(loading) menu-style=view_menu(loading) -> changed _
-  active bg=surface border=border icon=primary placeholder=muted value=fg selection=primary
-  focused-hovered bg=bg border=primary border-w=2.0 r=6.0
-  menu text=fg selected-text=fg selected-bg=primary bg=surface shadow=black/50
-  icon code="⌕" font=ui size=14.0 gap=6.0 side=right
-```
-
-Assigning a matching `[T]` to `combo[T]` state replaces its searchable options
-with a freshly indexed native `combo_box::State<T>`. `combo modes push value`
-calls native `State::push` to incrementally add one matching option and rebuild
-its search index. Mismatched lists or pushed values fail before Rust generation.
-
-`float` applies positive scale and x/y translation to one child. Its x/y
-expressions can use the scoped `f64` names `original_x`, `original_y`,
-`original_width`, `original_height`, `viewport_x`, `viewport_y`,
-`viewport_width`, and `viewport_height` from iced's translation callback:
-
-```ice
-float scale=1.02 x=(viewport_width - original_width) y=-1.0 shadow=black/50 shadow-y=2.0 shadow-blur=4.0 r=4.0
-  text "Floating label"
-```
-
-The shadow color, offset, blur, and uniform/per-corner radius properties cover
-every concrete `float::Style` field. The scoped geometry names exist only in
-`x=` and `y=`; style expressions and the child use the surrounding scope.
-`pin` places one child at x/y coordinates inside optional typed width/height
-bounds; x/y is the direct decomposition of iced's `position(Point)` helper.
-`sensor` observes one child: show/resize handlers receive `(width:f64,
-height:f64)`, while hide has no payload; anticipation is non-negative f64 and
-delay is non-negative i64 milliseconds. `key=` owns a comparable Ice value and
-provides the same continuity behavior as iced's borrowed `key_ref` form.
-`responsive size=(width, height)` binds the current iced `Size` as two scoped
-`f64` names and accepts one arbitrary child tree, so conditions and component
-inputs can depend on either dimension. A two-way size choice is one container
-holding two complementary `if`s on the bound width — Ice has no `else` — as in
-`examples/showcase/src/ui/app.ice`, whose `col` wraps `if feature_width < 900.0`
-and `if feature_width >= 900.0`. The child tree is built in layout, where the
-size is known, once per pass: a relayout inside the same frame — a scroll or a
-keystroke that invalidates layout — reuses the subtree that pass already built
-for its size, and only a new size builds it again.
-
-`theme` applies an iced theme to exactly one child subtree. With no preset or
-`default`, iced chooses the default theme for the outer light/dark mode; `app`
-reuses the app's generated custom palette. Every iced built-in theme is accepted
-in kebab case, such as `dark`, `catppuccin-mocha`, or `tokyo-night-storm`.
-Checked `fg=` and solid or linear `bg=` values override the subtree
-defaults.
-
-`stack` accepts every iced `Length` for width and height. Its first rendered
-child normally determines intrinsic size. `under=N` places the first N rendered
-children beneath that base without letting them determine intrinsic size,
-matching iced's `push_under`; values larger than the rendered child count simply
-leave the stack without an intrinsic base layer.
-
-`row` and `col` accept typed spacing, every iced `Length` for width/height,
-cross-axis `start`/`center`/`end` alignment, and clipping. Columns additionally
-accept `max-w=`. Padding can be uniform, axis-specific, or per-side; the
-more specific value wins regardless of property order. Bare `wrap` switches to
-iced's wrapping layout. `wrap-gap=` controls spacing between wrapped rows or
-columns and `wrap-align=` controls their main-axis placement; both require
-`wrap`. Non-wrapping rows and columns bound child fill factors so iced's native
-`u16` sum cannot overflow.
-
-`flex` uses Ice's native flexbox runtime. It supports `dir`, `flow`, `wrap`,
-`justify`, `items`, `content`, axis-specific gaps, sizing, padding, and
-clipping. A direct `box` child can set `order`, `grow`, `shrink`, `basis`,
-`self`, and uniform/axis/per-side `m` margins, including `auto` and
-`percent(N)`. `flex=none|auto|initial|grow[,shrink[,basis]]` is the compact
-item form.
-
-`keyed item in items by=key` is iced's identity-preserving column. `items` must
-be a list, `key` is checked in the item scope and must be bool, i64, or f64,
-and the indented node is the single repeated child template. Each child also
-receives an automatic `key(...)` identity scope. Keyed columns accept every
-native keyed-column setter: spacing, uniform/axis/per-side padding, every
-`Length` for width and height, max width, and cross-axis alignment. Repeated
-child fill factors are bounded against the rendered item count so the native
-`u16` sum cannot overflow.
-
-A keyed column also takes `virtual-row=`, described below. The key is what
-makes that combination the useful one: virtualization needs per-row state to
-survive the list changing under it, and the key is already the answer to whose
-state is whose. A key is `bool`, `i64`, or `f64`, so identity there is the
-key's 64-bit image rather than `PartialEq` — a row keyed `NaN` keeps its state
-instead of being a new row every pass, and `-0.0` is its own row.
-
-`lazy dependency as cached` rebuilds its one child subtree only when its memo
-key changes. The key depends on where the dependency reads from. A dependency
-rooted in state — an app or component state field, read directly, through a
-`derived` value, or through a component prop every call feeds from state — is
-keyed by the *revisions* of the state fields it reads: the memo tuple holds
-those counters, and the value itself is built inside the memo on a miss, so an
-unchanged frame clones and hashes no state at all, a write to any other field
-rebuilds nothing, and a write that stores an equal value (see section 6)
-rebuilds nothing either. A dependency that reads a row-local binding — the
-item of an enclosing `for` or keyed column, a match payload, a table row — is
-instead evaluated every pass, cloned into the tuple, and hashed, because a
-row's identity is the row, not the list it came from; that is the form a
-`lazy` inside a `for` over the loop item takes. The subtree also survives
-unmounting: when a `match` arm switch or a trimmed list tears the mount down,
-the built widget state is parked, and a later remount with an unchanged key
-rehydrates it instead of rebuilding and re-shaping — a screen switch pays only
-for content that actually changed. The dependency may be bool, i64, str, an
-extern type implementing Rust `Hash + Clone`, or a recursive list/optional of
-those. Only the owned `cached` alias is visible inside the subtree as a value,
-which statically enforces iced's `Element<'static>` contract. `lazy value, extra as
-cached` hashes each extra right after the value and exposes it inside the
-subtree as an immutable snapshot under its own name: an extra is a bare
-identifier — a state field, a component prop, or a `for` or keyed-column row
-local other than the alias — of a cheap type (`bool`, `i64`, `str`, or a
-fieldless UI enum), and a list of rows that each name `locale` rebuilds every
-row when the locale moves and none on an unchanged redraw. An extra that is
-exactly a state field is subsumed by that field's revision, like a bare `by`
-key, and is read afresh when the memo rebuilds. Extras do not combine with
-`by`, whose keys already serve that role. The enclosing `for`
-scope is not visible either — naming its alias inside the subtree is `E150` —
-because the subtree is built from its dependency alone, so it carries no
-iteration index and every row of a `lazy` list otherwise renders under one
-runtime id. A `lazy` inside a `for` therefore needs an `id` derived from the
-`lazy` alias rather than the loop one — `lazy fill as printed` carrying
-`#fill(printed.tid)` — or its rows are indistinguishable to targets, captures,
-and the accessibility tree. Input, combo, named QR data, a slot from an
-enclosing component, and an extern component with a `&` parameter are
-rejected because those forms borrow app-owned data (`E139`).
-Components and structured children remain usable when their complete expanded
-tree satisfies the same static rule. The enclosing
-component's routing context is preserved: routes inside the subtree resolve
-the component's own handlers, and `forward` and `emit` deliver component
-events and outputs exactly as they do outside `lazy`. A component event or
-output delivered from inside a `lazy` subtree is captured by the closure as an
-owned callback, so every call-site route for it — through any `forward` or
-`emit` chain — accepts only `_` payloads; an expression there would freeze a
-stale value or borrow view state.
-
-`lazy value by key, key as cached` keys the memo off cheap projections instead
-of the value: the keys — each `bool`, `i64`, `str`, or a fieldless UI enum —
-replace the value in the dependency tuple, and the value is captured by
-reference and cloned into the owned `cached` alias only when a key changes. An
-unchanged frame therefore
-deep-clones nothing, which is the point: a `for` — and a keyed column — over
-non-Copy rows already
-iterates by reference, so a row list whose every row is a keyed `lazy` builds
-its frame without cloning a single row, whether the rows repeat under a
-`for`, a keyed column, or a keyed virtual column. The keys are the author's contract
-that they move whenever the value's rendered content moves — `lazy message by
-message.rev, message.seq as row` — and content that changes without moving a
-key keeps showing the cached subtree, as long as the value is a row: a keyed
-value that is itself rooted in state gains that state's revisions as keys
-beside the explicit ones, so a write to the field rebuilds whether or not an
-explicit key moved. A key that is exactly a state field — `by file_text,
-file_path, dark` over component state — is subsumed by that field's revision
-rather than cloned into the tuple, so a `str` key costs no copy per frame
-either. The keyed value itself is never hashed,
-so it needs Clone rather than Hash: `f64` — and an extern type or list/optional
-carrying one — is a legal keyed value where the plain form's dependency must
-hash. Because the captured reference must
-outlive the view, the keyed form's value must be a place rooted in app or
-component state: a state field path, a component prop every call feeds from
-one, or a `for` or keyed-column row over such a place, recursively; a
-Copy-typed row is captured by value and ends that chain, but only a `for` or
-keyed-column row — every other binding (a match payload, a table row) reaches
-the builder as a reference to a frame temporary or as an owned value a `move`
-builder would tear out of the enclosing body, and is rejected. A prop-rooted
-value makes every call of the component part of the contract: generated
-components bake the caller's argument expression into the prop, so each call
-(and any default) must pass that prop an app state field path — or a prop fed
-the same way, recursively — and any other argument (a literal, a computed
-expression, a loop row, a component-state read) is rejected at the call site,
-where the fix belongs. Every
-other rule of the plain form — the alias-only subtree scope, unmount parking,
-preserved component routing — applies unchanged.
-Bare-identifier keys are also immutable snapshot locals inside the keyed lazy
-subtree. `lazy rows by revision, selected as cached` may therefore render from
-`revision` and `selected`; those names are the values the memo key was built
-from — stored in the dependency tuple, or for a state-field key read once when
-the memo rebuilt — not live reads of mutable state. Computed keys and
-field projections remain key-only. If a key name equals the `as` alias, the
-alias wins.
-
-Markdown content is parsed into owned iced state instead of being reparsed by
-the view. A literal initializes it directly, `markdown(source)` replaces it,
-`markdown state append source` incrementally extends it, and
-`markdown_images(state)` returns every referenced image URI as `[str]`:
-
-```ice
-state
-  help:markdown = "# Help [docs](https://iced.rs)"
-  images:[str] = []
-
-on open_link(url)
-on extend
-  markdown help append "\n\n![Ice](asset://ice)"
-  images = markdown_images(help)
-
-view
-  markdown help text-size=16.0 gap=12.0 -> open_link _
-    style font=ui inline-code-bg=surface inline-code-fg=fg inline-code-font=mono code-block-font=mono link=primary inline-code-p=3.0 inline-code-border=border inline-code-border-w=1.0 inline-code-r=4.0
-```
-
-The route receives the clicked URI as str. `text-size`, every h1-h6 size,
-`code-size`, and `spacing` map directly to iced Markdown `Settings`; sizes must
-be positive and spacing non-negative. The nested `style` line covers every
-field in iced Markdown `Style`: base, inline-code, and code-block fonts;
-inline-code highlight background, padding, text color, and full border; and
-link color. Uniform, axis, per-side padding and uniform/per-corner radius use
-the most specific supplied value. The reference app enables iced's Markdown
-parser and syntax highlighter features.
-
-A table iterates a typed list and gives every cell its row binding. Headers and
-cells are arbitrary one-root Ice subtrees:
-
-```ice
-table task in tasks w=fill px=8.0 sep=1.0
-  col w=fill align-x=left align-y=center
-    header
-      text "Task" @font-bold
-    cell
-      text task.title
-```
-
-Table width accepts every iced `Length`. Uniform/horizontal/vertical padding
-and separator thickness are non-negative pixels. Each column accepts every
-`Length` width plus all horizontal and vertical alignments; fill factors are
-bounded across both columns and rows so their native `u16` sums cannot
-overflow. Row and column identity scopes are generated automatically, so IDs
-inside repeated cells do not collide. Rust row values must be `Clone`, matching
-iced's table contract.
-
-Text editor content is another owned UI state type. A literal initializes it,
-and `editor(source)` replaces it from a runtime str. Like `input`, its `hint=`
-placeholder is a checked `str` expression:
-
-```ice
-state
-  notes:editor = "fn main() {}"
-
-view
-  editor #notes <-> notes hint="Write notes" w=640.0 h=fill min-h=80.0 max-h=240.0 size=14.0 line-h=1.3 p=8.0 wrap=word font=mono highlight="rs" highlight-theme=base16-ocean disabled=loading
-    active bg=surface border=border placeholder=muted value=fg selection=primary
-    focused-hovered bg=surface border=primary border-w=2.0 r=8.0
-    disabled bg=bg border=border value=muted
-```
-
-The compiler owns iced's `Action` message variant and calls `Content::perform`
-automatically. `action=name()` instead delegates that update to an
-`editor-action name()` adapter with the exact Rust signature
-`fn(&mut text_editor::Content, text_editor::Action)`; the adapter must perform
-the action itself and is intended for native history or telemetry that must see
-edits without cloning the document.
-Width is fixed pixels, height accepts every iced `Length`, metrics are
-range-checked, and all four wrapping modes, declared or built-in fonts,
-relative/absolute line height, and all five iced highlighter themes are
-accepted. Optional status lines cover every concrete Style field for active,
-hovered, focused, focused-hovered, and disabled editors. A disabled editor is
-rendered without `on_action`.
-
-The remaining native extension points are typed:
-
-```ice
-extern crate::backend
-  EditorCommand(save:bool)
-  editor-binding editor_keys(readonly:bool) -> EditorCommand
-  editor-action track_edits()
-  editor-highlighter editor_highlight(token:str)
-  editor-style editor_surface(readonly:bool)
-
-component EditorPanel(bind content:editor, readonly:bool)
-  editor <-> content action=track_edits() highlighter=editor_highlight("fn") key-binding=editor_keys(readonly) style=editor_surface(readonly) -> editor_command _
-```
-
-`editor-binding` receives iced's `KeyPress` implicitly and returns an optional
-native `Binding<EditorCommand>`; built-in edit bindings stay native while
-`Binding::Custom` is mapped through the checked route. `editor-highlighter`
-receives the fully configured plain-text `TextEditor` and returns a value
-convertible to the same default `Element`, so Rust can call `highlight_with`
-with any `Highlighter`, settings, highlight type, and format function. Stock
-Iced editor formats can vary color and font. Mixed metrics, span backgrounds,
-visual-line backgrounds, and shared rich hit-test geometry require a custom
-widget such as `ui_lang_runtime::RichTextEditor`.
-Large fixed-height collections use `ui_lang_runtime::VirtualListState` and the
-feature-gated `ui_lang_components::ui::virtual_list` typed boundary. Stable unique keys
-reconcile selection across reorder/delete, while native focus, pointer selection,
-Up/Down/Home/End/PageUp/PageDown, scroll-to-item, visible-range inspection, and
-named AccessKit list/item metadata remain runtime behavior. Visible and mounted
-range queries derive from the current item count, measured native viewport, and
-scroll offset. Native layout changes emit the typed `ViewportChanged` event;
-revisioned private operations synchronize programmatic state to the native
-scrollable on first layout, remount, and absolute offset zero without a
-caller-owned Iced task. Public keys require `Clone + Eq + Hash`, so owned domain
-identifiers do not require interning. An
-application mounts the widget in a bounded-height parent that does not scroll it
-vertically; `VirtualList` owns its native vertical scrolling. Arbitrary standard
-Iced scrolling ancestors are outside the v1 pointer contract when they translate
-or clip the list on a hit-test axis. Iced 0.14 retains raw window-coordinate
-touch positions while translating only cursor and replacement viewport data, and
-does not expose the lost ancestor transform to the descendant. Ordinary
-non-scrolling layout parents remain supported; nested scrolling requires a
-future explicit coordinate-context contract rather than inferred geometry. An
-explicit `VirtualListId` combines a readable logical name with a runtime-unique
-namespace; identity and retained state are not clonable, while explicit `fork`
-requires a new logical name and copies retained data into a new namespace
-instead of aliasing it. Logical names must be unique among concurrently mounted
-lists so headless selectors are exact. Separate `VirtualListId::new` calls with
-duplicate logical names violate that selector contract, but their runtime-unique
-namespaces still prevent native widget and AccessKit identity collisions.
-The collection selector comes from `VirtualListId::selector`, and reconciled
-row selectors come from `VirtualListState::item_selector`; callers do not
-reconstruct either from the readable logical name. Canonical UTF-8 percent
-escaping and separate reserved list/item namespaces prevent a logical name that
-resembles a row path from aliasing another semantic target.
-`update_snapshot` preserves identity only for value-oriented reducer replacement
-and its old snapshot may not remain mounted. Its immutable per-key semantic map
-is shared in constant time; only successful explicit reconciliation publishes a
-new complete map. Retained
-per-key semantic allocations remain distinct even when
-different keys produce the same hash. Only mounted visible-plus-overscan rows
-become Elements. Native scrollbar and interactive-child mouse, touch, and cursor
-behavior take precedence over row selection. Touch ownership uses the pressed
-and lifted event positions translated through the list's owned native scroll
-offset, clipped to its owned viewport, plus descendant capture before and after
-dispatch, independently of the current mouse cursor. Trees for
-keys in consecutive mounted-window intersections
-remain retained. The focused AccessKit list exposes its selected mounted item as
-the active descendant. Rust callers may opt into estimated variable-height rows
-with `VirtualListConfig::measured` and report mounted heights through
-`VirtualListEvent::RowsMeasured`; range queries remain bounded by the current
-item count.
-`VirtualList.Frame` is an Ice composition around an app-owned extern component;
-there is deliberately no `virtual-for` syntax, variable-height measurement, or
-nested vertical-scroll contract in the Ice v1 boundary. Accessibility v1
-focuses and navigates the collection but does not create offscreen item nodes or
-per-item accessibility actions.
-
-Hierarchical fixed-row collections use `ui_lang_runtime::TreeViewState` and the
-feature-gated `ui_lang_components::ui::tree_view` boundary on that same native
-collection engine. Callers reconcile unique keyed nodes in preorder, with each
-parent preceding a contiguous child subtree and marked `has_children`; invalid
-duplicate, missing, later, leaf, or already-closed parents reject the complete
-reconciliation atomically.
-Expansion is retained by key. Right expands a branch or enters its first child,
-Left collapses it or selects its parent, and collapse rehomes hidden selection
-to the collapsed ancestor. Expanding an unloaded branch returns a typed
-load-request key. Rename initiation is an explicit caller action that sends
-typed rename state; the caller focuses its editor and routes text changes,
-submit, and cancel through the typed rename events, then runs the tree focus
-task after removing the editor. The tree does not intercept
-keys owned by another focused control. `drag_target` classifies pointer geometry
-as before, inside, or after a visible row. AccessKit exposes a named Tree with
-mounted TreeItem nodes carrying stable
-identity, one-based level, sibling position and size, selection, and expansion.
-`TreeView.Frame` composes an app-owned typed extern; v1 remains fixed-height,
-caller-flattened, and outside Core syntax.
-
-Large fixed-row tabular surfaces use `ui_lang_runtime::DataGridState` and the
-feature-gated `ui_lang_components::ui::data_grid` boundary. Callers reconcile unique
-typed row keys and unique fixed-pixel typed columns. Successful reconciliation
-atomically publishes constant-time row and column indexes; stable row semantic
-identity, the active cell, and its selected row follow keys across reorder.
-Only visible rows plus overscan are materialized, while every fixed column is
-mounted for each mounted row. The grid owns native horizontal and vertical
-scrolling in a bounded parent and exposes both axes, mounted ranges and counts,
-selection, edit target, and logical dimensions through headless inspection.
-
-Arrow keys navigate cells, Home/End navigate a row, Ctrl/Cmd+Home and
-Ctrl/Cmd+End navigate the complete grid, and PageUp/PageDown use the measured
-viewport. Navigation reveals its destination. Sort activation returns a typed
-column key and leaves direction, row ordering, and data mutation to the caller.
-F2, Enter, and double click can begin an editable cell, but the caller owns the
-draft and committed value, mounts and focuses a native editor, and returns focus
-to the grid after commit or cancellation. Descendant controls handle events
-first, so the grid does not intercept their IME or text-editing protocol.
-AccessKit exposes a named Grid, a mounted header Row and ColumnHeader nodes, and
-mounted data Row and Cell nodes with total counts, one-based indexes, selected
-state, caller-supplied sort direction, and an active descendant for a mounted
-active cell. `DataGrid.Frame` composes the typed extern. V1 excludes variable
-row heights, resizable or virtualized columns, range selection, and Core
-syntax; it does not extend the small-data `Table` or `DataTableState` helpers.
-
-`editor-style` receives Theme and editor Status implicitly and returns native
-`text_editor::Style`, covering the advanced catalog class. An editor or input
-inside a component binds either a prop declared with `bind` — every call passes
-it explicitly with `content<->state`, and the state must be a direct app state,
-component-local state, or another `bind` prop — or, for an editor, the
-component's own `editor` state. Ordinary `name:type` props are read-only, and
-computed temporary bindings are rejected.
-`key-binding=` and the editor's outer `->` route must appear together; an
-editor without a custom binding has neither.
-
-Pure editor inspection uses `editor_cursor_line(editor)`,
-`editor_cursor_column(editor)`, `editor_line_count(editor)`,
-`editor_has_selection(editor)`, and `editor_line(editor, line) -> str?`.
-`editor_copy(editor)` preserves text and cursor in a fresh native Content when
-an actual duplicate is needed. A handler-only `sync` self-assignment such as
-`document = apply_command(document, command)` transfers the owned editor buffer
-through the function without cloning it, so editing, undo, formatting, and
-similar commands keep the same native buffer allocation.
-
-Spaces inside a compound expression should be wrapped in parentheses when the
-expression shares a line with widget properties:
-
-```ice
-button "Add" disabled=(loading || empty(trim(draft))) -> submit
-```
-
-## 5. Types and externs
+An Ice source graph has exactly one `app` or `daemon` root and exactly one
+`view`; the view and each component have exactly one root node. Top-level
+declarations are order-independent, but canonical source orders them
+`app|daemon`, `use`, `extern`, `theme contract`, `palette`, `recipe`, `state`,
+`preset`, `component`, `on`, `subscribe`, `view`, `test`.
+
+A graph may have multiple `extern` namespaces, so imported plugin fragments can
+bind their own Rust modules beside the application's backend. Bare extern type
+and function names are graph-global and duplicates are errors; aliased imports
+retain their namespace identity instead.
+
+## 5. The Rust boundary
+
+This is the one part of the contract the schema does not carry: what a
+declaration requires of the Rust item behind it. Generated probes type-check
+every declaration against the actual item.
+
+### Types
 
 | Ice | Rust extern type |
 | --- | --- |
@@ -2567,9 +224,12 @@ button "Add" disabled=(loading || empty(trim(draft))) -> submit
 | `i64` | `i64` |
 | `f64` | `f64` |
 | `str` | `String` |
+| `bytes` | `Vec<u8>` |
 | `[T]` | `Vec<T>` |
 | `T?` | `Option<T>` |
 | `result[T,E]` | `Result<T, E>` |
+| `unit` | `()` |
+| `Name` | the named struct in the extern namespace |
 | declared UI enum `Name` | generated Rust enum `Name`; fieldless enums are `Copy + Eq + Hash`, payload enums are `Clone` |
 | `combo[T]` | `iced::widget::combo_box::State<T>` |
 | `animation[bool]` | `iced::Animation<bool>` |
@@ -2581,197 +241,92 @@ button "Add" disabled=(loading || empty(trim(draft))) -> submit
 | `image-error` | `iced::widget::image::Error` |
 | `size-u32` | `iced::Size<u32>` |
 | `debug-span` | `iced::debug::Span`; only valid as optional owned state |
-| `rotation` | `iced::Rotation` |
-| `content-fit` | `iced::ContentFit` |
-| `color` | `iced::Color` |
-| `background` | `iced::Background` |
-| `gradient` | `iced::Gradient` |
-| `linear-gradient` | `iced::gradient::Linear` |
-| `color-stop` | `iced::gradient::ColorStop` |
-| `font` | `iced::Font` |
-| `font-family` | `iced::font::Family` |
-| `font-weight` | `iced::font::Weight` |
-| `font-stretch` | `iced::font::Stretch` |
-| `font-style` | `iced::font::Style` |
-| `theme-mode` | `iced::theme::Mode` |
-| `text-alignment` | `iced::widget::text::Alignment` |
-| `text-shaping` | `iced::widget::text::Shaping` |
-| `text-wrapping` | `iced::widget::text::Wrapping` |
-| `text-line-height` | `iced::widget::text::LineHeight` |
-| `length` | `iced::Length` |
-| `alignment` | `iced::Alignment` |
-| `horizontal-alignment` | `iced::alignment::Horizontal` |
-| `vertical-alignment` | `iced::alignment::Vertical` |
-| `border` | `iced::Border` |
-| `radius` | `iced::border::Radius` |
-| `shadow` | `iced::Shadow` |
-| `mouse-interaction` | `iced::mouse::Interaction` |
-| `scroll-delta` | `iced::mouse::ScrollDelta` |
-| `window-position` | `iced::window::Position` |
-| `redraw-request` | `iced::window::RedrawRequest` |
-| `window-direction` | `iced::window::Direction` |
-| `window-level` | `iced::window::Level` |
-| `window-mode` | `iced::window::Mode` |
-| `window-attention` | `iced::window::UserAttention` |
-| `instant` | `iced::time::Instant` |
-| `window-id` | `iced::window::Id` |
-| `window-screenshot` | `iced::window::Screenshot` |
 | `markdown` | `iced::widget::markdown::Content` |
 | `editor` | `iced::widget::text_editor::Content` |
+| `event` / `event-status` | `iced::Event` / `iced::event::Status` |
 | `key-press` | generated native keyboard press payload |
-| `event` | `iced::Event` |
-| `event-status` | `iced::event::Status` |
+| `instant` | `iced::time::Instant` |
 | `task-handle` | `iced::task::Handle` |
-| `Name` | the named struct in the extern namespace |
-| `unit` | `()` |
+| `window-id` / `window-screenshot` | `iced::window::Id` / `iced::window::Screenshot` |
+| `window-position` / `window-direction` / `window-level` / `window-mode` / `window-attention` | the matching `iced::window` value type |
+| `redraw-request` | `iced::window::RedrawRequest` |
+| `color` / `background` / `gradient` / `linear-gradient` / `color-stop` | the matching `iced` or `iced::gradient` type |
+| `font` / `font-family` / `font-weight` / `font-stretch` / `font-style` | the matching `iced::Font` or `iced::font` type |
+| `theme-mode` | `iced::theme::Mode` |
+| `text-alignment` / `text-shaping` / `text-wrapping` / `text-line-height` | the matching `iced::widget::text` type |
+| `length` / `alignment` / `horizontal-alignment` / `vertical-alignment` | the matching `iced` or `iced::alignment` type |
+| `border` / `radius` / `shadow` | `iced::Border` / `iced::border::Radius` / `iced::Shadow` |
+| `pixels` / `padding` / `degrees` / `radians` / `rotation` / `content-fit` | the matching `iced` value type |
+| `mouse-interaction` / `scroll-delta` | `iced::mouse::Interaction` / `iced::mouse::ScrollDelta` |
 
-One namespace keeps declarations short:
+Values crossing into iced messages must satisfy the traits generated code
+requires, notably `Clone`. Generated app and message debug output is opaque, so
+extern state and payload types do not additionally need `Debug`.
+
+Struct declarations are read-only views of Rust data: Ice may read a declared
+field (`task.title`) but cannot construct or mutate the struct. Declaring a
+field or function does not create it.
+
+### Effect kinds
+
+One namespace keeps declarations short, and the namespace is the Rust module
+path:
 
 ```ice
 extern crate::backend
   Task(id:i64, title:str, done:bool)
   AppError(message:str)
   list_tasks() -> [Task] ! AppError
-  create_task(title:str) -> [Task] ! AppError
-```
-
-This means:
-
-```rust
-crate::backend::Task
-crate::backend::AppError
-crate::backend::list_tasks
-crate::backend::create_task
-```
-
-Bare extern functions are asynchronous. `A -> B` means `async fn(...) -> B`.
-`A -> B ! E` means `async fn(...) -> Result<B, E>`. Values crossing into iced
-messages must satisfy the traits required by generated iced code, notably
-`Clone` for 2.0 message payloads. Generated app and message debug output is
-opaque, so ordinary extern state and payload types do not additionally need to
-implement `Debug`.
-
-Declared `pure` and `sync` functions are checked synchronous Rust calls with
-the same `fn(...) -> Output` ABI but different effect contracts. `pure` is the
-small escape hatch for a domain computation that does not justify a language
-builtin:
-
-```ice
-extern crate::backend
-  NetworkError(message:str)
-  AppError(message:str)
   pure normalize_error(error:NetworkError) -> AppError
-```
-
-This declaration requires
-`fn normalize_error(NetworkError) -> AppError`; generated probes verify the
-actual Rust signature. `pure` is a trusted promise about the Rust body: the
-same arguments always produce the same value, with no observable side effect.
-Ice may therefore reevaluate it in every checked expression context, including
-app and component state initializers, application settings, derived values, views,
-component defaults, subscription filters, custom easing, handlers, and tests.
-
-`sync` makes no determinism or effect promise. Use it for an immediate effect,
-an environment read, or retained identity construction:
-
-```ice
-extern crate::backend
-  sync connect(endpoint:str) -> Client
   sync now() -> instant
 ```
 
-A `sync` call is accepted in a top-level app state initializer or an immediately
-evaluated app, component, or preset handler expression. This includes handler
-`let` initializers, assignment right-hand sides, guards, and task arguments,
-including arguments inside nested task groups. Explicit expressions in
-`run every`, `run latest`, and `run replace` Future success and failure routes,
-and in `task` statement routes, become owned snapshots when the statement
-launches; `_` is supplied only by the delivered completion.
-Both branches are materialized at launch, so their expressions remain pure-only
-and a direct `sync` call is rejected even though the snapshot is immediate.
-Each result must be ordinary cloneable Ice data. Direct recomputation-unsafe
-builtins are also rejected. Evaluate either runtime value once in a preceding
-handler `let` and route that local instead.
-Stream, sip, flow, and native query route timing is unchanged. Component state
-initializers also reject `sync` because rendering may initialize them again.
-Capture a runtime value in top-level state or an immediately evaluated handler
-expression, then pass that value into `pure` computations. Neither synchronous
-kind may declare `! Error`; both return their values directly. The compiler
-probes types but does not inspect Rust bodies, so a dishonest `pure` declaration
-is a backend contract violation.
+- A bare function is `async fn(...) -> B`; `! E` makes it
+  `async fn(...) -> Result<B, E>`, and a fallible extern requires both success
+  and error routes.
+- `pure` is a trusted promise about the Rust body: same arguments, same value,
+  no observable side effect. Ice may therefore reevaluate it in every checked
+  expression context — state initializers, application settings, derived values,
+  views, component defaults, subscription filters, custom easing, handlers, and
+  tests.
+- `sync` makes no determinism or effect promise. It is accepted only where
+  evaluation happens exactly once and immediately: a top-level app state
+  initializer, or an immediately evaluated app, component, or preset handler
+  expression. Component state initializers reject it because rendering may
+  initialize them again; task route expressions reject it because both branches
+  materialize as owned snapshots at launch.
+- Neither synchronous kind may declare `! Error`.
 
-A `pure` or `sync` parameter may borrow with `&type`, exactly as an extern
-component parameter can. The call site is unchanged: an argument of type `str`,
-`[T]`, `T`, or `editor` satisfies the `&` parameter, and the generated call
-passes a reference to the state field (app or component instance), local, `for`
-row, or lazy alias instead of cloning it. `&str` lowers to `&str`, `&bytes` and
-`&[T]` to slices, `&editor` to `&iced::widget::text_editor::Content`, and any
-other `&T` to a shared Rust reference; the signature probe requires that
-reference, so an owned Rust parameter fails `cargo check`. Because the output
-is owned Ice data the borrow ends with the call, so borrowed parameters work
-in handlers, views, derived values, subscription conditions, component bodies,
-and `lazy` subtrees alike:
+The compiler probes types but never inspects Rust bodies, so a dishonest `pure`
+declaration is a backend contract violation, not a compile error.
 
-```ice
-extern crate::backend
-  Row(id:i64, label:str)
-  pure keep_rows(rows:&[Row], next:Row) -> [Row]
-  pure page_text(doc:&editor) -> str
-```
+### Borrowed parameters
 
-These require `fn keep_rows(&[Row], Row) -> Vec<Row>` and
-`fn page_text(&text_editor::Content) -> String`. Asynchronous externs (`task`,
-`stream`, `sip`, bare futures) and the fixed-shape adapters reject `&`: a spawned
-future cannot borrow app state, and animation easings and subscription filters
-receive their values by value. A `secret` parameter cannot borrow either: a
-reading is handed over once and wiped on return.
+A `pure`, `sync`, or extern-component parameter may borrow with `&type`. The
+call site is unchanged; the generated call passes a reference to the state
+field, local, `for` row, or lazy alias instead of cloning it. `&str` lowers to
+`&str`, `&bytes` and `&[T]` to slices, `&editor` to
+`&iced::widget::text_editor::Content`, and any other `&T` to a shared reference —
+the signature probe requires that reference, so an owned Rust parameter fails
+`cargo check`.
 
-An immediate self-assignment through one `pure` or `sync` extern call moves an
-`editor` or list state field into that call when the right-hand side references
-the field exactly once through an owned parameter. For example,
-`rows = append(rows, next)` transfers the owned list instead of cloning it, then
-assigns the returned list. Expressions that read the target more than once keep
-ordinary clone semantics, and a read that feeds a `&` parameter such as
-`rows = keep_rows(rows, next)` borrows the field and then assigns the result.
+Because the output is owned Ice data, the borrow ends with the call, so borrowed
+parameters work in handlers, views, derived values, subscription conditions,
+component bodies, and `lazy` subtrees alike. Asynchronous externs and the
+fixed-shape adapters reject `&`: a spawned future cannot borrow app state, and
+easings and subscription filters receive values by value. A `secret` parameter
+cannot borrow either — a reading is handed over once and wiped on return.
 
-Thirty-two typed iced adapters expose framework capabilities without embedding Rust
-expressions in Ice:
+An immediate self-assignment through one `pure` or `sync` call moves an `editor`
+or list field into that call when the right-hand side references the field
+exactly once through an owned parameter: `rows = append(rows, next)` transfers
+the owned list. Reading the target more than once keeps clone semantics, and a
+read that feeds a `&` parameter borrows and then assigns.
 
-```ice
-extern crate::backend
-  component native_help(active:bool) -> bool
-  component borrowed_help(label:&str, active:&bool) -> bool
-  selector by_kind(kind:str) -> str
-  shader status_shader(speed:f64) -> bool
-  task copy_text(text:str) -> unit
-  stream task_steps(count:i64) -> i64
-  sip download(url:str) progress=f64 -> bytes ! AppError
-  recipe events(channel:i64) -> str
-  event-filter runtime_event() -> str
-  subscription app_events() -> bool
-  theme app_theme(dark:bool)
-  themer alternate_panel(active:bool) -> bool
-  markdown-viewer docs_viewer(prefix:str) -> str
-  editor-binding editor_keys(readonly:bool) -> EditorCommand
-  editor-highlighter editor_highlight(token:str)
-  editor-style editor_surface(readonly:bool)
-  text-style summary_text(busy:bool)
-  slider-style volume_slider(busy:bool)
-  progress-style loading_progress(active:bool)
-  button-style action_button(busy:bool)
-  checkbox-style task_checkbox(busy:bool)
-  toggler-style notification_toggler(busy:bool)
-  radio-style view_radio(busy:bool)
-  box-style summary_container(busy:bool)
-  svg-style status_svg(active:bool)
-  input-style form_input(disabled:bool)
-  scroll-style task_scroll(active:bool)
-  pick-list-style view_picker(active:bool)
-  menu-style view_menu(active:bool)
-  panes-style workspace_panes(active:bool)
-```
+### Typed adapters
 
-Their Rust signatures are:
+Typed adapter declarations expose framework capabilities without embedding Rust
+expressions in Ice. Their required Rust signatures are:
 
 ```rust
 fn native_help(active: bool) -> iced::Element<'static, bool>;
@@ -2793,3958 +348,457 @@ fn alternate_panel(active: bool) -> (
     Option<fn(&AlternateTheme) -> iced::Background>,
 );
 fn docs_viewer(prefix: String) -> impl for<'a> iced::widget::markdown::Viewer<'a, String>;
-fn editor_keys(event: iced::widget::text_editor::KeyPress, readonly: bool) -> Option<iced::widget::text_editor::Binding<EditorCommand>>;
-fn editor_highlight<'a, Message: 'a>(editor: iced::widget::text_editor::TextEditor<'a, iced::advanced::text::highlighter::PlainText, Message>, token: String) -> impl Into<iced::Element<'a, Message>>;
-fn editor_surface(theme: &iced::Theme, status: iced::widget::text_editor::Status, readonly: bool) -> iced::widget::text_editor::Style;
-fn summary_text(theme: &iced::Theme, busy: bool) -> iced::widget::text::Style;
-fn volume_slider(theme: &iced::Theme, status: iced::widget::slider::Status, busy: bool) -> iced::widget::slider::Style;
-fn loading_progress(theme: &iced::Theme, active: bool) -> iced::widget::progress_bar::Style;
-fn action_button(theme: &iced::Theme, status: iced::widget::button::Status, busy: bool) -> iced::widget::button::Style;
-fn task_checkbox(theme: &iced::Theme, status: iced::widget::checkbox::Status, busy: bool) -> iced::widget::checkbox::Style;
-fn notification_toggler(theme: &iced::Theme, status: iced::widget::toggler::Status, busy: bool) -> iced::widget::toggler::Style;
-fn view_radio(theme: &iced::Theme, status: iced::widget::radio::Status, busy: bool) -> iced::widget::radio::Style;
-fn summary_container(theme: &iced::Theme, busy: bool) -> iced::widget::container::Style;
-fn status_svg(theme: &iced::Theme, status: iced::widget::svg::Status, active: bool) -> iced::widget::svg::Style;
-fn form_input(theme: &iced::Theme, status: iced::widget::text_input::Status, disabled: bool) -> iced::widget::text_input::Style;
-fn task_scroll(theme: &iced::Theme, status: iced::widget::scrollable::Status, active: bool) -> iced::widget::scrollable::Style;
-fn view_picker(theme: &iced::Theme, status: iced::widget::pick_list::Status, active: bool) -> iced::widget::pick_list::Style;
-fn view_menu(theme: &iced::Theme, active: bool) -> iced::overlay::menu::Style;
-fn workspace_panes(theme: &iced::Theme, active: bool) -> iced::widget::pane_grid::Style;
+fn editor_keys(event: iced::widget::text_editor::KeyPress, readonly: bool)
+    -> Option<iced::widget::text_editor::Binding<EditorCommand>>;
+fn editor_highlight<'a, Message: 'a>(
+    editor: iced::widget::text_editor::TextEditor<'a, iced::advanced::text::highlighter::PlainText, Message>,
+    token: String,
+) -> impl Into<iced::Element<'a, Message>>;
+fn editor_surface(theme: &iced::Theme, status: iced::widget::text_editor::Status, readonly: bool)
+    -> iced::widget::text_editor::Style;
 ```
 
-An extern component parameter without `&` is owned. `&str`, `&bytes`, and
-`&[T]` lower to borrowed slices; any other `&T` parameter lowers to a shared
-Rust reference, as for `pure` and `sync` functions. A component may therefore
-return `Element<'a, Event, Theme, Renderer>` borrowing app state, while
-owned-only components may return `Element<'static, Event, Theme, Renderer>`. Both use the app's configured
-renderer. A shader factory returns any concrete
-`shader::Program<Event>`; Ice constructs the native `Shader`, exposes its full
-width/height builder API, and maps the program's published event through a
-checked route:
+Every `*-style` adapter follows the same shape: the current `&iced::Theme`, then
+the widget's native `Status` where it has one, then the declaration's owned
+arguments, returning that widget's native `Style`. `box-style`, `menu-style`,
+`panes-style`, `text-style`, and `progress-style` receive no `Status`.
+Structured Ice properties and utilities override the returned base.
 
-```ice
-shader status_shader(1.0) w=fill h=32.0 -> shader_hovered _
-```
+Declared adapters are infallible; errors are ordinary event payloads when an
+adapter needs them. `theme` is the one adapter whose return type is implicit, so
+no `->` appears in Ice. Native consumers must enable the matching iced Cargo
+feature (`wgpu` for shaders, `canvas`, `sipper`, `selector`, `image`).
 
-A selector factory returns any concrete `widget::selector::Selector`. Ice passes
-its declared arguments, preserves its declared output type, and uses the result
-with native `find` or `find_all`. The consumer must enable iced's `selector`
-feature. Built-in selectors produce Ice's normalized `widget-target` value;
-custom selectors should use ordinary declared output types.
+## 6. Semantic invariants
 
-A task returns `Task<Event>` or `Task<Result<Event, Error>>`. A stream returns
-any static `Stream<Item = Event>` or `Stream<Item = Result<Event, Error>>` that
-meets iced's platform send bound. A sip returns a static
-`Sipper<Output, Progress>` or `Straw<Output, Progress, Error>`. A subscription
-recipe factory returns a concrete `advanced::subscription::Recipe`. An event
-filter receives iced's implicit runtime `Event` and optionally returns its
-declared payload. A subscription adapter returns `Subscription<Event>`.
-`theme` returns the concrete default-renderer `iced::Theme`; unlike value
-externs, its return type is implicit and no `->` appears in Ice. Its checked
-arguments may come from app state or the local component scope. The same
-factory is valid in the app `theme` setting and around one nested subtree, so
-Rust can construct `Theme::custom`, `Theme::custom_with_fn`, or any built-in
-theme while retaining full `Palette` and `Extended` palette logic.
-`themer` applies any Rust `Theme: iced::theme::Base` to a Rust-owned subtree
-while the surrounding Ice app keeps its normal Theme. Its factory returns the
-optional alternate Theme, an `Element` using that exact Theme type, and
-optional Theme-dependent text color and background function pointers. The
-generated probe verifies all four tuple fields use the same Theme type; the
-view lowers through native `widget::themer`, applies both callbacks when
-present, and maps the declared event through an ordinary checked route.
+These are the rules a construct listing cannot express.
 
-```ice
-view
-  themer alternate_panel(active) -> alternate_changed _
-```
+### Expressions
 
-`markdown-viewer` returns one concrete viewer implementing iced's default-theme,
-default-renderer `Viewer` for every item lifetime. `viewer=docs_viewer(args)`
-switches the Markdown node to native `view_with`; its declared output type is
-the checked route payload. The viewer owns customization of images, headings,
-paragraphs, code blocks, lists, quotes, rules, and tables. `progress-style`
-receives the current Theme implicitly and returns one native progress Style;
-generated code uses it directly as the widget's runtime style callback.
+The expression language is closed. There is no arbitrary Rust expression, method
+call, closure, general allocation API, or implicit truthiness; a new operation
+either belongs in the universal built-in set or behind a typed extern. It
+contains:
 
-`editor-binding` receives native `KeyPress` before its declared arguments and
-returns `Option<Binding<Output>>`; `Output` is the custom route payload.
-`editor-action` receives mutable native Content and the current Action and
-returns unit.
-`editor-highlighter` receives a fully configured plain `TextEditor` before its
-declared arguments and returns any value convertible to the same default
-`Element`; stock formats support color and font. Rich metrics and decorations
-belong in a custom widget. `editor-style` receives Theme and native editor
-Status implicitly.
-
-`text-style` receives the current Theme implicitly and returns native
-`text::Style`. Both `text ... style=summary_text(args)` and
-`rich-text style=summary_text(args)` use it as a runtime callback. An explicit
-rich-text `color=` or trailing `@text-*` utility overrides the callback color.
-`button-style` also receives the current button Status and returns its native
-Style. `checkbox-style`, `toggler-style`, and `radio-style` do the same for
-their selection-aware widget Status values. `box-style` receives Theme
-without a Status and returns its native surface Style. `svg-style` receives
-Theme and the idle/hovered SVG Status and returns the native SVG Style.
-`input-style` receives Theme and the current text-input Status and returns its
-native Style. `scroll-style` receives Theme and the complete scrollable Status
-and returns its native Style. `pick-list-style` does the same for pick-list
-Status. `menu-style` receives Theme without a Status and returns the shared
-pick-list/combo overlay menu Style. `panes-style` receives Theme without a
-Status and returns the native panes Style; checked structured style fields
-remain available as explicit overrides.
-
-Generated probes type-check every declaration
-against the actual Rust item. Extern component, shader, recipe, event-filter,
-pure, sync, selector, subscription, theme, themer, window, Markdown viewer, editor extension, and widget style declarations are
-infallible; errors are ordinary event payloads when an adapter needs them.
-Shader programs retain native control of `State`, `Primitive`, GPU
-pipeline/storage, event actions, redraws, capture, and mouse interaction. The
-consumer must enable iced's `wgpu` feature.
-
-Struct declarations are read-only views of Rust data. Ice may read a declared
-field (`task.title`) but cannot construct or mutate the struct. Declaring a
-field or function does not create it; the generated Rust probes verify the
-actual item and type.
-
-## 6. State and expressions
-
-Literal state types are inferred, including non-empty homogeneous lists:
-
-```ice
-state
-  draft = ""
-  loading = false
-  retries = 0
-  modes = ["List", "Board"]
-```
-
-These infer to `str`, `bool`, `i64`, and `[str]`, respectively.
-
-Top-level `derived` declarations name pure read-only expressions over app state
-and other derived values:
-
-```ice
-derived
-  normalized_draft = trim(draft)
-  can_submit = !loading && !empty(normalized_draft)
-```
-
-Derived values are available in app handlers and views. Their types are
-inferred, dependency cycles are errors, and assignment or `<->` binding is
-forbidden. Derived expressions use deterministic Ice built-ins and declared
-`pure` extern functions. They reject `sync` externs and recomputation-unsafe
-built-ins: `window_id.unique`, `aborted`, `debug.time_with`, `image.upgrade`, the
-unqualified image constructors `encoded` and `rgba`, plus
-`animation.animating`, `animation.interpolate`, `animation.remaining`, and
-`animation.project` when their explicit instant is omitted. This category
-covers both runtime reads and constructors that create a fresh retained identity
-on each call. The checker permits these built-ins in top-level app state
-initializers, handlers, and views. Capture the needed value or identity in app
-state from an initializer or handler when it must remain stable, then derive
-from that state.
-
-Derived values lower to pure read-only Rust computations cached on the
-application. A derived value is computed on its first read and kept across
-frames until a handler, a controlled widget, or a test step writes an app-state
-field its expression reads — directly or through another derived value. The
-compiler derives that dependency set from the expression itself; no runtime
-dependency graph, signal, or handler-maintained state mirror exists, and a
-handler never needs to keep a list-shaped derived value in sync by hand. The
-write clears the cache before the handler continues, so a read after a write in
-the same handler observes the fresh value. Evaluation cardinality is therefore
-at most once per write to a dependency, and the cache is semantics-preserving
-by construction: the restrictions above make every derived expression pure.
-
-Every app state field and every component state field also carries a
-compiler-owned revision: a counter the generated code ticks on every write to
-that field, and that nothing in Ice can read — there is no `rev()` built-in.
-An assignment compares the new value with the stored one first when the Rust
-type implements `PartialEq` (Ice's own scalars, strings, lists, optionals, and
-the enums it generates over those), so storing an equal value leaves the
-revision alone; an assignment of a type that cannot compare, an in-place
-mutation (an editor action, a combo push, a markdown append, an animation
-start), and a self-assignment that already took the old value out of the field
-all count as a change. `lazy` keys its memo off these revisions, so that is
-where the distinction shows: a write through an extern type without
-`PartialEq` always rebuilds the subtrees that read it.
-
-Empty lists need an annotation because their element type is unknowable:
-
-```ice
-tasks:[Task] = []
-selection:str? = none
-search_modes:combo[str] = ["List", "Board"]
-```
-
-Native animation state keeps motion structured while iced remains in charge of
-time and interpolation:
-
-```ice
-extern crate::backend
-  pure elastic(value:f64) -> f64
-
-state
-  expanded:animation[bool] = false
-    easing ease-in-out
-    duration 400ms
-    delay 50ms
-    repeat 1
-    auto-reverse true
-  progress:animation[f64] = 0.0
-    easing elastic
-    duration quick
-
-on open
-  expanded = true
-  progress = 1.0
-```
-
-The built-in state types are `bool` and `f64`; a named extern type is also
-accepted when its Rust type implements iced's animation bounds. Every native
-easing variant is accepted in kebab case. A different easing name
-must resolve to `pure name(value:f64) -> f64`. Durations and delays accept whole
-`ms`/`s` values, including zero; duration presets are `very-quick`, `quick`,
-`slow`, and `very-slow`. `repeat N` preserves iced's meaning (one repetition
-plays twice), while `repeat forever` and `auto-reverse true` map directly to the
-native builders. Ice subscribes to native window frames only while at least one
-animation is active.
-
-`from` makes the declaration itself the transition: the animation is created
-holding that literal and travels to the declared value the moment it comes into
-being. It exists because an assignment is otherwise the only thing that starts
-motion, and an instance materialized by a `for` has no event to assign on.
-
-A component may own `animation[T]` state, and then each instance animates on its
-own clock, keyed by the component's hierarchical instance scope exactly like
-every other local value. Such a component requires `lifetime mounted`: an
-animation's identity is the instant it started, so its storage is created the
-first time the instance renders — instead of re-running the initializer every
-pass — and dropped when the instance leaves the rendered tree. Component
-animations keep native frames alive on the same active-only subscription app
-animations use. A component animation read inside a `lazy` subtree is frozen at
-the value it held when the subtree was built, because `lazy` rebuilds only when
-its dependency hash changes; keep an animated surface outside the boundary that
-memoizes the row.
-
-The expression language contains:
-
-- literals: strings, booleans, `i64`, `f64`, `none`, list literals such as
-  `[]` and `["List", "Board"]`, and hexadecimal `bytes(00 ff ...)`;
+- literals: strings, booleans, `i64`, `f64`, `none`, list literals, and
+  hexadecimal `bytes(00 ff ...)`;
 - paths: `state_name`, `parameter`, `item.field`;
-- unary operators: `!`, `-`;
-- arithmetic: `*`, `/`, `%`, `+`, `-`;
-- comparison: `==`, `!=`, `<`, `<=`, `>`, `>=`;
-- boolean operators: `&&`, `||`;
-- parentheses;
-- built-ins: `len(list_or_str_or_bytes) -> i64`,
-  `empty(list_or_str_or_bytes) -> bool`, `trim(str) -> str`, `some(T) -> T?`,
-  `ok(T) -> result[T,_]`, `err(E) -> result[_,E]`,
-  `encoded(bytes) -> image`, `rgba(i64, i64, bytes) -> image`, and
-  `aborted(task-handle?) -> bool`;
-- namespaced keyboard built-ins such as `key.named("Enter")`,
-  `key.code("KeyA")`, and `key.latin(logical, physical)`;
-- native pointer built-ins such as `point(x, y)`, `mouse.button("left")`,
-  `mouse.cursor(point)`, `mouse.click(point, button, previous)`, and
-  `touch.finger("42")`;
-- native geometry transformations such as `vector(x, y)`, `size(width, height)`,
-  `point.distance(from, to)`, `rectangle.intersection(left, right)`,
-  `transform.translate(x, y)`, `transform.compose(left, right)`, and
-  `transform.point(point, transformation)`;
-- native units such as `pixels(value)`, `padding.all(value)`, `degrees(value)`,
-  and `radians(value)`;
-- native rotation values with `rotation.default`, `floating`, `solid`, `from`,
-  `with_radians`, and `apply`;
-- native content fitting with all `fit.*` variants and `fit.apply`;
-- native color values with `color.*` construction, conversion, parsing,
-  mutation, luminance, contrast, and readability operations;
-- native layout lengths with `length.*` variants, conversions, queries, and
-  composition;
-- native axis alignments with `alignment.*`, `horizontal.*`, and `vertical.*`;
-- image allocation retention with `image.downgrade(allocation) -> image-memory`
-  and `image.upgrade(memory) -> image-allocation?`;
-- debug timing with `debug.active(span_state) -> bool` and
-  `debug.time_with(name, value)`, preserving the value's checked type;
-- animation queries `animation.value(state)`,
-  `animation.animating(state[, at])`,
-  `animation.interpolate(bool_state, start, end[, at])` for matching `f64` or
-  `f64?` endpoints, and
-  `animation.remaining(bool_state[, at])`; remaining time is returned in
-  milliseconds independently of easing overshoot;
-- checked projection
-  `animation.project(state, value, expression[, at])`, where the expression
-  sees the current inner value as `value` and returns `f64` or `f64?`;
-- `markdown(str) -> markdown` and `markdown_images(markdown) -> [str]`;
-- calls to declared typed `pure` or `sync` extern functions, subject to the
-  current expression context's effect boundary.
-
-Declared `pure` and `sync` calls take precedence over ordinary built-ins. The
-name `bytes` remains reserved for hexadecimal byte-literal syntax. If either
-kind shadows `encoded` or `rgba`, state initialized by that call needs an
-explicit type because it is no longer a built-in literal constructor.
-
-Store `encoded` and `rgba` handles in state so they are created when state
-changes instead of on every view pass. Literal RGBA data is checked to contain
-exactly `width × height × 4` bytes. Image widgets accept either a path string or
-an `image` handle. A literal relative path — for `image`, `viewer`, `svg`, and
-the canvas `image` and `svg` commands, exactly like `font` and `icon-rgba` — is a
-compile-time asset: it resolves against the directory of the root `.ice` source,
-a missing or unreadable file is `E192`, editing the file re-analyzes the root,
-and its bytes are embedded in the binary, which therefore needs neither the
-source tree nor a particular working directory. An absolute literal or a computed
-path expression is a deliberate runtime reference instead: it is passed through
-unchanged and loaded from the process filesystem when the view renders:
-
-```ice
-state
-  logo = encoded(bytes(50 36 0a 31 20 31 0a 32 35 35 0a ff 00 ff))
-  pixel = rgba(1, 1, bytes(ff 00 ff ff))
-
-view
-  image pixel crop=(0, 0, 1, 1)
-```
-
-Explicit allocation prevents the first-frame delay of lazily uploaded image
-handles. Hold the returned allocation for as long as the guarantee is needed:
-
-```ice
-state
-  handle:image = rgba(1, 1, bytes(ff 00 ff ff))
-  allocation:image-allocation? = none
-  failure:image-error? = none
-
-on prepare
-  task image allocate handle -> ready _ | failed _
-
-on ready(value)
-  allocation = some(value)
-
-on failed(error)
-  failure = some(error)
-```
-
-`image-allocation` exposes `.handle` and exact `.size:size-u32`; `size-u32`
-exposes integer `.width` and `.height`. `image-error` preserves the native
-value and exposes `.kind` (`invalid`, `inaccessible`, `unsupported`, `empty`,
-or `out-of-memory`) plus its display `.message`. Downgrade/upgrade expose the
-native weak-memory lifecycle. This task requires iced's `image` Cargo feature,
-not only `image-without-codecs`.
-
-Native debug spans have an explicit, ownership-safe state lifecycle:
-
-```ice
-state
-  timer:debug-span? = none
-  measured = 0
-
-on begin
-  debug start "interaction" -> timer
-
-on finish
-  debug finish timer
-
-on compute
-  measured = debug.time_with("compute", measured + 1)
-```
-
-`debug start` stores the exact `iced::debug::Span`; if the target already owns
-a span, it is finished before replacement. `debug finish` takes and finishes
-the span and is harmless when state is `none`. Because native spans are not
-cloneable, `debug-span` is accepted only as `debug-span?` state and cannot cross
-an extern, component, handler-message, collection, or ordinary assignment
-boundary. Use `debug.active(state)` to read whether a span is present.
-`debug.time_with` accepts a string name plus any non-span expression and returns
-the expression's exact type. These calls always compile; iced's `debug` Cargo
-feature activates reporting, while builds without it use iced's native no-op
-spans. `cargo ice dev` turns that feature on through `ui-lang-runtime`'s
-`devtools` feature.
-
-There is no arbitrary Rust expression, method call, closure, general allocation
-API, or implicit truthiness. New operations either belong in a small universal builtin
-set or behind a typed extern function.
-
-## 7. Handlers and effects
-
-Handlers are the only place state changes:
-
-```ice
-on submit
-  let title = trim(draft)
-  return if loading || empty(title)
-  loading = true
-  run every create_task(title) -> created _ | failed _
-```
-
-A handler may make one exhaustive, typed decision without evaluating work in
-the other branches:
-
-```ice
-on live_updated(next)
-  match next.kind
-    LiveKind.chat
-      messages = fold_live_chat(messages, next)
-    LiveKind.tip
-      tip = next.tip
-    LiveKind.ready
-      ready = true
-```
-
-Rules:
-
-- assignment targets must be declared state;
-- `let` introduces one immutable handler-local value using the normal closed
-  expression language; it cannot shadow state, derived values, parameters, or
-  an earlier local;
-- assigned expressions must have the state type;
-- assigning the inner value of `animation[T]` starts its native transition at
-  the current monotonic instant; `state = value at instant` supplies an exact
-  `instant` instead;
-- `combo state push value` requires a `combo[T]` state and a `T` value;
-- `return if` requires `bool`;
-- handler `match` accepts a fieldless UI enum, requires every declared variant
-  exactly once, and has no wildcard arm. Each arm is a nested handler statement
-  list with its own local scope. Only the selected arm is evaluated;
-- `sync` externs are allowed in immediately evaluated app, component, and preset
-  handler expressions, including `let` initializers, assignment right-hand
-  sides, and arguments in nested task statements; explicit `run every`,
-  `run latest`, and `run replace` Future success and failure route expressions,
-  and `task` statement route expressions, become owned snapshots when the
-  statement launches, while `_` is supplied by the delivered completion. Both
-  branches materialize at launch but remain pure-only so an
-  unused branch cannot perform an effect. Each result must be ordinary cloneable
-  Ice data, and direct recomputation-unsafe builtins are rejected; evaluate a
-  runtime value in a preceding `let` and route that local. Stream, sip, flow,
-  and native query route timing is unchanged;
-- every statement that immediately returns an iced `Task` must be final:
-  `exit`, any Future `run` mode, `task`, `stream`, `sip`, `flow`, task groups,
-  abortable tasks, handler `match`,
-  clipboard writes, widget operations, window tasks, and pane queries;
-- `return if` is a conditional guard, pane mutations are synchronous state
-  changes, and `invalidate lane=<name>` only advances existing delivery-lane
-  state, so any of them may precede later statements;
-- fallible externs require both success and error routes;
-- infallible externs permit only the success route;
-- parameter names are unique within each handler;
-- handler parameter types are inferred from every incoming route;
-- incompatible incoming payloads are a type error;
-- `_` means the payload produced by the current widget or action route.
-
-Every handler Future and stream explicitly selects a delivery mode. Futures use
-`run every`, `run latest lane=<qualified-name>`, or
-`run replace lane=<qualified-name>`. Streams use `stream every` or
-`stream replace lane=<qualified-name>`; `stream latest` is E050 because an
-obsolete stream is not guaranteed to terminate. Bare handler `run` and
-`stream` are E050.
-`run` inside `subscribe` remains the separate long-lived stream-source
-construct. Task-flow `from run call()`/`from stream call()` and corresponding
-`then` sources remain Task adapters without a directly routed delivery mode.
-Future modes wrap an async Rust function with `Task::perform`; stream modes
-wrap a Rust `Stream` with `Task::run`. `task` directly maps a Rust function that
-already returns an iced `Task`, which exposes clipboard, window, focus, scroll,
-font, system, cancellation, batching, and other runtime operations without
-duplicating their implementation in Ice.
-
-One in-flight Future-mode statement or `task` statement owns one set of
-explicit route snapshots. The set is released when that work completes or is
-dropped, including a `replace` abort. A stale `latest` Future retains its set
-until it finishes. A multi-output `task` retains only the original set and
-clones values into each
-delivered message; there is no global snapshot map or completion-by-completion
-accumulation.
-
-`run every` delivers every Future completion and `stream every` delivers every
-stream item; neither owns a delivery lane. Work that can be superseded uses a
-statically named delivery lane:
-
-```ice
-on search
-  run latest lane=catalog search_catalog(query) -> searched _ | failed _
-
-on retry_search
-  run latest lane=catalog search_catalog(query) -> searched _ | failed _
-
-on refresh_preview
-  run replace lane=preview render_preview(document) -> previewed _ | failed _
-
-on choose_result(title)
-  invalidate lane=catalog
-  selected_title = title
-```
-
-The lane belongs to the state owner, not to a handler or source location. The
-top-level app is one owner; a daemon is one owner shared by all of its windows;
-each component instance is an independent owner. Thus equal fully qualified
-lane names join starts across handlers and source locations for one owner,
-while two component instances do not interfere. An unqualified name in a
-component imported `as catalog` belongs to that alias namespace, but it remains
-owned by each component instance and cannot join the app owner. Unaliased app
-and preset fragments remain in the root namespace and may share root lanes.
-Lane names are qualified identifiers written in source, so each checked owner
-has a finite set. One owner must use one effect kind and one delivery mode for
-a name: Future and stream starts cannot share a lane, and a Future lane cannot
-mix `latest` with `replace`. One handler execution cannot start the same lane
-twice.
-
-`invalidate lane=<qualified-name>` is an immediate direct app, daemon, preset,
-or component handler statement for a synchronous intent that supersedes
-already started work. It must resolve to an existing `latest` Future or
-`replace` Future/stream lane with the same fully qualified name and state
-owner; declaration order does not matter, but an unknown lane is E140.
-Invalidation never declares a lane, allocates bookkeeping, or starts a task. It
-advances the lane generation before canceling work, so every earlier Future
-completion or already queued stream item is stale. For a `latest` lane the old
-Future continues running. For a `replace` lane, invalidation also aborts and
-releases the current replacement handle. A component invalidates only that
-runtime instance's lane. `parallel`, `sequential`, and `abortable` task
-composition do not accept this non-task statement.
-
-In a component handler, a named `run latest`, `run replace`, or
-`stream replace` may be direct or a leaf of nested `parallel` and `sequential`
-task structure. Its lane still belongs to that component instance.
-`stream every` is rejected there because it has no compiler-owned lane to end
-work when a mounted component leaves.
-
-`latest` advances the lane generation and routes only the current generation's
-success or failure. It does not cancel stale Futures: they and their captured
-values remain live until they finish or their backend drops them. Work that is
-started repeatedly and never finishes can therefore retain memory or external
-resources even though its completions are filtered.
-
-`replace` also filters stale delivery and aborts the prior Iced task for the
-lane when a replacement is installed. A Future lane releases its handle when
-its matching terminal completion is accepted, the next replacement starts, the
-lane is invalidated, or its owner drops. If an outer `abortable` prevents that
-completion from reaching update, the fixed one current handle remains until
-one of the latter three events; it does not accumulate. A stream lane keeps one
-handle across all of the current stream's items and releases it only after
-natural termination, the next replacement, explicit invalidation, or owner
-drop. A private terminal message per naturally completed stream performs that
-cleanup; an ordinary item never clears the handle, and a stale item or terminal
-message never touches the current handle. Aborting drops work still owned by
-that task, but it is not
-transaction rollback: effects already performed remain, detached or blocking
-backend work may continue, and messages already queued by the runtime remain
-queued but fail the generation check. Use cancellation-safe or idempotent Rust
-boundaries when those effects matter. Per-owner lane bookkeeping is fixed by
-the source-declared names; it does not allocate entries from runtime request
-keys. The number of component owners follows the existing retained/mounted
-component lifetime contract.
-Future values, generations, and abort handles are backend details rather than
-Ice values.
-
-Multiple tasks can be composed as one structured final statement:
-
-```ice
-on refresh
-  parallel
-    run every load_tasks() -> tasks_loaded _ | failed _
-    run every load_profile() -> profile_loaded _ | failed _
-
-on save_then_refresh
-  sequential
-    run every save_draft() -> saved _ | failed _
-    run every load_tasks() -> tasks_loaded _ | failed _
-```
-
-`parallel` lowers to `Task::batch`; `sequential` lowers to repeated
-`Task::chain`. Groups may nest and accept only task-producing statements,
-including native clipboard, system, font, widget, window, and pane-query tasks.
-Sequential construction reads handler inputs and state before either task
-runs; it orders runtime task actions, not the later processing of their routed
-messages. Use a result handler when the next task needs state produced by the
-previous result.
-
-Native task cancellation stores iced's own handle in optional UI state:
-
-```ice
-state
-  request:task-handle? = none
-
-on start
-  abortable request abort-on-drop
-    run every load_tasks() -> tasks_loaded _ | failed _
-
-on cancel
-  abort request
-
-view
-  col
-    if aborted(request)
-      text "Canceled"
-```
-
-`abortable` accepts exactly one task-producing child, including a nested task
-group, and must be the final handler statement. It lowers to `Task::abortable`
-and stores the returned handle. Optional `abort-on-drop` applies iced's
-`Handle::abort_on_drop`; replacing the state handle or assigning `none` then
-cancels unfinished work when the last clone drops. `abort handle` calls
-`Handle::abort` when present and intentionally keeps the handle so
-`aborted(handle)` can report its status. A missing handle reports `false`.
-Task handles are opaque and cannot be compared or used as lazy keys.
-
-Native task streams route yielded items through `Task::run` and explicitly
-choose whether concurrent starts are independent or replacing:
-
-```ice
-extern crate::backend
-  AppError(message:str)
-  stream progress(total:i64) -> i64
-  stream checked_progress() -> i64 ! AppError
-
-on start
-  parallel
-    stream every progress(100) -> progressed _
-    stream replace lane=checked checked_progress() -> progressed _ | failed _
-```
-
-`stream every` starts an independent task and routes every item until that
-stream terminates. `stream replace lane=<qualified-name>` advances a delivery
-generation, aborts the prior task in that owner and lane, and routes only items
-from the current generation. Bare handler `stream` and `stream latest` are
-E050. `stream every` has no compiler-owned lane or handle, so repeatedly
-starting a stream that never terminates intentionally keeps every producer and
-its captures alive. Extern-aware completion therefore defaults a selected
-stream function to `stream replace lane=<qualified-function-name>`; `every` is
-an explicit opt-in. An infallible stream item becomes the success-route
-payload. A fallible stream must yield `Result<T, E>` items and requires both
-success and error routes; an error is one routed item and does not itself end
-the stream.
-
-Stream statements are task-producing, so they work directly and inside
-`parallel` or `sequential` groups. They are rejected anywhere under an
-`abortable` task: a replace lane is already compiler-owned cancellation, while
-an every stream has no bounded owner handle. Use `invalidate lane=<name>` to
-stop a replace stream without starting another, and use a subscription for
-view-derived long-lived activation. Because the mapping closure runs once per
-item, stream routes may pass one `_` or discard the item with a parameterless
-route; they cannot capture other expressions. Read current UI state inside the
-destination handler.
-
-Native sippers keep repeated progress distinct from their single final output
-and lower through `Task::sip`:
-
-```ice
-extern crate::backend
-  AppError(message:str)
-  sip download(url:str) progress=f64 -> bytes ! AppError
-
-on start
-  sip download(url)
-    progress -> downloading _
-    done -> downloaded _
-    error -> failed _
-```
-
-The Rust factory returns
-`impl iced::task::Straw<Vec<u8>, f64, AppError> + Send + 'static` (or
-`Sipper<Output, Progress>` when infallible). `progress` and `done` are required;
-`error` is required only for a fallible declaration. Each route may pass one
-`_` or discard its payload, and may not capture other expressions. A sip is a
-task-producing statement and can be nested in `parallel`, `sequential`, and
-`abortable`. Consumers must enable iced's `sipper` Cargo feature.
-
-Typed task flows keep domain output unwrapped until the final UI route, so
-native task combinators can depend on earlier output:
-
-```ice
-on start
-  flow
-    from stream page_ids(4)
-    then id -> task load_page(id)
-    collect
-    done -> pages_loaded _
-    units -> work_planned _
-```
-
-`from` accepts an extern `run`, `task`, or `stream` source and the built-in
-system, clipboard-read, font-load, and image-allocation tasks. It also accepts `done expr` and
-`none Type`, which lower directly to `Task::done` and `Task::none`:
-
-```ice
-flow
-  from done 7
-  map value -> value + 1
-  done -> finished _
-
-flow
-  from none i64
-  done -> finished _
-```
-
-`then name -> source` lowers to `Task::then` and binds each output only inside
-the next source call. Use
-`try` for `T?` output or a fallible task; fallible steps must keep the same
-error type required by iced's `Result` overload. A transform cannot capture UI
-state because the native closure is static; pass stable input to the first
-source or read current state in the destination handler.
-
-`map name -> expr` lowers to `Task::map` and replaces each output with the
-expression value. It may read only its binding. On a fallible flow it maps the
-successful value and preserves the error type; on an optional flow the binding
-is the whole optional value, matching native `Task::map` exactly:
-
-```ice
-flow
-  from task load_count()
-  map count -> count + 1
-  done -> loaded _
-  error -> failed _
-```
-
-`map-err error -> expr` lowers to `Task::map_err`, may read only its error
-binding, and replaces the flow's error type with the expression type. A `pure`
-extern is the normal way to translate one domain error into another:
-
-```ice
-flow
-  from task request()
-  map-err reason -> normalize_error(reason)
-  collect
-  done -> collected _
-```
-
-`collect` lowers to `Task::collect`. It changes an infallible `T` into `[T]`
-and a fallible `T ! E` into `[result[T,E]]`, preserving each failure as data
-and making the collected flow itself infallible.
-`discard` must be last, suppresses both output routes, and lowers to
-`Task::discard`. `units -> handler _` reads native `Task::units` during flow
-construction and emits an `i64` notification alongside the task. Non-discarded
-flows require `done`; fallible flows also require `error`. All three routes may
-pass one `_` or discard their payload. Flows are task-producing and work inside
-task groups and `abortable`.
-
-Examples of payload flow:
-
-```ice
-checkbox task.title checked=task.done -> toggle(task.id, _)
-run every list_tasks() -> loaded _ | failed _
-task copy_text(draft) -> copied
-
-on toggle(id, checked)
-  run every set_task_done(id, checked) -> updated _ | failed _
-```
-
-`on mount` runs once during app initialization and has no parameters. Generated
-message enums, update matching, owned clones, lifetimes, and `iced::Task::perform`
-calls are backend details.
-
-## 8. View language
-
-The implemented native nodes are:
-
-| Node | Contract |
-| --- | --- |
-| `col` | vertical children with full sizing, padding, spacing, alignment, clipping and wrapping behavior; `virtual-row=` lays out only the visible ones |
-| `row` | horizontal children with full sizing, padding, spacing, alignment, clipping and wrapping behavior |
-| `scroll` | one content child; complete direction/scrollbar/builders, every viewport getter and status selector, every concrete Style field, and typed native runtime style callbacks |
-| `grid` | responsive children with pixel width/spacing, fixed columns, minimum-cell wrapping, or native maximum-cell wrapping, and aspect-ratio or evenly distributed `Length` height |
-| `stack` | overlays children with typed width/height, optional clipping and `under=N` intrinsic-base control |
-| `box` | exactly one child with ID, all length bounds, max bounds, per-axis alignment, clipping, per-side padding, every concrete surface style field including linear backgrounds, and typed native runtime style callbacks |
-| `overlay` | named `content` and `layer` trees with checked visibility, alignment, padding, backdrop and optional dismissal |
-| `text` | one `str`, `i64`, or `f64` expression with an optional ID, bounds, size/line-height, font, alignment, shaping, wrapping, checked color/weight styles, and an AccessKit `Label` role containing the visible value |
-| `rich-text` | optional ID, zero or more structured spans with rich defaults, complete span highlights and optional string link events; `for` children expand a span template per list item into the same single paragraph, composing with literal spans |
-| `panes` | named pane trees backed by recursive persistent split state, structured title/full/compact controls, complete concrete state and surface styles with linear backgrounds, closed panes, list-keyed runtime templates, typed dynamic references, click, resize and drag/drop behavior |
-| `input` | required `str` or declared `secret` binding; checked accessible label/description, `TextInput` or value-suppressing `PasswordInput` role, ID, hint, disabled/secure, submit/paste, every concrete builder setter, complete icon, all concrete status style fields, and typed native runtime style callbacks |
-| `button` | string label or one child; checked accessible label/description and optional toggled state with an explicit label required for child content, compact-label typography utilities, `Button` role and keyboard activation, optional ID/disabled, typed size/padding/clip, eight presets, complete status styles, typed native runtime style callbacks and required route |
-| `checkbox` | string label, optional accessible label/description, `CheckBox` role and keyboard activation, bool value/route, disabled, sizing/typography/wrapping/font, custom icon, four presets and complete checked-aware status styles |
-| `toggler` | string label, optional ID, bool value/route, disabled, sizing/typography/wrapping/font/alignment and complete checked-aware status styles |
-| `slider` | optional ID, `f64` or typed extern numeric value/range/default/normal+shift steps, direction-aware sizing, change/release routes and nested status styles |
-| `progress` | `f64` value/range, all length/girth variants, vertical axis, five presets, complete concrete style overrides and typed native runtime style callbacks |
-| `radio` | string label, optional ID, bool/i64/f64/str/extern value route, bool selection, complete sizing/typography/font and selected-aware status styles |
-| `pick` | `[T]` options, `T?` selection, optional ID, complete typography/handle/status/menu configuration, typed native field/menu style callbacks and `T`-payload route |
-| `combo` | searchable/replaced/incrementally pushed `combo[T]` state, `T?` selection, optional ID, complete typography/icon/input/menu styles, typed native input/menu style callbacks and all routes |
-| `float` | one child with positive scale, bounds/viewport-aware x/y translation, shadow and per-corner shadow radius |
-| `pin` | one child with typed width/height and fixed x/y position |
-| `sensor` | one child with show/resize `(width, height)` routes, including direct named component-event emission, plus hide, key, anticipation and delay |
-| `responsive` | one arbitrary size-dependent child tree with scoped width/height bindings and typed bounds |
-| `rule` | horizontal/vertical separator with non-negative thickness, all fill modes, default/weak preset, color, corner radii and snap |
-| `qr` | literal or runtime text/binary payload with correction/version, cell/overall sizing and checked colors |
-| `space` | optional fixed/fill/fill-portion/shrink width and height |
-| `image` | raster path or encoded/RGBA handle with every concrete sizing/fit/filter/typed rotation/opacity/scale/expand/per-corner-radius/crop property; `label=` adds an AccessKit `Image` role and unlabeled images are decorative |
-| `viewer` | interactive image zoom/pan with path/handle sources and complete sizing/fit/filter/padding/scale configuration |
-| `svg` | SVG path or UTF-8/raw-byte memory expression with typed layout, idle/hover color properties, and a typed native runtime style callback |
-| `tooltip` | exactly two children (content then tip), full positioning/timing, every concrete box style field, and typed native runtime style callbacks |
-| `mouse` | one child; all button/enter/move/scroll/exit events and every iced cursor interaction |
-| `resize-handle` | one child with an optional ID, required `(dx, dy)` drag route, optional press/release routes, and checked cursor interaction |
-| `canvas` | declarative native geometry, raster/SVG drawing, path building, transforms, clipping, typed control flow, grouped dependency caches and pointer events |
-| `theme` | one child with default/app/all built-in iced themes and checked text color plus solid/linear background |
-| `if` | includes its children when a bool expression is true |
-| `for` | iterates a list and adds one typed item binding |
-| `keyed` | repeats one child template with a bool/i64/f64 identity key and native column sizing/alignment; `virtual-row=` lays out only the visible rows while per-row state still follows the key |
-| `lazy` | caches one owned static child subtree by a checked hashable dependency, or by cheap `by` key projections of a state-rooted value |
-| `markdown` | renders owned parsed/replaced/appended content, exposes image URIs, all Settings and Style fields, str link events, and typed custom Viewer factories |
-| `table` | maps typed rows into arbitrary structured headers/cells with complete sizing, padding, separator and alignment options |
-| `editor` | binds owned multi-line content to generated iced actions with sizing, typography, wrapping, built-in highlighting and every concrete status style field |
-
-`if` and `for` are child control-flow nodes inside a layout. There is no virtual
-DOM or runtime reconciliation layer; the iced backend constructs the current
-element tree from state.
-
-Grid `cols=`, `min-cell=`, and `max-cell=` are mutually exclusive. `cols=` is
-a positive `i64`; both cell widths and both dimensions of `h=aspect(W,H)` are
-positive `f64` values. `min-cell=` uses as many columns as fit without making
-a cell narrower than the requested width, matching CSS
-`repeat(auto-fit, minmax(..., 1fr))` behavior with natural row height;
-therefore it does not combine with `h=`. `max-cell=` exposes iced's native
-fluid grid, which adds columns so cells do not exceed the requested width.
-`w=` and `gap=` are non-negative `f64` pixels. A non-aspect
-`h=` accepts `fill`, `fill(N)`, `shrink`, or a non-negative `f64` pixel
-expression and maps to iced's evenly distributed sizing.
-
-`box` is the explicit one-child wrapper used to size, align, clip, pad,
-and style an arbitrary structured child tree. It accepts the shared surface
-properties used by pane content and title bars: solid or linear background,
-text, border with per-corner radius, shadow offset/blur, and pixel snapping.
-Geometry uses typed properties; semantic color and emphasis utilities may be
-layered on top when they do not duplicate a typed surface field:
-
-```ice
-box #card w=fill max-w=640.0 align-x=center p=12.0 bg=linear(1.57, surface@0.0, bg@1.0) r=10.0 shadow=black/50 shadow-y=2.0 shadow-blur=8.0 px-snap=true
-  TaskRow task=task loading=loading
-```
-
-`style=summary_container(loading)` may call a declared `box-style`. Its
-Rust function receives `&iced::Theme`, then its owned arguments, and returns
-`container::Style`. Utilities and typed properties override that returned base.
-
-An SVG accepts `style=status_svg(loading)` after a matching `svg-style`
-declaration. The Rust function receives `&iced::Theme`, `svg::Status`, then its
-owned arguments and returns `svg::Style`. Explicit `color=` and `hover=`
-properties override the callback result for their respective statuses.
-
-`col virtual-row=<estimate>` turns a column into a virtualized one: it accepts
-every child but lays out only those the viewport can reach, sizing the rest
-from the estimate until they scroll in and are measured for real. Text is
-shaped during layout, so a child never laid out never shapes — which is where
-the cost of a long list actually sits. Children keep their widget state, since
-they stay in the tree; they are simply not measured, drawn, or offered events
-while offscreen. Mount it inside a `scroll`. The estimate only needs the right
-order of magnitude. `wrap` and `align=` are rejected on such a column (`E197`),
-because both need every child measured.
-
-`keyed item in items by=key virtual-row=<estimate>` is the same estimate on a
-keyed column, and it is what a long list of *identified* rows needs. Per-row
-state — the widget tree, the measured height, which row holds keyboard focus,
-and the memo behind a `lazy` row — then follows its key rather than its index,
-so a list that prepends does not hand every row below the new one its
-predecessor's. Without the key, an index-diffed prepend invalidates every
-memoized row on the screen, which costs more than the virtualization saves.
-`align=` is rejected here too (`E197`), for the reason it is rejected on a
-plain column.
-
-The enclosing `scroll` keeps a virtual column's mounted window synchronized
-through an entire wheel transaction. iced forwards the first wheel event to
-the content but may consume the rest at the scrollable; generated code reads
-the resulting scroll translation after every captured wheel event and opens a
-new layout only when that translation leaves the rows already held as
-overscan. A rapid wheel burst or immediate direction reversal therefore cannot
-move every mounted row outside the viewport, and movement still covered by
-overscan does not add a layout pass.
-
-**A virtualized row is not an unmounted row.** Rows stay in the tree whether or
-not the viewport can reach them, so a component with `lifetime mounted` under a
-virtualized column keeps its state and its clock while it is scrolled out: an
-animation started when the row arrived goes on running, and scrolling back to
-the row shows it at its true age rather than restarting it. That is the honest
-reading — a row does not become newly-arrived because the reader scrolled to
-it — and it is why `lazy`'s parking lot, which exists for a mount actually torn
-down by a `match` arm switch or a trimmed list, has nothing to do here.
-Scrolling out is not a teardown, and virtualizing a list does not change how
-many rows are built; it changes how many are laid out.
-
-Measuring a row that sits above the viewport moves everything below it, which
-under a `scroll` anchored to the start shifts what the reader is looking at.
-Put a virtualized column in a scroll with `anchor-y=end` whenever it is read
-by scrolling back through unmeasured content — a message history, say. An
-end-anchored scroll stores its offset as a distance from the bottom, so
-content growing above the viewport carries the offset with it and the visible
-rows stay put. Scrolling forward is unaffected either way, because rows enter
-from the end and correct only what is already below. Offsets on such a scroll
-run from the bottom, so it rests on its newest row with no operation at all and
-`task widget snap`'s `0.0` selects that row while `1.0` selects the oldest;
-`task widget snap-end` names the content's end rather than an offset and
-returns a reader who scrolled away to the newest row.
-
-`anchor-y=keep` is the third answer, for the list `end` cannot serve: one whose
-newest row is on **top**. Such a list rests where `start` rests — offset zero
-is the newest row — but grows at the end nobody is watching, and a start
-anchor's absolute offset means every row a beat prepends slides the reader's
-rows down the screen by its own height. `keep` is `start`'s resting place with
-`end`'s correction: content arriving above the viewport carries the offset with
-it, while a reader who has not scrolled is left on the newest row. It is
-vertical only, and it corrects **growth** — a list that has reached a cap and
-is sliding rows off its far end has a constant height and no growth to read, so
-a reader scrolled into one still watches it slide.
-
-Whichever child holds keyboard focus keeps being laid out wherever it drifts
-to, so it still answers key presses and still moves focus correctly when the
-reader tabs on. Accessibility is not covered the same way: publishing a child's
-semantics requires laying it out, which is the cost being avoided, so a screen
-reader sees only the visible slice and the column publishes no set metadata to
-say how much it is not seeing. `.ice` tests read that same snapshot, so `click`
-and `expect a11y` cannot reach an offscreen child. Use `virtual-row=` for long,
-read-mostly content such as a message history; a collection that has to read
-correctly to assistive tech needs a real list widget instead.
-
-An `overlay` keeps the two trees explicit instead of relying on child order.
-When its bool condition is true, `layer` floats over `content`; the backdrop
-blocks button and scroll input and an optional `dismiss=` route handles a left
-click outside the layer. Pointer events inside the layer do not dismiss it.
-An open overlay is modal to the keyboard as well: Tab and Shift+Tab stay inside
-`layer`, focus that `content` held when the overlay opened is dropped, and no
-keystroke reaches `content` while the backdrop is covering it. Nothing declares
-this — a backdrop that swallows every press is what makes it true:
-
-```ice
-overlay when=about_open dismiss=close_about backdrop=black/60 p=24.0
-  content
-    Dashboard
-  layer
-    AboutDialog
-```
-
-Advanced overlays stay behind the existing typed component boundary instead
-of duplicating the `Overlay` trait in Ice:
-
-```ice
-extern crate::backend
-  component native_overlay(index:f64) -> unit
-
-view
-  extern native_overlay(42.0)
-```
-
-The Rust `Element` may contain a custom `Widget::overlay` implementation. Rust
-therefore retains the complete native `Overlay` contract: layout, draw,
-operate, update, mouse interaction, nested overlays, and `index()` ordering.
-The generated component probe verifies the owned Element ABI; a non-unit
-overlay event uses the same checked `-> handler _` mapping as any extern
-component.
-
-Rich text uses structured `span` children with `str`, `i64`, `f64`, or bool
-expressions, so mixed formatting and links remain
-readable without embedding markup in a string. A route is required exactly when
-at least one span has a string `link=`:
-
-```ice
-rich-text w=fill wrap=word size=14.0 @text-muted -> open_link _
-  span "Read the "
-  span "Ice guide" link="https://example.com" underline @font-bold text-primary
-  span "."
-```
-
-A `for` child expands a span template per list item at render time, composing
-with literal `span` siblings so a dynamically built line — a chat message body
-— still lowers to one native paragraph widget. The loop binding scopes to the
-`for`'s own `span` children, and a `link=` inside the loop requires the same
-route as a literal one:
-
-```ice
-rich-text wrap=word -> open_link _
-  span "Sources: "
-  for source in sources
-    span source.title link=source.url underline
-  span "."
-```
-
-Rich defaults cover size, relative or absolute line height, font, bounds,
-alignment, wrapping and color. A span can override size, line height, font and
-color; attach a string link; use a solid or linear highlight background with
-complete border/radius/padding; and toggle underline or strikethrough.
-
-A pane grid owns persistent iced layout state generated from its required static
-ID. Static names and checked `template(key)` references are the identities
-exposed to Ice; native pane/split IDs stay inside generated Rust. `resize=` is
-grab leeway and enables automatic ratio
-updates, while `drag` automatically applies successful drop targets. A two-pane
-layout uses the same explicit split tree as every larger layout:
-
-```ice
-panes #workspace w=fill h=fill gap=8.0 min-size=120.0 resize=6.0 drag click=pane_clicked(_)
-  split vertical ratio=0.7
-    pane files
-      FileList
-    pane editor
-      Editor
-```
-
-For an arbitrary initial layout, nest binary split nodes. A root-level
-`pane name closed` declares checked content without opening it:
-
-```ice
-panes #workspace w=fill h=fill
-  split workspace_root vertical ratio=0.7
-    pane files
-      FileList
-    split editor_stack horizontal ratio=0.6
-      pane editor
-        Editor
-      pane terminal
-        Terminal
-  pane preview closed
-    Preview
-```
-
-A runtime pane template repeats one checked pane body over list state. It is
-initially closed; handlers open and target any item through the template's
-bool, i64, f64, or str key:
-
-```ice
-state
-  documents:[Document] = []
-  selected_id = 42
-
-on open_document
-  pane #workspace split editor document(selected_id) horizontal ratio=0.4
-
-on close_document(id)
-  pane #workspace close document(id)
-
-view
-  panes #workspace
-    pane editor
-      EditorHome
-    pane document in documents by=document.id maximized=is_maximized
-      title
-        text document.title
-      controls
-        button "Close" -> close_document document.id
-      col
-        if is_maximized
-          text "Focused editor"
-        DocumentEditor document=document
-```
-
-The list must be app state so the generated pane body can safely borrow its
-current item. If an open key is no longer present, the pane renders a readable
-missing-data placeholder until it is closed or the item returns. Opening the
-same `template(key)` twice is a no-op. Optional `maximized=name` binds iced's
-per-pane maximized callback flag as a checked bool inside that pane's title,
-controls, content node, styles, and scoped IDs; it works on static, closed, and
-runtime panes.
-
-A pane may expose iced's native `Content`, `TitleBar`, and `Controls`
-structure directly. `compact` is the fallback used when the full
-controls would overlap the title. `always-controls` disables the default
-hover-only visibility, and title padding accepts the same per-side precedence
-as boxes:
-
-```ice
-panes #workspace resize=8.0 drag
-  style
-    hovered-region bg=linear(0.785, primary/10@0.0, primary/40@1.0) border=primary border-w=2.0 r=8.0
-    hovered-split color=primary w=3.0
-    picked-split color=fg w=3.0
-  split vertical
-    pane files bg=linear(1.57, surface@0.0, bg@1.0) border=border border-w=1.0 r=10.0 shadow=black/50 shadow-y=2.0 shadow-blur=8.0 px-snap=true
-      title p=8.0 px=12.0 always-controls bg=bg border=border border-w=1.0 r-tl=8.0 r-tr=8.0
-        text "Files" @font-bold
-      controls
-        row gap=8.0
-          button "Refresh" -> refresh
-          button "Close" -> close_files
-      compact
-        button "…" -> open_file_menu
-      FileList
-    pane editor
-      Editor
-```
-
-Each pane requires exactly one direct content node; wrap siblings in `row` or
-`col`. `controls` require `title`, and `compact` requires full `controls`.
-Pane and title typed surface properties cover every
-concrete `container::Style` field: solid or linear background, text, border
-with per-corner radius, shadow offset/blur, and pixel snapping. Semantic
-`@` colors may be used when they do not duplicate a typed field; layout stays
-explicit in child nodes. Linear angles are radians, offsets are checked
-in `0.0..=1.0`, and iced's maximum of eight color stops is enforced.
-
-The optional first `style` child maps directly to iced's complete concrete
-`pane_grid::Style`: hovered region solid or linear background and border
-(including every corner radius), plus hovered and picked split line colors and
-widths. Omitted fields retain `pane_grid::default(theme)`. Background parsing
-is shared with pane surfaces instead of being a panes-only special case.
-A declared `panes-style` call can provide the native runtime base instead;
-the structured child still applies checked field overrides after that callback:
-
-```ice
-panes #workspace style=workspace_panes(loading)
-  style
-    picked-split w=4.0
-  split vertical
-    pane files
-      FileList
-    pane editor
-      Editor
-```
-
-Pane grids may only live in the app view because component/repeated instances
-need separately keyed persistent state. Click routes receive a stable `str`:
-the static name or `template(key)` for a runtime pane.
-
-Canvas is a checked declarative layer over iced's native `Canvas`, `Program`,
-`Frame`, `Path`, and `Cache`. Its body is drawing code, not a widget subtree:
-
-```ice
-canvas w=fill h=220.0 cache=chart_version cache-group=charts capture=true cursor=(cursor_state) cursor-outside=true
-  state
-    cursor_state = "crosshair"
-    drag_count = 0
-    drag_x = 0.0
-    drag_y = 0.0
-  event mouse pressed as button
-    set cursor_state = "grabbing"
-    set drag_count = drag_count + 1
-    emit chart_button button
-    capture
-  event mouse released as button
-    set cursor_state = "crosshair"
-    redraw
-    capture
-  event keyboard press -> chart_key _
-  capture touch lost
-  redraw window frame after=16ms
-  rect x=0.0 y=0.0 w=canvas_width h=canvas_height fill=bg
-  circle x=64.0 y=64.0 r=28.0 fill=primary stroke=fg stroke-w=2.0
-  path fill=primary/25 stroke=primary stroke-w=2.0 cap=round join=round
-    move x=96.0 y=160.0
-    bezier ax=140.0 ay=20.0 bx=180.0 by=200.0 x=240.0 y=80.0
-    line x=240.0 y=160.0
-    close
-  text "Drag me" x=16.0 y=196.0 color=fg size=14.0
-  image logo x=264.0 y=16.0 w=48.0 h=48.0 filter=nearest opacity=0.9 snap=true r=6.0
-  svg "icon.svg" x=320.0 y=16.0 w=48.0 h=48.0 color=primary rotate=0.1 opacity=0.9
-```
-
-`canvas_width` and `canvas_height` are scoped `f64` bindings containing the
-current frame dimensions. A single optional `state` block declares typed,
-per-canvas `Program::State`; its initializers are self-contained and cannot
-capture app state or component parameters. Commands accept app state, canvas
-state, and frame dimensions in expressions. Nested `if` and `for` commands draw
-conditional or repeated geometry. `group` applies translation, rotation,
-uniform/non-uniform scale and an optional `(x, y, width, height)` clip while
-restoring the previous transform after its body.
-
-`rect`, `circle`, and `path` accept a checked solid or `linear(...)` fill,
-`non-zero` or `even-odd` fill rule, and an optional stroke. Strokes expose
-width, butt/square/round caps, miter/round/bevel joins, dash segments and dash
-offset. Path bodies map directly to move, line, arc, arc-to, ellipse, cubic
-Bézier, quadratic, rectangle, per-corner rounded rectangle, circle, and close
-builder calls. Canvas text accepts string/numeric content, position, maximum
-width, color, size, relative/absolute line height, font, alignment and shaping.
-
-`image source` draws either a path string or an `image` handle produced by
-`encoded(...)`/`rgba(...)`. It requires `x`, `y`, `width`, and `height`, and
-exposes every concrete `iced::Image` field: linear/nearest filtering, rotation,
-opacity, pixel snapping, and per-corner radius. `svg source` has the same bounds,
-rotation, and opacity contract plus an optional checked color. Add the bare
-`memory` flag to accept UTF-8 SVG text or raw bytes instead of a path. Both
-commands draw inside the current frame transform and clip.
-
-`cache=dependency` uses iced's geometry cache and clears it when the checked
-hashable app dependency changes, the bounds change, or a canvas event updates
-local state. Include every app state value that affects drawing in that
-dependency; omit `cache=` for always-fresh geometry. `cache-group=name`
-requires `cache=` and gives every canvas carrying
-the same static name a shared native `canvas::Group`; this maps directly to
-iced's grouped cache storage without changing invalidation keys. Pointer
-press/release variants and move emit local `(x, y)` values;
-scroll emits `(x, y, pixels)`. `enter`/`exit` have no payload. `capture=true`
-marks emitted pointer events captured. Native consumers must enable iced's
-`canvas` Cargo feature.
-
-Canvas event directives expose the complete native `Program::update` event and
-action surface without turning drawing commands into handlers:
-
-```ice
-event keyboard press -> chart_key _
-event input-method preedit -> composing _ _ _
-event mouse wheel -> wheel _ _ _
-event touch moved -> touched _ _ _
-event window resized -> resized _ _
-capture window close-request
-redraw window frame
-redraw window frame after=16ms
-
-event mouse moved as x, y
-  set drag_x = x
-  set drag_y = y
-  redraw
-  capture
-
-event mouse released as button
-  set cursor_state = "grab"
-  emit released button
-  capture
-```
-
-`event` accepts every input-method, keyboard, mouse, touch, and window variant
-listed by `subscribe` and uses the same checked payload types. Mouse event
-coordinates are raw window coordinates; the compact `move=` canvas property
-continues to emit local coordinates. `capture source` returns iced's
-capture-only action. `redraw source` requests the next frame, while `after=ms`
-or `after=s` calls `request_redraw_at` relative to the current instant. A routed
-event publishes a message and therefore already redraws. A structured event
-uses `as` to name its typed payload, then may update local state with `set`,
-choose one explicit `emit` or immediate/timed `redraw`, and optionally
-`capture`. Publishing already requests a redraw. `emit` uses the named values
-instead of `_`. Timed redraws use checked instant arithmetic and fall back to
-an immediate redraw when a platform clock cannot represent the requested
-deadline. `cursor=(expression)`
-derives the complete iced mouse interaction from canvas state, while
-`cursor-outside=true` lets that interaction remain active outside the bounds;
-unknown runtime strings safely use the default interaction. `capture=true`
-also marks routed and redraw actions captured. Event sources must be unique
-within a canvas and these directives are allowed only at its root, not inside
-drawing groups or control flow.
-
-### View control flow
-
-Literal `match` has first-match semantics. Each arm owns one or more nodes; an
-optional `_` catch-all must be last:
-
-```ice
-match status
-  "ready"
-    text "Ready"
-  "loading"
-    text "Loading"
-  _
-    text "Unavailable"
-```
-
-Arm values are compared with checked equality. Exhaustiveness is not required;
-without `_`, no arm renders when no value matches.
-
-Option, result, and UI-enum patterns are exhaustive. `some(value)` and
-`ok(value)`/`err(value)` introduce immutable payload names scoped to that arm;
-`none` has no payload. An enum pattern uses `Enum.variant` or
-`Enum.variant(value)` according to the declaration. Every variant must appear
-exactly once unless a final `_` arm handles the remainder.
-
-```ice
-enum RequestState
-  idle
-  loading
-  ready([Task])
-  failed(AppError)
-
-match request
-  RequestState.idle
-    text "Idle"
-  RequestState.loading
-    text "Loading…"
-  RequestState.ready(tasks)
-    TaskList tasks=tasks
-  RequestState.failed(error)
-    ErrorPanel message=error.message
-```
-
-UI enums are top-level, non-generic, and non-recursive. A variant has zero or
-one payload, and payload types must be ordinary cloneable Ice data. Enums have
-no methods or struct literals. Constructors use `Enum.variant` for an empty
-variant and `Enum.variant(value)` for a payload variant. Fieldless enums support
-`==` and `!=`. Payload-carrying enums do not support comparison and must be
-inspected with exhaustive `match`.
-
-### Components
-
-Components are typed view templates. They remain pure by default, and may own
-small UI-local state when the interaction belongs to the reusable view:
-
-```ice
-component Counter(label:str)
-  state
-    count = 0
-  on increment
-    count = count + 1
-  col #root
-    text label
-    text count
-    button "Increment" -> increment
-```
-
-They have one root, typed inputs, and no implicit capture of app state. A local
-`state` block accepts self-contained ordinary cloneable values. Local `on`
-handlers may assign that state, stop with `return if`, fire a declared event
-with a final `emit(event, args...)`, or end with a Future
-extern call using an explicit `run every`, `run latest`, or `run replace`
-delivery mode, or with `stream replace` on an instance-owned lane. Future runs,
-replacement streams, and scoped widget operations may compose with `parallel`
-and `sequential`; `stream every`, `abortable`, other native tasks, lifecycle
-hooks, and implicit prop capture stay at app level. Pass a prop or event value
-explicitly through the route when a local handler needs it.
-
-A component use is also a layout boundary the compiler inserts on its own.
-When every expression the use evaluates — its arguments, its slot content, the
-body, and the bodies of the components that body uses — and every place an
-`input` below it binds with `<->` read only app state,
-derived values, the instance's own state, palette entries, and locals the
-subtree declares, and every widget below it lays out from its own element and
-limits alone, the generated code keys the subtree's layout node on the
-revisions of those reads and, while they hold, skips both iced's diff of the
-nodes below and their layout walk. The element is still built on every pass,
-so a `&` parameter, a controlled `input`, or an `editor` binding lives under
-the boundary unchanged; only the walks are saved. A `for` or keyed-column row
-is a function of the list its view iterates, and a `match` payload of the
-value its match takes it from, so a use whose argument is one of those keys on
-that expression's revisions — an outer row's list on up, when the list is
-itself a row. That is the compiler's key, not `lazy`'s: a `lazy` over a row
-still hashes the row, so a prepend rebuilds one row rather than the list. A
-use whose argument is a `lazy` alias, a table row, or a secret; a body that
-reads the implicit animation clock; a nested component with state of its own;
-a `lazy`, an `extern` component, an `editor`, a `virtual-row` column, an
-auto-scrolling `scroll`, a `sensor`, a resize handle, a responsive size, a
-`float`, a `pane_grid`, or media anywhere below — each of these diffs and lays
-out on every pass as before. `lazy` remains the explicit boundary for a subtree
-inside a component, and a memoized use never wraps one.
-
-A prop may declare a default after its type. Calls may omit that named prop;
-required props must precede defaulted props:
-
-```ice
-component Panel(title:str, description:str="", elevated:bool=false)
-  col
-    text title
-    text description
-
-view
-  Panel title="Settings"
-```
-
-Defaults are pure checked expressions evaluated without an environment. They
-cannot refer to app state, component state, or any parameter (including an
-earlier parameter), call a `sync` extern or recomputation-unsafe builtin, or
-belong to a `bind` prop. Declared `pure` extern calls are allowed. The
-recomputation-unsafe set is the same one rejected by derived expressions,
-including the unqualified `encoded` and `rgba` image constructors.
-Mutable component-only values such as `editor`,
-`markdown`, `combo`, `animation`, task handles, and debug spans cannot have
-defaults, and of them only `animation` and `editor` may be declared as
-component state at all. A supplied argument always overrides the default.
-
-An `editor` declared as component state requires `lifetime retained`: the
-instance's content must survive the instance leaving the tree (a draft is
-only useful if it is still there when its instance returns), and only the
-retained map can hand the view a plain borrow of the content. Its initializer
-follows the app-state form — a `str` becomes the initial content. Each
-instance owns its content: the editor widget binds it with `<->` exactly like
-app editor state, actions arrive tagged with the instance scope, and local
-handlers read it (`editor_text`, cursor queries) and replace it
-(`body = editor("")`) like any other local state. View expressions over a
-local editor read through a reference — `disabled=empty(trim(editor_text(body)))`
-gates a send button without cloning content. An editor state cannot appear in
-preset overrides, and the component test seam exposes it as its text. Widgets
-binding the same editor state must agree on one `action=` adapter, as at app
-level.
-
-Local state is keyed by the component's hierarchical instance scope, so two
-explicit component IDs own independent values. The declared initializer is
-used until the first local event materializes that instance. The default
-`lifetime retained` keeps entries for the app lifetime, including while an
-instance is absent from the current tree. Repeated dynamic retained instances
-should therefore use stable IDs. Because rendering may evaluate an initializer
-again, it may call `pure` externs but rejects `sync` externs and the same
-recomputation-unsafe built-ins forbidden in component prop defaults, including
-the unqualified `encoded` and `rgba` image constructors.
-
-`lifetime mounted` marks the scopes present in each rendered root and removes
-entries that disappear from that root, at the start of the pass after the one
-that stopped rendering them. The delay is required, not incidental: a
-`responsive` and every other deferred builder constructs its subtree during
-layout, so components under one are marked after their root has finished
-rendering, and removing entries any earlier would drop state the same pass was
-still about to claim. Removing an entry drops its local state and delivery-lane
-bookkeeping, including any `run replace` or `stream replace` abort-on-drop
-handles. Stream cancellation therefore occurs at that documented next-pass
-prune boundary, not when `view` first omits the component. A retained component
-instead keeps its stream lane alive while absent, as required by retained
-lifetime.
-Daemon roots include their window ID, so rendering one window never prunes
-another window's scopes.
-
-A `mounted` component may declare one `boot` section: a local handler the
-runtime fires once per materialized instance scope, the first time a render
-sights the instance. Its body accepts exactly the component statement forms,
-and it may read the component's ordinary cloneable params — the sighting
-render captures their values into the queued boot message, so a pane loads
-itself against the endpoint and identity its instance was mounted with, and
-an instance keyed by identity reloads with fresh values when the identity
-changes. `bind` params and non-cloneable values are not captured. The booted mark
-is pruned with the instance, so a scope that leaves the tree and comes back
-boots again; `retained` components reject `boot` (`E103`) because a retained
-scope is never announced. Delivery rides the render: the view drains this
-pass's first-sighted scopes and the root publishes their boot messages on the
-next widget-update pass, through the same channel measured viewports already
-report on — so a boot fires after its instance's first frame, never during
-it. `boot` is a section, not an event: `on boot` is rejected, and no view
-route can target it. Beyond `boot` there is no `on unmount` hook or other
-arbitrary lifecycle effect; handlers remain the only place that starts work.
-Components without local state, handlers, or `boot` remain compile-time view
-expansion rather than runtime component objects.
-
-A component may declare required or optional slots. Bare `slot` is the conventional
-`children` slot and receives one structured child tree at its call site:
-
-```ice
-component Panel(title:str)
-  col p=16.0 @bg-surface rounded-lg
-    text title @font-bold
-    slot
-
-Panel title="Tasks" #tasks-panel
-  scroll h=fill
-    col
-      for task in tasks
-        TaskRow task=task loading=loading #task(task.id)
-```
-
-A component call uses checked named props in any order, as above. A bare
-`name` item is shorthand for the passthrough `name=name`. Unknown,
-missing, duplicate, and incorrectly typed props are compile-time errors.
-Ordinary props are read-only. A component that writes through a prop declares
-that capability with `bind`, and every caller uses `<->` explicitly:
-
-```ice
-component Field(bind value:str, label:str)
-  col
-    text label
-    input "Value" <-> value
-
-Field value<->draft label="Title"
-```
-
-A bind argument must be a direct app state, component-local state, or another
-bind prop. `value=draft`, `value<->trim(draft)`, binding an ordinary prop inside
-a component, and forwarding an ordinary prop are compile-time errors. This is
-the only way component parameters carry writable state; ordinary `=` arguments
-never forward a state binding.
-
-For React-like compound structure, name the slots in the component and fill
-them with readable `name:` blocks at the call site:
-
-```ice
-component Dialog()
-  col p=24.0 @bg-surface rounded-lg
-    slot header
-    slot body
-    slot actions
-
-Dialog
-  header:
-    text "Delete task?" @font-bold
-  body:
-    text "This cannot be undone."
-  actions:
-    row gap=8.0
-      button "Cancel" -> cancel
-      button "Delete" -> delete
-```
-
-Qualified component names provide a React-style compound form without the
-extra `name:` layer. A direct `Dialog.Name` child fills the matching `Name`
-slot while remaining a normal checked component call:
-
-```ice
-component Dialog()
-  col p=24.0 @bg-surface rounded-lg
-    slot Header
-    slot Body
-    slot Actions
-
-component Dialog.Header()
-  row
-    slot
-
-component Dialog.Body()
-  box w=fill
-    slot
-
-component Dialog.Actions()
-  row gap=8.0
-    slot
-
-Dialog
-  Dialog.Header
-    text "Delete task?" @font-bold
-  Dialog.Body
-    text "This cannot be undone."
-  Dialog.Actions
-    row gap=8.0
-      button "Cancel" -> cancel
-      button "Delete" -> delete
-```
-
-All direct children in compound form must be immediate qualified children of
-the parent call. Mixing a `Dialog.Header` child with an unrelated direct child
-is a compile-time error. Explicit `header:` blocks remain useful when the slot
-content should not have its own component styling or behavior.
-
-Append `?` to a named slot to make it optional. A missing optional slot lowers
-to no child at all. `provided(Name)` is a checked compile-time boolean inside
-the component view, so wrappers can disappear with the slot:
-
-```ice
-if provided(Footer)
-  box pt=12.0
-    slot Footer?
-```
-
-Absence propagates through single-child wrappers until a multi-child layout
-can omit that subtree. An entirely absent app or test root becomes an empty
-column. Forwarding an optional slot preserves its `provided` status.
-
-Every supplied slot accepts exactly one root. Wrap sibling nodes in `row`,
-`col`, `grid`, or `stack`. Unknown, missing required, and duplicate slot names
-are compile-time errors. A component can forward a named slot through another
-component by placing `slot name` inside the corresponding `name:` block.
-
-A component without slots rejects child content. Slot content keeps the
-caller's state, loop bindings, handlers, and IDs while rendering under the
-component instance scope.
-
-Long widget and component metadata can move into a first-child `with` block.
-It accepts only the same checked properties and `@` utilities as the parent;
-actual children, slots, and status blocks remain siblings after it:
-
-```ice
-input "New task" #new-task <-> draft
-  with
-    hint="What needs doing?"
-    disabled=loading
-    w=fill
-    @control
-
-  active bg=surface border=border
-  focused border=primary
-```
-
-Only one non-empty `with` block is allowed. The formatter owns its canonical
-shape: at most two short metadata entries stay inline; longer metadata moves
-to the first block, one property or utility per line, followed by `events`,
-`forward`, slots/statuses, and content. Positional arguments and bindings stay
-on the node's first line. A line whose metadata-shaped words interleave with
-other words — such as a parser-rejected spaced `disabled=a || b` — is
-preserved as written apart from indentation; the formatter never rewraps
-source it cannot represent.
-
-Components may expose one typed output. Route that output at every call site;
-inside the component view, `emit` forwards the value:
-
-```ice
-component Toggle(checked:bool) -> bool
-  extern native_toggle(checked) -> emit(_)
-
-Toggle checked=checked -> changed _
-```
-
-A non-`unit` component requires a route, while a `unit` component rejects one.
-`emit` accepts exactly one value matching the declared output and may be used
-to forward nested component or extern-component output.
-
-A component handler may also fire a declared event with the statement form
-`emit(event, args...)`, one value per declared payload. It is a task
-statement (final, or composed with `parallel`/`sequential`): the event is
-delivered as the NEXT update-loop message, so the handler's state writes land
-before the receiving handler runs. Because the emitting handler cannot see
-any call site's environment, a handler-emitted event must be statically
-deliverable: every call site routes it either straight to ONE app handler
-with `_`-only payloads, or chains it upward with `emit(outer_event, _...)`
-from inside another component, where the same rule applies to the outer
-event — and every chain must converge on the same app handler. A view-route
-`emit` keeps its full call-site flexibility; the restriction binds only
-events a handler fires.
-
-### Subscription slices
-
-An app keeps ONE subscription and one route for it. `slice
-Component.handler(args…) at <key>` hands what that route just received on to
-the instance the key names, as the next message in the SAME update loop — so
-a data plane can live in component state without a second event system.
-
-The key is matched against the instance's own identity: a component mounted
-with an explicit keyed id (`#room(id)`) carries that key in its scope, and
-the slice delivers to every instance whose scope ends in it — normally
-exactly one, and more only when the same key is mounted twice. It is a
-lookup, not a broadcast every instance filters for itself: a message costs a
-view rebuild, so telling instances that did not ask would charge the frame
-for panes nobody is looking at.
-
-The statement is a PUBLICATION, not the handler's closing act. It sits
-anywhere, and a handler that publishes accumulates its tasks and returns
-their batch — so a `return if` below a slice cannot swallow it. That is the
-shape a failure path needs: hand the words back to the room they were
-written in, and only then decide whether the timeline on screen is that
-room's. Only an APP handler may write one; a component handler already owns
-its instance's state.
-
-Arguments are checked against the target handler's parameters, and because
-nothing else routes to a sliced handler, the slice IS where those parameter
-types come from. The key is a `str`.
-
-Committed ordering and lifecycle:
-
-- The app handler's own writes land FIRST. The slice is a statement in it,
-  so by the time an instance is told, the app-level state that route
-  maintains is already current.
-- Several matching instances are delivered in ascending scope order — the
-  deliveries of ONE slice are chained, not batched, so two panes under one
-  key see the payload in a defined order rather than the runtime's. Two
-  SLICE STATEMENTS in one handler run concurrently with each other and with
-  whatever the handler itself launches; they address different instances, and
-  ordering them would mean delaying one behind the other's task.
-- An instance with no materialized state receives nothing — a `retained`
-  instance keeps receiving while it is off screen (that IS the point: its
-  pane is current when the reader returns), and a `mounted` instance stops
-  when it leaves the tree, with its state.
-- The app-level route stays exactly what it was, so a plane can descend one
-  slice at a time.
-
-Components may instead expose multiple named events with zero or more ordered
-typed payloads. Every declared event has exactly one route at each call site;
-missing, unknown, and duplicate routes are errors. Event routes are checked in
-the caller's scope, while emission is only valid inside the declaring
-component view:
-
-```ice
-component PageItem(page:str)
-  emits
-    select(str)
-    favorite(str, bool)
-  col
-    button "Open" -> emit(select, page)
-    checkbox "Favorite" checked=false -> emit(favorite, page, _)
-
-PageItem page="roadmap"
-  events
-    select -> navigate _
-    favorite -> favorite_changed _ _
-```
-
-Exact same-name, same-signature forwarding has one explicit shorthand:
-
-```ice
-component PageMenu(page:str)
-  emits
-    select(str)
-  PageItem page=page
-    forward
-      select
-```
-
-`forward select` is exactly `select -> emit(select, _)` without an intermediate
-message. The outer event must exist with the identical payload signature;
-wildcard forwarding and verbose identity routes are errors.
-
-Ordered widget payloads may emit named component events directly. For example,
-`sensor show=emit(measured, _, _)` and `resize=emit(measured, _, _)` pass the
-measured `f64` width and height through the component contract.
-
-A component route resolves only local component handlers and declared event
-emissions. Direct references to app-global handlers are errors, so reusable
-component dependencies remain explicit. A `lazy` subtree is no exception: only
-its `cached` alias is in scope as a value, but the component's handlers,
-events, and output remain routable there. The `component ... -> Type` and
-call-site `-> route` pair remains the canonical default-event shorthand and may
-coexist with named events.
-
-### Extern components and subscriptions
-
-An extern component is a typed Rust `Element` adapter with owned or borrowed
-parameters:
-
-```ice
-extern native_help(external_hover) #help -> external_hover_changed _
-extern borrowed_help(draft, external_hover) #borrowed-help -> external_hover_changed _
-```
-
-Its arguments and emitted payload are checked against the declaration. A
-non-`unit` output requires a route. A `unit` component may omit the route; its
-messages are mapped to an internal no-op. Extern components own their styling,
-so `@` utilities are not accepted on the call. A direct `#id` identifies the
-bounds of the returned native element for first-class tests.
-
-Subscriptions are declared separately from activation:
-
-```ice
-subscribe
-  every 500ms when auto_refresh -> tick
-  input-method preedit -> composing _ _ _
-  app_events() -> external_event _
-  keyboard press -> key_pressed _
-  keyboard release -> key_released _
-  keyboard modifiers -> key_modifiers_changed _
-  mouse moved -> pointer_moved _ _
-  mouse wheel -> wheel_scrolled _ _ _
-  touch pressed -> finger_pressed _ _ _
-```
-
-The compiler batches active subscriptions and wires the application builder.
-Subscription routes accept only `_`; handlers can read current state after the
-event arrives. This prevents generated `'static` subscription closures from
-capturing a borrowed application state.
-
-Any source may have a boolean activation condition between the source and
-route:
-
-```ice
-subscribe
-  every 2s when auto_refresh && online -> refresh
-  keyboard press when shortcuts_enabled -> key_pressed _
-```
-
-The condition is type-checked and evaluated from current app state whenever
-iced rebuilds subscriptions. False returns `Subscription::none()`, so an
-inactive timer or external stream is actually stopped instead of merely
-dropping its messages.
-
-Runtime event sources may also filter iced's dispatch status:
-
-```ice
-subscribe
-  event status=any -> runtime_event _
-  event with-id status=ignored -> window_event _ _
-  mouse moved status=captured -> drag_moved _ _
-  keyboard press status=ignored when shortcuts_enabled -> key_pressed _
-  window close-request status=any -> close_requested
-```
-
-`captured` means a widget handled the event; `ignored` means none did; `any`
-accepts both and is the default when `status=` is omitted. The modifier is
-available on generic, input-method, keyboard, mouse, touch, and non-frame
-window events. Timers, system/extern subscriptions, and raw window frames have
-no iced event status and reject it.
-
-`keyboard press` and `keyboard release` accept a `key=` filter that narrows
-the subscription to one logical named key, so it fires for that key alone
-instead of every keyboard event:
-
-```ice
-subscribe
-  keyboard press key=escape status=captured -> dismiss_overlay _
-  keyboard release key=arrow-left -> nudge_done _
-```
-
-The name uses the same shapes as the test driver's `key-down`: a lowercase
-ergonomic name such as `escape` or `arrow-left`, or an exact iced variant such
-as `TVInputHDMI1`. The filter compares the press's logical `key`, composes
-with `status=` and `when` (written in `key= status= when` order), and applies
-to canvas `event keyboard press`/`release` bindings the same way. Character
-keys are not filterable, and `keyboard modifiers` rejects the option.
-
-`event` carries the complete native `iced::Event` value across handlers and
-typed extern functions. Non-raw events lower to `event::listen_with` so the
-status rule is uniform. `event raw` lowers to `event::listen_raw`, includes
-redraw requests, and therefore must be filtered or routed without causing
-another redraw; an unfiltered raw listener can loop forever. `with-id` prepends
-the originating `window-id`. Runtime system-theme
-changes are not `iced::Event` values and remain available through
-`system theme`.
-
-Generic events support the same transforms as every native source:
-
-```ice
-extern crate::backend
-  pure label_event(value:event) -> str?
-
-subscribe
-  event filter=label_event status=any -> labeled _
-  event raw with-id status=captured -> captured _ _
-```
-
-Every native or extern source also supports iced's identity and output
-transforms:
-
-```ice
-extern crate::backend
-  pure visible_pointer(x:f64, y:f64) -> str?
-
-state
-  generation = 7
-
-on pointer_moved(generation, position)
-
-subscribe
-  mouse moved with=generation filter=visible_pointer -> pointer_moved _ _
-```
-
-`filter=` names a declared `pure` function and lowers to
-`Subscription::filter_map`. Its parameters exactly match the source payloads:
-no parameters for a payload-free event, one for a scalar source, and one per
-field for a multi-payload native event. It must return `T?`; after filtering,
-the route has one `T` payload. The generated closure captures nothing.
-
-`with=` lowers to `Subscription::with`, participates in the subscription's
-iced identity, and becomes the first route payload. It accepts Ice values with
-a statically hashable type; extern value types must additionally implement
-Rust's `Hash + Clone + Send + Sync + 'static` contract. Filtering happens
-before context is attached. Both modifiers are optional and routes may omit
-all `_` placeholders when their values are intentionally discarded.
-
-Declared `stream` externs can also become long-lived subscriptions:
-
-```ice
-extern crate::backend
-  stream worker() -> str
-  stream room_events(room:i64, generation:i64) -> str
-
-subscribe
-  run worker() -> received _
-  run room_events(room, generation) -> received _
-```
-
-A zero-argument `run` passes the Rust function item to
-`Subscription::run`. One or more arguments lower to `Subscription::run_with`;
-their value, or ordered tuple of values, is the subscription identity data and
-the generated noncapturing builder clones it into the declared stream
-function. Every data argument must be hashable. A fallible declaration
-`stream ... -> T ! E` emits one `result[T,E]` payload so failures remain stream
-values. These sources may use the same `with=`, `filter=`, and `when` modifiers
-as every other subscription.
-
-Custom iced recipes use the same checked source shape:
-
-```ice
-extern crate::backend
-  recipe counter(id:i64) -> i64
-
-subscribe
-  recipe counter(generation) -> counted _
-```
-
-The factory arguments are checked against Rust, its concrete return type must
-implement `iced::advanced::subscription::Recipe<Output = T>`, and the source
-lowers directly to `advanced::subscription::from_recipe`. Ice owns only the
-route and optional transforms; Rust retains the recipe's identity hashing,
-runtime-event input, stream, and cancellation behavior.
-
-Raw runtime events can be narrowed by a typed Rust filter without exposing
-iced's large platform event enum in Ice:
-
-```ice
-extern crate::backend
-  event-filter runtime_event() -> str
-
-state
-  event_identity = 1
-
-subscribe
-  events event_identity using=runtime_event -> received _
-```
-
-The identity expression must be hashable. The declared function takes no Ice
-parameters because Rust receives one implicit
-`iced::advanced::subscription::Event` and returns `Option<T>`. Generated code
-uses a native `Recipe` over iced's `EventStream`, hashes both the filter type
-and identity, and forwards only `Some(T)`. This exposes interaction window IDs,
-dispatch status, all runtime event variants, and system-theme changes while
-preserving native cancellation.
-
-Together, the declarative sources and typed adapters cover the complete
-application-facing `iced::Subscription` construction surface: `none`, `batch`,
-`run`, `run_with`, `from_recipe`, `with`, `map`, `filter_map`, and `units`.
-`iced::advanced::subscription::into_recipes` is the runtime consumer that
-extracts boxed recipes after an application has built a subscription; it does
-not create or transform an application subscription, so it intentionally has
-no source-language form.
-
-Ice covers all three public iced time operations with its native monotonic
-`instant` type:
-
-```ice
-extern crate::backend
-  refresh_status() -> i64
-
-state
-  last:instant? = none
-
-on read_time
-  task time now -> tick _
-
-on tick(now)
-  last = some(now)
-
-subscribe
-  every 500ms -> tick _
-  repeat refresh_status() every 2s -> refreshed _
-```
-
-`task time now` lowers to `iced::time::now`. `every` forwards each native
-`Instant`; the route may omit `_` when it does not need the tick value.
-`repeat` accepts a declared zero-argument async extern and lowers its function
-item directly to `iced::time::repeat`. A fallible extern produces
-`result[T,E]` values instead of splitting the subscription into success/error
-routes. Durations must be positive whole numbers using `ms` or `s`. `every`
-requires iced's `tokio` or `smol` Cargo feature; `repeat` requires `tokio`,
-which the reference app uses. In a generated test build `every` ticks off the
-test driver's logical clock rather than a wall-clock timer, so its ticks are
-scripted by `advance`/`wait` and a loaded machine cannot fire a period a test
-never asked for; `repeat` and timer futures inside tasks and streams remain on
-real time.
-
-Native keyboard subscriptions infer structured payloads. Press events expose
-`key:key`, `modified_key:key`, `physical_key:physical-key`,
-`location:key-location`, `modifiers:key-modifiers`, optional `text`, and
-`repeat`; release events expose the same fields except `text` and `repeat`.
-These four public types are the exact native iced values, so state and typed
-extern functions can preserve them without string conversion.
-
-```ice
-state
-  shortcut:key = key.named("Enter")
-  scan:physical-key = key.code("Enter")
-  location:key-location = key.location("standard")
-  modifiers:key-modifiers = key.modifiers(false, true, false, false)
-  latin:str? = none
-
-on pressed(event)
-  latin = key.latin(event.key, event.physical_key)
-  shortcut = event.key
-```
-
-`key.named("Variant")` and `key.code("Variant")` accept exact iced Rust enum
-variant names and lower directly, covering every current named and physical
-code without a second alias catalog; rustc reports an unknown variant during
-`cargo ice check`. `key.character(str)` and `key.unidentified()` construct the
-other logical variants. `key.native_unidentified()` and literal
-`key.native("android" | "macos" | "windows" | "xkb", code)` construct every
-native physical variant with checked integer ranges. For runtime integers,
-`key.try_native(platform, code) -> physical-key?` returns none on overflow.
-
-`key.location("standard" | "left" | "right" | "numpad")` covers every
-location. `key.modifiers(shift, control, alt, logo)` constructs any flag set;
-`key.command_modifiers()` preserves iced's platform-dependent `COMMAND`
-constant. Modifier values expose `shift`, `control`, `alt`, `logo`, `command`,
-`jump`, and `macos_command` booleans. Logical keys expose `kind`, optional
-`named`, and optional `character`; physical keys expose `kind`, optional
-`code`, `native_platform`, and `native_code`; locations expose `name`.
-Equality compares the native typed values, and `key.latin` delegates to iced's
-native locale-aware physical-key translation. Like `iced::keyboard::listen`,
-these subscriptions receive keyboard events that no widget captured.
-
-Pointer values also preserve iced's native types across state, handlers, and
-typed extern functions:
-
-```ice
-state
-  position:point = point(12.0, 24.0)
-  offset:vector = vector(10.0, 20.0)
-  extent:size = size(100.0, 80.0)
-  bounds:rectangle = rectangle(0.0, 0.0, 100.0, 80.0)
-  transform:transformation = transform.compose(transform.translate(10.0, 20.0), transform.scale(2.0))
-  button:mouse-button = mouse.button("left")
-  cursor:mouse-cursor = mouse.cursor(point(12.0, 24.0))
-  click:mouse-click = mouse.click(point(12.0, 24.0), mouse.button("left"), none)
-  finger:touch-finger = touch.finger("18446744073709551615")
-```
-
-`mouse.button` accepts `left`, `right`, `middle`, `back`, and `forward`.
-`mouse.other_button` accepts a checked literal `u16` value;
-`mouse.try_other_button(i64) -> mouse-button?` safely handles runtime values.
-`touch.finger` accepts a checked decimal `u64` string, preserving the full
-native identifier without unsigned Ice arithmetic, while
-`touch.try_finger(str) -> touch-finger?` parses runtime input safely.
-
-`mouse.cursor(point)`, `mouse.levitating(point)`, and `mouse.unavailable()`
-construct all cursor variants. `mouse.cursor_position`, `cursor_over`,
-`cursor_in`, and `cursor_from` expose iced's optional coordinate queries;
-`cursor_is_over`, `cursor_is_levitating`, `cursor_levitate`, `cursor_land`, and
-`cursor_translate` expose its variant and vector-translation behavior.
-`mouse.click` creates a native click from a point, button, and optional previous
-click. Point, vector, size, and rectangle coordinates are `f64` in Ice and
-lower to iced's `f32` geometry.
-
-`interaction.default/none/hidden/idle/context_menu/help/pointer/progress/wait/
-cell/crosshair/text/alias/copy/move/no_drop/not_allowed/grab/grabbing/
-resize_horizontal/resize_vertical/resize_diagonal_up/resize_diagonal_down/
-resize_column/resize_row/all_scroll/zoom_in/zoom_out()` construct the default
-and every `iced::mouse::Interaction` variant. A value exposes its kebab-case
-`.kind`, supports native equality and ordering, and crosses typed extern
-boundaries exactly. The native enum does not implement `Hash`, so it is
-deliberately rejected as a lazy dependency.
-
-Mouse areas and canvases accept first-class values with
-`cursor=(interaction_expression)`. Their existing compact cursor names remain
-equivalent human-readable sugar; canvases also retain runtime string cursor
-selection for mutable local state.
-
-`scroll.lines(x, y)` and `scroll.pixels(x, y)` construct both native
-`iced::mouse::ScrollDelta` variants. Each value exposes `.kind`, `.x`, and `.y`,
-supports equality and exact typed extern passage, and preserves negative and
-fractional native coordinates. It is rejected for ordering and lazy identity
-because the native floating-point enum implements neither `Ord` nor `Hash`.
-Existing mouse-area, canvas, and subscription scroll routes keep their readable
-`x, y, pixels` payloads as destructuring sugar for the same native variants.
-
-`event_status.ignored/captured()` construct both native
-`iced::event::Status` variants. `event_status.merge(left, right)` preserves the
-native rule that `Captured` takes precedence, and `.kind` exposes `ignored` or
-`captured`. Values support native equality and exact typed extern passage.
-Ordering and lazy identity are rejected because the native enum implements
-neither `Ord` nor `Hash`. Existing subscription status filters remain readable
-keyword sugar for the same two statuses.
-
-`window_direction.north/south/east/west/north_east/north_west/south_east/
-south_west()` construct every native resize direction.
-`window_level.default/normal/always_on_bottom/always_on_top()`,
-`window_mode.windowed/fullscreen/hidden()`, and
-`window_attention.critical/informational()` cover every variant of their native
-enums. Each value exposes a kebab-case `.kind` and crosses typed extern
-boundaries exactly.
-
-Level and mode values support native equality; ordering is rejected. Direction
-and user-attention values reject all comparisons because their native enums do
-not implement `PartialEq`. None is a lazy identity because the native types do
-not implement `Hash`. Existing window task keywords remain concise equivalent
-sugar.
-
-`window_position.default/centered/specific(point)` construct the native
-default, centered, and fixed-coordinate variants. A `window-position` exposes
-`.kind` and an optional `.point`; callback positions use `specific-with` and
-have no fixed point. The native enum does not implement `PartialEq` or `Hash`,
-so all comparisons and lazy identity are rejected.
-
-`Position::SpecificWith(fn(Size, Size) -> Point)` crosses the existing typed
-`pure` boundary exactly: a Rust pure extern returns `window-position`, and
-rustc checks the callback signature while Ice stores and passes the native
-function pointer unchanged. Existing initial-window `default`, `centered`, and
-`specific(x, y)` settings remain concise equivalent sugar.
-
-`redraw_request.next_frame/at(instant)/wait()` construct all three native
-`iced::window::RedrawRequest` variants. Values expose `.kind` and an optional
-`.instant`, preserve native equality and ordering, and cross typed extern
-boundaries exactly. They are rejected as lazy dependencies because the native
-enum does not implement `Hash`. Existing canvas/shader redraw commands and raw
-event routing remain concise behavior-level sugar.
-
-`window_id.unique()` calls native `iced::window::Id::unique`, while `.display`
-uses the native decimal `Display` implementation. IDs preserve native equality,
-ordering, hashable lazy identity, and exact typed extern passage. Window task,
-daemon, and subscription payloads use the same first-class type.
-
-`screenshot.new(bytes, size-u32, scale)` calls native `Screenshot::new`.
-Screenshots expose `.rgba:bytes`, `.size:size-u32`, `.scale_factor:f64`, and
-`.debug:str`. `screenshot.as_bytes` and `screenshot.into_bytes` preserve the
-borrowed and owned byte views at Ice's owned `bytes` boundary.
-
-`screenshot.crop(value, rectangle-u32)` returns the cropped screenshot or
-`none`. `screenshot.crop_error` returns `zero`, `out-of-bounds`, or `none`, and
-`screenshot.crop_error_message` preserves the native Display message. The
-crop boundary validates region arithmetic and RGBA length before calling Iced,
-so malformed constructed or extern values return `out-of-bounds` instead of panicking. The
-native value is cloneable but implements neither equality nor hashing, so
-comparisons and lazy identity are rejected. Typed pure externs pass the exact
-`iced::window::Screenshot` value.
-
-Fields are checked: points and vectors expose `x/y` plus lossless two-value
-`values`; points also expose native `display`; sizes expose `width/height` plus
-`values`; rectangles expose `x/y/width/height`, `center`, `center_x`,
-`center_y`, `position`, `size`, and `area`; buttons expose `kind`
-and optional `number`; cursors expose `kind`, optional `position`, and
-`levitating`; clicks expose `kind` and `position`; fingers expose their
-lossless decimal `id`.
-
-Native units remain first-class iced values instead of becoming untyped
-numbers:
-
-```ice
-state
-  gap:pixels = pixels(8.0)
-  inset:padding = padding(4.0, 8.0, 12.0, 16.0)
-  quarter:degrees = degrees(45.0) * 2.0
-  rotation:radians = radians.from_degrees(quarter)
-
-on inspect
-  inset = padding.fit(inset, size(80.0, 40.0), size(96.0, 56.0))
-  rotation = (rotation + radians.pi()) % radians(6.0)
-```
-
-`pixels(value)` and `pixels.zero()` construct native `Pixels`;
-`pixels.from_u32(literal)` checks the full native range and
-`pixels.try_from_u32(i64) -> pixels?` safely converts runtime integers. Pixels
-expose their `value`, native equality/order, and every native `+`, `*`, and `/`
-combination with another pixels value or an Ice `f64`. The native `u32`
-division form is represented by the same checked f64 scalar operation.
-
-`padding(top, right, bottom, left)`, `padding.zero`, `all`, `top`, `right`,
-`bottom`, `left`, `horizontal`, `vertical`, and `axes(vertical, horizontal)`
-cover every native constructor and scalar/axis conversion.
-`padding.from_pixels` preserves the exact Pixels conversion. `with_top`,
-`with_right`, `with_bottom`, `with_left`, `with_horizontal`, and
-`with_vertical` call the native builder methods and accept either f64 or
-pixels. Padding exposes each side plus computed `x/y`; `padding.fit` delegates
-to iced's size-constrained fit. `size.from_padding`,
-`rectangle.expand_padding`, and `rectangle.shrink_padding` preserve the native
-conversion and geometry behavior. Padding values support equality and typed
-extern passage.
-
-`degrees(value)` and `radians(value)` narrow numeric construction to native
-f32. Both expose their lossless Ice-f64 `value`, equality/order against their
-own type, and iced's angle-left comparison against f64. Degrees support native
-f64 multiplication. Radians support same-type `+`, `-`, `*`, `/`, `%`, f64
-scaling in either native direction, and native addition of Degrees.
-`radians.from_degrees` performs iced's exact conversion; `radians.pi` exposes
-the native constant and `display` uses native formatting.
-
-`degrees.range_start/end/in_range` and `radians.range_start/end/in_range`
-expose the full native `RangeInclusive` behavior without adding a speculative
-generic range type. `radians.distance_start/end` expose both points returned by
-native `to_distance`. Size and rectangle rotation accept either f64 radians or
-a first-class radians value; `rectangle.vertices_angle` keeps the exact native
-radians result alongside the f64 `vertices_rotation` projection.
-
-`rotation.default()` and `rotation.from(f64)` preserve iced's floating default
-and scalar conversion. `rotation.floating(radians)` and
-`rotation.solid(radians)` construct both native variants;
-`rotation.with_radians(value, radians)` updates the angle through the native
-`radians_mut` method and returns the value. A rotation exposes checked
-`.radians`, `.degrees`, and `.kind` (`floating` or `solid`) projections, supports
-native equality and typed extern passage, and `rotation.apply(value, size)`
-returns iced's exact minimum layout size. Image and SVG `rotate=` properties
-accept only this first-class value.
-
-`fit.default()` and `fit.contain()` produce iced's default `Contain` strategy;
-`fit.cover`, `fit.fill`, `fit.none`, and `fit.scale_down` construct every other
-native variant. A content-fit value exposes `.kind` with the compact kebab name
-and `.display` through iced's native formatter, supports equality, lazy hashing,
-and typed extern passage, and `fit.apply(value, content_size, bounds_size)` calls
-the exact native sizing algorithm. Image, SVG, and Viewer `fit=` properties
-accept the first-class value directly; their existing compact names remain
-equivalent sugar.
-
-`color.default()`, `color.black()`, `color.white()`, and `color.transparent()`
-produce the native default and constants. `color.rgb`, `color.rgba`,
-`color.rgb8`, `color.rgba8`, and `color.linear_rgba` call the corresponding
-native constructors; the three 8-bit channels are checked integer literals in
-`0..=255`. `color.try_rgb8(i64, i64, i64)` and
-`color.try_rgba8(i64, i64, i64, f64)` accept dynamic channels and return `none`
-instead of wrapping an out-of-range value. `color.from3` and `color.from4`
-preserve iced's array conversions. Floating-point color constructor channels
-are checked statically when literal and clamped to `0.0..=1.0` when dynamic;
-`color.try_rgba8` returns `none` for a dynamic alpha outside that range.
-`color.parse(str) -> color?` accepts every native 3/4/6/8-digit RGB hexadecimal
-form and maps its native parse error to `none`.
-
-A color exposes `.r`, `.g`, `.b`, `.a`, `.rgba8`, `.linear`, `.luminance`, and
-`.display`. `color.inverse` and `color.invert` return the same channel-wise
-inverse, avoiding iced 0.14's broken in-place channel update; `color.scale_alpha`
-returns the native alpha-scaled color;
-`color.luminance`, `color.contrast`, and `color.readable(foreground, background)`
-call iced's exact WCAG calculations. Colors support equality and typed extern
-passage. They are deliberately rejected as lazy identities because native
-`Color` contains floating-point channels and does not implement `Hash`.
-
-`color_stop.default()` and `color_stop(offset, color)` construct exact native
-gradient stops. A stop exposes `.offset` and `.color`, supports equality and
-typed extern passage, and is not a lazy identity because it contains floating
-point values.
-
-`linear(angle)` constructs `iced::gradient::Linear` and accepts either `f64` or
-`radians`. `linear.add_stop` and `linear.add_stops` delegate to the native
-sorting, finite/range rejection, and eight-stop limit; `linear.scale_alpha`
-preserves the native stop-color operation. Existing malformed stops received
-from extern Rust are discarded before adding, instead of reaching the native
-sorter's partial-order panic. A linear gradient exposes `.angle`
-and its exact eight-entry `[color-stop?]` `.stops`, supports equality and typed
-extern passage, and is not a lazy identity.
-
-`gradient.linear` constructs the native enum variant while
-`gradient.from_linear` preserves its native conversion. A gradient exposes
-`.kind` and `.linear`; `gradient.scale_alpha` delegates to the native operation.
-`background.color` and `background.gradient` construct both native variants;
-`background.from_color`, `background.from_gradient`, and
-`background.from_linear` preserve every native conversion. A background
-exposes `.kind`, optional `.color`, and optional `.gradient`, and
-`background.scale_alpha` handles either variant. Both types support equality
-and typed extern passage but remain unavailable as floating-point lazy
-identities. Existing solid/linear style properties remain compact equivalent
-sugar.
-
-`font.default()`, `font.sans()`, and `font.monospace()` produce the native
-default, `Font::DEFAULT`, and `Font::MONOSPACE` values. `font.with_name("Inter")`
-maps to `Font::with_name`, while `font.new(family, weight, stretch, style)`
-constructs the complete public value. Names must be string literals because
-iced stores them as `&'static str`.
-
-`family.default/serif/sans_serif/cursive/fantasy/monospace()` cover the default
-and every non-named family variant; `family.named("Inter")` covers `Name` with
-the same static-literal rule. A family exposes `.kind` and optional owned
-`.name`. `weight.default/thin/extra_light/light/normal/medium/semibold/bold/
-extra_bold/black()` and `stretch.default/ultra_condensed/extra_condensed/
-condensed/semi_condensed/normal/semi_expanded/expanded/extra_expanded/
-ultra_expanded()` cover every native descriptor. `font_style.default/normal/
-italic/oblique()` covers every style. Each descriptor exposes a compact
-kebab-case `.kind`.
-
-A font exposes `.family`, `.weight`, `.stretch`, and `.style`. All five values
-support equality, hashable lazy identity, and exact typed extern passage;
-ordering is rejected. Existing `font name family=... weight=... stretch=...
-style=...` declarations and `font=default`/`font=mono` properties remain the
-human-readable widget sugar over the same native descriptors.
-
-`theme_mode.default/none/light/dark()` cover the default and every native
-`iced::theme::Mode` variant. Values expose `.kind`, support equality and exact
-typed extern passage, and reject ordering and lazy identity because the native
-enum implements neither `Ord` nor `Hash`. App theme names and native Theme
-factories remain the human-readable behavior-level layer.
-
-`text_alignment.default/left/center/right/justified()` cover every native text
-alignment variant. `text_alignment.from_horizontal`,
-`text_alignment.from_alignment`, and `horizontal.from_text_alignment` preserve
-all native conversions. `text_shaping.default/auto/basic/advanced()` covers
-every shaping strategy while leaving the default feature-aware, and
-`text_wrapping.default/none/word/glyph/word_or_glyph()` covers every wrapping
-strategy.
-
-`line_height.default/relative/absolute()` constructs both native line-height
-variants. `line_height.from_f64`, `line_height.from_pixels`, and
-`line_height.to_absolute` preserve both native conversions and absolute pixel
-resolution. Enum values expose `.kind`; line heights additionally expose
-optional `.relative` and `.absolute` payloads. All four values support equality,
-hashable lazy identity, and exact typed extern passage; ordering is rejected.
-Existing `align-x=`, `shape=`, `wrap=`, `line-h=`, and
-`line-h-px=` properties remain the concise widget sugar.
-
-`length.fill()`, `length.fill_portion(u16 literal)`, `length.shrink()`, and
-`length.fixed(f64)` construct every native variant. Dynamic `i64` portions use
-`length.try_fill_portion(value) -> length?`, which returns `none` outside the
-native `u16` range. `length.from_f64`, `length.from_pixels`, and
-`length.from_u32` call all three native conversions; dynamic unsigned units use
-`length.try_from_u32(value) -> length?` without wrapping.
-
-A length exposes `.fill_factor`, `.is_fill`, `.kind`, optional `.portion`, and
-optional `.fixed` projections. `length.fluid(value)` and
-`length.enclose(value, other)` call the exact native layout methods. Lengths
-support equality and typed extern passage, and may be used directly in every
-view property whose iced builder accepts `Length`; the compact `fill`,
-`fill(N)`, `shrink`, and numeric spellings remain equivalent sugar. Native
-floating fixed lengths do not implement `Hash`, so lengths are rejected as lazy
-identities.
-
-`alignment.start/center/end`, `horizontal.left/center/right`, and
-`vertical.top/center/bottom` construct every variant of iced's three alignment
-enums. `alignment.from_horizontal`, `alignment.from_vertical`,
-`horizontal.from_alignment`, and `vertical.from_alignment` preserve all native
-conversions. Each value exposes a compact `.kind`, supports equality, hashable
-lazy identity, and typed extern passage. Existing view properties keep their
-short `start/center/end`, `left/center/right`, and `top/center/bottom` sugar.
-
-`border.default()` and `border.new(color, width, radius)` construct complete
-native values. `border.color`, `border.width`, and `border.rounded` map the
-three native free constructors; `border.with_color`, `border.with_width`, and
-`border.with_radius` map the three consuming builders. Width accepts `f64` or
-`pixels`; radius accepts `f64` or `radius`. A border exposes `.color`, `.width`,
-and `.radius`, supports equality and typed extern passage, and is not a lazy
-identity because it contains floating-point values.
-
-`radius(value)`, `radius.new(value)`, and `radius.default()` map the native free
-uniform constructor, associated constructor, and default respectively.
-`radius.top_left/top_right/bottom_right/bottom_left/top/bottom/left/right`
-construct each native partial shape; the matching `radius.with_*` forms take an
-existing radius first and call every consuming builder. Pixel inputs accept
-`f64` or `pixels`. `radius.from_f64/from_u8/from_u32/from_i32` preserve all four
-native conversions, with checked literal integer ranges; `radius.try_from_u8`,
-`radius.try_from_u32`, and `radius.try_from_i32` safely handle dynamic `i64`
-inputs. A radius exposes all four corner fields and `.values` in native corner
-order, supports equality, `radius * f64`, and typed extern passage, and is not a
-lazy identity because its corners are floating-point values.
-
-`shadow.default()` constructs the native default. `shadow.new(color, offset,
-blur)` constructs an exact `iced::Shadow`; the checked arguments are `color`,
-`vector`, and `f64`, with narrowing to native `f32` only at code generation.
-A shadow exposes `.color`, `.offset`, and `.blur`, supports equality and typed
-extern passage, and is deliberately rejected as a lazy identity because its
-native color and blur fields contain floating-point values.
-
-The default iced `f32` geometry API has direct checked expressions:
-
-```ice
-state
-  origin:point = point.origin()
-  snapped:point-u32 = point.snap(point(3.25, 4.75))
-  unit:size = size.unit()
-  bounds:rectangle = rectangle.with_size(size(640.0, 480.0))
-
-on inspect
-  distance = point.distance(origin, point(3.0, 4.0))
-  moved = (bounds + vector(4.0, 8.0)) * 2.0
-  overlap = rectangle.intersection(bounds, moved)
-```
-
-Points support `+/- vector` and point subtraction produces a vector. Vectors
-support negation, vector `+/-`, and `*` or `/ f64`. Sizes support size `+/-`,
-`*` or `/ f64`, and component multiplication by a vector. Rectangles support
-`+/- vector` and `* f64`. Codegen narrows Ice scalars to the native `f32`
-operand only at these typed operations.
-
-`point.origin`, `point.distance`, and `point.snap` cover point constants and
-queries; `vector.zero` is the native zero value. Sizes provide `zero`, `unit`,
-`infinite`, `min`, `max`, `expand`, `rotate`, `ratio`, `from_vector`, and
-`vector.from_size`. `size.from_u32` accepts two checked literal `u32` values;
-`size.try_from_u32(i64, i64) -> size?` returns none for runtime overflow.
-
-Rectangles provide `zero`, `infinite`, `with_size`, `with_radius`,
-`with_vertices`, `vertices_rotation`, `contains`, `distance`, `offset`,
-`is_within`, `intersection`, `intersects`, `union`, `snap`, `expand`, `shrink`,
-`rotate`, `zoom`, `anchor`, and `from_u32`. Expand and shrink take exact
-`top, right, bottom, left` values. Rotate and vertex rotation use radians.
-Anchor accepts checked `left|center|right` and `top|center|bottom` literals.
-
-Snapping preserves iced's exact unsigned results: `point.snap` returns
-`point-u32`, while `rectangle.snap` returns `rectangle-u32?`. Their coordinates
-and dimensions project to lossless Ice `i64` values and both types can cross a
-typed extern boundary. `rectangle.from_u32` converts an exact snapped rectangle
-back to the default native `f32` rectangle.
-
-`transform.identity()`, `transform.translate(x, y)`, and
-`transform.scale(factor)` construct native transformations.
-`transform.orthographic(width, height)` accepts two literal values in the full
-native `u32` range; `transform.try_orthographic(i64, i64) -> transformation?`
-safely handles runtime dimensions. `transform.inverse(value)` and
-`transform.compose(left, right)` preserve iced's exact matrix behavior and
-composition order. Transformations expose `scale_factor`, `translation`, and a
-lossless 16-value `matrix` projection.
-
-`transform.point`, `transform.vector`, `transform.size`,
-`transform.rectangle`, `transform.cursor`, and `transform.click` apply the
-native matrix to every iced value that implements transformation
-multiplication. All geometry and transformation values can cross typed extern
-boundaries unchanged. `mouse-click` uses iced's advanced mouse API and
-therefore requires the `advanced` Cargo feature. Native clicks do not implement
-equality; compare their checked `kind` or `position` fields instead.
-
-Input-method composition events use a separate readable source:
-
-```ice
-subscribe
-  input-method opened -> composition_opened
-  input-method preedit -> composition_changed _ _ _
-  input-method commit -> composition_committed _
-  input-method closed -> composition_closed
-```
-
-Preedit emits `(text:str, start:i64?, end:i64?)`; both byte offsets are absent
-when iced hides the composition cursor. Commit emits the final `str`, while
-opened and closed have no payload. These subscriptions observe captured and
-ignored events and require iced's `advanced` Cargo feature.
-
-System queries and theme changes use the same task/subscription model:
-
-```ice
-on inspect
-  task system info -> inspected _
-
-on read_theme
-  task system theme -> theme_changed _
-
-subscribe
-  system theme -> theme_changed _
-```
-
-`system theme` produces `"none"`, `"light"`, or `"dark"`. The inferred
-`system-info` payload exposes `system_name`, `system_kernel`, `system_version`,
-`system_short_version`, `cpu_brand`, `cpu_cores`, `memory_total`, `memory_used`,
-`graphics_backend`, and `graphics_adapter`. Optional iced fields remain
-optional; core and byte counts use `i64` and saturate at `i64::MAX` instead of
-wrapping. `task system info` requires iced's `sysinfo` Cargo feature. Both
-system tasks are infallible and reject an error route.
-
-Clipboard effects cover both platform targets:
-
-```ice
-task clipboard read -> clipboard_read _
-task clipboard read-primary -> primary_read _
-task clipboard write draft
-task clipboard write-primary draft
-```
-
-Reads are infallible tasks with a `str?` payload because the target may not
-contain text. Writes require `str`, produce no message in iced, accept no route,
-and must be the handler's final statement.
-
-Font declarations map directly to iced's complete `Font` descriptor:
-
-```ice
-font brand family="Inter" weight=semibold stretch=normal style=italic default=true
-
-view
-  text "Brand" font=brand
-```
-
-The family may be a named family or any of iced's five generic families. Every
-weight, stretch, and style variant is accepted. At most one declaration may be
-the application default. `font=default` and `font=mono` remain built-ins;
-`default` and `mono` therefore cannot be declaration names. Declared fonts also
-work on text, rich text and spans, input, editor, checkbox, toggler, radio, pick,
-combo, and their custom icons. App-level `font "path"`
-settings embed and preload the corresponding bytes before iced starts; a
-descriptor's named family selects the family exposed by those bytes.
-The generated Rust app exposes the effective descriptor through
-`App::default_font()`. It returns the declaration marked `default=true`, or
-`iced::Font::DEFAULT` when none is declared, so native adapters can share the
-same application font without duplicating its family.
-
-Runtime bytes use iced's native font Task directly:
-
-```ice
-on load_font
-  task font load downloaded_font_bytes -> font_loaded _
-```
-
-The expression must be `bytes`, the success payload is `unit`, and the task is
-treated as infallible because iced's current `font::Error` has no variants.
-
-Image preallocation is a fallible native task:
-
-```ice
-task image allocate handle -> allocated _ | allocation_failed _
-```
-
-Success carries `image-allocation`; failure carries the exact `image-error`.
-Both routes are required, and the task composes inside task groups, abortable
-tasks, and typed task flows.
-
-Widget operation tasks target checked IDs in the app view:
-
-```ice
-task widget focus #search
-task widget focused #search -> focus_checked _
-task widget cursor #search 3
-task widget select #search 0 5
-task widget snap #results 0.0 1.0
-task widget snap-end #results
-task widget scroll-by #results 0.0 24.0
-task widget scroll-to-key #results selected
-```
-
-`task widget snap` uses iced's native relative offsets, which are measured from
-the scroll's own anchor: on an `anchor-y=end` scroll, offset zero is the newest
-row and offset one is the oldest. `task widget snap-end` names the end of the
-*content* instead, so it selects the newest row under either anchor — it is the
-operation for returning a reader to the live end of a list.
-
-Targets use the same hierarchy as the rendered component tree. Write the
-outer scope first, then each nested scope separated by `/`:
-
-```ice
-state
-  selected = 42
-  draft = ""
-
-component Dialog()
-  col
-    slot
-
-component TaskField(value:str)
-  input "Title" #title <-> value
-
-on edit_selected
-  task widget focus #dialog(selected)/TaskField/title
-
-view
-  Dialog #dialog(selected)
-    TaskField value=draft
-```
-
-Only explicit component IDs create a public target scope. A component call
-without one receives an internal source-scoped identity for state isolation,
-but its descendants cannot be targeted from the caller. Layout and box IDs
-create descendant scopes, slot content inherits its slot position's scope,
-keyed rows add `key(value)`, table headers/cells add
-`header(index)` or `row(index)/col(index)`, and panes add their name.
-An ID on the component's root widget is another path segment rather than an
-alias for the component scope. For example, a `Dialog #dialog` whose root is
-`col #root` and whose input is `#title` exposes `#dialog/root/title`.
-Inside a component handler, the path starts at that component instance, so
-`task widget focus #title` targets its own `#title` descendant without naming
-the call-site scope.
-Declared dynamic IDs use `i64` or `str`; keyed rows use bool/i64/f64 and table
-indices use i64. Every segment name, key presence, order, and key type must
-match a real input, editor, or scroll ID. Static paths lower to
-`widget::Id::new`; a path with any dynamic segment lowers to
-`widget::Id::from(String)`. An unknown `E172` target reports up to three nearest
-valid target paths so missing or reordered scope segments are visible.
-
-Ice exposes all 13 functions in `iced::widget::operation`: previous/next/direct
-focus and focus query; cursor front/end/position; select all/range; relative
-snap/end; and absolute scroll-to/scroll-by. Effects have no route and
-`focused` requires a `bool` route. Cursor and selection positions are
-non-negative `i64`; relative offsets are `f64` in `0.0..=1.0`; absolute
-offsets are unrestricted `f64`.
-
-`scroll-to-key` is the runtime's own: it lands the `keyed` row whose `by=`
-value equals the key at the top of the scroll it names. The key is bool/i64/
-f64 like a keyed row's. Only a `virtual-row=` keyed column knows its rows'
-tops, so the row is looked up in the scroll's virtualized keyed columns in
-tree order, and the first column holding the key is the one scrolled to; a
-key no column carries does nothing. The landing is exact on the frame that
-draws: the first jump aims at the row's estimated top, and the column re-aims
-the scroll as it measures the row and its neighbours, until the row stops
-moving. A row top is measured from the top of the content and a scroll offset
-from the scroll's own anchor, so the landing reads the anchor rather than
-assuming one: it lands on the same row under `anchor-y=end` as under `start`.
-
-In a daemon whose graph keeps `lifetime mounted` component state, every
-rendered id is qualified by the window that drew it, so one window's render
-never prunes another's storage. An app or preset handler builds target paths
-from the bare app name and would silently address nothing there, so an
-id-targeted operation in those handlers must name the window whose render
-qualified the id, as a trailing `window=` marker carrying an ordinary
-`window-id` expression — the same typed value `task window open` routes
-deliver and app state already retains:
-
-```ice
-on opened(id)
-  console = some(id)
-
-on jump
-  match console
-    some(id)
-      task widget focus #workspace/palette-input window=id
-    none
-      return
-```
-
-An unqualified id-targeted operation in an app or preset handler of such a
-daemon stays rejected (`E172`), as is a `window=` qualifier anywhere it is
-meaningless: in a component handler (its path starts at the component
-instance, whose scope already carries its window), in an app or daemon whose
-rendered ids are unqualified, on an operation with no `#id` target, or
-carrying anything other than a `window-id`. A window-qualified path always
-lowers to `widget::Id::from(String)` — the window is a runtime value, so the
-path is never a compile-time constant.
-
-Feature-gated native widget selectors use the same checked paths and ordinary
-Ice expressions:
-
-```ice
-state
-  found:widget-target? = none
-  matches:[widget-target] = []
-
-on inspect
-  task widget find id #dialog(selected)/TaskField/title -> found_one _
-
-on inspect_text
-  task widget find-all text "Title" -> found_many _
-
-on inspect_point
-  task widget find point 12.0 24.0 -> found_one _
-
-on inspect_focus
-  task widget find focused -> found_one _
-```
-
-`find` emits an optional result and `find-all` emits a list. Built-in `id`,
-`text`, `point`, and `focused` selectors return `widget-target`, including its
-kind, optional native `widget-id`, bounds, visible bounds, text content,
-scrollable content bounds and translation when the selected target provides
-them. Fields unavailable for a target kind are optional. A custom selector
-call such as `find-all by_kind("text")` emits the selector declaration's output
-type instead. Reading a field through `widget-target?` lifts that field into an
-optional result. The consumer must enable iced's `selector` feature.
-
-Persistent pane grids expose their native layout-state operations directly in
-handlers:
-
-```ice
-pane #workspace maximize details
-pane #workspace restore
-pane #workspace swap tasks details
-pane #workspace move details left
-pane #workspace resize 0.6
-pane #workspace resize editor_stack 0.55
-pane #workspace drop details tasks center
-pane #workspace split details preview horizontal ratio=0.4
-pane #workspace close details
-pane #workspace maximized -> pane_observed _
-pane #workspace adjacent tasks right -> pane_observed _
-```
-
-Grid names, static pane names, template names, and dynamic key types are checked
-against the app view. Effects mutate the compiler-owned `pane_grid::State`
-synchronously and do not accept routes. Any pane argument may use
-`template(key)`; `split` stores that key and the template resolves the current
-item from its declared list state.
-`maximized` and `adjacent` are final handler queries and emit `str?`, because
-there may be no maximized or adjacent pane. `resize ratio` targets the root
-split. A nested `split name axis` declaration gives that native split a stable
-checked identity, and `resize name ratio` keeps targeting that split while it
-remains in the layout. Ratios are checked `f64` values in `0.0..=1.0`. `drop`
-accepts `center` or an edge region. `split` opens a declared closed pane beside
-an open target with the requested axis and ratio; asking to open an already-open
-pane is a no-op.
-
-Window tasks can open named templates and retain iced's typed window ID in
-ordinary Ice state:
-
-```ice
-state
-  child:window-id? = none
-
-on open_child
-  task window open child -> child_opened _
-
-on child_opened(id)
-  child = some(id)
-  task window size target=id -> window_size _ _
-
-on find_oldest
-  task window oldest -> oldest_found _
-
-on find_latest
-  task window latest -> latest_found _
-
-on inspect_raw_id
-  task window raw-id -> raw_id_read _
-
-on capture_window
-  task window screenshot -> window_captured _
-
-on window_captured(value)
-  last_capture = value
-
-on change_icon
-  task window icon bytes(ff 00 00 ff 00 ff 00 ff) 2 1
-```
-
-`open` emits `window-id`; `oldest` and `latest` emit `window-id?`. They require
-routes and do not accept `target=`. All per-window effects and queries accept an
-optional `target=window-id`; without it they retain the convenient behavior of
-resolving iced's oldest initial window. Automatic tabbing is application-wide
-and does not accept a target.
-
-Other effects have no route and queries require one. `size` emits two `f64`
-values; `maximized` emits `bool`; `minimized` emits `bool?`; `position` and
-`monitor-size` each emit two `f64?` values; `scale` emits `f64`; and
-`mode` emits `str`. `raw-id` emits the opaque platform `u64` identifier as a
-lossless `str`. A `screenshot` route emits one native `window-screenshot`; its
-RGBA bytes, physical size, and scale factor are available as typed fields.
-`icon` accepts RGBA `bytes`
-followed by positive `i64` width and height. Literal byte counts are checked as
-`width × height × 4`; dynamic invalid data safely produces no task.
-
-Callback-only iced window behavior crosses one exact typed boundary:
-
-```ice
-extern crate::backend
-  window describe_window(prefix:str) -> str
-
-on inspect_window
-  task window describe_window("main") -> window_described _
-```
-
-The Rust item has the ABI
-`fn(&dyn iced::window::Window, String) -> String`. The implicit first argument
-provides iced's native `HasWindowHandle` and `HasDisplayHandle` access without
-putting Rust syntax in Ice. Parameters, output, route, and optional
-`target=window-id` are statically checked; generated probes make a missing item
-or wrong Rust signature a local rustc error.
-
-Ice covers close, drag and all resize directions, resize
-and constraints, resizability, maximize/minimize state, position and movement,
-all modes, decorations, user attention, focus, level, system menu, mouse
-passthrough, monitor size, runtime RGBA icon changes, and automatic tabbing.
-Positive sizes, bool arguments, icon payloads, callback arguments, and target
-IDs are checked before Rust generation. Together with the structured platform
-blocks and typed callback boundary, this covers iced 0.14's public window
-surface.
-
-Every iced window event has a direct subscription form:
-
-```ice
-subscribe
-  window frame -> frame
-  window opened with-id -> opened _ _ _ _ _
-  window moved with-id -> moved _ _ _
-  window resized with-id -> resized _ _ _
-  window close-request with-id -> close_requested _
-  window file-dropped with-id -> file_dropped _ _
-```
-
-`opened` emits optional x/y followed by width/height; moved and resized emit
-two `f64` values; rescaled emits `f64`; file paths emit `str`; and frame,
-closed, close-request, focused, unfocused, and files-hovered-left have no
-payload. Add `with-id` to any of the eleven non-frame forms to prepend the
-originating typed `window-id`; the frame stream is application-wide and has no
-window identity. Routes accept only the exact number of `_` payloads. The
-modifier also works with `status=`, while Canvas window events reject it because
-Canvas receives only the event value.
-
-Every iced mouse event also has a direct subscription form:
-
-```ice
-subscribe
-  mouse entered -> entered
-  mouse left -> left
-  mouse moved -> moved _ _
-  mouse pressed -> pressed _
-  mouse released -> released _
-  mouse wheel -> wheel _ _ _
-```
-
-Moved emits window x/y as two `f64` values. Pressed and released emit the exact
-native `mouse-button`; its `kind` field is `left`, `right`, `middle`, `back`,
-`forward`, or `other`, and `number` preserves the optional native `u16` value
-as `i64?`.
-Wheel emits x/y as `f64` followed by `pixels:bool`; false means iced line
-units. These subscriptions observe captured and ignored runtime events. As
-with window subscriptions, routes accept only the exact number of `_`
-payloads.
-
-All four iced touch events are direct subscriptions:
-
-```ice
-subscribe
-  touch pressed -> pressed _ _ _
-  touch moved -> moved _ _ _
-  touch lifted -> lifted _ _ _
-  touch lost -> lost _ _ _
-```
-
-Each emits `(finger:touch-finger, x:f64, y:f64)`. The typed finger preserves
-iced's full native `u64` identity; its `id` field exposes a lossless decimal
-string when text is needed. Routes
-accept exactly three `_` payloads and observe both captured and ignored touch
-events.
-
-### IDs
-
-IDs are identities, not CSS selectors. Static IDs must be unique in their local
-view/component scope. Repeated instances use a stable typed key:
-
-```ice
-for task in tasks
-  TaskRow task=task loading=loading #task(task.id)
-```
-
-An ordinary `for` adds no public identity segment: the example exposes
-`task(<id>)` directly. The backend may keep a private index scope for automatic
-accessibility identities and no-ID component state, but that private scope is
-never part of a test or widget-operation target.
-
-The logical identity is hierarchical:
+- `!` and unary `-`; `* / % + -`; `== != < <= > >=`; `&& ||`; parentheses;
+- value built-ins: `len`, `empty`, `trim`, `some`, `ok`, `err`, `encoded`,
+  `rgba`, `aborted`, `markdown`, `markdown_images`;
+- namespaced native built-ins: `key.*`, `mouse.*`, `touch.*`, `point`,
+  `vector`, `size`, `rectangle.*`, `transform.*`, `pixels`, `padding.*`,
+  `degrees`, `radians`, `rotation.*`, `fit.*`, `color.*`, `length.*`,
+  `alignment.*`, `horizontal.*`, `vertical.*`, `image.downgrade`,
+  `image.upgrade`, `window_id.*`, `debug.active`, `debug.time_with`, and the
+  animation queries `animation.value`, `animation.animating`,
+  `animation.interpolate`, `animation.remaining`, `animation.project`;
+- calls to declared `pure` or `sync` externs, subject to the context's effect
+  boundary.
+
+Declared `pure` and `sync` names take precedence over ordinary built-ins;
+`bytes` stays reserved for the byte-literal syntax. `cargo ice check` reports
+the exact signature of any built-in used incorrectly.
+
+The **recomputation-unsafe** built-ins are `window_id.unique`, `aborted`,
+`debug.time_with`, `image.upgrade`, the unqualified constructors `encoded` and
+`rgba`, and the animation queries when their explicit instant is omitted. They
+read runtime state or mint a fresh retained identity per call, so they are
+accepted in top-level app state initializers, handlers, and views, and rejected
+anywhere the compiler may re-evaluate an expression — notably `derived`.
+
+### Revisions and the derived cache
+
+Every app and component state field carries a compiler-owned revision: a counter
+generated code ticks on every write, and that nothing in Ice can read — there is
+no `rev()` built-in. An assignment compares the new value with the stored one
+first when the Rust type implements `PartialEq` (Ice's own scalars, strings,
+lists, optionals, and the enums it generates over those), so storing an equal
+value leaves the revision alone. An assignment of a type that cannot compare, an
+in-place mutation (an editor action, a combo push, a markdown append, an
+animation start), and a self-assignment that already took the old value out of
+the field all count as a change.
+
+`derived` declarations are pure read-only expressions over app state and other
+derived values. They lower to computations cached on the application: computed
+on first read, kept across frames, and cleared when a handler, controlled
+widget, or test step writes a state field the expression reads — directly or
+through another derived value. The compiler derives that dependency set from the
+expression itself. No runtime dependency graph, signal, or handler-maintained
+mirror exists, and a handler never keeps a list-shaped derived value in sync by
+hand. The write clears the cache before the handler continues, so a read after a
+write in the same handler observes the fresh value.
+
+The cache is semantics-preserving by construction, which is why derived
+expressions reject `sync` externs and recomputation-unsafe built-ins — those
+that read runtime state or mint a fresh retained identity per call. Capture such
+a value in state from an initializer or handler, then derive from that state.
+
+### Effects and delivery lanes
+
+Handlers are the only place state changes. Every statement that immediately
+returns an iced `Task` must be final; `return if`, pane mutations, and
+`invalidate lane=` are synchronous and may precede later statements.
+
+Every Future and stream explicitly selects a delivery mode. `run every` and
+`stream every` deliver every completion or item and own no lane. Work that can
+be superseded names a static lane:
+
+- `latest` advances the lane generation and routes only the current
+  generation's success or failure. It does not cancel stale Futures: they and
+  their captured values live until they finish.
+- `replace` also aborts the prior task when a replacement is installed.
+- `stream latest` is rejected, because an obsolete stream is not guaranteed to
+  terminate.
+
+A lane belongs to the state owner, not to a handler or source location. The
+top-level app is one owner, a daemon is one owner shared by all of its windows,
+and each component instance is an independent owner. Equal fully qualified lane
+names therefore join starts across handlers for one owner, while two component
+instances never interfere. One owner must use one effect kind and one delivery
+mode per name.
+
+Per-owner lane bookkeeping is fixed by the source-declared names; it never
+allocates entries from runtime request keys. Aborting is not transaction
+rollback: effects already performed remain, detached backend work may continue,
+and already queued messages stay queued but fail the generation check. Use
+cancellation-safe or idempotent Rust boundaries when that matters.
+
+### Identity
+
+IDs are identities, not CSS selectors. Static IDs are unique in their local
+view/component scope; repeated instances use a stable typed key. The logical
+identity is hierarchical:
 
 ```text
 App / component-instance / local-node
 Tasks/task(42)/root
 ```
 
-A component call must have an explicit ID to create a public instance segment.
-Without one, it receives an internal source-scoped identity used only for state
-isolation. Repeated or externally targeted component calls therefore provide a
-stable dynamic or static ID. The iced backend lowers identities to native
-widget IDs where Iced exposes them and uses layout/component IDs to build
-descendant scopes, so all accepted `#id` forms participate in first-class test
-targeting.
-Every concrete rendered built-in node accepts a direct `#id`; its test target
-uses that node's actual layout and hit-test bounds. `if`, `for`, and `slot` do
-not render boxes and therefore accept no IDs. A component-call `#id`
-remains an instance scope and must be followed by a rendered descendant ID.
+A component call must carry an explicit ID to create a public instance segment;
+without one it receives an internal source-scoped identity used only for state
+isolation. An ordinary `for` adds no public segment. The backend may keep a
+private index scope for automatic accessibility identities and no-ID component
+state, but that scope is never part of a test or widget-operation target.
 
-## 9. First-class test mode
+Every concrete rendered node accepts a direct `#id`, and its test target uses
+that node's actual layout and hit-test bounds. `if`, `for`, and `slot` render no
+box and accept no ID. A component-call `#id` is an instance scope and must be
+followed by a rendered descendant ID.
 
-A top-level `test` exercises the generated Iced program or one mounted Ice
-view. It is part of the same checked source graph as production declarations;
-there is no second test-file grammar or Rust registration step.
+### Layout boundaries
 
-```ice
-test counter_contract
-  preset test
-  viewport 320 240
-  timeout 2s
-  mount
-    Counter #counter
+A component use is a layout boundary the compiler inserts on its own. When every
+expression the use evaluates — its arguments, slot content, body, and the bodies
+of the components that body uses — and every `input` binding below it read only
+app state, derived values, the instance's own state, palette entries, and locals
+the subtree declares, and every widget below it lays out from its own element and
+limits alone, the generated code keys the subtree's layout node on the revisions
+of those reads and skips both iced's diff of the nodes below and their layout
+walk while they hold.
 
-  target root = #counter/root
-  target increment = #counter/increment
-  target result = #counter/result
+**The element is still built on every pass.** Only the walks are saved. A `&`
+parameter, a controlled `input`, or an `editor` binding therefore lives under the
+boundary unchanged. The same applies to `lazy` and to `virtual-row=`: a
+virtualized row is not an unmounted row — rows stay in the tree, keep their
+widget state and their clock, and are simply not measured, drawn, or offered
+events while offscreen. Virtualizing a list changes how many rows are laid out,
+never how many are built.
 
-  expect root.width ~= 240.0
-  click increment
-  expect text "1" within result
-```
+Because publishing a child's semantics requires laying it out, a virtualized
+column exposes only its visible slice to assistive tech and to `.ice` tests, and
+publishes no set metadata for what it is hiding. Long read-mostly content is the
+intended use; a collection that must read correctly to a screen reader needs a
+real list widget.
 
-### Declaration and configuration
+### Accessibility
 
-A test name uses `snake_case` and is unique across the complete import graph.
-Tests may be declared in the root or an imported `.ice` fragment. A test may
-have an empty body. `preset`, `viewport`, `timeout`, `theme`, `scale`, `locale`,
-`platform`, `reduced-motion`, `mount`, and `target` declarations are optional
-and may be mixed with one another, but every such declaration must precede the
-first executable step. Each configuration form may appear at most once, and a
-target alias name is unique within its test. The same alias may be reused in
-another test; definition, references, collision checks, and LSP rename remain
-in that one test scope.
+Ice owns a checked accessibility layer above stock iced. Generated Core nodes
+produce a deterministic AccessKit tree:
 
-Without `preset`, the normal application boot function supplies fresh state
-and its initial task. Without `mount`, the complete application view is tested.
-A `mount` block contains exactly one ordinary checked view root and replaces
-only the view used by that test; it retains the generated app state, update,
-theme, tasks, and subscription contract. App and preset handlers may therefore
-use widget or pane operations whose target exists only in a test mount; any
-mount-only pane state referenced by unconditional generated code is retained in
-the production state shape. The default viewport is `1024 × 768`
-logical pixels. Explicit dimensions must be positive finite values in the Iced
-`f32` range. The default timeout is `2s`; an explicit timeout is a positive
-integer followed by `ms` or `s`. Boot or preset tasks settle before the first
-step. Because a pane-grid ID names generated persistent state, pane-grid IDs
-are unique across the production view and every test mount in one source graph.
-
-The environment declarations are explicit test inputs, not a second
-application configuration. `theme light|dark|none` replaces the headless
-program's theme result with `Theme::default(mode)` for rendering. It does not
-change application-owned palette or theme state; use a preset or `dispatch` to
-exercise such state. `scale` overrides the program's positive
-logical-to-physical scale factor. When either is absent, the generated program
-retains its normal callback result. `locale`, `platform`, and `reduced-motion`
-pin metadata and platform-sensitive driver context so fixtures do not inherit
-those labels from the host. They do not synthesize an operating-system setting
-event or create app state by themselves. The same view, update, task, and
-subscription code remains in use. A Rust harness may independently pin the
-startup OS preference with `Config::system_theme`; the Ice `system-theme`
-action is a post-boot change notification and does not alter the render-theme
-override.
-
-### Targets and rendered identity
-
-`target name = #scope/id` gives a checked selector path a local alias. A later
-declaration may reuse that path as a prefix, for example
-`target title = card/title`; the base must be an earlier alias and the result is
-the same checked selector as the expanded absolute path. `#` paths always stay
-absolute. Actions and presence/text assertions accept either an alias or a
-direct `#` path. Expressions use the alias as a typed test target, for example
-`expect card.width == 240.0`. An alias stores its selector, not a candidate or
-old bounds: each use resolves against the current rendered tree after the most
-recent update. A dynamic selector key may reference an earlier target alias;
-self and forward references are rejected. Targets themselves are opaque
-identities and are not comparable; compare an explicit field such as `kind`,
-`value`, or `width` instead.
-
-A target path is rooted at the scope the tested view renders under, which a
-test never spells: a daemon root that retains `lifetime mounted` component
-state carries the window it is rendering for, and a target resolves against the
-one window the test drives, the same window `window` reads. A test follows the
-app onto each window the app opens, so addressing a second window of a
-multi-window daemon means driving the app to open it.
-
-Static paths are checked against the normal scoped ID graph. Dynamic keys use
-the existing widget-target expression and key-type rules. IDs still represent
-identity, not CSS selectors. In particular, a component call ID introduces an
-instance scope but no synthetic layout box. Given `Card #card`, a test selects
-an explicitly identified rendered descendant such as `#card/root`; targeting
-`#card` itself is an error. A missing runtime candidate reports nearby known
-IDs instead of guessing.
-
-### Actions and execution
-
-The pointer and focus actions are:
-
-```ice
-click target
-click target right
-double-click target
-click-at 120.0 48.0
-leave
-move target
-move 120.0 48.0
-press target
-release
-wheel 0.0 -48.0
-wheel lines 0.0 -3.0
-scroll-to scroller 0.0 240.0
-scroll-by scroller 0.0 48.0
-snap scroller 0.0 0.5
-snap-end scroller
-drag source destination
-press source
-drop destination
-focus field
-focus-next
-focus-previous
-blur
-window focus
-window blur
-```
-
-Coordinates and scroll amounts are logical pixels. `scroll-to` sets an absolute
-offset and `scroll-by` applies a delta; `snap` uses native relative x/y unit
-offsets, measured from the scroll's own anchor, and `snap-end` selects the end
-of the content under either anchor. Targeted pointer operations
-resolve the current visible bounds and use their center; coordinate operations
-use the supplied point directly. The optional pointer button is `left`,
-`right`, `middle`, `back`, or `forward`, and defaults to `left`. `press` keeps
-that button down until its matching `release`. `drag from to` is a complete
-left-button gesture: it moves to `from`, presses, moves to `to`, and releases.
-Standalone `drop target` moves to `target` and releases an already-held left
-button, normally established by an earlier `press` and optional `move`. The
-driver retains cursor, button, focus, and widget-local state across steps,
-including rerenders. Targeted focus and scroll operations first prove that the
-resolved widget exposes the matching native capability and then use the exact
-widget ID that was matched, including a `StableId`-derived ID. A present but
-non-focusable or non-scrollable target therefore fails instead of silently
-performing no operation.
-
-Keyboard, text, and input-method actions operate on the current focus:
-
-```ice
-type "text"
-clear
-replace "complete value"
-select 0 5
-select-all
-cursor 5
-cursor front
-cursor end
-composition start
-composition update "조"
-composition update "조합" 0 3
-composition commit "조"
-composition cancel
-key enter
-key "x"
-key TVInputHDMI1
-key-down escape modified=escape location=standard physical=IntlBackslash text="x" repeat=false
-key-up escape modified=escape location=standard physical=IntlBackslash
-modifiers shift control
-modifiers
-chord control shift "p"
-repeat backspace 3
-```
-
-`key` is one complete press/release. `key-down` and `key-up` expose the two
-halves when held state matters. A non-empty quoted string is a character key
-value, carried as Iced's string-valued `Key::Character`; it is not restricted
-to one Unicode scalar value. Named and physical keys accept ergonomic
-lowercase/kebab forms such as `enter`, `arrow-left`, `f1`, `key-a`, and
-`numpad-enter`, or the exact Iced UpperCamel variant such as `TVInputHDMI1` and
-`IntlBackslash` for complete enum coverage. A down/up step may specify its
-modified key, logical location, and physical code. Down events also accept
-non-empty event text and the repeat flag; those two options are rejected on
-key-up. Shape-valid exact names lower directly to the pinned typed Iced enums;
-an unknown variant is rejected by the generated Rust compilation instead of a
-duplicated Ice-side enum table. Held-key identity prefers a supplied physical
-code while still requiring repeat/release at the original location; without a
-physical code it uses the logical key plus location. Simultaneous left/right or
-distinct native unidentified keys therefore retain independent lifecycles.
-`modifiers` replaces the held modifier set and its bare form clears it. `chord`
-applies its listed modifiers for one key. `repeat key count` treats `count` as
-the total activation count: one initial non-repeat key-down, `count - 1` repeat
-key-down events, then one key-up. `select`, indexed `cursor`, `select-all`, and
-the `front`/`end` cursor positions use native widget operations and require
-exactly one focused widget ID that exposes Iced's text-input operation.
-`clear` and `replace` share that requirement because they begin with
-`select-all`. A focused text editor or other focusable widget fails explicitly
-instead of being treated as a text input. Negative
-indexes and values that do not fit `usize` fail;
-otherwise Ice passes the positions to the native operation without an Ice-side
-upper-bound or text-length check. Composition steps emit the normal Iced
-input-method lifecycle. An optional update selection is a checked UTF-8 byte
-range inside the preedit string. A commit does not close the input-method
-session, permitting further update/commit cycles; cancel clears preedit state
-and emits `Closed`.
-
-Touch, window, system, time, capture, and direct dispatch are also semantic
-steps:
-
-```ice
-tap target
-tap target 2
-touch down 1 40.0 60.0
-touch move 1 44.0 72.0
-touch up 1 44.0 72.0
-touch down 2 80.0 90.0
-touch cancel 2 80.0 90.0
-window move 40.0 60.0
-window resize 800.0 600.0
-window rescale 2.0
-window redraw
-window close-request
-window opened
-window closed
-system-theme dark
-file-hover "/tmp/report.txt"
-file-drop "/tmp/report.txt"
-file-leave
-wait 50ms
-advance 16ms
-idle
-capture focused_input
-dispatch top_level_handler
-dispatch top_level_handler(argument, ...)
-```
-
-A touch ID is numeric and remains active from `down` until `up` or `cancel`;
-multiple IDs permit multi-touch fixtures. `tap` allocates the lowest unused
-touch ID for its complete down/up gesture, so explicitly managed contacts may
-remain active at the same time. Pointer and application steps are spelled
-bare; every step that acts on the window is spelled `window <verb>`, so
-`move x y` moves the pointer while `window move x y` moves the window.
-`window resize` updates the retained viewport before emitting the ordinary
-Iced resize event. Move, rescale, focus, close-request, opened/closed, redraw,
-file, and system-theme steps likewise travel through the normal
-event/subscription path. `close-request` asks the application to close; it does
-not bypass the application's close-request handler.
-
-`idle` drains work that is already ready, including task results and
-subscription handoffs. `wait` permits the stated amount of real elapsed time,
-advances the logical clock by exactly the stated duration, and then settles.
-`advance` deterministically advances the driver's logical clock without
-waiting and emits `RedrawRequested`. The logical clock moves only through
-these two statements; `every` subscriptions tick off it, while arbitrary
-`iced::time` futures inside tasks and streams deliberately stay on real time.
-`capture` records the current window as in-memory RGBA and writes a PNG plus
-a structured JSON frame manifest. The default directory is
-`target/ice-test-artifacts/<sanitized-test-name>/`.
-`ICE_TEST_ARTIFACT_DIR` replaces the root while retaining the per-test
-directory; a Rust harness may instead set `Config::artifact_dir` to the exact
-per-test directory. The manifest records its schema version, capture/PNG
-identity, logical and physical sizes, scale, configured theme preference,
-resolved render-theme mode/name, system theme, locale/platform/motion context,
-window state, redraw-clock guarantees, and every inspectable named target.
-Physical captures are limited to 16,777,216 pixels (64 MiB of RGBA8) and reject
-zero, overflowing, or mismatched renderer buffers before writing artifacts.
-Capture names use lowercase ASCII letters, digits, and underscores. The
-returned `Capture` retains RGBA bytes, dimensions, scale, and both artifact
-paths. Capture does not perform a golden-image comparison implicitly.
-Every manifest target generated from an Ice view carries the `.ice` path, line,
-and column of the rendered view node that constructed it. Generated test builds
-retain this provenance across imports, component scopes, dynamic IDs, and
-rerenders. A target constructed wholly inside Rust without an enclosing Ice
-node may report `source: null`.
-
-Every generated app also contains an inert hidden inspection test. It returns
-immediately during ordinary test runs; `cargo ice inspect ROOT.ice` activates
-only the canonical matching root, constructs the normal app/daemon `Program`,
-applies the requested preset and fixed environment, and writes one named PNG
-plus JSON manifest. Options cover viewport, preset, render/system theme, scale,
-locale, platform, reduced motion, name, output directory, and an explicit Cargo
-package for external includes. `--frames N` additionally measures eight warmup
-redraws and then `N` timed frames on that same driver before capturing, and
-records per-phase p50/p95 microseconds, the frame and warmup counts, the build
-profile, and layout memo hit/miss totals in the manifest's `frames` object;
-`--release` builds the inspection optimized and is accepted only with
-`--frames`. A fragment without a top-level app/daemon or a root not included by
-the selected package is rejected.
-
-`cargo ice inspect` also has an opt-in release-only interaction trace path.
-`--test NAME --trace` measures an authored first-class Ice test with explicit
-warmup/repeat counts. `--fuzz interactions --seed N --steps N` deterministically
-generates bounded semantic actions from the live target/capability inventory,
-refreshing it after each action; `--replay TRACE.json` pins the artifact's
-environment and exact sequence on a fresh boot. No trace syntax extends the Ice
-test language. Stable action phases are view, UI build/layout, event dispatch,
-program update, widget operation, task settle, and total action time. Draw and
-PNG/manifest evidence capture stay outside timed intervals. A strict sibling
-`ice_interaction_trace` schema-1 artifact retains raw samples,
-p50/p95/p99/max, 60/120 Hz misses, source/target provenance, unavailable
-phases, confirmation count, stable finding fingerprint, reducer attempts, and
-worst-state evidence. Confirmed generated panic, timeout, assertion, or local
-latency-policy findings are replayed on fresh boots and delta-reduced to a
-strictly smaller sequence when possible.
-
-`cargo ice diff BASE.json CURRENT.json` recursively compares structured
-manifest values and 8-bit RGBA pixels under explicit numeric, channel, and
-changed-ratio tolerances. It writes machine-readable `report.json` and a
-transparent/red `diff.png`, then exits unsuccessfully for a disallowed delta.
-Artifact names, PNG filenames, capture-statement labels, and the measured
-`frames` object are reported as ignored fields; all rendered and environmental
-fields participate.
-Capture remains observation-only; golden policy belongs to tooling rather
-than runtime behavior. A capture delivers a redraw request to the same native
-widget tree immediately before drawing so status-aware widgets render their
-current active, hovered, pressed, or disabled style; messages produced by that
-observational redraw are not applied to application state.
-
-`cargo ice review ROOT.ice` analyzes one complete root graph, runs each
-declared first-class Ice test selected by zero or more `--test NAME` options,
-and captures stdout, stderr, duration, exit status, and every named frame
-artifact. The review output is a versioned JSON report plus an HTML index,
-diagnostics inventory, accessibility role/name/action summary, and
-source-mapped structured changes. A baseline may be a previous review bundle
-or capture directory; a report baseline must carry the `ice_review_bundle`
-artifact discriminator, exact schema version, `success: true`, and a typed,
-duplicate-free capture list. A capture-diff report is not a review baseline.
-Captures match by the stable test/capture manifest key.
-When a baseline is supplied, a changed, new, removed, or unreadable capture is
-a review failure under the explicit pixel, ratio, and value tolerances. An
-explicit `--test` selection filters report keys before resolving, reading, or
-checking manifest paths; evidence from unselected tests is outside that run's
-baseline scope, while full scope validates every entry. Capture manifests have
-schema version 2 and review reports have schema version 2 with distinct
-artifact discriminators. Direct diff and review use the same structural
-validator for all published required top-level fields and core nested source,
-geometry, accessibility, and paint shapes. Test failure also fails the review.
-Each run uses a fresh artifact/log/diff subdirectory. Once the output directory
-is opened, every early error publishes a failure report, diagnostics, and HTML
-for the new run ID; a detailed failure already published for that run is not
-replaced by the generic fallback.
-
-`dispatch` constructs the checked message for a top-level handler;
-component-local handlers remain private and are exercised through their
-rendered controls. Semantic steps keep generated-message construction internal:
-tests drive native input, widget state, accessibility, and program events
-instead of depending on the private generated message enum.
-
-Every test starts with fresh application state, its own executor/runtime, and
-one persistent headless Iced UI cache. Widget-local state, focus, and other
-retained widget state therefore survive rerenders within that test but never
-leak into another test. The headless runtime models one current window: a
-task-issued window open replaces it, retaining application/process context but
-resetting widget cache, focus, scroll, cursor, held input, touch, and IME state.
-After boot and after every action, emitted widget and
-subscription messages are replayed in order through generated update code.
-Finite returned tasks and their recursively emitted messages drain before the
-next statement. Generated subscriptions are re-established after updates and
-receive the same simulated interaction/window events. The timeout protects boot
-and finite-task settling from non-quiescent work. Long-lived timer, I/O, and
-worker subscriptions are sampled around boot and simulated events; they are not
-awaited to global quiescence, because an active subscription may intentionally
-be infinite. `wait` is the bounded real-time escape hatch and, with `advance`,
-the only mover of the logical clock `every` ticks off; neither turns an
-infinite subscription into finite work.
-
-Checked `pure`, `sync`, future, task, stream, and subscription externs call their real
-Rust implementations. Their panics and errors are not hidden. Deterministic
-test behavior belongs behind a named preset or a Rust `cfg(test)` implementation
-boundary; Ice has no mock layer.
-
-### Assertions and target fields
-
-The assertion forms are:
-
-```ice
-expect boolean_expression
-expect numeric_expression ~= numeric_expression
-expect exists target
-expect missing target
-expect text string_expression
-expect no text string_expression
-expect text string_expression within target
-expect no text string_expression within target
-expect tray label string_expression
-expect tray icon string_expression
-expect tray item string_expression
-expect no tray item string_expression
-expect tray command string_expression
-expect no tray command string_expression
-expect component target.field == expression
-expect component target.field != expression
-expect a11y target role "button"
-expect a11y target name "Save"
-expect a11y target value "Draft"
-expect a11y target checked true
-expect a11y target disabled false
-expect a11y target focused true
-expect a11y target action click
-expect a11y target action focus false
-```
-
-A boolean expectation uses normal checked app-state expressions, equality, and
-`pure` extern calls. Component-local state stays out of those expressions;
-`expect component` below is the one read of it an Ice test has. `~=` converts both
-numeric operands to `f64` and uses absolute tolerance `0.001`; non-finite values
-fail. Text matching is exact over visible rendered text. `within` restricts the
-search to the selected target's visible bounds — its layout bounds carried
-through the scroll offsets above it and clipped to the window — so a target
-scrolled into view is searched where it now is, and a target with nothing
-visible contains no text. `exists` and `missing` are useful for IDs whose
-nodes are conditional at runtime.
-
-`expect component target.field == expression` (or `!=`) compares one declared
-`state` entry of one component instance. `target` is an alias or `#` path that
-names a component call's `#id` — an instance scope, not a rendered widget —
-and `field` is a `state` name that component declares; the expression is
-checked against the field's type. The read compiles onto the component seam
-below: the checked target path is the very scope string the runtime keys the
-instance's state by, so the generated test calls `__ice_test_state_<name>`
-with it and compares the field. An instance that has rendered but never
-handled an event reports its declared initial state; a scope no render has
-sighted fails, naming the scope and the live instances of that component. The
-checker rejects a target that is not a component scope, a field the component
-does not declare, an animation state (it has no comparable value), and a path
-under which two different components mount, all as `E194`; a type mismatch is
-the ordinary `E101`. An alias that names a component scope may be declared and
-chained from, but every rendered-widget use of it — `click alias`,
-`expect exists alias`, `alias.width` — is rejected as `E194`, the same as the
-bare path. This is an observation only: test source cannot write component
-state, and `dispatch` still reaches top-level handlers alone.
-
-For a Rust-level harness in the generated crate (`__boot`/`__update`-style
-suites and pixel probes), every stateful component also generates a
-test-only seam, `#[cfg(test)]` and stable-named: `__IceTestState_<name>` (a
-`Clone` view over the DECLARED state fields only — lane bookkeeping and
-animations excluded, and an `editor` state carried as its text, since content
-is what a harness asserts on), `__ice_test_state_<name>(&self, scope)` returning a
-clone for one instance — an instance that has rendered but holds no stored
-state yet answers with its declared initial state, and only a scope no render
-sighted is `None` — `__ice_test_scopes_<name>(&self)` listing live
-instance scopes, and `__ice_test_message_<name>_<handler>(scope, args…)`
-building the exact message the runtime would deliver for each local handler,
-`boot` included. Reads are clones and writes are ordinary update-loop
-messages, so the runtime privacy contract holds: the seam lifts only the
-harness's blindness, never a production path. `<name>` is the component name
-snake-cased (`ForgeCodeBrowser` -> `forge_code_browser`; hex-escaped only
-for names outside plain ASCII alphanumerics).
-
-`expect tray` reads the runtime's record of what the program last decided the
-status item should show, not the screen, so it runs on every platform and
-means the same thing on each. `label` and `item` match by substring — a tray
-row is one composed string rather than a tree of runs, so the assertion names
-the fragment that carries the meaning, and matching a row by text rather than
-by index makes reordering rows harmless and deleting one fatal. `icon` matches
-the declared `icon-rgba` path exactly. `command` asks whether the row carrying
-the text is one the reader can choose rather than a stat drawn disabled or a
-submenu the platform opens, and fails either way when no row carries the text.
-Rows inside a submenu are matched like every other row, and `command` fails
-when the text names more than one of them.
-
-`tray choose` runs a menu row the way the platform does — by row index,
-through the generated row-to-handler table the subscription uses — so it
-covers the chosen-row-to-handler path end to end:
-
-```ice
-tray choose "Open terminal"
-```
-
-It fails on a row that is not there and on a stat, which the platform draws
-disabled and refuses to let anyone press.
-
-Accessibility actions and expectations use the same semantic tree exported to
-AccessKit:
-
-```ice
-a11y focus field
-a11y activate submit
-```
-
-Role, accessible name/value, checked, disabled, focused, and supported-action
-expectations fail when the target has no semantic node instead of falling back
-to visual text. `expect a11y ... action name` defaults its expected boolean to
-`true`; append `false` to assert that an action is unavailable. The checked
-action names are `click` and `focus`, matching the authoritative Snapshot
-dispatch surface. `a11y activate` and `a11y focus` dispatch through real
-accessibility operations, and reject an unsupported or disabled action with the
-originating Ice source location.
-
-A resolved test target exposes these checked fields:
-
-| Family | Fields | Type |
+| Ice node | AccessKit role | Semantic state |
 | --- | --- | --- |
-| identity/content | `kind`, `value` | `str` |
-| visibility | `visible` | `bool` |
-| bounds | `x`, `y`, `width`, `height`, `left`, `top`, `right`, `bottom`, `center_x`, `center_y` | `f64` |
-| clipped bounds | `visible_x`, `visible_y`, `visible_width`, `visible_height` | `f64` |
-| content bounds | `content_x`, `content_y`, `content_width`, `content_height` | `f64` |
-| retained transform | `translation_x`, `translation_y`, `scroll_x`, `scroll_y` | `f64` |
-| surface paint | `background`, `border`, `shadow` | native checked value |
-| text paint | `text_color`, `text_size`, `font`, `line_height` | native checked value |
-| primitive counts | `surface_count`, `text_count`, `image_count` | `i64` |
-| text primitive | `text_x`, `text_y`, `text_width`, `text_height`, `text_baseline` | `f64` |
-| image primitive | `image_x`, `image_y`, `image_width`, `image_height` | `f64` |
-| image paint | `image_color` (svg tint; an untinted primitive fails) | native checked value |
-| raster geometry | `pixel_aligned` | `bool` |
-| focus | `focused` | `bool` |
-| accessibility text | `accessibility_role`, `accessibility_name`, `accessibility_description`, `accessibility_value` | `str` |
-| accessibility state | `accessibility_checked`, `accessibility_disabled`, `accessibility_supports_activate`, `accessibility_supports_focus` | `bool` |
+| `text` | `Label` | the visible text is its value |
+| `input` | `TextInput` | label, optional description, value, disabled/focus state |
+| secure or `secret` `input` | `PasswordInput` | label, optional description, disabled/focus state; no value is exported |
+| `button` | `Button` | label, optional description, toggled/expanded state, disabled/focus state, click action |
+| `checkbox` | `CheckBox` | label, optional description, toggled/disabled/focus state, click action |
+| `toggler` | `Switch` | label, optional description, toggled/disabled/focus state, click action |
+| `radio` | `RadioButton` | label, optional description, selected/checked state, disabled/focus state, click action |
+| `slider` | `Slider` | default `Slider` label, current value, focus state |
+| `progress` | `ProgressIndicator` | default `Progress` label and current value |
+| `pick` / `combo` | `ComboBox` | placeholder or search label, selected value, focus state |
+| `editor` | `MultilineTextInput` | placeholder or default label, current value, disabled/focus state |
+| labeled `image` | `Image` | label and optional description |
 
-`border` exposes its normal `color`, `width`, and `radius` fields. `value` is
-available only when the selected runtime candidate exposes text content. The
-clipped/content/transform/scroll fields likewise fail at runtime when that
-candidate has no corresponding retained geometry. This is deliberate: a
-missing measurement is not converted to zero.
+A positional input label, compact button string, and visible checkbox or toggler
+label are default accessible names; `label=` overrides them. A button whose
+content is a child node requires `label=` (`E105`); an image without one is
+decorative and omitted from the semantic tree.
 
-Geometry comes from real post-layout Iced bounds in logical pixels. Ice does
-not invent a DOM box model or retained `padding`/`gap` values; tests assert
-relationships between child and parent bounds. For example,
-`expect child.x ~= parent.x + 16.0` checks effective left padding without
-coupling the runtime to a CSS abstraction.
+Semantic read order and keyboard focus order follow view-tree order. Tab and
+Shift+Tab traverse enabled interactive controls; disabled controls expose
+disabled state but no focus or click action. Wrapper-focused controls draw their
+outline only while focus is visible, matching the web's `:focus-visible`
+semantics — keyboard, accessibility, and programmatic focus show it, a pointer
+press does not, and a key press on a pointer-focused control restores it. Text
+entry controls keep iced's native focused rendering, which follows the web's
+text-entry heuristic instead. There is no numeric focus-order syntax. In a
+daemon, Tab traverses the window it was pressed in, and every window keeps its
+own focus.
 
-Surface and text fields use structured paint output from a real redraw through
-the default headless tiny-skia renderer. A surface lookup requires exactly one
-quad whose bounds equal the target. A text lookup requires exactly one visible
-text primitive inside it. Zero or multiple matches fail with a request for a
-narrower ID rather than selecting arbitrarily; count fields let a test establish
-that precondition explicitly. Text/image bounds are post-transform logical
-pixels, while `pixel_aligned` evaluates the target bounds at the active scale
-factor. `text_baseline` is the first visible shaped-line baseline retained by a
-paragraph, editor, or raw shaped buffer and fails for cached text when no shaped
-run survives. Accessibility fields are strict: an absent semantic node or
-property fails rather than returning a fabricated empty value. A custom
-headless renderer may still support layout and interaction, but structured
-tiny-skia paint fields and visible-text assertions are unavailable. The
-checker rejects those assertions when the custom renderer is known statically;
-a generic Rust harness receives an explicit runtime failure.
+Tree construction, focus updates, duplicate-ID disambiguation, and action
+routing are deterministic across platforms. Native screen-reader export is a
+separate, narrower contract: `accesskit_unix` exports a single-window Linux
+application over AT-SPI and `accesskit_windows` a single-window Windows
+application through UI Automation. Other targets keep the deterministic tree and
+action behavior without a native adapter. Rich text and advanced widgets are
+outside this Core semantic contract.
 
-### Failure and generated-code contract
+### Theme and style
 
-Parser and checker diagnostics reject duplicate test/alias names, declarations
-after executable steps, duplicate or invalid configuration, unknown presets,
-handlers, aliases, fields, or ID paths, component-scope targets in
-rendered-widget positions, invalid key
-shapes or options, wrong expression types, and unsupported renderer contracts
-when known statically. Runtime failures include the test name, normalized Ice
-statement, and source path/line; selector, expected/actual values, current
-bounds, and nearby IDs are included when relevant. Tests imported through `use`
-retain the imported fragment's path and original line rather than the merged
-source line.
+A `theme contract` declares semantic tokens; each `palette` provides exactly one
+`#RRGGBB` or `#RRGGBBAA` value for every declared token. `bg`, `fg`, `primary`,
+and `danger` are required; other names are app-defined. Palette declarations are
+ordered and the first is the initial default. They generate the nominal
+`palette[Name]` type, and `palette active` selection is an exhaustive generated
+match, not a string lookup or a reactive theme graph. `white`, `black`, and
+`transparent` are built in and cannot be redeclared.
 
-Each declaration lowers to an ordinary `#[cfg(test)] #[test]` function, so both
-`cargo test` and `cargo ice test` discover it. Generated support uses the public
-`ui_lang_runtime::testing` API. Every interaction, environment event, time
-step, capture, and accessibility action lowers to the semantic,
-raw-event-independent `Action` enum and crosses the single
-`Driver::perform_action(Action, Location)` boundary. `Config`, `Capture`,
-`Target`, paint records, accessibility properties, and `step` complete that
-Rust-facing test surface. The `Action` enum is distinct from the application's
-private generated message enum, so a non-DSL conformance harness can construct
-and replay the same semantic operations without knowing generated internals.
-The `step` helper adds Ice source context to panics from generated statement
-evaluation. Generated Ice tests need no Rust wrapper, registration, or
-application-level dependency on a separate simulator crate.
+Utilities and recipes are resolved at compile time. There is no CSS engine,
+selector matching, runtime cascade, or runtime string parser. Recipes expand in
+place with the base first, then the child; later utilities win, and direct typed
+properties override recipe defaults. A direct typed property combined with a
+direct utility that owns the same field is an error.
+
+### Test mode
+
+A top-level `test` is part of the same checked source graph as production
+declarations — there is no second test-file grammar and no Rust registration
+step. Each declaration lowers to an ordinary `#[cfg(test)] #[test]` function, so
+`cargo test` and `cargo ice test` both discover it.
+
+Every interaction, environment event, time step, capture, and accessibility
+action lowers to the semantic, raw-event-independent `Action` enum and crosses
+the single `Driver::perform_action(Action, Location)` boundary. That enum is
+distinct from the application's private generated message enum, so a non-DSL
+conformance harness can replay the same semantic operations without knowing
+generated internals.
+
+Environment declarations (`theme`, `scale`, `locale`, `platform`,
+`reduced-motion`) are explicit test inputs, not a second application
+configuration: they pin driver context and the render theme without synthesizing
+an operating-system event or creating app state. A `mount` block replaces only
+the view, retaining the generated state, update, theme, task, and subscription
+contract.
 
 Revision 2.0 has no DOM, CSS selector engine, computed-style object, synthetic
 component bounds, component-local-state writes from test source, external test
-format, test mock DSL, general virtual clock, built-in golden-image comparator, or multi-window
-orchestration. Named captures expose renderer output without making exact pixel
-equality the test contract.
-
-## 10. Theme and style
-
-Themes separate a semantic token contract from one or more concrete palettes:
-
-```ice
-theme contract Ducktape
-  bg
-  fg
-  primary
-  danger
-  surface
-
-palette light for Ducktape
-  bg #fdfdfb
-  fg #171717
-  primary #7c3aed
-  danger #dc2626
-  surface #ffffff
-
-palette dark for Ducktape
-  bg #161615
-  fg #f5f5f4
-  primary #a78bfa
-  danger #fb7185
-  surface #20201e
-```
-
-`bg`, `fg`, `primary`, and `danger` are required contract tokens. Other names
-are app-defined. Every palette must target the declared contract and provide
-exactly one `#RRGGBB` or `#RRGGBBAA` value for every token; missing, unknown,
-duplicate, and invalid-color entries are errors. Palette declarations are
-ordered, and the first is the initial default. The declarations generate the
-nominal `palette[Ducktape]` type with variants such as `Ducktape.light` and
-`Ducktape.dark`. An app selects one with `palette active_palette`; changing that
-state changes generated Iced theme fields and every semantic-token style on the
-next view. Unknown variants and contract mismatches are compile-time errors.
-Selection is an exhaustive generated match, not a string lookup or reactive
-theme graph. `white`, `black`, and `transparent` remain built in and cannot be
-redeclared. A color may carry opacity, such as `bg-primary/70`.
-
-A container's `bg=` alone also accepts a *computed* opacity, written
-parenthesised: `bg=flash/(fade)` takes any `f64` expression on the same
-`0..=100` percentage scale as the literal form, clamped, and replaces the
-color's own alpha on every view pass. It is what lets an animated number reach a
-surface — `bg=flash/(animation.project(fade, value, value))` fades a row. It needs a single
-background color, so a gradient is rejected, and it is a container property:
-every other color position stays a literal token. A view using one keeps its
-compiled Rust rather than publishing a template, because the published view
-format carries only constant colors.
-
-Apps and nested subtrees may use `default`, `app`, or any of iced's 22 built-in
-default-renderer themes. A typed Rust factory covers arbitrary native
-`iced::Theme` values without embedding Rust expressions in Ice:
-
-```ice
-extern crate::backend
-  theme native_theme(dark:bool)
-
-app NativeTheme
-  theme native_theme(dark)
-
-view
-  theme native_theme(!dark)
-    text "Native nested theme"
-```
-
-The Rust function has signature `fn(bool) -> iced::Theme`. It may use
-`Theme::custom_with_fn` to derive the complete extended palette; generated
-probes reject a missing function, wrong arguments, or a different return type.
-
-`@` switches the remainder of a node to checked utility or recipe names. Put
-typed properties before it. A semantic recipe gives a repeated visual role one
-checked default without adding a runtime style system:
-
-```ice
-recipe panel for box
-  @w-full p-5 bg-surface border border-border rounded-lg overflow-hidden
-
-recipe action for button
-  @text-12.5px font-semibold px-4 py-2 rounded-md disabled:bg-disabled disabled:text-disabled_fg
-
-recipe primary_action for button extends action
-  @bg-primary text-primary_fg
-  @hover:bg-primary/90 pressed:bg-primary/80
-
-view
-  box @panel
-    button "Save" @primary_action -> save
-```
-
-Recipe names must be unique within their checked namespace. An aliased recipe
-resolves an unqualified `extends` base relative to that namespace. A recipe may
-contain one or more `@`-prefixed utility-only lines and targets exactly one of `col`, `row`, `flex`, `grid`,
-`stack`, `box`, `text`, `input`, or `button`; `text` also covers rich text and
-spans. A recipe may extend at most one recipe with the same target. A body line
-without its `@`, missing bases, target mismatches, and inheritance cycles are `E046`; multiple bases and
-free recipe composition are not syntax. Every flattened recipe body is checked
-against its declared target even when the recipe is not used by the current
-view.
-
-Recipes expand in place at compile time, with the base first and the child
-second. Child utility values win, later node utilities win, then direct typed
-properties on the node override recipe defaults. This makes
-`box p=24.0 @panel` a valid local exception. A direct typed property combined
-with a direct utility that owns the same field remains `E045`.
-
-Utilities and recipes are resolved at compile time; there is no CSS engine,
-selector matching, runtime cascade, or runtime string parser. Fixed native
-widget appearance may use `style=` presets; reusable or state-dependent native
-appearance that is more complex than token variants crosses a typed Rust style
-or component boundary.
-
-The accepted utility surface is:
-
-| Family | Values | Effective on |
-| --- | --- | --- |
-| size | `w-full`, `h-full` | row, col, flex, grid, stack, box; `w-full` also input |
-| max width | `max-w-sm` through `max-w-2xl` | row, col, flex, grid, stack, box |
-| alignment | `items-center` | row, col, flex |
-| wrapper alignment | `self-center` | row, col, grid, stack, box |
-| overflow | `overflow-hidden` | row, col, flex, grid, stack, box |
-| gap | scaled `gap-*` or exact `gap-Npx` | row, col, flex, grid, stack |
-| padding | scaled `p-*`, `px-*`, `py-*` or exact `p-Npx`, `px-Npx`, `py-Npx` | row, col, flex, grid, stack, box, input, button |
-| text size | `text-xs` through `text-2xl` or exact positive `text-Npx` | text; compact button label |
-| line height | `leading-tight`, `leading-snug`, `leading-normal`, `leading-relaxed` | text; compact button label |
-| text family | `font-mono` | text; compact button label |
-| text weight | `font-medium`, `font-semibold`, `font-bold` | text; compact button label |
-| color | `bg-TOKEN`, `text-TOKEN`, `border-TOKEN` | checked per widget |
-| border | `border`, `border-2` | visual layout wrappers, box, input, and button |
-| radius | `rounded-sm`, `rounded`, `rounded-md`, `rounded-lg`, `rounded-full`, or exact `rounded-Npx` | layout wrappers, input, and button |
-| states | `hover:bg-*`, `pressed:bg-*`, `disabled:bg-*`, `disabled:text-*`, `disabled:opacity-*` | button; `disabled:text-*` also text inside button content |
-| focus | `focus:border-*` | input |
-| focus-visible | `focus-visible:border-*` | button |
-
-A button hands its status to child content through its text ink. Its
-status-resolved text color (utilities, status blocks, and the disabled pass
-combined) is the inherited color every color-less text child draws with, and
-an svg child opts into the same channel with `color=inherit` — so a
-single-glyph icon button lights its glyph over the whole plate, not over the
-svg's own bounds. A child that pins an explicit color opts out of the channel;
-inside a button's content it may still declare `disabled:text-*`, a status arm
-keyed on the button's disabled status, so explicit ink follows the disabled
-ramp without a mount parameter. Hover and pressed ink for children stay on the
-shared channel: declare them on the button, not the child.
-
-Structured native status blocks use `active` as their shared base. A button's
-`hovered`, `pressed`, and `disabled` blocks only need their deltas; input,
-editor, combo, slider, and scroll statuses follow the same rule. Checked and
-selected controls inherit the corresponding `active checked|unchecked` or
-`active selected|unselected` block. `focused-hovered` additionally inherits
-`focused`, and `opened-hovered` additionally inherits `opened`. Later,
-more-specific fields win.
-
-Scaled spacing values are `0 1 2 3 4 5 6 8 10 12 16 20 24` and map to four
-iced logical pixels per unit. An integer `px` suffix selects the exact logical
-pixel value instead; exact text size also accepts a positive finite decimal.
-Opacity values are `0 25 50 75 100`; color opacity may be any integer from 0
-through 100.
-
-`border-TOKEN` and `focus:border-TOKEN` require a border width on the same node,
-provided by `border-w=` or a supported wrapper/status `border` utility. A
-rounded row, column, grid, or stack requires a background or border, because
-iced would otherwise have nothing to round.
-
-`focus-visible:border-TOKEN` styles the keyboard focus ring drawn over a
-button, not the button's own border, so it requires no border width: the ring
-keeps its two-pixel stroke and takes the token's color and the button's
-`rounded-*` radius. The ring's visibility is not the recipe's to decide — it
-follows the focus origin exactly as the default outline does (keyboard,
-accessibility, and programmatic focus wear it; a pointer press does not), so
-moving a recipe's ring onto `focus-visible:` never removes keyboard users'
-focus affordance.
-
-The checker rejects both an unknown utility (`E041`) and a known utility on a
-node where the iced backend would ignore it (`E042`/`E044`). Silent CSS-like
-no-ops are not allowed.
-
-## 11. Diagnostics
-
-Language errors have stable codes and source coordinates:
-
-```text
-E132 src/ui/tasks.ice:26:1: unknown handler `save`
-E041 src/ui/tasks.ice:61:1: unsupported utility `grid-cols-3`
-E042 src/ui/tasks.ice:61:1: utility `gap-4` has no effect on `text`
-```
-
-When the resolved source file is readable, command-line rendering includes the
-offending line and a caret at the checked column:
-
-```text
-E045 src/ui/panel.ice:8:1: style property `width` is set by both `w=` and `@w-full`
-8 |   stack w=fill @w-full
-  | ^
-hint: remove `w=`; `@w-full` sizes both the stack and its generated outer wrapper
-```
-
-Imported-file errors use the imported path and excerpt. Callers that only have
-an in-memory source, or whose file is no longer readable, retain the compact
-coordinate-only form.
-
-`E045` is limited to two current forms that write the same generated field. It
-does not reject callback or fixed-preset base styles, `font=` composed with a
-font-weight utility, or layout utilities that style only a generated outer
-wrapper.
-Stack `w-full`/`h-full` write both the stack and its wrapper, so combining them
-with typed stack size is rejected. `cargo ice fmt` only normalizes indentation
-and blank lines; it never changes language vocabulary.
-
-The `E160-E179` family covers the constructs iced cannot express directly, whose
-lowering therefore has limits of its own: `E174` rejects a `tracking=` combined
-with a property its grapheme row cannot honour (`wrap=`, `align-x=justified`,
-`style=`), `E175` rejects a `tracking=` on literal text that is not latin, and
-`E176` rejects a `border-dash=` with no `border=` colour for its stroke to draw
-or a statically all-zero pattern.
-
-`E196` is the internal-invariant code: it reports a compiler bug, never a
-mistake in an `.ice` source, so no Ice program can be edited to avoid it.
-
-The implemented families are:
-
-| Range | Meaning |
-| --- | --- |
-| `E000-E019` | document, indentation, theme |
-| `E020-E039` | extern, type, and state syntax |
-| `E040-E079` | component, statement, view, expression, and style rules |
-| `E080-E099` | media, selection, container, and content view nodes, and subscription sources |
-| `E100-E119` | duplicate declarations and theme semantics |
-| `E120-E139` | view, action, and route resolution |
-| `E140-E159` | handler and expression types |
-| `E160-E179` | IDs and backend lowering constraints |
-| `E180-E199` | file imports, source loading, and later view, canvas, match, and test rules |
-
-Successful analysis may also emit stable semantic warnings:
-
-| Code | Meaning |
-| --- | --- |
-| `W001` | a component is unreachable from every application view and first-class test mount |
-| `W002` | reachable state has no reader, including state that is written but has no observable consumer |
-| `W003` | reachable state has readers but no writer and therefore always keeps its initial value |
-| `W004` | handlers form an unconditional immediate routing cycle that can refresh the application forever |
-| `W005` | a handler is unreachable from runtime routes, subscriptions, presets, mount, and first-class tests |
-| `W006` | handlers form a future, task, query, stream, or progress completion cycle that can refresh or multiply work forever |
-| `W007` | an unfiltered raw-event subscription can feed redraw requests back into application updates |
-| `W008` | a stateful component is repeated with position-based identity, so inserts or reordering can transfer state between items |
-| `W009` | a retained stateful component is mounted under dynamic identities whose stored state is never reclaimed |
-| `W010` | a workspace `.ice` file is outside every app or daemon import graph |
-| `W011` | a reachable derived value, handler parameter, or handler local is never read |
-| `W012` | a statement or view gate is a constant no-op, redundant gate, or dead subtree |
-| `W013` | a statement follows an unconditional `return if true` and can never execute |
-| `W014` | two subscriptions have the same source, gates, payload mapping, and destination route |
-| `W015` | a component with targetable widget IDs is mounted without the public ID scope needed to address them from its caller |
-| `W016` | an extern component rebuilds its native widget from string or list content on every view pass, outside any `lazy` boundary |
-| `W017` | a plain `lazy` inside a repetition clones and hashes a row-local list, or a record owning one, on every view pass |
-| `W018` | a `str`, `bytes`, `[T]`, `editor`, or list-owning record state field is cloned into a by-value `pure`/`sync` parameter on every view pass or subscription check |
-| `W019` | a `for` or keyed column over a state-rooted list instantiates a component, an extern component, or a nested repetition per row on every view pass with no per-row `lazy` and no `virtual-row` column |
-| `W020` | a plain `lazy` inside a repetition evaluates a call or operator over the row on every view pass only to compute the key it is compared by |
-| `W021` | a `sync` extern is called from a handler that a sub-second `every`, a stream, the raw event feed, pointer or window motion, or a slider drag routes to |
-
-State initializers are not writers. Reads and writes are collected at the
-already checked expression, mutation, controlled-binding, and test-expression
-sites, with duplicate checker passes collapsed to one source site. Component
-state is analyzed only when the component is reachable. `cargo ice` combines
-all discovered app roots before reporting `W001`, so a shared component
-definition used by any root is not reported as unreachable merely because
-another root imports but does not mount it. `W005` starts at the app view,
-subscriptions, preset boot statements, component boot sections, the implicit
-`mount` handler, test mounts, and test dispatches, then follows every routed
-effect. Component-local
-handlers use their reachable component view as the root. State reads and writes
-inside unreachable handlers do not suppress `W002` or `W003`. An init-only
-`image` state read without ever being written does not report `W003`: storing
-`encoded`/`rgba` handles in never-rewritten state is the documented pattern
-that keeps a handle from being minted on every view pass. `W002` still applies
-to an `image` state nothing reads. The CLI and LSP
-union reachable component and handler definitions over every discovered or open
-app root before reporting graph warnings.
-
-`W004` follows task-flow routes that unconditionally emit before any external
-effect, immediate `units` routes, and pane-query routes, including routes nested
-in task groups. A non-constant `return if` termination guard suppresses outgoing
-cycle edges; `return if false` does not. `W006` extends the same graph through
-future, task, and query completions plus repeated stream and sip-progress routes.
-`W007` reports raw event subscriptions unless they have a filter, request only
-captured events, or are statically disabled with `when false`.
-
-`W008` follows component composition through `for`, table-cell, and component
-slot scopes. Use `keyed item in items by=stable_key` when repeated children own
-state. `W009` covers keyed repetitions, dynamic `#id(key)` scopes, pane
-templates, tables, and unkeyed repetitions when the component uses the default
-`retained` lifetime; `lifetime mounted` reclaims entries that leave the rendered
-tree. `cargo ice` emits CLI-only `W010` after unioning the canonical dependency
-graphs of every discovered app and daemon root. Imported fragments and roots are
-not orphans; standalone files that no root imports are.
-
-`W011` follows transitive derived-value dependencies and ignores unreachable
-handlers. Prefixing an intentionally ignored handler parameter or local with
-`_` suppresses it. Preset boot locals and statements participate in the same
-`W011-W013` analysis as application handlers. `W012` reports self-assignment,
-literal `return if false`, literal `if true`/`if false` gates, and repetitions
-over a literal empty list. `W013` reports the first unreachable statement after
-a constant-true return.
-`W014` compares the full subscription identity, context, filter, condition, event status,
-payload arguments, and route; statically disabled `when false` subscriptions are
-excluded, so it warns only when an external event would be delivered twice with
-identical semantics.
-`W015` reports each reachable id-less component call whose definition contains
-input, editor, or scroll IDs that an explicit component ID would expose to
-widget operations. Component-local handlers may still use their own relative
-paths; the warning covers operation paths hidden from the caller and suggests
-adding an explicit component ID.
-
-`W016` through `W021` are performance warnings: iced rebuilds the whole view on
-every message, so a view expression is paid once per frame unless a `lazy`
-boundary memoizes it. `W016` reports an `extern ... component` call whose
-`str` or `[T]` argument reads app state, a derived value, or component state
-and is not inside a `lazy` subtree; literals and pure calls over literals do
-not count, and a component that declares any `&` parameter is exempt because
-it reads state in place by design. A component parameter that feeds such an
-argument is charged to each call site that supplies it from state outside a
-`lazy`, once per extern component the parameter reaches, so a component
-mounted only behind `lazy` stays silent. The fix is the memo boundary the
-message spells out: `lazy content as alias` or the keyed form for a list.
-`W017` reports the plain form `lazy value as alias` nested in `for`, `keyed`,
-or `table` when the value reads the row — the loop item, a match payload, a
-table row — and is a list or a record with a list field: that form clones its
-dependency into the memo tuple and hashes the clone once per item per frame,
-where `lazy value by <cheap keys> as alias` captures it by reference and
-hashes only the keys. A value rooted in state is keyed by state revisions and
-is not reported; neither is a record of scalars and strings, the whole-row
-memo idiom. `W018` reports a `pure` or `sync` extern call whose by-value parameter receives a bare app-state or
-component-state field of type `str`, `bytes`, `[T]`, `editor`, or a record
-whose Ice declaration has a list field, when the call is owned by a view
-expression (reachable component bodies, interaction, media, tooltip, float,
-pin, and component argument expressions included) or by a subscription `when`
-condition: the generated call clones the whole field once per view pass or
-subscription check. Handler-owned calls run once per message and `derived`
-initializers are not reported; a literal or projected argument, a test mount,
-an unreachable component, and a parameter already declared `&str`, `&bytes`,
-`&[T]`, `&T`, or `&editor` (section 5) are silent. A `lazy` subtree needs no
-exemption because only its alias and its key or extra snapshots are in scope
-there, and a component mounted only behind `lazy` is still reported, since
-the rule classifies the body rather than its mounts. Opaque extern records are not inspected: a record
-declared `History(note:str)` whose Rust struct owns vectors clones them
-silently, so zero `W018` sites does not mean zero per-frame record clones.
-The fix is the borrowed parameter, which leaves the call site unchanged, or
-moving the result into state from the handler that writes the field.
-
-`W019` reports a `for`, or a `keyed` column, whose list is rooted in app
-state, a derived value, component state, or a prop, whose row body
-instantiates a component, an extern component, or a nested repetition, and
-which has no per-row boundary: every child of the `for` is not a `lazy`, the
-`for` is not directly under a `col` with `virtual-row=`, or the keyed column
-carries no `virtual-row=` of its own. Rows of leaf widgets are not reported.
-The message names both fixes: `lazy item by <cheap keys> as alias` around the
-row, which rebuilds a row only when its keys move, or `virtual-row=<height>`,
-which lays out only the rows in view. `W020` reports the plain form `lazy
-value as alias` inside a repetition whose value is a call or an operator over
-the row — `lazy label_of(message) as label` — because the memo must evaluate
-that expression on every pass before it can compare the key, so the work it
-wraps is never skipped; a bare row value (priced by `W017` when it owns a
-list) and a value rooted in state (keyed by revisions) are silent. The fix is
-to key the row and move the call inside the subtree.
-
-`W021` reports a `sync` extern call inside a handler that runs at a cadence:
-the route of a subscription `every` under one second, of a `stream`
-statement's items or a stream subscription, of the `event`/`events` feed, of
-`mouse moved`, `mouse wheel`, `touch moved`, `window frame`, `window
-moved`/`resized`/`rescaled`, or `window file-hovered`, and a slider's drag
-route. Handlers run on the loop thread, so the app freezes for as long as the
-Rust body takes, once per turn; the message names the async form, `run
-name(args) -> handler`, whose result arrives as a message. A source that
-fires once per user action — a button, a submit route, a picker, a key
-press, a click, a focus change, a close request — is one turn like any other
-and is silent, as is an `every` of a second or more; only the handlers a
-trigger routes to directly are classified. The `cef-browser` example's 16ms
-pump keeps its `sync` by design and carries the warning.
-
-
-`cargo ice check` first reports these language errors directly, then invokes
-`cargo check` so rustc verifies extern items and generated iced types. A missing
-Rust item is named by its `crate::module::item` path in rustc's diagnostic.
-Imported-language diagnostics already point to the original fragment and line.
-Generated Rust carries nested provenance regions for view nodes, handler
-statements, state declarations and initializers, derived values, subscriptions,
-and extern probes. `ui-lang-build` materializes each root below Cargo's
-`OUT_DIR`, and the proc macro expands it through `include!`, preserving rustc's
-generated line. `cargo ice check` and `clippy` consume Cargo JSON diagnostics
-and map marked error spans back to the root or imported `.ice` file, line, source
-excerpt, and syntax while retaining the generated Rust coordinate as a note.
-`test` and `compat` first
-run the corresponding source-mapped Cargo check, then invoke the normal test
-runner. Generated first-class test failures retain their original root or
-imported Ice path and line as before.
-
-The LSP exposes the same Clippy remapping as the `Run Ice lint` source action
-and `ice.lint` workspace command. The command runs Clippy for every initialized
-Cargo workspace root and publishes mapped rustc and Clippy diagnostics under
-the responsible `.ice` document URI. Diagnostics without generated Ice
-provenance remain with the Rust language server. The command is explicit so
-normal edit-time parser and semantic diagnostics do not wait for Cargo.
-The LSP publishes error-level generated diagnostics, including type and extern
-contract failures. Warning-level Rust and Clippy findings describe backend
-output rather than actionable Ice syntax and are suppressed at the generated
-item boundary; Ice's non-CLI-only semantic warnings (`W001-W009` and
-`W011-W021`) continue to come directly from the language checker.
-The command rejects execution while any open workspace Ice buffer differs from
-disk, preventing Cargo diagnostics from being applied to a different source
-revision.
-
-## 12. Development runner and Cargo commands
-
-`cargo ice dev -p PACKAGE [<cargo-build-args>] [-- <app-args>]` is the native
-development runner. It discovers the package's unique Ice app or daemon root,
-analyzes that root and its imports with the normal parser and checker, then
-builds exactly one selected Cargo binary through the same ahead-of-time code
-generator used by production builds. A package with multiple Ice roots uses
-the explicit `cargo ice dev FILE -- <cargo-build-args> [-- <app-args>]` form.
-Generated applications never parse, deserialize, or interpret Ice source at
-runtime.
-
-Native filesystem notifications over the complete input graph trigger snapshot
-verification. Access-only events and events below excluded build, vendor,
-fixture, or VCS directories do not trigger verification. The idle runner does
-not content-hash the graph on its 100-millisecond process-liveness cadence. If
-the native watcher cannot be created or cannot install a required root, the
-runner emits the WARN tracing event `native notifications unavailable; using
-polling safety mode` and switches to a 750-millisecond metadata-inventory poll.
-The same fallback is installed if the native notification channel
-disconnects. A fallback metadata change, watcher error, or rescan request
-triggers the existing complete content-snapshot verification. The runner also
-performs a complete
-content rescan every 30 seconds, so missed or metadata-invisible changes remain
-recoverable. For native notifications naming known files, the
-runner reuses the accepted inventory and unchanged content stamps, and hashes
-only affected paths. A path absent from the accepted inventories, a removed or
-renamed path, or a directory path refreshes the metadata inventory so added and
-removed inputs participate without hashing unchanged contents. A change is
-settled only when two equivalent snapshots 50 milliseconds apart are identical.
-The final stabilized bytes for affected Ice files are reused by incremental
-analysis. Unchanged files in the retained import closure are neither read,
-hashed, nor scanned again; newly imported files still load from disk.
-
-After a settled Ice, Rust, Cargo, build-script, configuration, or embedded-asset
-change, the runner builds a new executable while the accepted process remains
-open. It stages the executable under a revision-specific path and launches it
-as a shadow candidate with a unique readiness-file path and opaque token. The
-generated root wrapper atomically writes that exact token only after its child
-draw returns. The candidate becomes accepted only after the runner reads the
-exact token and confirms that the process is still alive; then it terminates
-the previous process and deletes its staged executable. Parse, check, build,
-startup, early-exit, and readiness failures discard the candidate and leave the
-previous process running.
-
-An accepted edit is offered to the running process as an in-place view reload
-before any of that. The runner re-runs parse, check, and lowering, so the edit
-is diagnosed exactly as before, and republishes the view as data. When the
-running binary still fills the slot table the new view asks for and the
-published template actually changed, rewriting that file is the whole reload:
-the runner emits the INFO tracing event `view reloaded in place`, and the app
-renders the change on its next frame with application, window, and widget state
-untouched. Structure, literals, colors, spacing, and accessibility segments
-reload this way; reading new state, adding a handler, or using a node the
-template vocabulary does not model does not, and neither does a view that
-publishes no template at all. Every other accepted edit takes the shadow
-candidate path above and therefore starts fresh application, window, and widget
-state. Both tiers run the one renderer that ships in release, so neither is a
-second runtime implementation of Ice.
-
-An app reports readiness through its root view. A daemon uses the same boundary
-after one of its windows draws. A windowless daemon candidate has no draw event,
-so it reaches the 30-second readiness timeout and never replaces the accepted
-process.
-
-The runner executes the selected binary directly, owns both accepted and
-candidate children, and removes staged executables on replacement or shutdown.
-`Ctrl-C` terminates the owned children without leaving a `cargo run` descendant.
-
-| Command | Behavior |
-| --- | --- |
-| `cargo build` / `cargo check` | runs `ui-lang-build` in each consumer build script, includes requested roots from `OUT_DIR`, and checks generated Rust |
-| `cargo fmt` | formats Rust; foreign `.ice` files are unchanged |
-| `cargo clippy` | lints generated Rust as part of the normal crate |
-| `cargo ice fmt` | runs Rust formatting and formats all discovered `.ice` files |
-| `cargo ice fmt --check` | checks both Rust and Ice formatting without changing `.ice` files |
-| `cargo ice check` | language analysis followed by workspace `cargo check` |
-| `cargo ice test [cargo-test args...]` | analyzes every Ice app graph, then runs `cargo test --workspace` with the remaining arguments; ordinary Cargo discovers the same generated tests |
-| `cargo ice clippy` | language analysis followed by workspace clippy |
-| `cargo ice compat` | analyzes app graphs, verifies exact `iced`, `iced_widget`, `ui-lang-build`, runtime, and AccessKit lockfile versions plus direct reference-app/runtime manifest pins, and runs the reference app tests |
-| `cargo ice expand FILE` | prints generated Rust for debugging |
-| `cargo ice dev -p PACKAGE [<cargo-build-args>] [-- <app-args>]` | discovers the package's unique Ice root, watches complete source/build inputs, reloads compatible views in place, and replaces the running app only after a rebuilt shadow candidate reports ready |
-| `cargo ice bundle -p PACKAGE [--target TRIPLE]...` | analyzes the package's Ice root, builds it in release, and writes the host platform's installable artifact: a signed, notarized macOS `.app` and `.dmg`, a Debian `.deb` with a desktop entry and icon theme, or a per-user Windows `.msi`; the app name and `id` become the product name and identifier, every icon size is rendered from one SVG, repeated macOS targets are joined with `lipo`, and signing credentials come from the environment |
-| `cargo ice inspect FILE [options]` | runs the containing package's generated headless app entry and writes PNG plus source-mapped JSON artifacts, optionally with `--frames N [--release]` per-phase frame cost and layout memo counts in the manifest's `frames` object, or release-mode authored/generated/replay interaction evidence in a strict sibling `trace.json` |
-| `cargo ice diff BASE.json CURRENT.json [options]` | compares structured manifests and RGBA pixels, writes JSON/PNG diff artifacts, and fails outside explicit tolerances |
-| `cargo ice api FILE` | checks an app or declaration-only interface graph and prints its deterministic, versioned public API fingerprint |
-| `cargo ice api diff BASE.json CURRENT.json [--format human\|json]` | verifies both fingerprints, classifies public changes, and exits nonzero when any breaking change is present |
-| `cargo ice review FILE [options]` | runs selected first-class Ice tests and writes one JSON/HTML bundle containing logs, diagnostics, captures, optional interaction traces, accessibility summary, baseline diffs, and source-mapped changes |
-| `cargo ice schema` | prints the generative Core grammar, style and test-mode contracts, editor capabilities, and backend contract as JSON |
-| `cargo ice lsp` | serves stdio UTF-16 diagnostics, formatting, context-aware completion, component/recipe hover, component signature help, workspace-edit and `Run Ice lint` source actions, definition, and rename |
-
-`cargo-ice` discovers `.ice` files recursively below the current directory,
-skips `.git`, worktree metadata, `target`, and `tests/cases` fixture trees,
-analyzes files with a top-level `app` or `daemon` as roots, and formats both
-roots and imported fragments.
-
-The schema describes every Core construct's valid contexts, canonical syntax,
-child cardinality, typed properties, binding, and route. It also describes test
-configuration, actions, assertions, target fields, execution settling, paint
-inspection, and runtime support. Completion entries are generated from that
-same construct table instead of a separate vocabulary.
-
-The public API fingerprint is a checked semantic artifact, not source text or
-generated Rust. Its schema-versioned SHA-256 payload contains the language
-revision, containing Cargo package name/version, components (sorted
-read/bind/default/required props, named-event payloads, default output,
-required/optional slots, and lifetime), recipes (target, base, and base-first
-flattened utilities), the global theme token contract, UI enums, extern types,
-and all typed extern function kinds. Named declarations and unordered contract
-sets are sorted; positional payload and extern parameter order and recipe
-utility precedence remain ordered. Consequently formatting, source relocation,
-and declaration reordering do not change the fingerprint, while imported bare
-and aliased declarations retain their checked `::` identities.
-
-The diff contract is independently schema-versioned. Removed components and
-contract members, new required props or slots, read/bind capability changes,
-event signature changes, theme-token changes, and extern/type signature changes
-are breaking. New components, defaulted props, optional slots, recipes, types,
-and extern functions are additive. Recipe flattening, existing default values,
-and component lifetime changes require behavioral review. Named events form a
-closed routing contract, so adding one is breaking. Package version changes are
-metadata; a package name or language revision change is breaking. Malformed,
-unknown-schema, or hash-inconsistent inputs are rejected before comparison.
-Unknown fields are malformed at every nested schema node, and correctly
-rehashed artifacts are still rejected when named contracts are duplicated,
-unsorted, or internally inconsistent. Pull-request CI
-compares against the target commit's baseline and requires the committed
-baseline to exactly match fresh output; an intentional breaking update needs
-the explicit maintainer-controlled `api-breaking-approved` label applied after
-the latest commit. A later push invalidates that event and requires the label
-to be removed and reapplied. Retargeting a pull request reruns the comparison
-against the new target commit.
-This batch release gate adds no Ice syntax and no LSP method; diagnostics,
-completion, hover, signature help, and code actions continue to consume the
-ordinary checked document.
-
-The LSP uses Content-Length framed stdio, full-document synchronization, and
-the same parser/checker/source map as the compiler. Completion distinguishes
-top-level, handler, view, typed-match-arm, widget-status, component-call,
-theme-contract, and test contexts.
-Checked component calls expose only their read/bind/default props, slots, and
-named events; handler completion lowers each Future extern to `run every`, each
-Task extern to `task`, and each Stream extern to `stream`. Component hover and
-signature help show the complete contract, while recipe hover flattens utilities
-base-first.
-Code actions return direct workspace edits for binding syntax, missing event and
-error routes, handler skeletons, accessible child-content button labels, and
-long-node `with` conversion. They can also extract an identical sequence of two
-or more inline utilities when it occurs on at least two nodes of the same
-recipe target, replacing every exact occurrence with one top-level recipe. A
-component's direct app-handler route can become a typed named event when the
-payload types and single call site are unambiguous. Code actions also add all
-missing explicit Option, Result, or UI-enum arms; selecting a wildcard replaces
-it and copies its view body into the generated arms. An unresolved unqualified
-component, recipe, extern, or type reference
-is qualified only when checking each imported namespace proves exactly one
-alias makes the complete source graph valid. Existing file URIs use the
-open buffers throughout each import graph; imported diagnostics are published
-at the imported URI with UTF-16 ranges. Opening, changing, or closing a buffer
-reanalyzes every open app root, and closing it returns that file to disk.
-Checked component, handler, recipe, and test-target declarations and references retain
-imported source origins, so definition and complete-reference rename use
-current open buffers plus closed app roots under the initialized workspace.
-Rename validates the new identifier, rejects declaration collisions, and waits
-until every app root under the initialized workspace checks. Plain component
-names, compound-family roots, and recipe names are renameable; a family-root
-rename updates dotted descendants, but direct dotted descendants and the
-implicit `mount` handler are definition-only. A test-target alias is renameable
-only with its definition and references in the same test; an alias with the same
-spelling in another test is unrelated.
-
-The normal runtime and reference-app tests verify deterministic semantic trees,
-focus, keyboard activation, visible focus, password suppression, and action
-routing. On Linux, `scripts/a11y-smoke.sh` starts an isolated D-Bus/AT-SPI
-session and runs the ignored native gate that discovers the exported tree and
-delivers its action to the Iced bridge. `scripts/a11y-windows-check.sh`
-cross-compiles the Windows adapter, production reference app, runtime tests,
-generated reference-app tests, and Core tests from a Linux host; unit and
-codegen tests cover oldest-window resolution, deferred show and initial work,
-ordered message replay, the headless test bypass, and exact target-scoped
-dependency pins. Headless tests cover dispatch from the bridge to the app
-message. These gates do not expand the single-window or coordinate contract
-above.
-
-## 13. Current coverage and escape hatches
-
-The 2.0 native backend covers the complete public, application-facing surface
-of the pinned iced baseline across windowed applications, windowless daemons,
-widgets, layout, tasks, subscriptions, native values, and custom rendering
-boundaries. Borrowed custom widgets and an application-wide renderer type
-retain arbitrary native behavior without admitting unchecked expressions into
-Ice. [`COVERAGE.md`](COVERAGE.md) is the exact versioned completeness ledger.
-
-The language must not grow one ad-hoc syntax form for every iced API. Thirty-four
-typed Rust boundaries cover domain work, native elements and programs, runtime
-tasks and subscriptions, Markdown viewers, and native style callbacks without
-admitting arbitrary Rust into expressions or duplicating iced in the core
-grammar. These boundaries are part of the complete declarative contract, not a
-second-class fallback. Direct native syntax remains preferable for common UI
-concepts.
-
-When the pinned iced baseline changes, every new or changed public,
-application-facing behavior is a coverage obligation. The upgrade is not
-complete until the ledger records a native checked representation and the
-evidence rule in `COVERAGE.md` passes. This obligation may extend direct syntax
-or an existing typed boundary; it does not by itself justify another keyword.
-
-Native language coverage and system coverage are therefore separate:
-
-```text
-common screen structure -> checked native Ice vocabulary
-advanced/custom widget  -> typed Rust Element adapter
-custom GPU program      -> typed Rust Shader Program adapter
-iced runtime operation  -> typed Rust Task adapter
-repeated task output     -> typed Rust Stream/Sipper adapter
-event/stream source      -> typed Rust Subscription adapter
-native default theme     -> typed Rust Theme factory
-alternate themed subtree -> typed Rust Themer adapter
-domain and I/O           -> typed Rust async extern
-pure domain conversion   -> typed Rust pure extern
-immediate effect/value   -> typed Rust sync extern in an app initializer or immediate handler expression
-native window handle     -> typed Rust window callback
-```
-
-## 14. Reference application
+format, test mock DSL, general virtual clock, built-in golden-image comparator,
+or multi-window orchestration. Named captures expose renderer output without
+making exact pixel equality the test contract.
+
+## 7. Reference application
 
 The reference component catalog starts at
-[`examples/showcase/src/ui/app.ice`](examples/showcase/src/ui/app.ice).
-Focused fixtures under
+[`examples/showcase/src/ui/app.ice`](examples/showcase/src/ui/app.ice). Focused
+fixtures under
 [`examples/showcase/tests/cases/ui/`](examples/showcase/tests/cases/ui/)
 compile-test the extended surface recorded in [`COVERAGE.md`](COVERAGE.md).
+
+## Appendix: nested forms
+
+`cargo ice schema` enumerates every construct's own syntax and properties, but
+names its children only by role (`app-setting`, `canvas-command`,
+`pane-configuration`, `span`, …). Those child vocabularies are listed here and
+nowhere else. Everything not in this appendix is in the schema. `INDENT`
+delimits a block; `expr`, `route`, `length`, `color_ref`, `background_value`,
+`duration`, and `call` are the ordinary checked forms.
+
+```text
+root_decl      = ("app" | "daemon") PascalName (INDENT app_setting*)?
+app_setting    = "title" expr | "theme" expr | "palette" expr
+               | ("bg" | "fg") expr
+               | "id" string | "font" string
+               | ("executor" | "renderer") rust_path
+               | "text-size" number | "scale" expr
+               | ("antialiasing" | "vsync") bool
+               | window_decl | tray_decl
+
+window_decl    = "window" name? INDENT window_setting*
+window_setting = ("size" | "min-size" | "max-size") number number
+               | "icon-rgba" string u32 u32
+               | "position" ("default" | "centered" | number number)
+               | "level" ("normal" | "always-on-bottom" | "always-on-top")
+               | ("maximized" | "fullscreen" | "visible" | "resizable"
+                 | "closeable" | "minimizable" | "decorations" | "transparent"
+                 | "blur" | "exit-on-close") bool
+               | window_platform
+window_platform = "platform" "linux" INDENT
+                    (("app-id" string) | ("override-redirect" bool))*
+                | "platform" "windows" INDENT
+                    (("drag-and-drop" | "skip-taskbar" | "undecorated-shadow") bool
+                    | "corner" ("default" | "do-not-round" | "round" | "round-small"))*
+                | "platform" "macos" INDENT
+                    (("title-hidden" | "titlebar-transparent"
+                    | "fullsize-content-view") bool)*
+                | "platform" "wasm" INDENT ("target" (string | "none"))?
+
+tray_decl      = "tray" INDENT tray_setting*
+tray_setting   = "icon-rgba" string u32 u32 ("when" expr)?
+               | "icon-template" bool
+               | ("label" | "tooltip") expr
+               | "menu" INDENT tray_row+
+tray_row       = "separator" | expr ("->" name)? ("when" expr)? (INDENT tray_row+)?
+
+state_entry    = name (":" type)? "=" expr (INDENT animation_setting*)?
+animation_setting = "easing" name
+                  | "duration" (duration | "very-quick" | "quick" | "slow" | "very-slow")
+                  | "delay" duration
+                  | "repeat" (u32 | "forever")
+                  | "auto-reverse" bool
+                  | "from" (bool | number)
+
+subscription_use = subscription_source ("with=" expr)? ("filter=" name)?
+                   ("status=" event_status)? ("when" expr)? "->" route
+subscription_source
+               = call | "every" duration | "repeat" call "every" duration
+               | "run" call | "recipe" call
+               | "events" expr "using=" name
+               | "event" ("raw")? ("with-id")?
+               | "input-method" input_method_event
+               | "keyboard" ("press" | "release" | "modifiers")
+               | "mouse" mouse_event | "touch" touch_event
+               | "window" window_event ("with-id")?
+               | "system theme"
+input_method_event = "opened" | "preedit" | "commit" | "closed"
+mouse_event    = "entered" | "left" | "moved" | "pressed" | "released" | "wheel"
+touch_event    = "pressed" | "moved" | "lifted" | "lost"
+window_event   = "frame" | "opened" | "closed" | "moved" | "resized"
+               | "rescaled" | "close-request" | "focused" | "unfocused"
+               | "file-hovered" | "file-dropped" | "files-hovered-left"
+
+rich_text_child = rich_span | "for" name "in" expr INDENT rich_span*
+rich_span      = "span" expr rich_span_property* styles?
+rich_span_property = ("size=" | "line-h=" | "line-h-px=") expr
+                   | "font=" font_ref | "color=" color_ref | "link=" expr
+                   | "bg=" background_value | "border=" color_ref
+                   | "border-w=" expr
+                   | ("r=" | "r-tl=" | "r-tr=" | "r-br=" | "r-bl=") expr
+                   | ("p=" | "px=" | "py=" | "pt=" | "pr=" | "pb=" | "pl=") expr
+                   | "underline" | "underline=" expr
+                   | "strike" | "strike=" expr
+
+pane_grid_style = "style" INDENT pane_grid_style_status+
+pane_grid_style_status
+               = "hovered-region" pane_region_style_property+
+               | ("hovered-split" | "picked-split") pane_line_style_property+
+pane_region_style_property
+               = "bg=" background_value | "border=" color_ref
+               | ("border-w=" | "r=" | "r-tl=" | "r-tr=" | "r-br=" | "r-bl=") expr
+pane_line_style_property = "color=" name ("/" u8)? | "w=" expr
+pane_configuration = pane_view
+                   | "split" name? pane_axis ("ratio=" number)?
+                     INDENT pane_configuration pane_configuration
+pane_view      = "pane" name pane_property* styles? INDENT pane_section* node
+pane_template  = "pane" name "in" name "by=" expr
+                 pane_property* styles? INDENT pane_section* node
+pane_property  = surface_style_property | "maximized=" name
+pane_section   = "title" pane_title_property* styles? INDENT node
+               | "controls" INDENT node
+               | "compact" INDENT node
+pane_title_property
+               = ("p=" | "px=" | "py=" | "pt=" | "pr=" | "pb=" | "pl=") expr
+               | "always-controls" | surface_style_property
+pane_axis      = "horizontal" | "vertical"
+surface_style_property
+               = "bg=" background_value
+               | ("text=" | "border=" | "shadow=") color_ref
+               | ("border-w=" | "r=" | "r-tl=" | "r-tr=" | "r-br=" | "r-bl="
+                 | "shadow-x=" | "shadow-y=" | "shadow-blur="
+                 | "px-snap=") expr
+
+pane_operation = "maximize" name | "restore" | "maximized"
+               | "adjacent" name pane_edge
+               | "swap" name name | "close" name
+               | "move" name pane_edge | "resize" (name expr | expr)
+               | "drop" name name ("center" | pane_edge)
+               | "split" name name pane_axis ("ratio=" expr)?
+pane_edge      = "top" | "left" | "right" | "bottom"
+
+window_task    = "task window" window_operation ("target=" expr)? ("->" route)?
+window_operation = "open" name? | "oldest" | "latest"
+                 | "close" | "drag" | "toggle-maximize" | "toggle-decorations"
+                 | "focus" | "system-menu" | "raw-id" | "screenshot"
+                 | "drag-resize" direction
+                 | ("resize" | "move") expr expr
+                 | ("resizable" | "maximize" | "minimize" | "mouse-passthrough"
+                   | "auto-tabs") expr
+                 | ("min-size" | "max-size" | "resize-step") ("none" | expr expr)
+                 | "set-mode" ("windowed" | "fullscreen" | "hidden")
+                 | "attention" ("none" | "critical" | "informational")
+                 | "level" ("normal" | "always-on-bottom" | "always-on-top")
+                 | "size" | "maximized" | "minimized" | "position"
+                 | "scale" | "mode" | "monitor-size"
+                 | "icon" expr expr expr
+                 | call
+
+canvas_item    = canvas_state | canvas_event | canvas_command
+canvas_state   = "state" INDENT state_entry+
+canvas_event   = "event" canvas_event_source "->" route
+               | "event" canvas_event_source ("as" name_list)?
+                 INDENT canvas_event_action+
+               | "capture" canvas_event_source
+               | "redraw" canvas_event_source ("after=" duration)?
+canvas_event_source
+               = "input-method" input_method_event
+               | "keyboard" ("press" | "release" | "modifiers")
+               | "mouse" mouse_event | "touch" touch_event
+               | "window" window_event
+canvas_event_action
+               = "set" name "=" expr | "emit" route | "capture"
+               | "redraw" ("after=" duration)?
+canvas_command = canvas_rect | canvas_circle | canvas_line | canvas_text
+               | canvas_path | canvas_group | canvas_if | canvas_for
+canvas_rect    = "rect" point size canvas_radius* canvas_paint+
+canvas_circle  = "circle" point "r=" expr canvas_paint+
+canvas_line    = "line" "x1=" expr "y1=" expr "x2=" expr "y2=" expr canvas_stroke
+canvas_text    = "text" expr "x=" expr "y=" expr canvas_text_property*
+canvas_text_property = ("max-w=" | "size=" | "line-h=" | "line-h-px=") expr
+                     | "color=" color_ref | "font=" name
+                     | "align-x=" ("default" | "left" | "center" | "right"
+                       | "justified")
+                     | "align-y=" ("top" | "center" | "bottom")
+                     | "shape=" ("auto" | "basic" | "advanced")
+canvas_path    = "path" canvas_paint+ INDENT canvas_path_segment+
+canvas_group   = "group" canvas_transform* INDENT canvas_command*
+canvas_if      = "if" expr INDENT canvas_command*
+canvas_for     = "for" name "in" expr INDENT canvas_command*
+canvas_radius  = ("r=" | "r-tl=" | "r-tr=" | "r-br=" | "r-bl=") expr
+canvas_paint   = "fill=" background_value
+               | "fill-rule=" ("non-zero" | "even-odd")
+               | canvas_stroke
+canvas_stroke  = "stroke=" background_value ("stroke-w=" expr)?
+                 ("cap=" ("butt" | "square" | "round"))?
+                 ("join=" ("miter" | "round" | "bevel"))?
+                 ("dash=" "(" expr_list ")")? ("dash-offset=" expr)?
+canvas_transform = ("x=" | "y=" | "rotate=" | "scale="
+                   | "scale-x=" | "scale-y=") expr
+                 | "clip=(" expr "," expr "," expr "," expr ")"
+canvas_path_segment = "move" point | "line" point
+                    | "arc" point "r=" expr "start=" expr "end=" expr
+                    | "arc-to" "ax=" expr "ay=" expr "bx=" expr "by=" expr "r=" expr
+                    | "ellipse" point "r-x=" expr "r-y=" expr
+                      "rotate=" expr "start=" expr "end=" expr
+                    | "bezier" "ax=" expr "ay=" expr "bx=" expr "by=" expr point
+                    | "quadratic" "cx=" expr "cy=" expr point
+                    | "rect" point size
+                    | "rounded" point size canvas_radius+
+                    | "circle" point "r=" expr | "close"
+```
+
+`extern` items are the declaration kinds in section 5: a struct signature, a
+bare/`pure`/`sync` function, or one of the typed adapters (`component`,
+`selector`, `shader`, `task`, `stream`, `sip`, `recipe`, `event-filter`,
+`subscription`, `theme`, `themer`, `window`, `markdown-viewer`, the `editor-*`
+kinds, and the per-widget `*-style` kinds).

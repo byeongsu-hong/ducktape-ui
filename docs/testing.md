@@ -1,7 +1,8 @@
 # First-class Ice tests: driver and evidence reference
 
 The README shows the shape of an authored `test`; this is the full driver,
-determinism, and evidence contract. `SPEC.md` remains the grammar of record.
+determinism, and evidence contract. `cargo ice schema` remains the vocabulary of
+record.
 
 ## Environment pinning
 
@@ -143,7 +144,7 @@ expect component browser.draft == ""
 The target is the component call's `#id` — the scope that is not a rendered
 widget — and the field is one of the component's declared `state` entries,
 checked against its type. The read is compiled onto the generated component
-seam (`__ice_test_state_<name>`, `SPEC.md` §9), keyed by the same scope string
+seam (`__ice_test_state_<name>`), keyed by the same scope string
 the view keys the instance's state by, so there is no second naming scheme:
 the alias that fails `click` because it names a scope is the alias that works
 here, and `#path.field` works too. An instance that has rendered but never
@@ -1080,7 +1081,7 @@ if each were computed once: **~25us of a 3300us frame**. Reading this table
 before writing a codegen fix is what stopped one being written then. The
 snapshot has since been replaced by a cache on the app struct that survives
 frames and is cleared by the writes that can change it
-(`docs/decisions/0008-derived-cache.md`), so a derived read now costs a
+(`SPEC.md` section 6), so a derived read now costs a
 reference and the 8 reads compute once per feed beat, not once per read.
 
 **The scrolling report was a different kind of bug, and it reproduced.**

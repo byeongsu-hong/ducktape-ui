@@ -42,8 +42,9 @@ new syntax.
 
 ## Extended widget inventory
 
-The implemented view grammar includes more than the schema's Core list. Locate
-the exact syntax in `SPEC.md` section 4 and a compiling fixture before use.
+`cargo ice schema` lists every construct's own syntax and properties; the
+nested child vocabularies are in `SPEC.md`'s nested-forms appendix. Confirm
+both against a compiling fixture before use.
 
 ### Layout and composition
 
@@ -251,8 +252,8 @@ point, or declared selector adapters where supported. Operations may be scoped
 inside a stateful component only when the checker can restrict them to that
 component subtree.
 
-Never guess operation payload order. Find the operation in `SPEC.md` section 7
-and its focused `.ice` fixture.
+Never guess operation payload order. Find the operation in `SPEC.md`'s
+nested-forms appendix and its focused `.ice` fixture.
 
 ## Native subscriptions and values
 
@@ -284,7 +285,7 @@ and externs:
   redraw request;
 - instant and animation values.
 
-Use the named constructor/query built-ins documented in `SPEC.md` section 6.
+Use the named constructor/query built-ins listed in `SPEC.md` section 6.
 Do not replace a native typed value with a string unless the UI only needs a
 display label.
 
@@ -314,8 +315,8 @@ extern crate::backend
 
 Also use the dedicated Markdown, editor, and per-widget style adapter kinds
 where applicable. Their Rust return signatures are specific and compile-time
-probed. Copy the exact declaration/signature pair from `SPEC.md` or the focused
-reference fixture.
+probed. Copy the exact declaration/signature pair from `SPEC.md` section 5 or
+the focused reference fixture.
 
 Use a borrowed extern-component parameter (`&str`, `&bool`, and so on) only
 when the returned element's lifetime genuinely benefits. Default to owned
@@ -323,7 +324,8 @@ values; borrowed custom widgets introduce real lifetime constraints.
 
 ## How to verify an advanced construct
 
-1. Search `SPEC.md` for the construct's grammar and semantic section.
+1. Run `cargo ice schema` for the construct, then check `SPEC.md` for its
+   nested forms and semantic rules.
 2. Search `examples/showcase/tests/cases/ui/` for the exact spelling.
 3. Search `crates/ui-lang-core/src/check/tests/` and
    `crates/ui-lang-core/src/codegen/tests/` for edge behavior.

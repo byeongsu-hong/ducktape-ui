@@ -138,7 +138,7 @@ pub(in crate::codegen) fn generate_view(
         ""
     };
     let callback_value = if daemon { "window" } else { "" };
-    // The third span (ADR 0011, G3): a frame whose build overran says so at
+    // The third span: a frame whose build overran says so at
     // the view's root node. It covers the element tree this function emits —
     // not iced's layout and draw, and not a `lazy` subtree, which is evaluated
     // during layout.

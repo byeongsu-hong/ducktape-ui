@@ -574,11 +574,11 @@ struct ExprEmission<'a> {
     component_state_scope: Option<&'a str>,
 }
 
-/// Wraps an extern call in the span that times it (ADR 0011, G3). The guard
+/// Wraps an extern call in the span that times it. The guard
 /// drops once the block's value — the call's result — has been computed, so
 /// what it measures is the Rust body that ran on the loop thread: a `sync`
 /// extern in full, an async one's inline construction, which is the part of it
-/// the arrow in SPEC §1 does not cover.
+/// the arrow in SPEC §2 does not cover.
 ///
 /// A `pure` extern is left bare. It is the one kind the language has a promise
 /// about, it is the kind a view calls per node per frame, and a guard there

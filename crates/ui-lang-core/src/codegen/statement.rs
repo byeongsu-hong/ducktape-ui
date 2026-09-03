@@ -334,7 +334,7 @@ fn resolved_run_task_code(
         .map(|arg| resolved_expr_use_code(program, *arg, env, ValueMode::Owned))
         .collect::<Result<Vec<_>, _>>()?
         .join(", ");
-    // The constructor runs inline on the loop thread — the freeze SPEC §1's
+    // The constructor runs inline on the loop thread — the freeze SPEC §2's
     // arrow does not cover — so it is timed like any other extern call.
     let call = extern_call_code(program, action, format!("{}({args})", action.rust_path));
     Ok(wrap(
