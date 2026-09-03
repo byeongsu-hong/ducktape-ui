@@ -65,13 +65,23 @@
 //! a real layout subtree (a container's `operate` unwraps its child node, so a
 //! placeholder panics); and building one means laying the child out, which is
 //! the shaping this widget exists to skip. So a screen reader sees only the
-//! mounted slice, and this column publishes no `size_of_set`/`position_in_set`
-//! to compensate, because it does not own its children's semantics. `.ice`
-//! tests read that same snapshot, so `click` and `expect a11y` cannot target an
-//! offscreen child either. When a collection has to read correctly to assistive
-//! tech, use [`crate::virtual_list`], which owns its rows and publishes set
-//! metadata and an active descendant for them. A `virtual-row` column is for
-//! long, read-mostly content.
+//! mounted slice. `.ice` tests read that same snapshot, so `click` and
+//! `expect a11y` cannot target an offscreen child either.
+//!
+//! **What the mounted slice does say is which slice it is.** The column cannot
+//! reach into a built child's semantics — it is handed elements — but on the
+//! way past each mounted child it announces "item `i` of `n`", and the first
+//! node that child publishes takes it. So a row reads as "Row 12, 12 of 500"
+//! rather than "12 of 8", which is the difference between a list a reader can
+//! place themselves in and a screenful with no context. A child that sets its
+//! own `position_in_set` keeps it; it knows more about itself than the column
+//! does.
+//!
+//! What is still missing against [`crate::virtual_list`] is an active
+//! descendant and the ability to reach an offscreen row without scrolling to
+//! it. A collection that must be enumerable without scrolling still wants that
+//! widget; a `virtual-row` column now reads correctly for a reader moving
+//! through it.
 //!
 //! # Rows can carry keys
 //!
@@ -956,6 +966,7 @@ where
         operation: &mut dyn Operation,
     ) {
         let live = tree.state.downcast_ref::<State>().live.clone();
+        let size_of_set = self.children.len();
         operation.custom(None, layout.bounds(), tree.state.downcast_mut::<State>());
         operation.container(None, layout.bounds());
         operation.traverse(&mut |operation| {
@@ -965,6 +976,15 @@ where
                 if !live.contains(index) {
                     continue;
                 }
+                // The column cannot reach into a built child's semantics, but
+                // it can say what the child is one of. Without this a screen
+                // reader is told the tree it can see, which is a screenful,
+                // rather than the list the reader is in.
+                let mut set = crate::SetPosition {
+                    position: index.saturating_add(1),
+                    size: size_of_set,
+                };
+                operation.custom(None, child_layout.bounds(), &mut set);
                 child.as_widget_mut().operate(
                     &mut tree.children[index],
                     child_layout,
@@ -2091,5 +2111,91 @@ mod tests {
             translation > estimated_top,
             "the landing {translation} moved past the estimated top {estimated_top}, so it read measured rows"
         );
+    }
+}
+
+#[cfg(test)]
+mod set_metadata_tests {
+    use super::*;
+    use iced::advanced::widget::operation::{self, Outcome};
+    use iced_test::runtime::UserInterface;
+    use iced_test::runtime::user_interface;
+
+    /// A virtualized column holds a screenful of a long list, and a reader who
+    /// cannot see it needs to be told which screenful. The column does not own
+    /// its children's semantics, so it says this on the way past instead, and
+    /// the row's own node takes it.
+    #[test]
+    fn a_mounted_row_says_which_of_how_many_it_is() {
+        const COUNT: usize = 100;
+        const ROW: f32 = 20.0;
+        const VIEWPORT: f32 = 100.0;
+
+        let mut renderer = {
+            use iced::advanced::renderer::Headless as _;
+            iced_test::futures::futures::executor::block_on(iced_test::renderer::Renderer::new(
+                iced::Font::DEFAULT,
+                iced::Pixels(16.0),
+                None,
+            ))
+            .expect("headless renderer")
+        };
+        let children: Vec<Element<'_, (), iced::Theme, iced_test::renderer::Renderer>> = (0..COUNT)
+            .map(|index| {
+                crate::accessible(
+                    Element::new(
+                        iced::widget::container(iced::widget::text(""))
+                            .width(Length::Fill)
+                            .height(ROW),
+                    ),
+                    crate::StableId::new(format!("row/{index}")),
+                    crate::Role::ListItem,
+                )
+                .label(format!("Row {index}"))
+                .into()
+            })
+            .collect();
+        let mut ui = UserInterface::build(
+            crate::virtual_scroll(iced::widget::scrollable(virtual_children(children, ROW))),
+            Size::new(240.0, VIEWPORT),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut operation = crate::SnapshotOperation::<()>::named("virtual set metadata");
+        ui.operate(&renderer, &mut operation::black_box(&mut operation));
+        let Outcome::Some(snapshot) = operation.finish() else {
+            panic!("snapshot operation did not finish");
+        };
+
+        let items = snapshot
+            .update
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.role() == crate::Role::ListItem)
+            .collect::<Vec<_>>();
+        assert!(!items.is_empty(), "no rows were published at all");
+        assert!(
+            items.len() < COUNT,
+            "the column mounted the whole list ({} rows), so this proves nothing about a \
+             virtualized one",
+            items.len()
+        );
+        for (_, node) in &items {
+            let label = node.label().expect("row label");
+            let index: usize = label
+                .trim_start_matches("Row ")
+                .parse()
+                .expect("row label carries its index");
+            assert_eq!(
+                node.position_in_set(),
+                Some(index + 1),
+                "row {index} does not say where it sits"
+            );
+            assert_eq!(
+                node.size_of_set(),
+                Some(COUNT),
+                "row {index} does not say how long the list is"
+            );
+        }
     }
 }

@@ -506,10 +506,14 @@ events while offscreen. Virtualizing a list changes how many rows are laid out,
 never how many are built.
 
 Because publishing a child's semantics requires laying it out, a virtualized
-column exposes only its visible slice to assistive tech and to `.ice` tests, and
-publishes no set metadata for what it is hiding. Long read-mostly content is the
-intended use; a collection that must read correctly to a screen reader needs a
-real list widget.
+column exposes only its visible slice to assistive tech and to `.ice` tests. It
+does tell that slice which slice it is: each mounted row is published with its
+`position_in_set` among the whole collection and the collection's `size_of_set`,
+so a reader moving through the list is placed in it rather than in the
+screenful. A row that sets its own position keeps it. What a virtualized column
+still cannot do is expose a row without laying it out, so it publishes no active
+descendant and nothing offscreen is reachable without scrolling to it; a
+collection that must be enumerated without scrolling needs a real list widget.
 
 ### Accessibility
 
