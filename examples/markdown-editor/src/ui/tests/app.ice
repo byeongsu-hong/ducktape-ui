@@ -263,3 +263,25 @@ test decorated_window_has_no_drag_strip
   viewport 1120 720
   target strip = #app/sidebar/root/titlebar-strip
   expect missing strip
+
+// `virtual-row=` on the note list is an estimate of this row's height, and the
+// two are kept in step by hand. A NoteRow is 10px of button padding either side
+// of three `wrap=none` lines at 13, 12 and 11px with 3px between them, so its
+// height does not follow its content — but it does follow its own padding and
+// type scale, and this pins that number where the estimate can be read next to
+// it.
+test a_note_row_is_the_height_the_list_virtualizes_by
+  viewport 1120 720
+  target new = #app/sidebar/root/top/new
+  target row = #app/sidebar/root/list/rows/note("Welcome to your notes")/root
+  expect !loading
+  expect row.visible
+  expect row.height ~= 72.8
+  // Selection swaps the row's whole button, and a long list has exactly one
+  // selected row, so the estimate is the unselected one's height for almost
+  // every row it aims at. Creating a note moves the selection off this one.
+  click new
+  expect !loading
+  expect current_title != "Welcome to your notes"
+  expect row.visible
+  expect row.height ~= 72.8
