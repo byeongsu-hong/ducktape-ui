@@ -1,12 +1,28 @@
 //! A column that lays out only the children the viewport can see.
 //!
 //! [`crate::virtual_list`] avoids building offscreen rows at all, which costs
-//! the caller a builder closure and a state reducer. That price buys very
-//! little: constructing a chat row is ~0.24µs while laying one out and shaping
-//! its text is ~87µs, so **construction is under half a percent of the bill**
-//! (`tests/frame_probe.rs` measures both). Text is shaped in `layout`, not in
-//! `Element` construction — so a column can accept every child, hand back
-//! placeholder nodes for the ones offscreen, and never shape them.
+//! the caller a builder closure and a state reducer. Text is shaped in
+//! `layout`, not in `Element` construction — so a column can accept every
+//! child, hand back placeholder nodes for the ones offscreen, and never shape
+//! them, and the closure buys only the construction.
+//!
+//! **How much that is depends on the row, and the spread is wide.** On a chat
+//! row — a leaf and some text — construction is ~0.24µs against ~87µs to lay
+//! one out, under half a percent of the bill, and the closure would be a
+//! rounding error (`examples/ai-chat/src/frame_probe.rs` measures both). On a
+//! component row it is not: `frame_probe::offscreen_row_cost` in
+//! `examples/trading` prices a `PositionRow` the pane can never show at
+//! **8.5–9.0µs**, thirty-odd times the chat row, because a component row is a
+//! dozen cells each with its own accessibility key. A pane holding 96 of them
+//! spends about 660µs of a 2121µs frame building rows nothing renders.
+//!
+//! Read the trade-off as conditional, then: this column is right when a row is
+//! cheap to build, and the cost of being wrong scales with the collection, not
+//! with the viewport. Ice has no way to choose — `virtual-row=` lowers to this
+//! column, and [`crate::virtual_list`]'s builder closure is reachable only from
+//! Rust — so an Ice app with expensive rows pays it. Closing that needs the
+//! observed window to be readable where the view is built, which is the same
+//! thing [`crate::virtual_list`] gets from caller-owned state.
 //!
 //! That makes this usable from anywhere a plain column is, including a
 //! generated `for` body, with no closure, no key type, and no caller-owned

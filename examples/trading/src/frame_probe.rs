@@ -730,6 +730,64 @@ fn sweep(axis: &str, counts: &[usize], screen: impl Fn(usize) -> Screen) {
     }
 }
 
+/// What a row the viewport cannot show costs.
+///
+/// `virtual_children` accepts every child and hands back placeholder nodes for
+/// the ones offscreen, so an offscreen row is never laid out, shaped or drawn.
+/// It is still *built*, and the module is written on the premise that building
+/// is nearly free — measured on a chat row at ~0.24us, against ~87us to lay one
+/// out. A trading row is not a chat row: it is a component with a dozen cells,
+/// and this probe prices one.
+///
+/// Both counts are past what the pane can reach. `PositionRow` is a fixed 44px
+/// and the whole window is 940px, so the positions pane can never show more
+/// than 21 rows; every row between 48 and 96 is one no viewport reaches. The
+/// slope between them is therefore construction and nothing else.
+#[test]
+#[ignore = "frame-cost probe, run explicitly: prices a row the viewport cannot show, asserts nothing"]
+fn offscreen_row_cost() {
+    const COUNTS: [usize; 2] = [48, 96];
+
+    let mut drivers: Vec<Driver<_>> = COUNTS
+        .iter()
+        .map(|&positions| {
+            let mut driver = Driver::new(
+                Trading::__program(),
+                Config::new("offscreen_row_cost").viewport(VIEWPORT.0, VIEWPORT.1),
+            );
+            *driver.state_mut() = app(Screen { positions, ..DENSE });
+            for _ in 0..WARMUP {
+                driver.redraw(here());
+            }
+            driver
+        })
+        .collect();
+
+    // Round-robin, so a spike on this shared machine lands on both counts.
+    let mut frames: Vec<Vec<u128>> = vec![Vec::new(); COUNTS.len()];
+    for _ in 0..ROUNDS {
+        for (index, driver) in drivers.iter_mut().enumerate() {
+            let phases = driver.redraw_phases(here());
+            frames[index].push((phases.view + phases.layout + phases.update).as_micros());
+        }
+    }
+
+    eprintln!("\npositions past the pane's 21-row reach");
+    let mut medians = Vec::new();
+    for (index, count) in COUNTS.iter().enumerate() {
+        let mut samples = std::mem::take(&mut frames[index]);
+        let (low, mid, high) = quantiles(&mut samples);
+        eprintln!("{count:>6} positions   frame {mid:>7}us  iqr {low:>7}..{high}");
+        medians.push(mid);
+    }
+    let added = COUNTS[1] - COUNTS[0];
+    let cost = (medians[1] as f64 - medians[0] as f64) / added as f64;
+    eprintln!(
+        "{:<32} {cost:>7.2}us each  ({added} rows the viewport never reaches)",
+        "one offscreen position row"
+    );
+}
+
 /// What a beat of the feed costs the app: folding it into state, and the frame
 /// that has to follow because the fold moved every row it draws.
 #[test]
