@@ -120,7 +120,23 @@ category = "public.app-category.developer-tools"
 copyright = "Copyright © 2026 ducktape-ui contributors. MIT licensed."
 # name, identifier, executable, and minimum-system-version are also accepted;
 # an unknown key is an error rather than a silently ignored line.
+
+[package.metadata.ice.bundle.usage]
+camera = "Showcase uses the camera to preview a capture."
+microphone = "Showcase uses the microphone to preview a recording."
+NSSpeechRecognitionUsageDescription = "Showcase transcribes what you dictate."
 ```
+
+macOS terminates an app the moment it reaches the camera, the microphone, or
+any other protected resource whose reason the bundle does not declare — no
+prompt, no recoverable error. Each entry becomes one `Info.plist` key: `camera`
+and `microphone` are shorthand for `NSCameraUsageDescription` and
+`NSMicrophoneUsageDescription`, and every other permission is written out as
+its own `NS…UsageDescription` key. A key that is neither, an empty reason, and
+one permission declared under both its names are all refused when the manifest
+is read. Screen capture is not on the list because macOS has no usage key for
+it; it is granted through Screen Recording in System Settings. The other
+packagers ignore the table — only macOS asks for a sentence.
 
 ### Icon
 

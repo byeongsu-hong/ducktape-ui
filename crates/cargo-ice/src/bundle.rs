@@ -16,6 +16,7 @@ mod macos;
 mod windows;
 
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,18 @@ use std::process::Command;
 
 const USAGE: &str = "cargo ice bundle -p <package> [--target <triple>]...";
 const DEFAULT_MINIMUM_SYSTEM_VERSION: &str = "11.0";
+
+/// macOS kills an app the moment it reaches a protected resource whose reason
+/// the bundle does not declare, so the sentence the prompt shows is part of
+/// the package rather than the code. Apple's list is long and keeps growing,
+/// so the two a desktop app almost always needs get a shorthand and every
+/// other key is written out.
+const USAGE_KEY_SUFFIX: &str = "UsageDescription";
+const USAGE_KEY_PREFIX: &str = "NS";
+const USAGE_ALIASES: [(&str, &str); 2] = [
+    ("camera", "NSCameraUsageDescription"),
+    ("microphone", "NSMicrophoneUsageDescription"),
+];
 
 pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     let request = Request::parse(args)?;
@@ -294,6 +307,7 @@ struct BundleOptions {
     category: Option<String>,
     copyright: Option<String>,
     minimum_system_version: Option<String>,
+    usage: BTreeMap<String, String>,
 }
 
 impl BundleOptions {
@@ -312,6 +326,7 @@ impl BundleOptions {
             "category",
             "copyright",
             "minimum-system-version",
+            "usage",
         ];
         if let Some(unknown) = table.keys().find(|key| !known.contains(&key.as_str())) {
             return Err(format!(
@@ -336,8 +351,66 @@ impl BundleOptions {
             category: string("category")?,
             copyright: string("copyright")?,
             minimum_system_version: string("minimum-system-version")?,
+            usage: usage_descriptions(table.get("usage").unwrap_or(&Value::Null))?,
         })
     }
+}
+
+/// Reads `[package.metadata.ice.bundle.usage]` into the Info.plist keys macOS
+/// reads, ordered so two builds of one manifest write the same file.
+fn usage_descriptions(table: &Value) -> Result<BTreeMap<String, String>, String> {
+    if table.is_null() {
+        return Ok(BTreeMap::new());
+    }
+    let table = table
+        .as_object()
+        .ok_or_else(|| "[package.metadata.ice.bundle.usage] must be a table".to_owned())?;
+    let mut descriptions = BTreeMap::new();
+    for (declared, value) in table {
+        let key = usage_key(declared)?;
+        let reason = value
+            .as_str()
+            .map(str::trim)
+            .filter(|reason| !reason.is_empty())
+            .ok_or_else(|| {
+                format!(
+                    "[package.metadata.ice.bundle.usage] `{declared}` must be a non-empty string; macOS shows it verbatim in the permission prompt"
+                )
+            })?;
+        if descriptions
+            .insert(key.clone(), reason.to_owned())
+            .is_some()
+        {
+            return Err(format!(
+                "[package.metadata.ice.bundle.usage] declares `{key}` twice, once through its shorthand"
+            ));
+        }
+    }
+    Ok(descriptions)
+}
+
+/// A shorthand names one of the two common permissions; anything else is the
+/// Info.plist key itself, so a typo is refused instead of reaching a bundle
+/// that crashes on the permission it meant to describe.
+fn usage_key(declared: &str) -> Result<String, String> {
+    if let Some((_, key)) = USAGE_ALIASES.iter().find(|(alias, _)| *alias == declared) {
+        return Ok((*key).to_owned());
+    }
+    let named_permission = declared.len() > USAGE_KEY_PREFIX.len() + USAGE_KEY_SUFFIX.len();
+    let is_plist_key = declared.starts_with(USAGE_KEY_PREFIX)
+        && declared.ends_with(USAGE_KEY_SUFFIX)
+        && named_permission;
+    if is_plist_key {
+        return Ok(declared.to_owned());
+    }
+    let aliases = USAGE_ALIASES
+        .iter()
+        .map(|(alias, _)| *alias)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "[package.metadata.ice.bundle.usage] `{declared}` is neither a shorthand ({aliases}) nor an `{USAGE_KEY_PREFIX}…{USAGE_KEY_SUFFIX}` key"
+    ))
 }
 
 /// One resolved identity, complete for the host platform before any file is
@@ -356,6 +429,7 @@ struct BundleMeta {
     category: Option<String>,
     copyright: Option<String>,
     minimum_system_version: String,
+    usage: BTreeMap<String, String>,
 }
 
 impl BundleMeta {
@@ -415,6 +489,7 @@ impl BundleMeta {
                 .minimum_system_version
                 .clone()
                 .unwrap_or_else(|| DEFAULT_MINIMUM_SYSTEM_VERSION.to_owned()),
+            usage: package.options.usage.clone(),
         })
     }
 }
@@ -594,6 +669,7 @@ mod tests {
             category: Some("public.app-category.developer-tools".into()),
             copyright: None,
             minimum_system_version: "11.0".into(),
+            usage: BTreeMap::new(),
         }
     }
 
@@ -798,6 +874,87 @@ mod tests {
             BundleOptions::read(&Value::Null).expect("an absent table"),
             BundleOptions::default()
         );
+    }
+
+    #[test]
+    fn the_usage_table_becomes_the_keys_macos_reads() {
+        let options = BundleOptions::read(&json!({
+            "usage": {
+                "camera": "Ducktape uses the camera for video in huddles.",
+                "microphone": "Ducktape uses the microphone for voice in huddles.",
+                "NSSpeechRecognitionUsageDescription": "Ducktape transcribes what you say.",
+            },
+        }))
+        .expect("read the usage table");
+        assert_eq!(
+            options.usage.into_iter().collect::<Vec<_>>(),
+            [
+                (
+                    "NSCameraUsageDescription".to_owned(),
+                    "Ducktape uses the camera for video in huddles.".to_owned()
+                ),
+                (
+                    "NSMicrophoneUsageDescription".to_owned(),
+                    "Ducktape uses the microphone for voice in huddles.".to_owned()
+                ),
+                (
+                    "NSSpeechRecognitionUsageDescription".to_owned(),
+                    "Ducktape transcribes what you say.".to_owned()
+                ),
+            ],
+            "a shorthand and a written-out key land side by side, in a stable order"
+        );
+        assert!(
+            BundleOptions::read(&json!({}))
+                .expect("no usage table")
+                .usage
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_usage_key_macos_never_reads_is_refused() {
+        let error = BundleOptions::read(&json!({ "usage": { "camara": "typo" } }))
+            .expect_err("a misspelled shorthand");
+        assert!(error.contains("`camara`"), "{error}");
+        assert!(
+            error.contains("camera, microphone"),
+            "the message names both"
+        );
+
+        let error = BundleOptions::read(&json!({ "usage": { "NSCamera": "truncated" } }))
+            .expect_err("a key that is not a usage description");
+        assert!(error.contains("UsageDescription"), "{error}");
+        assert!(
+            BundleOptions::read(&json!({ "usage": { "NSUsageDescription": "empty name" } }))
+                .is_err(),
+            "a key that names no permission"
+        );
+
+        let error = BundleOptions::read(&json!({ "usage": { "camera": "  " } }))
+            .expect_err("a blank reason is the crash it was meant to prevent");
+        assert!(error.contains("non-empty string"), "{error}");
+        assert!(
+            BundleOptions::read(&json!({ "usage": { "camera": 7 } })).is_err(),
+            "a reason is text"
+        );
+        assert!(
+            BundleOptions::read(&json!({ "usage": "camera" })).is_err(),
+            "the usage entry is a table"
+        );
+    }
+
+    #[test]
+    fn one_permission_cannot_be_declared_by_both_names() {
+        let error = BundleOptions::read(&json!({
+            "usage": {
+                "camera": "one reason",
+                "NSCameraUsageDescription": "another reason",
+            },
+        }))
+        .expect_err("two reasons for one prompt");
+        assert!(error.contains("NSCameraUsageDescription"), "{error}");
+        assert!(error.contains("twice"), "{error}");
     }
 
     #[test]

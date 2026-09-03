@@ -229,9 +229,12 @@ per-user `.msi` with a Start menu shortcut on Windows. Identity is not restated
 to get one: the `app` name becomes the product name, its `id` becomes the
 bundle identifier, desktop-entry name, and registry key, and the Cargo manifest
 supplies the version, description, authors, and homepage each packager needs.
-Only icon, category, copyright, and minimum system version are declared in
-`[package.metadata.ice.bundle]`, where an unknown key fails instead of doing
-nothing. One SVG becomes every raster the three ask for — the `.icns` entry
+Only icon, category, copyright, minimum system version, and the macOS privacy
+usage descriptions are declared in `[package.metadata.ice.bundle]`, where an
+unknown key fails instead of doing nothing. The usage table maps `camera` and
+`microphone`, or any written-out `NS…UsageDescription` key, onto the
+`Info.plist` sentence macOS shows before it hands over a protected resource,
+and refuses an unknown key, an empty reason, or one permission declared twice. One SVG becomes every raster the three ask for — the `.icns` entry
 table, the `.ico` directory, and the hicolor sizes — and because the renderer
 carries no fonts, an icon still holding a `<text>` element is refused rather
 than drawn with a hole in it. Host-independent contracts cover those three icon
