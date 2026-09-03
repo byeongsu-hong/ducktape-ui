@@ -345,9 +345,9 @@ cargo ice schema | jq '.core.testMode'
 cargo ice schema | jq '.core.constructs[] | {label, contexts, syntax, children, properties, binding, route}'
 ```
 
-Treat schema output as authoritative for Core. Treat `SPEC.md` as authoritative
-for the complete implemented language, and `COVERAGE.md` as the exact Iced
-surface ledger.
+Treat schema output as authoritative for the construct vocabulary, `SPEC.md` as
+authoritative for semantics, the Rust boundary, and nested forms the schema does
+not enumerate, and `COVERAGE.md` as the exact Iced surface ledger.
 
 ## Diagnose generated Rust
 

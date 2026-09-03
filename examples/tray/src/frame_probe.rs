@@ -432,7 +432,7 @@ fn guard_flip_cost() {
 /// but `__tray_sync` recomputes `clock(remaining)` twice, `phase(..)`,
 /// `start_label(running)` and all three `length_label(..)` regardless. The gap
 /// between the seam crossings this prints and `EXTERN_EVALS_PER_SYNC` is the
-/// un-keyed rehydration ADR-0009 revisions could close: the three submenu rows
+/// un-keyed rehydration state revisions could close: the three submenu rows
 /// are the only ones `session` can move, and two of the three are unchanged on
 /// every cycle step.
 #[test]

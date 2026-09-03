@@ -103,7 +103,7 @@ stream, the raw event feed, pointer or window motion, or a slider drag routes to
 `perf-*` warning fixtures plus the `w016`-`w021` checker unit tests pinning each
 fixture's exact site set, and `cargo ice check` reporting no warnings over the in-repo
 examples other than the `W021`s on `cef-browser`'s 16ms tick, which keeps its `sync`
-pump by design (ADR 0011).
+pump by design.
 Component and handler reachability is combined
 across all workspace or open-editor roots. `cargo ice` additionally reports
 workspace `.ice` files outside every root graph as CLI-only `W010`. Cargo JSON
@@ -991,7 +991,7 @@ Component animations keep native frames alive on the same active-only
 `window::frames()` subscription app animations use. Interpolation happens where
 it always did — in the view pass — so an animated surface must sit outside any
 `lazy` boundary that memoizes the row around it; inside one it is frozen at the
-value the subtree was built with, and `SPEC.md` says so.
+value the subtree was built with, and `SPEC.md` section 6 says so.
 
 Evidence: `crates/ui-lang-core/tests/cases/compile/row-animation` (generated
 `from` transition, per-instance materialization, frame subscription over

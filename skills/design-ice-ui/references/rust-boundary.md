@@ -402,7 +402,7 @@ Use `aborted(request)` to query the handle. `abort` keeps the handle so its
 status remains readable.
 
 Use `flow` only when native task combinators must transform or depend on prior
-task output before the final UI route. Read `SPEC.md` section 7 and reuse a
+task output before the final UI route. Reuse a
 tested flow fixture; its typed stages are intentionally stricter than promise
 chaining.
 

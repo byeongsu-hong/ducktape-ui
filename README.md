@@ -176,8 +176,9 @@ The punctuation has one job each:
 checked app graph, and errors point into the fragment that caused them. Beyond
 this taste — components with local state, events and slots, themes and
 palettes, typed enums with exhaustive `match`, recipes, flexbox — the full
-authoring surface is defined in [`SPEC.md`](SPEC.md), and the
-[agent skill](#agent-skill) teaches it interactively.
+authoring surface is listed by `cargo ice schema`, its contract is
+[`SPEC.md`](SPEC.md), and the [agent skill](#agent-skill) teaches it
+interactively.
 
 ## Accessibility
 
@@ -264,7 +265,7 @@ disabled, a submenu with the rows it owns — and puts it back in its place.
 item should show, and `tray choose` runs a menu row the way the platform does
 — a nested row by its text like any other, since the row table is flat at
 every depth; both run on every platform. Other targets compile the same source
-with the tray as a no-op; see `SPEC.md` for the mapping.
+with the tray as a no-op.
 
 `showcase` also exercises the 100k-row collection widgets behind typed extern
 boundaries — no Core syntax involved: [`VirtualList`](crates/ui-lang-components/docs/virtual-list.md),
@@ -384,8 +385,7 @@ candidate; the workspace packages use pre-1.0 SemVer `0.1.0`.
 pinned iced 0.14 surface. A future iced baseline is not complete while an
 application-facing row remains partial or missing; a gap may close through
 canonical Ice syntax or a typed boundary.
-[`docs/decisions`](docs/decisions) records accepted boundaries (`Accepted` is a
-normative direction, not a support claim), with the matching
-[feature evidence contracts](docs/feature-evidence-contracts.md).
+[Feature evidence contracts](docs/feature-evidence-contracts.md) define what a
+support claim has to show.
 [`RELEASING.md`](RELEASING.md) defines lockstep versions and the generated-code
 compatibility boundary.

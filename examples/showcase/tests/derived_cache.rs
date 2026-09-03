@@ -1,5 +1,5 @@
 //! Derived values are cached across frames and recomputed only after a write
-//! to a field they read (`docs/decisions/0008-derived-cache.md`).
+//! to a field they read (`SPEC.md` section 6).
 //!
 //! The `.ice` tests inside the app check the semantics; the contract below
 //! prices the cache: a list-shaped derived value read three times per frame
