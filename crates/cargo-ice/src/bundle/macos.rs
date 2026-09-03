@@ -79,6 +79,11 @@ fn info_plist(meta: &BundleMeta) -> plist::Value {
     if let Some(copyright) = &meta.copyright {
         set("NSHumanReadableCopyright", text(copyright));
     }
+    // Without the reason for a protected resource, the first call that touches
+    // it terminates the process; there is no prompt and no recoverable error.
+    for (key, reason) in &meta.usage {
+        set(key, text(reason));
+    }
     plist::Value::Dictionary(dictionary)
 }
 
@@ -256,6 +261,43 @@ mod tests {
             Some(true)
         );
         assert!(plist.get("NSHumanReadableCopyright").is_none());
+    }
+
+    #[test]
+    fn a_declared_permission_reaches_the_prompt_macos_shows() {
+        let plist = plist_of(&BundleMeta {
+            usage: [
+                (
+                    "NSCameraUsageDescription".to_owned(),
+                    "Ducktape uses the camera for video in huddles.".to_owned(),
+                ),
+                (
+                    "NSMicrophoneUsageDescription".to_owned(),
+                    "Ducktape uses the microphone for voice in huddles.".to_owned(),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..showcase_meta()
+        });
+        assert_eq!(
+            plist
+                .get("NSCameraUsageDescription")
+                .and_then(plist::Value::as_string),
+            Some("Ducktape uses the camera for video in huddles.")
+        );
+        assert_eq!(
+            plist
+                .get("NSMicrophoneUsageDescription")
+                .and_then(plist::Value::as_string),
+            Some("Ducktape uses the microphone for voice in huddles.")
+        );
+        assert!(
+            plist_of(&showcase_meta())
+                .get("NSCameraUsageDescription")
+                .is_none(),
+            "an app that declares nothing asks for nothing"
+        );
     }
 
     #[test]
