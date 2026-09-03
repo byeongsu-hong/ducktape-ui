@@ -26,11 +26,11 @@ resolver = "3"
 exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 
 # `vendor/iced_tiny_skia` is the published 0.14.0 source with the changes
-# below: six defects fixed, one module opened, one present shortened and
-# four repaints narrowed. Every one of them reaches every software render,
-# which is what every headless capture, `cargo ice inspect` and any
-# `tiny-skia` window draws with. Drop the directory and this patch when a
-# release carries all of them.
+# below: six defects fixed, one module opened, one present shortened, four
+# repaints narrowed and one cache hit unburdened. Every one of them reaches
+# every software render, which is what every headless capture, `cargo ice
+# inspect` and any `tiny-skia` window draws with. Drop the directory and this
+# patch when a release carries all of them.
 #
 # 1. It translates a canvas group's clip rectangle by the group's own
 # transformation twice — once when the layer records it and again when the
@@ -127,6 +127,15 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 # reach is added to the bounds, and the damage takes the pixel of
 # anti-aliasing either side that the quads already take. Pinned by
 # `crates/ui-lang-runtime/tests/stroke_damage.rs`.
+#
+# 13. Its SVG cache builds the parser's `usvg::Options` before it looks the
+# handle up, and those options carry a `fontdb::Database`. Every hit therefore
+# constructed a font database and dropped it again to discover the tree was
+# already parsed. A `Svg` is measured during layout, so an app with icons paid
+# that once per icon per frame: 13-17us of apple-music's 104us layout phase.
+# The options are built inside the miss, where they are used. Nothing about
+# what is drawn changes, so no test pins it; the existing captures cover that
+# an SVG still parses and renders.
 #
 # `vendor/iced_winit` is the published 0.14.0 source with one line changed:
 # the event loop no longer keeps a `WaitUntil` deadline that has already

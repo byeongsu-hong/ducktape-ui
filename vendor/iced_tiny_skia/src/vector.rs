@@ -87,24 +87,28 @@ impl Cache {
     fn load(&mut self, handle: &Handle) -> Option<&usvg::Tree> {
         let id = handle.id();
 
-        // TODO: Reuse `cosmic-text` font database
-        if self.fontdb.is_none() {
-            let mut fontdb = usvg::fontdb::Database::new();
-            fontdb.load_system_fonts();
-
-            self.fontdb = Some(Arc::new(fontdb));
-        }
-
-        let options = usvg::Options {
-            fontdb: self
-                .fontdb
-                .as_ref()
-                .expect("fontdb must be initialized")
-                .clone(),
-            ..usvg::Options::default()
-        };
-
+        // Parsing options are only needed to parse. `usvg::Options::default`
+        // builds a `fontdb::Database`, so hoisting this above the cache check
+        // made every hit — every icon, every frame, during layout — construct
+        // a font database and drop it again to discover it was not needed.
         if let hash_map::Entry::Vacant(entry) = self.trees.entry(id) {
+            // TODO: Reuse `cosmic-text` font database
+            if self.fontdb.is_none() {
+                let mut fontdb = usvg::fontdb::Database::new();
+                fontdb.load_system_fonts();
+
+                self.fontdb = Some(Arc::new(fontdb));
+            }
+
+            let options = usvg::Options {
+                fontdb: self
+                    .fontdb
+                    .as_ref()
+                    .expect("fontdb must be initialized")
+                    .clone(),
+                ..usvg::Options::default()
+            };
+
             let svg = match handle.data() {
                 Data::Path(path) => {
                     fs::read_to_string(path).ok().and_then(|contents| {

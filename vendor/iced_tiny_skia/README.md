@@ -48,6 +48,12 @@ every `tiny-skia` window.
   measured a changed primitive by the bounds of its path, so a horizontal
   rule — a rectangle of zero height — asked for no repaint at all.
 
+- **The SVG cache looks a handle up before it builds a parser.** `usvg`'s
+  options carry a `fontdb::Database`, and they were built ahead of the lookup,
+  so every cache hit constructed one and dropped it to find the tree already
+  there. Measuring an `svg` happens during layout, so an app with icons paid it
+  once per icon per frame.
+
 The six defects are pinned by tests in `crates/ui-lang-runtime/tests`
 (`canvas_offset_clip.rs`, `shadow_layer_clip.rs`, `canvas_text_damage.rs`,
 `text_anchor_damage.rs`, `shadow_damage.rs`, `stroke_damage.rs`).
