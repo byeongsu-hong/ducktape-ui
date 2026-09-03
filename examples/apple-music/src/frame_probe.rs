@@ -293,6 +293,7 @@ fn frame_cost() {
         app.dispatch(__MusicMessage::Seek(11.0), here());
         app.redraw(here());
     });
+    probe::report_frame_phases(&mut app, "apple-music", ROUNDS, here());
 }
 
 /// What a section's rows cost, and what they cost per row.

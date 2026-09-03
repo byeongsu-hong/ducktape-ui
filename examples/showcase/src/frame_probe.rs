@@ -163,6 +163,7 @@ fn frame_cost() {
     ] {
         phase.report();
     }
+    probe::report_frame_phases(&mut driver, "showcase", FRAMES, here());
 }
 
 // ---------------------------------------------------------------------------

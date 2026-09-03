@@ -245,6 +245,7 @@ fn frame_cost() {
         quiet,
         dirty as i128 - quiet as i128
     );
+    probe::report_frame_phases(&mut driver, "cef-browser", ROUNDS, here());
 }
 
 /// Audit scenario 1: open the app and touch nothing.

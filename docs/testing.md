@@ -398,6 +398,33 @@ is the code the Ice compiler emits, the second adds iced's layout and event
 walk. On showcase that is ~0.72ms against ~3.3ms, so roughly three quarters of a
 frame is layout, and optimizing generated code alone cannot reach it.
 
+Every example's probe closes with a `PHASES` line from
+`probe::report_frame_phases`, the medians of those same three phases over the
+probe's own rounds. It exists so one app's frame can be read against another's:
+the table below is one machine's release run of all ten, sorted by total, and
+what it is for is the *shape* of each row, not the absolute microseconds.
+
+| app | view | layout | walk | total |
+|---|---|---|---|---|
+| tray | 0 | 0 | 0 | 0 |
+| starter | 2 | 1 | 0 | 3 |
+| cef-browser | 7 | 3 | 0 | 10 |
+| candles | 20 | 7 | 1 | 28 |
+| apple-music | 67 | 89 | 17 | 173 |
+| markdown-editor | 107 | 28 | 126 | 261 |
+| ai-chat, 500 rows | 242 | 31 | 27 | 300 |
+| hotreload, 500 KB | 406 | 24 | 2 | 432 |
+| trading, dense | 42 | 998 | 134 | 1174 |
+| showcase | 635 | 577 | 147 | 1359 |
+
+No two rows are limited by the same thing, and that is the point. Trading
+spends 85% of its frame in layout, so a boundary the layout walk stops at is
+the only lever that reaches it. Hotreload spends 94% in the view build, where
+layout boundaries buy nothing. Markdown-editor's largest column is the event
+walk, which under `cfg(test)` carries the accessibility snapshot the shipped
+app builds only for a screen reader — read that row as an upper bound, not as
+the app's frame. Take a phase split before choosing a fix.
+
 `idle redraw @480x320` says what that layout is proportional to. The small
 viewport holds a fraction of the same catalog — 8.4x less area — and costs
 ~3.1ms against ~3.3ms, a 6% difference. **A frame costs what the view contains,

@@ -286,6 +286,7 @@ fn frame_cost() {
     report("follow_link, no-op handler + redraw (2)", follow);
     report("pointer move over document (1)", over_document);
     report("pointer move over sidebar (1)", over_sidebar);
+    probe::report_frame_phases(&mut driver, "markdown-editor", ROUNDS, here());
 }
 
 /// What the sidebar list costs as the library grows, and how much of that is the
