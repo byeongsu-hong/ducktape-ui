@@ -58,6 +58,35 @@ The six defects are pinned by tests in `crates/ui-lang-runtime/tests`
 (`canvas_offset_clip.rs`, `shadow_layer_clip.rs`, `canvas_text_damage.rs`,
 `text_anchor_damage.rs`, `shadow_damage.rs`, `stroke_damage.rs`).
 
+## Found in the same sweep, deliberately not fixed
+
+Four of those six are one defect wearing different clothes: the renderer draws
+one rectangle and measures another. Sweeping the rest of `Layer::damage` turns
+up a seventh instance, in `Text::Raw`, and it is left alone on purpose.
+
+`Layer::draw_text_raw` stores the active transformation inside the item rather
+than folding it into the position, and pushes it as `Item::Live`, whose
+`transformation()` is the identity. `Text::visible_bounds` compensates for
+exactly that in the `Paragraph` and `Editor` arms — it multiplies by the stored
+transformation — and does not in the `Raw` arm, which returns `raw.clip_bounds`
+untouched. `engine.rs` meanwhile draws the buffer at `raw.position` sized by the
+buffer itself, under `transformation * local_transformation`. So the rectangle
+measured is neither the rectangle drawn nor in the space it is drawn in.
+
+It stays unfixed because nothing produces a `Text::Raw`. `fill_raw` is declared
+on `iced_graphics`' text renderer trait and implemented here, and no widget in
+`iced_widget`, no code in `iced_core`, and nothing in this workspace calls it —
+it is an escape hatch for a custom text renderer. A fix could only be exercised
+by a test that constructs the variant itself, which would pin the arithmetic
+without demonstrating a repaint anyone can see. Upstream also marks the variant
+unsound in the same area: `impl PartialEq for Raw` returns `false`
+unconditionally, with a TODO saying raw buffers cannot be compared, so every
+frame carrying one damages it regardless.
+
+Reach for this entry the moment something calls `fill_raw`. The fix is to give
+the `Raw` arm the same treatment the `Paragraph` arm already has, and the test
+becomes writable at that point because a widget produces the input.
+
 Wired in through `[patch.crates-io]` in the workspace `Cargo.toml` and in
 `examples/app-store/Cargo.toml`. Delete this directory and both patch entries
 once a release carries all of it.
