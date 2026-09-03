@@ -417,13 +417,46 @@ what it is for is the *shape* of each row, not the absolute microseconds.
 | trading, dense | 42 | 998 | 134 | 1174 |
 | showcase | 635 | 577 | 147 | 1359 |
 
-No two rows are limited by the same thing, and that is the point. Trading
-spends 85% of its frame in layout, so a boundary the layout walk stops at is
-the only lever that reaches it. Hotreload spends 94% in the view build, where
-layout boundaries buy nothing. Markdown-editor's largest column is the event
-walk, which under `cfg(test)` carries the accessibility snapshot the shipped
-app builds only for a screen reader — read that row as an upper bound, not as
-the app's frame. Take a phase split before choosing a fix.
+No two rows are limited by the same thing, and that is the point. Hotreload
+spends 94% of its frame in the view build, where a layout boundary buys
+nothing. Markdown-editor's largest column is the event walk, which under
+`cfg(test)` carries the accessibility snapshot the shipped app builds only for
+a screen reader — read that row as an upper bound, not as the app's frame.
+
+**A column is where the work is charged, not where it is done.** Trading's row
+reads as 85% layout, and it is not: `responsive #terminal-fit` wraps the whole
+terminal — about 1500 lines of `view.ice` — and `responsive` runs its closure
+once per layout pass, so building that subtree is charged to layout. Its memos
+all hit while it happens (component 113/0, lazy 57/0), which is the tell: a
+frame that were really spending 961us walking layout would be missing them.
+
+Deleting the wrapper proves it. With `term_w` replaced by the literal the
+1760px viewport gives it — every read of it is a comparison against 1280.0 or
+1580.0, so the same branches are taken — the same screen measures:
+
+| `responsive #terminal-fit` | view | layout | walk | total |
+|---|---|---|---|---|
+| as written | 38 | 988 | 133 | 1159 |
+| removed | ~1000 | ~260 | ~170 | ~1420 |
+
+The work did not go away, it changed columns — and it did not get cheaper.
+Read the totals as "not recovered", not as "worse": the probe's own footer
+says an absolute is not comparable across two builds of the app, because a
+boundary added anywhere in `__view` re-optimizes all of it. What the pair does
+establish is within one build, where the two columns swap. So the lever
+trading needs is whatever makes that build rarer — not a layout boundary,
+which its memos already are and which already hit.
+
+Measured on the same screen and *not* worth doing: `tracking=` lowers to one
+`text` widget and one `String` per grapheme inside a flex row, 55 sites in
+trading, which reads like the obvious next target. Deleting every one of them
+measures 1131–1191us against the 1159us baseline — no difference, because those
+labels sit under memo boundaries that hit and their rows are never rebuilt.
+
+Take a phase split before choosing a fix, and when one column dominates, check
+what defers into it before believing it. `lazy` and `responsive` both move work
+across the view/layout line; the probe footers in `examples/*/src/frame_probe.rs`
+say so for `lazy`, and this is the same rule for `responsive`.
 
 `idle redraw @480x320` says what that layout is proportional to. The small
 viewport holds a fraction of the same catalog — 8.4x less area — and costs

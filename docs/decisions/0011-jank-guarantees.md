@@ -250,6 +250,17 @@ parking lot's O(n) scan on park and reclaim (unreachable at steady state,
 paid on screen switches); `responsive` re-running its closure per layout
 pass (a bucketed lowering when every size read is a literal comparison).
 
+That last one has since been priced, on trading's dense terminal, where
+`responsive #terminal-fit` wraps the whole screen: the rebuild is 988 us of
+a 1159 us frame, and it is charged to layout — which is why that frame reads
+as 85% layout while every memo under it hits. Deleting the wrapper and
+substituting the literal width each read compares against does not recover
+it. The subtree simply moves into `__view`, 38 us to about 1000 us, and the
+total does not come down — about 1420 us against 1159 us, which is a
+different build of `__view` and so not a strict comparison, but plainly not a
+saving. A bucketed lowering has to make that build rarer; a version that only
+relocates it is already measured, and buys nothing.
+
 ## Consequences
 
 - A repeated component row without a boundary is a warning, and the
