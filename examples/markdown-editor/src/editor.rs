@@ -1,7 +1,7 @@
 use iced::advanced::text::{Highlight as TextHighlight, Highlighter, LineHeight};
 use iced::font::{Family, Style as FontStyle, Weight};
 use iced::widget::text_editor::{Action, Content, Cursor, Edit, Motion, Position};
-use iced::{Border, Color, Element, Font, Padding, Pixels, Theme, mouse};
+use iced::{Border, Color, Element, Font, Padding, Pixels, mouse};
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -119,7 +119,7 @@ pub fn markdown_editor<'a>(
     find: String,
 ) -> Element<'a, RichEditorAction> {
     let cursor = document.cursor().position;
-    let format_theme = editor_theme(dark);
+    let format_palette = editor_format_palette(dark);
     let (content_version, change_hint) = current_editor_state();
     let editor = RichTextEditor::new(document, content_version);
     let editor = if let Some(change) = change_hint {
@@ -148,7 +148,7 @@ pub fn markdown_editor<'a>(
         .highlight_with::<MarkdownHighlighter>(
             Caret::new(cursor.line as i64, cursor.column as i64, dark, &find),
             u64::from(dark),
-            move |highlight| markdown_format(highlight, &format_theme),
+            move |highlight| markdown_format(highlight, &format_palette),
         )
         .mouse_interaction(|line, position| {
             if crate::document::link_at(line, position.column).is_empty() {
@@ -223,19 +223,21 @@ fn editor_palette(dark: bool) -> EditorPalette {
     }
 }
 
-fn editor_theme(dark: bool) -> Theme {
+/// The six colours `markdown_format` and `span_format` read. They used to
+/// take a whole `Theme`, so every view build wrapped this palette in a
+/// `Theme::custom` — a name allocation plus `Extended::generate`, which
+/// walks about thirty colours through oklch — for an extended palette no
+/// format ever looks at.
+fn editor_format_palette(dark: bool) -> iced::theme::Palette {
     let palette = editor_palette(dark);
-    Theme::custom(
-        String::from("markdown"),
-        iced::theme::Palette {
-            background: palette.surface,
-            text: palette.text,
-            primary: palette.link,
-            success: palette.link,
-            warning: palette.matched,
-            danger: Color::from_rgb8(0xe5, 0x48, 0x4d),
-        },
-    )
+    iced::theme::Palette {
+        background: palette.surface,
+        text: palette.text,
+        primary: palette.link,
+        success: palette.link,
+        warning: palette.matched,
+        danger: Color::from_rgb8(0xe5, 0x48, 0x4d),
+    }
 }
 
 fn body_font(weight: Weight, style: FontStyle) -> Font {
@@ -258,8 +260,7 @@ fn code_font() -> Font {
     }
 }
 
-fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
-    let palette = theme.palette();
+fn markdown_format(highlight: &MarkdownHighlight, palette: &iced::theme::Palette) -> Format {
     let subdued = Color {
         a: 0.38,
         ..palette.text
@@ -286,7 +287,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
             style,
             marker_count,
         } => {
-            let mut format = span_format(style, theme);
+            let mut format = span_format(style, palette);
             format.color = Some(if hidden { Color::TRANSPARENT } else { subdued });
             format.highlight = None;
             format.padding = Padding::ZERO;
@@ -324,7 +325,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
             line_padding: Padding::from([0.0, CODE_BLOCK_PADDING]),
             ..Format::default()
         },
-        MarkdownHighlight::Span(style) => span_format(style, theme),
+        MarkdownHighlight::Span(style) => span_format(style, palette),
         MarkdownHighlight::CodeBlock => Format {
             color: Some(palette.text),
             font: Some(code_font()),
@@ -363,8 +364,7 @@ fn markdown_format(highlight: &MarkdownHighlight, theme: &Theme) -> Format {
     }
 }
 
-fn span_format(style: SpanStyle, theme: &Theme) -> Format {
-    let palette = theme.palette();
+fn span_format(style: SpanStyle, palette: &iced::theme::Palette) -> Format {
     let subdued = Color {
         a: 0.38,
         ..palette.text
@@ -2588,7 +2588,7 @@ mod tests {
                             let level = style.heading.expect("heading level");
                             super::markdown_format(
                                 &MarkdownHighlight::Span(style),
-                                &iced::Theme::Light,
+                                &iced::theme::Palette::LIGHT,
                             )
                             .size
                             .map(|size| (level, size.0))
@@ -2610,7 +2610,8 @@ mod tests {
                 (6, 16.0)
             ]
         );
-        let code = super::markdown_format(&MarkdownHighlight::CodeBlock, &iced::Theme::Light);
+        let code =
+            super::markdown_format(&MarkdownHighlight::CodeBlock, &iced::theme::Palette::LIGHT);
         assert!((code.size.unwrap().0 - 14.4).abs() < 0.01);
         let iced::advanced::text::LineHeight::Absolute(code_line_height) =
             code.line_height.unwrap()
@@ -2630,7 +2631,7 @@ mod tests {
                 code: true,
                 ..super::SpanStyle::default()
             }),
-            &iced::Theme::Light,
+            &iced::theme::Palette::LIGHT,
         );
         assert!((inline.size.unwrap().0 - 16.0).abs() < 0.01);
         assert_eq!(inline.padding.top, 0.0);
@@ -2639,7 +2640,7 @@ mod tests {
             inline.highlight.unwrap().background,
             iced::Background::Color(iced::Color {
                 a: super::CODE_BACKGROUND_ALPHA,
-                ..iced::Theme::Light.palette().text
+                ..iced::theme::Palette::LIGHT.text
             })
         );
     }
@@ -2673,7 +2674,7 @@ mod tests {
                             style,
                             marker_count,
                         },
-                        &iced::Theme::Light,
+                        &iced::theme::Palette::LIGHT,
                     ),
                 )),
                 _ => None,
