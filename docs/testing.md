@@ -453,6 +453,34 @@ trading, which reads like the obvious next target. Deleting every one of them
 measures 1131–1191us against the 1159us baseline — no difference, because those
 labels sit under memo boundaries that hit and their rows are never rebuilt.
 
+Measured on the same screen and worth a great deal, though nothing has been
+spent on it yet: the identity chain. Every node's generated code builds an
+accessibility key by formatting its parent's scope, and identified nodes build
+a scope string of their own. Replacing every view-path emitter in
+`codegen/view.rs` and `codegen/view/content.rs` with `String::new()` and
+running the two release binaries interleaved, twelve pairs with the order
+rotated each round:
+
+| | frame, `redraw_phases` total |
+|---|---|
+| as written | 1137us |
+| no identity strings | 890us |
+
+Twelve pairs of twelve, no overlap between the sets — the ablated maximum is
+940us and the unablated minimum is 1126us. That is **247us of a 1137us frame,
+22%**, and a floor: the `for`-loop scopes in `codegen/expr/children.rs` are
+still in the ablated build. Memo counts are identical in both binaries
+(component 113/0, lazy 57/0), so no boundary moved.
+
+Read it as an upper bound on any fix rather than a forecast. A real interning
+still needs one `iced::widget::Id` per node that carries one, and
+`Internal::Unique` is private, so each of those is `Id::from(hash.to_string())`
+— an allocation this ablation does not keep. What the number does settle is
+that the size of this slice belongs to the app and not to the language: the
+same chain measured about 3% of showcase's 70us view build, and an argument
+that declines it on a 25-widget catalog is not evidence about a 302-node
+terminal.
+
 Take a phase split before choosing a fix, and when one column dominates, check
 what defers into it before believing it. `lazy` and `responsive` both move work
 across the view/layout line; the probe footers in `examples/*/src/frame_probe.rs`
