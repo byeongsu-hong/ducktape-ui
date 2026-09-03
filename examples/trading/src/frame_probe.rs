@@ -474,6 +474,7 @@ fn frame_cost() {
          at all. Compare `what the fill rows cost`, which is a difference taken\n\
          inside one binary."
     );
+    probe::report_frame_phases(&mut driver, "trading-DENSE", ROUNDS, here());
 }
 
 /// End-to-end wheel zoom cost in the trading screen, including the chart's

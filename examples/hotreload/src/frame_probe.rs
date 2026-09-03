@@ -217,6 +217,7 @@ fn frame_cost() {
             doc.len(),
         );
     }
+    probe::report_frame_phases(&mut drivers[2], "hotreload-500KB", ROUNDS, here());
 }
 
 // ------------------------------------------------------------------ S2 typing

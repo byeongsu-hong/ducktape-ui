@@ -192,6 +192,7 @@ fn frame_baseline() {
     view_only.report();
     idle.report();
     write.report();
+    probe::report_frame_phases(&mut driver, "starter", FRAMES, here());
 }
 
 // ---------------------------------------------------------- derived probe

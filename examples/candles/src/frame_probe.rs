@@ -282,6 +282,7 @@ fn frame_cost() {
          (68 sites for a 25-widget app). No message is involved, so no a11y\n\
          snapshot walk is in that row — the allocations are the view's own."
     );
+    probe::report_frame_phases(&mut driver, "candles", ROUNDS, here());
 }
 
 /// Scenario 3 against scenario 2. Zoomed to the whole tape, one pixel is ~11

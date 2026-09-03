@@ -334,6 +334,51 @@ fn micros(phase: Duration) -> u64 {
     u64::try_from(phase.as_micros()).unwrap_or(u64::MAX)
 }
 
+/// One `PHASES` line: the median view, layout and event-walk cost of
+/// `rounds` frames, timed by [`Driver::redraw_phases`].
+///
+/// This — not a [`Driver::redraw`] — is what an example's frame table should
+/// close with. A redraw also broadcasts to every subscription and settles the
+/// task queue, work the shipped app does not do once per frame, so its number
+/// answers a question about the harness rather than about the app.
+///
+/// Every example calls this at the end of its own frame probe, on a driver
+/// that probe has already warmed. The line is tab-separated and labelled so
+/// one app's frame can be read against another's measured the same way.
+///
+/// Returns the three medians added together.
+pub fn report_frame_phases<P>(
+    driver: &mut Driver<P>,
+    label: &str,
+    rounds: usize,
+    source: Location,
+) -> u128
+where
+    P: Program + 'static,
+    P::Renderer: 'static,
+    P::Message: Clone,
+{
+    let mut view = Vec::with_capacity(rounds);
+    let mut layout = Vec::with_capacity(rounds);
+    let mut update = Vec::with_capacity(rounds);
+    for _ in 0..rounds {
+        let frame = driver.redraw_phases(source);
+        view.push(frame.view.as_micros());
+        layout.push(frame.layout.as_micros());
+        update.push(frame.update.as_micros());
+    }
+    let median = |samples: &mut Vec<u128>| {
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    };
+    let (view, layout, update) = (median(&mut view), median(&mut layout), median(&mut update));
+    eprintln!(
+        "PHASES\t{label}\tview={view}\tlayout={layout}\twalk={update}\ttotal={}",
+        view + layout + update
+    );
+    view + layout + update
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

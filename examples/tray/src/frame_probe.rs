@@ -218,6 +218,7 @@ fn frame_cost() {
         }
     });
     let _ = &mut counter;
+    ::ui_lang_runtime::testing::probe::report_frame_phases(&mut driver, "tray", FRAMES, here());
 }
 
 // ------------------------------------------------------- the rehydration

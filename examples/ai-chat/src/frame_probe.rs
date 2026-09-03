@@ -299,6 +299,7 @@ fn frame_baseline() {
             }),
         );
 
+        probe::report_frame_phases(&mut driver, &format!("ai-chat-{rows}rows"), FRAMES, here());
         let (allocations, bytes) = alloc::allocated(|| driver.state_mut().__view());
         eprintln!(
             "one __view ({rows} rows)                        {allocations} allocations, {bytes} bytes"
