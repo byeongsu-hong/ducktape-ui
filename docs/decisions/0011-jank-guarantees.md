@@ -340,7 +340,49 @@ relocates it is already measured, and buys nothing.
    `iced::widget::Id` upstream. `Internal::Unique` is private today, so
    even a hashed id is `Id::from(hash.to_string())` — a short allocation
    at 322 sites rather than none, which is most of why interning cannot
-   reach zero. If it is ever taken, the drift between the two spellings
+   reach zero.
+
+   **The first of those two conditions is now met, and the 3% above is
+   showcase's number, not the language's.** Measured on trading's dense
+   terminal by ablating the view-path emitters in `codegen/view.rs` and
+   `codegen/view/content.rs` — every identified scope, every keyed scope,
+   every `@kind:line` key and the identity `container`'s id all replaced
+   by `String::new()` — against an unablated build of the same source.
+   Two release binaries, twelve interleaved runs with the order rotated
+   each round:
+
+   | | frame, `redraw_phases` total |
+   | --- | --- |
+   | as written | 1137 us |
+   | no identity strings | 890 us |
+
+   Twelve pairs out of twelve, with no overlap at all: the ablated
+   maximum is 940 us and the unablated minimum is 1126 us. That is
+   **247 us of a 1137 us frame, 22%** — against the ~3% of a 70 us build
+   this entry declined on. Memo counts are identical in both binaries
+   (component 113/0, lazy 57/0), so the ablation moved no boundary. The
+   `for`-loop scopes in `codegen/expr/children.rs` are still in the
+   ablated build, so 22% is a floor.
+
+   What that does and does not establish: the ablation is an **upper
+   bound on any fix**, because a real interning keeps one
+   `Id::from(hash.to_string())` at every node that carries a widget id,
+   and this ablation keeps none. It does not say how much of the 247 us a
+   fix recovers. What it does say is that the size of the slice is a
+   property of the app, not of the language: a 25-widget catalog screen
+   and a 302-node terminal do not sit in the same regime, and an entry
+   that declines on one is not evidence about the other. The same shape
+   turned up the same day in `virtual_children`, whose design premise —
+   "construction is under half a percent of the bill" — was an ai-chat
+   leaf row at 0.24 us against a trading component row at 8.5-9 us.
+
+   Still not taken here: the price named below is unchanged, and 247 us
+   of a frame that is already almost entirely construction argues at
+   least as strongly for the boundary that skips the build. Whoever
+   reopens it should price both against each other rather than take this
+   number as a decision.
+
+   If it is ever taken, the drift between the two spellings
    needs a test that fails when they diverge: a generated app whose
    handler focuses a keyed target, asserted through a real widget op
    rather than through the driver's own target resolution.
