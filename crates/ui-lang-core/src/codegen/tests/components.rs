@@ -2162,6 +2162,37 @@ view
 }
 
 #[test]
+fn memo_keys_past_eleven_reads_as_an_array() {
+    // A tuple hashes up to twelve elements; the palette name is one of
+    // them, so twelve reads must go in as an array or the key fails to
+    // compile.
+    let fields = (0..12).map(|i| format!("  f{i} = 0\n")).collect::<String>();
+    let params = (0..12)
+        .map(|i| format!("f{i}:i64"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let body = (0..12)
+        .map(|i| format!("    text f{i}\n"))
+        .collect::<String>();
+    let arguments = (0..12)
+        .map(|i| format!("f{i}=f{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let generated = memo_program(&format!(
+        "state\n{fields}component Wide({params})\n  col\n{body}view\n  Wide {arguments}\n"
+    ));
+    assert_eq!(generated.matches("::ui_lang_runtime::rev_memo(").count(), 1);
+    // The reads are a `BTreeSet`, so they come out in lexical order.
+    let revisions = [0, 10, 11, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        .map(|i| format!("self.__ice_rev[{i}], "))
+        .concat();
+    assert!(
+        generated.contains(&format!("([{revisions}], __ice_palette.name)")),
+        "twelve reads key as an array: {generated}"
+    );
+}
+
+#[test]
 fn memo_treats_a_row_the_body_declares_as_its_own_read() {
     let generated = memo_program(
         r#"state

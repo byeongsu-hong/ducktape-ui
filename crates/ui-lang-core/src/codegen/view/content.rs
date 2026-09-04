@@ -1,5 +1,10 @@
 use super::*;
 
+/// How many revision reads a `rev_memo` key carries as bare tuple elements:
+/// Rust implements `Hash` for tuples of at most twelve, and the palette name
+/// takes one slot.
+const MAX_TUPLE_REVISIONS: usize = 11;
+
 pub(in crate::codegen) fn render_content(
     node: ViewId,
     document: &LoweredProgram,
@@ -587,10 +592,19 @@ pub(in crate::codegen) fn render_content(
             // every pass, the walk below it is skipped while the key holds.
             Ok(match memo_reads {
                 Some(reads) => {
-                    let key = reads
+                    let revisions = reads
                         .iter()
                         .map(|read| format!("{read}, "))
                         .collect::<String>();
+                    // A tuple implements `Hash` up to twelve elements; the
+                    // palette name is one, so past eleven reads the revisions
+                    // (every one a `u64`) go in as an array instead.
+                    let overflows_tuple_hash = reads.len() > MAX_TUPLE_REVISIONS;
+                    let key = if overflows_tuple_hash {
+                        format!("[{revisions}], ")
+                    } else {
+                        revisions
+                    };
                     format!(
                         "{{ let {scope_binding} = {component_scope}; ::ui_lang_runtime::rev_memo({site}u64, ({key}__ice_palette.name), {use_code}).into() }}",
                         site = node.0
