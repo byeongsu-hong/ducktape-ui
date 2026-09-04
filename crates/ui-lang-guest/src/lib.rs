@@ -17,14 +17,19 @@
 //! and comes back as response events. There is no executor thread and no
 //! clock inside the module — only what the host sends in.
 
-pub use app_store_frame as frame;
 pub use driver::Driver;
+pub use ui_lang_wire as frame;
 
 mod driver;
 pub mod host;
 pub mod testing;
 
-pub type Element<'a, Message> = iced::Element<'a, Message, iced::Theme, iced::Renderer>;
+/// The software renderer by name, not `iced::Renderer`: an app's workspace
+/// enables tiny-skia alone, so there the two are one type, while this crate
+/// also builds in a workspace where wgpu turns `iced::Renderer` into the
+/// fallback enum.
+pub type Renderer = iced_tiny_skia::Renderer;
+pub type Element<'a, Message> = iced::Element<'a, Message, iced::Theme, Renderer>;
 
 /// The generated application, seen from the driver.
 pub trait WasmApp: Sized + 'static {

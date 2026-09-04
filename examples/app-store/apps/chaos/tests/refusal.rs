@@ -4,8 +4,8 @@
 
 use app_store_chaos::chaos::FLOOD;
 use app_store_chaos::{boot_native, tick_native};
-use app_store_sdk::frame::{Event, Frame};
-use app_store_sdk::testing::{click, has_text, redraw, refuse, texts};
+use ui_lang_guest::frame::{Event, Frame};
+use ui_lang_guest::testing::{click, has_text, redraw, refuse, texts};
 
 fn boot() -> Frame {
     boot_native();

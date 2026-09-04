@@ -6318,6 +6318,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ui-lang-guest"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "iced_runtime",
+ "iced_tiny_skia",
+ "ui-lang-runtime",
+ "ui-lang-wire",
+]
+
+[[package]]
 name = "ui-lang-runtime"
 version = "0.1.0"
 dependencies = [
@@ -6350,6 +6361,14 @@ dependencies = [
  "serde",
  "serde_json",
  "stats_alloc",
+]
+
+[[package]]
+name = "ui-lang-wire"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "serde",
 ]
 
 [[package]]

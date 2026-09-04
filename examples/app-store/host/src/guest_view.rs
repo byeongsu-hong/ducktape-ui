@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use app_store_frame as wire;
+use ui_lang_wire as wire;
 use iced::advanced::text::{self as core_text, LineHeight, Paragraph as _, Shaping, Wrapping};
 use iced::advanced::widget::Tree;
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, renderer};

@@ -117,6 +117,7 @@ jobs:
           cargo check --locked -p ui-lang-runtime --target wasm32-unknown-unknown --no-default-features --features data-grid
           cargo check --locked -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features button,data-grid,tree-view,virtual-list
           cargo check --locked -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features log-timeline
+          cargo check --locked -p ui-lang-guest --target wasm32-unknown-unknown
       - name: Test native WGPU smoke harness
         run: |
           rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests

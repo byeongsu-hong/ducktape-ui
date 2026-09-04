@@ -1,18 +1,22 @@
 # A separate workspace on purpose: the apps target wasm32 and the host pulls
 # wasmtime, neither of which belongs in the root workspace's lockfile or CI.
+# The wire and the guest runtime the apps are built on are workspace crates
+# (`crates/ui-lang-wire`, `crates/ui-lang-guest`); only the apps, the host
+# and their windows live here.
 [workspace]
 resolver = "2"
-members = ["frame", "sdk", "apps/todo", "apps/counter", "apps/clock", "apps/activity", "apps/chaos", "host"]
+members = ["apps/todo", "apps/counter", "apps/clock", "apps/activity", "apps/chaos", "host"]
 
 [workspace.dependencies]
 ui-lang = { path = "../../crates/ui-lang" }
 ui-lang-build = { path = "../../crates/ui-lang-build" }
 ui-lang-runtime = { path = "../../crates/ui-lang-runtime", default-features = false }
-app-store-frame = { path = "frame" }
-app-store-sdk = { path = "sdk" }
+ui-lang-wire = { path = "../../crates/ui-lang-wire" }
+ui-lang-guest = { path = "../../crates/ui-lang-guest" }
 # Software rendering only, on purpose: enabling wgpu anywhere in this
-# workspace turns `iced::Renderer` into the wgpu/tiny-skia fallback enum for
-# the apps too, and the sdk records through `iced_tiny_skia`'s layers.
+# workspace turns `iced::Renderer` into the wgpu/tiny-skia fallback enum,
+# and an app's generated view is bound to `iced::Renderer` while the guest
+# driver records through `iced_tiny_skia`'s layers.
 iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tiny-skia", "fira-sans"] }
 
 [patch.crates-io]

@@ -2,8 +2,8 @@
 //! first, each with who published it and under what topic.
 
 use app_store_activity::{boot_native, tick_native};
-use app_store_sdk::frame::Event;
-use app_store_sdk::testing::{has_text, item, redraw, texts};
+use ui_lang_guest::frame::Event;
+use ui_lang_guest::testing::{has_text, item, redraw, texts};
 
 #[test]
 fn bus_messages_become_rows_newest_first() {

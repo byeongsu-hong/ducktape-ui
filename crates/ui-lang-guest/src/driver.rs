@@ -34,7 +34,7 @@ type Tasks<M> = Vec<BoxStream<Action<M>>>;
 pub struct Driver<A: WasmApp> {
     app: A,
     cache: user_interface::Cache,
-    renderer: iced::Renderer,
+    renderer: crate::Renderer,
     size: Size,
     cursor: mouse::Cursor,
     tasks: Tasks<A::Message>,
@@ -68,7 +68,7 @@ impl<A: WasmApp> Driver<A> {
         Self {
             app,
             cache: user_interface::Cache::default(),
-            renderer: iced::Renderer::new(Font::with_name(DEFAULT_FONT), Pixels(16.0)),
+            renderer: crate::Renderer::new(Font::with_name(DEFAULT_FONT), Pixels(16.0)),
             size: Size::new(640.0, 480.0),
             cursor: mouse::Cursor::Unavailable,
             tasks,
@@ -381,7 +381,7 @@ fn rgba(c: iced::Color) -> wire::Rgba {
     [c.r, c.g, c.b, c.a]
 }
 
-fn flatten(renderer: &mut iced::Renderer) -> wire::Frame {
+fn flatten(renderer: &mut crate::Renderer) -> wire::Frame {
     let mut frame = wire::Frame::default();
     for layer in renderer.layers() {
         let mut out = wire::Layer {

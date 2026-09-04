@@ -13,11 +13,12 @@ them as capabilities the app's manifest has to declare.
 ![The same in dark mode: the guests follow the store's colour mode](screenshots/store-dark.png)
 
 ```
-frame/          the wire: events in, a Frame of quads and laid-out text lines out,
-                plus Request / Response for everything else
-sdk/            what an app needs to run in wasm: a headless Driver (layout, draw,
-                task executor), `host::request` / `host::subscribe` / `host::theme`,
-                and `export_app!`, which adds the four C exports and the manifest
+crates/ui-lang-wire/   (workspace crate) the wire: events in, a Frame of quads and
+                laid-out text lines out, plus Request / Response for everything else
+crates/ui-lang-guest/  (workspace crate) what an app needs to run in wasm: a headless
+                Driver (layout, draw, task executor), `host::request` /
+                `host::subscribe` / `host::theme`, and `export_app!`, which adds
+                the four C exports and the manifest
 apps/counter/   three buttons; Auto is a chain of host timers, every change goes
                 on the bus and into the store's log
 apps/todo/      a list kept in the host's storage — it survives uninstall/reinstall
@@ -101,10 +102,10 @@ and switches its own palette on each answer, so the windows change together.
 
 ```rust
 ui_lang::include_app!("src/ui/app.ice");
-app_store_sdk::export_app!(Clock, __ClockMessage, "Clock", "Host uptime.", ["clock"]);
+ui_lang_guest::export_app!(Clock, __ClockMessage, "Clock", "Host uptime.", ["clock"]);
 ```
 
-That is the whole crate. `export_app!` implements the sdk's `WasmApp` trait
+That is the whole crate. `export_app!` implements the guest crate's `WasmApp` trait
 over the generated `__boot` / `__view` / `__update` / `__theme`, emits the
 exports, and writes name, description and capabilities into an
 `ice.manifest` custom section, so the catalog lists the app — and shows what
@@ -162,7 +163,7 @@ through the same table and answer from its own subscriptions.
 
 ## How a frame crosses
 
-1. The sdk's driver polls the app's tasks (re-polling one that wakes
+1. The guest driver polls the app's tasks (re-polling one that wakes
    itself, which every `Task::stream` does once), builds the view, lays it
    out with a `UserInterface`, and draws into `iced_tiny_skia`'s recording
    layers — the same renderer the desktop uses, minus the rasterization.
@@ -268,7 +269,7 @@ and four tables of at most a million elements — a table is allocated at its
 declared minimum when the module is instantiated, before any other limit is
 consulted. An app that spins burns its budget and traps; an app that
 allocates past the limit traps on the grow. A trap ends that instance — its
-window shows the reason (the module's own panic message when the sdk's hook
+window shows the reason (the module's own panic message when the guest's panic hook
 left one) and a Restart button that asks the store to reload the module on
 its executor, where the compile does not stall the window, and swap it into
 the same handle, keeping the window and everything the app wrote to

@@ -4,7 +4,7 @@
 //! host for things it will not give: a capability the manifest never
 //! declared, and more requests than one tick allows.
 
-use app_store_sdk::host;
+use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

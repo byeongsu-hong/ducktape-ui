@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use app_store_frame as wire;
+use ui_lang_wire as wire;
 use iced::Size;
 use iced::time::Instant;
 use wasmtime::{

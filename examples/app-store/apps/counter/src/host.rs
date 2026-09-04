@@ -1,7 +1,7 @@
 //! What the counter asks the host for. Each is an ordinary Ice `task`: an
 //! async function whose future waits on a host answer.
 
-use app_store_sdk::host;
+use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

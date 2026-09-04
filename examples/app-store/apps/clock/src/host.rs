@@ -1,6 +1,6 @@
 //! The clock's one source of time: a stream of ticks the host sends.
 
-use app_store_sdk::host;
+use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
