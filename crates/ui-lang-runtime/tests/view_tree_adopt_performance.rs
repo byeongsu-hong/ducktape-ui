@@ -59,13 +59,19 @@ fn adopt_again(root: &wire::Node, samples: usize) -> Vec<u128> {
 
 #[test]
 fn taking_in_a_full_screen_of_inputs_stays_flat() {
+    // Wide of the 1.3 ms this measures locally, because a shared runner is
+    // slower than a desk and the regression it guards is not subtle: the
+    // list this replaced took 69 ms, four times the p95 below.
+    const P50_BUDGET_US: u128 = 15_000;
+    const P95_BUDGET_US: u128 = 30_000;
+
     let root = screen_of_inputs();
     let (p50, p95) = assert_wall_clock_budgets(
         "view_tree adopt",
         adopt_again(&root, 32),
-        8_000,
-        16_000,
+        P50_BUDGET_US,
+        P95_BUDGET_US,
         || adopt_again(&root, 32),
     );
-    println!("view_tree adopt: p50 {p50}us p95 {p95}us");
+    eprintln!("full screen of inputs adopted: p50={p50}us p95={p95}us");
 }
