@@ -454,7 +454,7 @@ pub(in crate::codegen) fn generate_boot(
     } else {
         writeln!(
             out,
-            "#[cfg(all(target_os = \"windows\", not(test)))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{\n::iced::window::oldest().then(|__id| match __id {{\n::std::option::Option::Some(__id) => ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityNativeWindow),\n::std::option::Option::None => ::iced::Task::none(),\n}})\n}}\nfn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}#[cfg(all(target_os = \"windows\", not(test)))]\n{{\nstate.__ice_accessibility_initial = ::std::option::Option::Some(0);\n(state, Self::__accessibility_attach())\n}}\n#[cfg(not(all(target_os = \"windows\", not(test))))]\n{{\nlet task = state.__boot_task();\n{tray_sync}let __accessibility = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n(state, ::iced::Task::batch([task, __accessibility]))\n}}\n}}"
+            "#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{\n::iced::window::oldest().then(|__id| match __id {{\n::std::option::Option::Some(__id) => ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityNativeWindow),\n::std::option::Option::None => ::iced::Task::none(),\n}})\n}}\n#[cfg(not(all(any(target_os = \"windows\", target_os = \"macos\"), not(test))))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{ ::iced::Task::none() }}\nfn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}#[cfg(all(target_os = \"windows\", not(test)))]\n{{\nstate.__ice_accessibility_initial = ::std::option::Option::Some(0);\n(state, Self::__accessibility_attach())\n}}\n#[cfg(not(all(target_os = \"windows\", not(test))))]\n{{\nlet task = state.__boot_task();\n{tray_sync}let __accessibility = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n(state, ::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()]))\n}}\n}}"
         )
         .unwrap();
     }
@@ -597,7 +597,7 @@ pub(in crate::codegen) fn generate_presets(
         } else {
             writeln!(
                 out,
-                "#[cfg(all(target_os = \"windows\", not(test)))]\n{{\nstate.__ice_accessibility_initial = ::std::option::Option::Some({});\n(state, Self::__accessibility_attach())\n}}\n#[cfg(not(all(target_os = \"windows\", not(test))))]\n{{\nlet task = state.{task_name}();\n{tray_sync}let __accessibility = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n(state, ::iced::Task::batch([task, __accessibility]))\n}}\n}}",
+                "#[cfg(all(target_os = \"windows\", not(test)))]\n{{\nstate.__ice_accessibility_initial = ::std::option::Option::Some({});\n(state, Self::__accessibility_attach())\n}}\n#[cfg(not(all(target_os = \"windows\", not(test))))]\n{{\nlet task = state.{task_name}();\n{tray_sync}let __accessibility = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n(state, ::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()]))\n}}\n}}",
                 index + 1
             )
             .unwrap();
@@ -707,13 +707,13 @@ pub(in crate::codegen) fn generate_update(
     if program.settings().kind == ProgramKind::Daemon {
         writeln!(
             out,
-            "#[cfg(all(target_os = \"windows\", not(test)))]\n{message}::__AccessibilityNativeWindow(_) => {{ return ::iced::Task::none(); }},"
+            "#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]\n{message}::__AccessibilityNativeWindow(_) => {{ return ::iced::Task::none(); }},"
         )
         .unwrap();
     } else {
         writeln!(
             out,
-            "#[cfg(all(target_os = \"windows\", not(test)))]\n{message}::__AccessibilityNativeWindow(__window) => {{\nlet __id = __window.id();\nif !self.__ice_accessibility.attach_window(__window) {{ return ::iced::Task::none(); }}\nlet __restore = {windows_restore};\nlet __initial = self.__accessibility_initial_task();\nlet mut __pending = ::std::vec::Vec::new();\nfor __message in ::std::mem::take(&mut self.__ice_accessibility_pending) {{\n__pending.push(self.__update(__message));\n}}\nlet __pending = ::iced::Task::batch(__pending);\nlet __snapshot = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\nreturn __restore.chain(::iced::Task::batch([__initial, __pending, __snapshot]));\n}},"
+            "#[cfg(all(target_os = \"windows\", not(test)))]\n{message}::__AccessibilityNativeWindow(__window) => {{\nlet __id = __window.id();\nif !self.__ice_accessibility.attach_window(__window) {{ return ::iced::Task::none(); }}\nlet __restore = {windows_restore};\nlet __initial = self.__accessibility_initial_task();\nlet mut __pending = ::std::vec::Vec::new();\nfor __message in ::std::mem::take(&mut self.__ice_accessibility_pending) {{\n__pending.push(self.__update(__message));\n}}\nlet __pending = ::iced::Task::batch(__pending);\nlet __snapshot = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\nreturn __restore.chain(::iced::Task::batch([__initial, __pending, __snapshot]));\n}},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityNativeWindow(__window) => {{\nif !self.__ice_accessibility.attach_window(__window) {{ return ::iced::Task::none(); }}\nreturn ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n}},"
         )
         .unwrap();
     }

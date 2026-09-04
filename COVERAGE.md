@@ -753,10 +753,10 @@ single percentage would be misleading.
 
 ## Accessibility
 
-Core accessibility is **native for single-window Linux and Windows
-applications** through Ice-owned AccessKit adapters for AT-SPI and UI
-Automation. It remains **partial at cross-platform system scope** because other
-targets do not yet export to native screen readers.
+Core accessibility is **native for single-window Linux, Windows, and macOS
+applications** through Ice-owned AccessKit adapters for AT-SPI, UI Automation,
+and NSAccessibility. It remains **partial at cross-platform system scope**
+because other targets do not yet export to native screen readers.
 
 | Core surface | Delivered contract |
 | --- | --- |
@@ -798,7 +798,7 @@ target resolver walks. Nothing in the trading example closes it; that example is
 where the gap was found, not where it lives.
 
 AccessKit tree construction and action dispatch are deterministic on every
-target. Native export is single-window on Linux and Windows. Daemon and
+target. Native export is single-window on Linux, Windows, and macOS. Daemon and
 multi-window adapters, native export on other targets, and exact desktop
 screen-coordinate bounds are unsupported on stock Iced 0.14.0. Rich text and
 widgets outside the table above have no Core semantics claim. First-class
@@ -807,15 +807,21 @@ action.
 `scripts/a11y-smoke.sh` proves that
 the Linux AT-SPI tree is discoverable and an invoked action reaches the Iced
 bridge; `scripts/a11y-windows-check.sh` cross-compiles the Windows adapter and
-the generated reference app's production and test forms. Headless tests cover
+the generated reference app's production and test forms;
+`scripts/a11y-macos-check.sh` builds both natively and runs the runtime's
+NSAccessibility bridge tests. Headless tests cover
 dispatch to the app message. On Windows, Iced's automatically created initial
 main window starts hidden, windowed, and non-maximized. The bootstrap resolves
 its ID with `window::oldest()`, then defers configured-mode restoration, the
 selected boot or preset task, and received messages until UI Automation subclass
 attachment;
 it then restores the mode and releases the initial task alongside queued
-messages, preserving queue order. Named windows retain their configured settings
-and remain outside native export.
+messages, preserving queue order. On macOS the same `window::oldest()` capture
+runs beside boot rather than in front of it: nothing is deferred, and the
+`NSView` subclass attaches on the main thread as soon as the handle arrives —
+`Bridge::attach_window` refuses anywhere else, so an off-main construction
+keeps the deterministic tree and exports nothing. Named windows retain their
+configured settings and remain outside native export.
 
 ## Typed system reachability
 

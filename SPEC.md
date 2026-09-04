@@ -554,9 +554,10 @@ own focus.
 Tree construction, focus updates, duplicate-ID disambiguation, and action
 routing are deterministic across platforms. Native screen-reader export is a
 separate, narrower contract: `accesskit_unix` exports a single-window Linux
-application over AT-SPI and `accesskit_windows` a single-window Windows
-application through UI Automation. Other targets keep the deterministic tree and
-action behavior without a native adapter. Rich text and advanced widgets are
+application over AT-SPI, `accesskit_windows` a single-window Windows
+application through UI Automation, and `accesskit_macos` a single-window macOS
+application through NSAccessibility. Other targets keep the deterministic tree
+and action behavior without a native adapter. Rich text and advanced widgets are
 outside this Core semantic contract.
 
 ### Theme and style

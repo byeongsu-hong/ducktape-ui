@@ -1468,6 +1468,12 @@ view
         "__pending.push(self.__update(__message))",
         "__restore.chain(::iced::Task::batch([__initial, __pending, __snapshot]))",
         "::iced::window::Mode::Windowed",
+        // macOS attaches NSAccessibility to the same captured window without
+        // Windows' deferral: boot runs, and the adapter arrives beside it.
+        "#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]",
+        "#[cfg(not(all(any(target_os = \"windows\", target_os = \"macos\"), not(test))))]\nfn __accessibility_attach() -> ::iced::Task<__AccessibleMessage> { ::iced::Task::none() }",
+        "::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()])",
+        "#[cfg(all(target_os = \"macos\", not(test)))]\n__AccessibleMessage::__AccessibilityNativeWindow(__window) => {\nif !self.__ice_accessibility.attach_window(__window) { return ::iced::Task::none(); }",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -1610,6 +1616,7 @@ view
         "for __message in ::std::mem::take(&mut self.__ice_accessibility_pending)",
         "__pending.push(self.__update(__message))",
         "let __initial = self.__accessibility_initial_task();",
+        "::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()])",
         "::iced::Task::run",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
