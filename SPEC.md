@@ -555,10 +555,14 @@ Tree construction, focus updates, duplicate-ID disambiguation, and action
 routing are deterministic across platforms. Native screen-reader export is a
 separate, narrower contract: `accesskit_unix` exports a single-window Linux
 application over AT-SPI, `accesskit_windows` a single-window Windows
-application through UI Automation, and `accesskit_macos` a single-window macOS
-application through NSAccessibility. Other targets keep the deterministic tree
-and action behavior without a native adapter. Rich text and advanced widgets are
-outside this Core semantic contract.
+application through UI Automation, and `accesskit_macos` a macOS `app` or
+`daemon` through NSAccessibility. A daemon exports one adapter per window: a
+window attaches when it opens, publishes the tree scoped to itself, keeps its
+own focus state, and drops its adapter when it closes, so two windows holding
+the same Ice id never share a tree. Other targets keep the deterministic tree
+and action behavior without a native adapter, and a daemon on them exports
+nothing. Rich text and advanced widgets are outside this Core semantic
+contract.
 
 ### Theme and style
 

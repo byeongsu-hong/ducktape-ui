@@ -205,9 +205,12 @@ activate. Native screen-reader export covers single-window Linux, Windows, and
 macOS applications through AccessKit's AT-SPI, UI Automation, and
 NSAccessibility adapters (the Windows bootstrap holds the initial window hidden
 until the UI Automation subclass is ready, preserving queue order; macOS
-subclasses the AppKit view beside boot, on the main thread). Other targets,
-daemon and multi-window adapters, exact desktop bounds, rich text, and unlisted
-widgets are outside this Core contract.
+subclasses the AppKit view beside boot, on the main thread). On macOS a
+`daemon` exports too, one adapter per window: each window attaches as it
+opens, publishes a tree scoped to itself, keeps its own focus state, and takes
+its adapter with it when it closes. Daemon export on Linux and Windows, exact
+desktop bounds, rich text, and unlisted widgets are outside this Core
+contract.
 
 ## Installing a build
 

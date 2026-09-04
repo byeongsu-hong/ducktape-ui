@@ -337,6 +337,13 @@ pub(in crate::codegen) fn generate_boot(
         "::ui_lang_runtime::Bridge::new()"
     };
     writeln!(out, "__ice_accessibility: {accessibility_bridge},").unwrap();
+    if program.settings().kind == ProgramKind::Daemon {
+        writeln!(
+            out,
+            "#[cfg(all(target_os = \"macos\", not(test)))]\n__ice_accessibility_windows: ::ui_lang_runtime::WindowBridges::new(),"
+        )
+        .unwrap();
+    }
     if program.settings().kind == ProgramKind::Application {
         writeln!(
             out,
@@ -708,6 +715,15 @@ pub(in crate::codegen) fn generate_update(
         writeln!(
             out,
             "#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]\n{message}::__AccessibilityNativeWindow(_) => {{ return ::iced::Task::none(); }},"
+        )
+        .unwrap();
+        // One adapter per window: a window that opens captures its AppKit
+        // view and publishes its own scoped tree, a window that closes takes
+        // its adapter with it, and focus is per window. The shared bridge
+        // still sees every event, so the deterministic tree is unchanged.
+        writeln!(
+            out,
+            "#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowEvent(__id, __event) => {{\nlet __opened = matches!(__event, ::iced::window::Event::Opened {{ .. }});\nself.__ice_accessibility.window_event(__id, __event.clone());\nself.__ice_accessibility_windows.window_event(__id, __event);\nif __opened {{\nreturn ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityWindowNative);\n}}\nreturn ::iced::Task::none();\n}},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowNative(__window) => {{\nlet __id = __window.id();\nif !self.__ice_accessibility_windows.attach(__window) {{ return ::iced::Task::none(); }}\nreturn ::ui_lang_runtime::snapshot_in::<{message}>({accessibility_root}, __id).map(move |__snapshot| {message}::__AccessibilityWindowSnapshot(__id, ::std::boxed::Box::new(__snapshot)));\n}},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowSnapshot(__id, __snapshot) => {{ self.__ice_accessibility_windows.update(__id, *__snapshot); return ::iced::Task::none(); }},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowAction(__id, __request) => {{\nlet __task = self.__ice_accessibility_windows.dispatch(__id, __request);\nreturn __task.chain(::ui_lang_runtime::snapshot_in::<{message}>({accessibility_root}, __id).map(move |__snapshot| {message}::__AccessibilityWindowSnapshot(__id, ::std::boxed::Box::new(__snapshot))));\n}},"
         )
         .unwrap();
     } else {
@@ -1082,7 +1098,14 @@ pub(in crate::codegen) fn generate_update(
         .filter(|tray| tray.reactive())
         .map_or("", |_| "self.__tray_sync();\n");
     if program.settings().kind == ProgramKind::Daemon {
-        writeln!(out, "}};\n{tray_sync}__task\n}}").unwrap();
+        // Every exporting window refreshes its own scoped tree. The list is
+        // the attached windows, so a daemon with no native adapter — every
+        // non-macOS target, and macOS before a window opens — walks nothing.
+        writeln!(
+            out,
+            "}};\n{tray_sync}#[cfg(all(target_os = \"macos\", not(test)))]\n{{\nlet __accessibility = if ::ui_lang_runtime::accessibility_active() {{\n::iced::Task::batch(self.__ice_accessibility_windows.attached().into_iter().map(|__window| ::ui_lang_runtime::snapshot_in::<{message}>({accessibility_root}, __window).map(move |__snapshot| {message}::__AccessibilityWindowSnapshot(__window, ::std::boxed::Box::new(__snapshot)))))\n}} else {{\n::iced::Task::none()\n}};\nreturn ::iced::Task::batch([__task, __accessibility]);\n}}\n#[cfg(not(all(target_os = \"macos\", not(test))))]\n__task\n}}"
+        )
+        .unwrap();
     } else {
         writeln!(
             out,

@@ -480,7 +480,8 @@ checks that the native tree is discoverable and an AT-SPI action reaches the
 Iced bridge. `scripts/a11y-windows-check.sh` cross-compiles the Windows runtime
 and both production and test forms of the generated reference app. On macOS,
 `scripts/a11y-macos-check.sh` builds the same two and runs the runtime's
-NSAccessibility bridge tests; it needs a Mac, so no CI job runs it. Headless
+NSAccessibility bridge tests, `app` and `daemon` alike; it needs a Mac, so no
+CI job runs it. Headless
 tests cover dispatch from the bridge to the app message.
 
 `cargo ice fmt` normalizes indentation and blank lines. It does not translate

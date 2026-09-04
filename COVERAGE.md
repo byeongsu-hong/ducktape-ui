@@ -755,8 +755,10 @@ single percentage would be misleading.
 
 Core accessibility is **native for single-window Linux, Windows, and macOS
 applications** through Ice-owned AccessKit adapters for AT-SPI, UI Automation,
-and NSAccessibility. It remains **partial at cross-platform system scope**
-because other targets do not yet export to native screen readers.
+and NSAccessibility, and **native for a macOS `daemon`**, one adapter per
+window. It remains **partial at cross-platform system scope** because other
+targets do not yet export to native screen readers, and because a daemon on
+Linux and Windows still exports nothing.
 
 | Core surface | Delivered contract |
 | --- | --- |
@@ -798,9 +800,11 @@ target resolver walks. Nothing in the trading example closes it; that example is
 where the gap was found, not where it lives.
 
 AccessKit tree construction and action dispatch are deterministic on every
-target. Native export is single-window on Linux, Windows, and macOS. Daemon and
-multi-window adapters, native export on other targets, and exact desktop
-screen-coordinate bounds are unsupported on stock Iced 0.14.0. Rich text and
+target. Native export is single-window on Linux and Windows, and on macOS it is
+per window: an `app` exports its one window and a `daemon` exports each window
+it opens. Daemon export on Linux and Windows, native export on other targets,
+and exact desktop screen-coordinate bounds are unsupported on stock Iced
+0.14.0. Rich text and
 widgets outside the table above have no Core semantics claim. First-class
 showcase tests exercise every newly mapped control role, exported state, and
 action.
@@ -809,7 +813,9 @@ the Linux AT-SPI tree is discoverable and an invoked action reaches the Iced
 bridge; `scripts/a11y-windows-check.sh` cross-compiles the Windows adapter and
 the generated reference app's production and test forms;
 `scripts/a11y-macos-check.sh` builds both natively and runs the runtime's
-NSAccessibility bridge tests. Headless tests cover
+NSAccessibility bridge tests, including the per-window ones.
+`examples/two-windows` is the daemon that holds the per-window claim: two
+windows over one shared state, which is the desktop shape a Ducktape app has. Headless tests cover
 dispatch to the app message. On Windows, Iced's automatically created initial
 main window starts hidden, windowed, and non-maximized. The bootstrap resolves
 its ID with `window::oldest()`, then defers configured-mode restoration, the
@@ -820,8 +826,20 @@ messages, preserving queue order. On macOS the same `window::oldest()` capture
 runs beside boot rather than in front of it: nothing is deferred, and the
 `NSView` subclass attaches on the main thread as soon as the handle arrives —
 `Bridge::attach_window` refuses anywhere else, so an off-main construction
-keeps the deterministic tree and exports nothing. Named windows retain their
-configured settings and remain outside native export.
+keeps the deterministic tree and exports nothing.
+
+A macOS `daemon` uses `WindowBridges` instead of one `Bridge`: a
+`window::Event::Opened` captures that window's `NSView` and attaches an adapter
+keyed by its `iced::window::Id`, `Closed` drops it, and focus is applied per
+window. Each attached window publishes `snapshot_in(root, window)` — the
+snapshot operation scoped by the `WindowScope` marker a daemon's view root
+already carries for focus traversal — so a window's tree holds its own
+controls and no other window's. The unscoped `snapshot` still runs, because it
+is what the shared deterministic bridge, the test harness, and Tab traversal
+read; it is only the native adapters that must never be handed it. An action
+carries the window it was raised in, so two windows holding the same Ice id
+route to their own control. Named windows of an `app` retain their configured
+settings and remain outside native export.
 
 ## Typed system reachability
 
