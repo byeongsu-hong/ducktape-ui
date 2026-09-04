@@ -60,6 +60,10 @@ accesskit_unix = "=0.22.1"
 # `accesskit_unix` 0.22.1's `accesskit_atspi_common`. 0.27 moved to
 # `accesskit` 0.25 and cannot be used until the core pin moves with it.
 accesskit_macos = "=0.26.3"
+# Already in the graph via objc2; used only to hand a tree update's
+# NSAccessibility notifications to the next main-queue turn, so raising them
+# can never re-enter the winit event loop from inside one of its own frames.
+dispatch2 = "=0.3.1"
 # Already in the graph via tray-icon's `muda`; used for the safe main-thread
 # checks guarding tray init and the NSAccessibility subclass.
 objc2 = "0.6"

@@ -2189,11 +2189,20 @@ impl<Message> Bridge<Message> {
         if let Some(adapter) = &mut self.adapter {
             adapter.update_if_active(|| update.clone());
         }
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        // Windows raises inline: UI Automation's `QueuedEvents::raise` does
+        // not service the run loop, so it cannot re-enter the event loop the
+        // way NSAccessibility's does.
+        #[cfg(target_os = "windows")]
         if let Some(adapter) = &mut self.adapter
             && let Some(events) = adapter.update_if_active(|| update.clone())
         {
             events.raise();
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(adapter) = &mut self.adapter
+            && let Some(events) = adapter.update_if_active(|| update.clone())
+        {
+            raise_on_next_turn(events);
         }
         *self.latest_tree.lock().expect("accessibility tree lock") = Some(update);
         self.snapshot = Some(snapshot);
@@ -2297,7 +2306,7 @@ impl<Message> Bridge<Message> {
                 _ => return,
             };
             if let Some(events) = adapter.update_view_focus_state(focused) {
-                events.raise();
+                raise_on_next_turn(events);
             }
         }
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -2354,6 +2363,54 @@ struct WindowEntry<Message> {
     latest_tree: Arc<Mutex<Option<TreeUpdate>>>,
     snapshot: Option<Snapshot<Message>>,
     adapter: accesskit_macos::SubclassingAdapter,
+}
+
+/// Hands a tree update's NSAccessibility notifications to the next turn of the
+/// main queue instead of posting them here.
+///
+/// `QueuedEvents::raise` is synchronous, and its own documentation warns that
+/// accessibility methods on the view may be called while it runs. In practice
+/// it lets AppKit service the run loop, which drains the blocks winit queues
+/// for its event handling — so raising from inside a `Bridge`/`WindowBridges`
+/// update, which iced calls from inside its own event-loop turn, re-enters the
+/// runner. A widget operation then runs against a half-built interface: an
+/// empty `container` whose `operate` unwraps the first laid-out child took the
+/// whole process down, through an Objective-C frame that cannot unwind.
+///
+/// Deferring costs one run-loop turn of latency and removes the re-entrancy:
+/// the notifications go out with no iced frame on the stack, so anything
+/// AppKit does in response starts a fresh turn instead of nesting inside one.
+///
+/// `QueuedEvents` is `!Send`, so it never leaves this thread: the queue is a
+/// thread-local and the drain the main queue runs is a bare `fn`. Both only
+/// ever run on the main thread, which is the only thread an adapter attaches
+/// on.
+#[cfg(target_os = "macos")]
+fn raise_on_next_turn(events: accesskit_macos::QueuedEvents) {
+    PENDING_RAISES.with(|pending| pending.borrow_mut().push(events));
+    let already_scheduled = RAISE_SCHEDULED.with(|scheduled| scheduled.replace(true));
+    if already_scheduled {
+        return;
+    }
+    dispatch2::DispatchQueue::main().exec_async(drain_pending_raises);
+}
+
+#[cfg(target_os = "macos")]
+fn drain_pending_raises() {
+    RAISE_SCHEDULED.with(|scheduled| scheduled.set(false));
+    let pending = PENDING_RAISES.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+    for events in pending {
+        events.raise();
+    }
+}
+
+#[cfg(target_os = "macos")]
+thread_local! {
+    /// Notifications waiting for the next main-queue turn. Drained whole, so a
+    /// burst of updates costs one scheduled block rather than one per update.
+    static PENDING_RAISES: RefCell<Vec<accesskit_macos::QueuedEvents>> =
+        const { RefCell::new(Vec::new()) };
+    static RAISE_SCHEDULED: Cell<bool> = const { Cell::new(false) };
 }
 
 #[cfg(target_os = "macos")]
@@ -2467,7 +2524,7 @@ impl<Message> WindowBridges<Message> {
         };
         let update = snapshot.update.clone();
         if let Some(events) = entry.adapter.update_if_active(|| update.clone()) {
-            events.raise();
+            raise_on_next_turn(events);
         }
         *entry.latest_tree.lock().expect("accessibility tree lock") = Some(update);
         entry.snapshot = Some(snapshot);
@@ -2488,7 +2545,7 @@ impl<Message> WindowBridges<Message> {
             return;
         };
         if let Some(events) = entry.adapter.update_view_focus_state(focused) {
-            events.raise();
+            raise_on_next_turn(events);
         }
     }
 }
@@ -4404,6 +4461,60 @@ mod tests {
         bridges.window_event(window, iced::window::Event::Focused);
         bridges.window_event(window, iced::window::Event::Closed);
         assert!(bridges.attached().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_window_action_handler_survives_a_flood_with_no_poll_between() {
+        // What an assistive technology can do to a daemon: perform action
+        // after action with the event loop never getting a turn in between.
+        // The handler runs on the main thread inside an AppKit callback that
+        // cannot unwind, so it must never panic and never block — past the
+        // buffer it drops, and the window each request came from survives on
+        // the ones that fit.
+        let (sender, mut receiver) =
+            iced::futures::channel::mpsc::channel(ACCESSIBILITY_ACTION_BUFFER);
+        let first = iced::window::Id::unique();
+        let second = iced::window::Id::unique();
+        let mut handler = WindowActions {
+            window: first,
+            sender: sender.clone(),
+        };
+        let mut other = WindowActions {
+            window: second,
+            sender,
+        };
+
+        let flood = ACCESSIBILITY_ACTION_BUFFER * 4;
+        for node in 1..=flood {
+            let request = ActionRequest {
+                action: Action::Click,
+                target_tree: TreeId::ROOT,
+                target_node: NodeId(node as u64),
+                data: None,
+            };
+            // Alternating windows, so a dropped request cannot be mistaken
+            // for one that was merely routed to the other window.
+            accesskit::ActionHandler::do_action(&mut handler, request.clone());
+            accesskit::ActionHandler::do_action(&mut other, request);
+        }
+
+        // Everything that fit is in order and still names its own window;
+        // the rest was dropped rather than panicking or blocking.
+        // `futures` reserves one slot per sender on top of the buffer, and a
+        // daemon holds one sender per window, so two windows can hold two
+        // more than the configured backlog. The point of the assertion is the
+        // bound itself: the flood is dropped, not queued without limit.
+        let routed = std::iter::from_fn(|| receiver.try_recv().ok()).collect::<Vec<_>>();
+        assert_eq!(routed.len(), ACCESSIBILITY_ACTION_BUFFER + 2);
+        assert!(routed.len() < flood);
+        assert_eq!(routed[0].0, first);
+        assert_eq!(routed[1].0, second);
+        assert!(
+            routed
+                .iter()
+                .all(|(window, _)| *window == first || *window == second)
+        );
     }
 
     #[cfg(target_os = "macos")]
