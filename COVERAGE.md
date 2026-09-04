@@ -828,7 +828,9 @@ runs beside boot rather than in front of it: nothing is deferred, and the
 `Bridge::attach_window` refuses anywhere else, so an off-main construction
 keeps the deterministic tree and exports nothing.
 
-A macOS `daemon` uses `WindowBridges` instead of one `Bridge`: a
+A macOS `daemon` uses `WindowBridges` instead of one `Bridge` — a type that
+exists only on macOS, because neither of the other two adapters can be keyed by
+window: a
 `window::Event::Opened` captures that window's `NSView` and attaches an adapter
 keyed by its `iced::window::Id`, `Closed` drops it, and focus is applied per
 window. Each attached window publishes `snapshot_in(root, window)` — the

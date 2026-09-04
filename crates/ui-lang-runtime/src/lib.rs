@@ -2329,18 +2329,16 @@ impl<Message> Default for Bridge<Message> {
 /// its own focus state, routes its own actions, and takes its adapter with it
 /// when it closes.
 ///
-/// Only macOS publishes here. `accesskit_macos` subclasses one `NSView`, which
-/// is exactly per-window; `accesskit_unix`'s AT-SPI adapter is per-process and
-/// `accesskit_windows` subclasses the Win32 handle a `Bridge` already owns, so
-/// on those targets every method below is inert and a daemon keeps the
-/// deterministic tree with no native export — the behaviour it had before.
+/// macOS only, and the type does not exist elsewhere: `accesskit_macos`
+/// subclasses one `NSView`, which is exactly per-window, while
+/// `accesskit_unix`'s AT-SPI adapter is per-process and `accesskit_windows`
+/// subclasses the Win32 handle a `Bridge` already owns. Neither can be keyed
+/// by window, so on those targets a daemon exports nothing and generated code
+/// never names this type — the behaviour it had before.
+#[cfg(target_os = "macos")]
 pub struct WindowBridges<Message> {
     id: u64,
     receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::Receiver<WindowAction>>>>,
-    #[cfg_attr(
-        not(target_os = "macos"),
-        expect(dead_code, reason = "only the macOS adapter takes a sender")
-    )]
     sender: iced::futures::channel::mpsc::Sender<WindowAction>,
     windows: HashMap<iced::window::Id, WindowEntry<Message>>,
 }
@@ -2348,12 +2346,13 @@ pub struct WindowBridges<Message> {
 /// An action a native adapter raised, named with the window it came from —
 /// two windows of one daemon can hold the same Ice id, so the node id alone
 /// does not say which control was pressed.
+#[cfg(target_os = "macos")]
 pub type WindowAction = (iced::window::Id, ActionRequest);
 
+#[cfg(target_os = "macos")]
 struct WindowEntry<Message> {
     latest_tree: Arc<Mutex<Option<TreeUpdate>>>,
     snapshot: Option<Snapshot<Message>>,
-    #[cfg(target_os = "macos")]
     adapter: accesskit_macos::SubclassingAdapter,
 }
 
@@ -2371,6 +2370,7 @@ impl accesskit::ActionHandler for WindowActions {
     }
 }
 
+#[cfg(target_os = "macos")]
 impl<Message> fmt::Debug for WindowBridges<Message> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WindowBridges")
@@ -2380,6 +2380,7 @@ impl<Message> fmt::Debug for WindowBridges<Message> {
     }
 }
 
+#[cfg(target_os = "macos")]
 impl<Message> WindowBridges<Message> {
     pub fn new() -> Self {
         let id = NEXT_BRIDGE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2417,7 +2418,6 @@ impl<Message> WindowBridges<Message> {
     /// Refuses off the main thread and refuses a window already attached —
     /// `accesskit_macos` panics when a view is subclassed twice, and a daemon
     /// can be told a window opened more than once.
-    #[cfg(target_os = "macos")]
     pub fn attach(&mut self, window: NativeWindow) -> bool {
         let on_main_thread = objc2::MainThreadMarker::new().is_some();
         if !on_main_thread || self.windows.contains_key(&window.id) {
@@ -2455,12 +2455,6 @@ impl<Message> WindowBridges<Message> {
         true
     }
 
-    #[cfg(not(target_os = "macos"))]
-    pub fn attach(&mut self, window: NativeWindow) -> bool {
-        let _ = window;
-        false
-    }
-
     /// Drops the window's adapter, which restores the view's original class.
     pub fn close(&mut self, window: iced::window::Id) {
         self.windows.remove(&window);
@@ -2472,7 +2466,6 @@ impl<Message> WindowBridges<Message> {
             return;
         };
         let update = snapshot.update.clone();
-        #[cfg(target_os = "macos")]
         if let Some(events) = entry.adapter.update_if_active(|| update.clone()) {
             events.raise();
         }
@@ -2494,15 +2487,13 @@ impl<Message> WindowBridges<Message> {
         let Some(entry) = self.windows.get_mut(&window) else {
             return;
         };
-        #[cfg(target_os = "macos")]
         if let Some(events) = entry.adapter.update_view_focus_state(focused) {
             events.raise();
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = (entry, focused);
     }
 }
 
+#[cfg(target_os = "macos")]
 impl<Message: Clone + Send + 'static> WindowBridges<Message> {
     /// Routes an action against the snapshot of the window it came from.
     pub fn dispatch(&self, window: iced::window::Id, request: ActionRequest) -> Task<Message> {
@@ -2513,32 +2504,38 @@ impl<Message: Clone + Send + 'static> WindowBridges<Message> {
     }
 }
 
+#[cfg(target_os = "macos")]
 impl<Message> Default for WindowBridges<Message> {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Clone)]
 struct WindowActionSubscription {
     id: u64,
     receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::Receiver<WindowAction>>>>,
 }
 
+#[cfg(target_os = "macos")]
 impl PartialEq for WindowActionSubscription {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
+#[cfg(target_os = "macos")]
 impl Eq for WindowActionSubscription {}
 
+#[cfg(target_os = "macos")]
 impl Hash for WindowActionSubscription {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.id.hash(state);
     }
 }
 
+#[cfg(target_os = "macos")]
 fn window_action_stream(
     subscription: &WindowActionSubscription,
 ) -> iced::futures::channel::mpsc::Receiver<WindowAction> {
@@ -4383,6 +4380,7 @@ mod tests {
         assert!(!disabled.is_attached());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn window_bridges_start_empty_and_ignore_windows_that_never_attached() {
         let mut bridges = WindowBridges::<Message>::new();
