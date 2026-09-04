@@ -1,5 +1,6 @@
-//! One running app: a wasm instance inside a fuel and memory budget, the
-//! frame it draws every tick, and the guest's side of every request it makes.
+//! One running app: an `ice:view` component instance inside a fuel and
+//! memory budget, the tree it sent last, and the guest's side of every
+//! request it makes.
 //!
 //! Everything the view calls is reachable here — `extern crate::store` in
 //! `app.ice` binds one module — so the catalog, the library and the widget
@@ -7,17 +8,46 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use ui_lang_wire as wire;
-use iced::Size;
 use iced::time::Instant;
+use ui_lang_runtime::view_tree::{Inputs, Output};
+use ui_lang_wire as wire;
+use wasmtime::component::{Component, Linker};
 use wasmtime::{
-    Cache, CacheConfig, Config, Engine, Linker, Module, OptLevel, Store, StoreLimits,
-    StoreLimitsBuilder, TypedFunc,
+    Cache, CacheConfig, Config, Engine, OptLevel, Store, StoreLimits, StoreLimitsBuilder,
 };
+
+// The `ice:view` world, as `export_app!` exports it: `init` and `tick`,
+// generated into a `View` with one `call_*` per export, and the `panicked`
+// import the guest's panic hook calls, as a trait the store's data implements.
+wasmtime::component::bindgen!({
+    path: "../../../crates/ui-lang-guest/wit/view.wit",
+    world: "view",
+});
+
+/// What a guest's store holds: its limits, and the message its panic hook
+/// handed over — read after the trap that follows, when the instance can no
+/// longer be asked.
+struct HostState {
+    limits: StoreLimits,
+    panic: Option<String>,
+}
+
+impl ViewImports for HostState {
+    fn panicked(&mut self, message: String) {
+        // One line, like a trap's, and no longer than the window shows.
+        let line = message.lines().next().unwrap_or_default();
+        let cut = line
+            .char_indices()
+            .map(|(at, _)| at)
+            .find(|at| *at > MAX_FAULT_BYTES)
+            .unwrap_or(line.len());
+        self.panic = Some(line[..cut].to_string());
+    }
+}
 
 pub use crate::catalog::{
     Capability, CatalogEntry, StoreError, capability_hint, catalog_dir, find_entry, scan_catalog,
@@ -81,12 +111,7 @@ pub async fn restart_guest(surface: Surface) -> Result<Surface, StoreError> {
     }
     match fresh {
         Ok(mut fresh) => {
-            fresh.size = guest.size;
             fresh.dark = guest.dark;
-            fresh.pending.push(wire::Event::Resized {
-                width: guest.size.width,
-                height: guest.size.height,
-            });
             *guest = fresh;
             drop(guest);
             Ok(surface)
@@ -112,10 +137,6 @@ pub async fn install_app(entry: CatalogEntry) -> Result<Loaded, StoreError> {
 }
 
 // ---------- the guest ----------
-
-/// Where the sdk's panic hook left its message, and how long it is. `None`
-/// for a module built without the hook.
-type PanicText = Option<(TypedFunc<(), u32>, TypedFunc<(), u32>)>;
 
 /// A clock subscription: one answer per period, forever.
 struct Ticker {
@@ -146,24 +167,20 @@ pub(crate) struct Wake {
 pub struct Guest {
     /// Kept whole so a faulted instance can be reloaded in place.
     entry: CatalogEntry,
-    /// Identity for anything the host remembers about one instance across
-    /// calls — the keyboard focus. Never the `Arc`'s address: that is reused
-    /// by the next allocation of the same size, which would hand a freshly
-    /// installed guest the keyboard nobody gave it.
-    pub(crate) serial: u64,
-    store: Store<StoreLimits>,
-    memory: wasmtime::Memory,
-    input_ptr: TypedFunc<u32, u32>,
-    tick: TypedFunc<u32, u32>,
-    output_ptr: TypedFunc<(), u32>,
-    /// The module's last panic message, if it was built with the sdk's hook.
-    panic_text: PanicText,
+    store: Store<HostState>,
+    view: View,
     /// Cleared when this instance faults or drops, which is what prunes its
     /// bus subscriptions without locking the guest from inside a publish.
     alive: Arc<AtomicBool>,
-    pub(crate) size: Size,
     pub(crate) pending: Vec<wire::Event>,
+    /// The last frame, its `root` kept across `unchanged` ticks.
     pub(crate) frame: wire::Frame,
+    /// Bumped when `frame.root` changes: the widget rebuilds when it sees a
+    /// number it has not rendered.
+    pub(crate) frame_rev: u64,
+    /// The live text of every input in the tree — the host's, not the
+    /// guest's.
+    pub(crate) inputs: Inputs,
     /// One-shot answers, each with the moment it becomes due.
     due: Vec<(Instant, wire::Event)>,
     tickers: Vec<Ticker>,
@@ -212,7 +229,6 @@ impl std::fmt::Debug for Guest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Guest")
             .field("app", &self.entry.id)
-            .field("size", &self.size)
             .field("fault", &self.fault)
             .finish_non_exhaustive()
     }
@@ -225,7 +241,6 @@ impl Drop for Guest {
             FAULTED.fetch_sub(1, Ordering::Relaxed);
         }
         self.alive.store(false, Ordering::Relaxed);
-        crate::guest_view::release_focus(self.serial);
     }
 }
 
@@ -248,27 +263,28 @@ fn engine() -> &'static Engine {
     })
 }
 
-/// The modules loaded this run, by path and modification time. Reopening,
+/// The components loaded this run, by path and modification time. Reopening,
 /// restarting or reinstalling an app that was loaded once is then an
-/// instantiation — under a millisecond — and a module rebuilt meanwhile is
-/// noticed by its timestamp and loaded again.
-fn module(path: &str) -> Result<(Module, bool), String> {
-    static MODULES: OnceLock<Mutex<HashMap<String, (SystemTime, Module)>>> = OnceLock::new();
+/// instantiation — under a millisecond — and a component rebuilt meanwhile
+/// is noticed by its timestamp and loaded again.
+fn component(path: &str) -> Result<(Component, bool), String> {
+    static COMPONENTS: OnceLock<Mutex<HashMap<String, (SystemTime, Component)>>> = OnceLock::new();
     let stamp = std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .map_err(|error| format!("{path}: {error}"))?;
-    let modules = MODULES.get_or_init(Mutex::default);
-    if let Some((known, module)) = modules.lock().expect("module cache").get(path)
+    let components = COMPONENTS.get_or_init(Mutex::default);
+    if let Some((known, component)) = components.lock().expect("component cache").get(path)
         && *known == stamp
     {
-        return Ok((module.clone(), true));
+        return Ok((component.clone(), true));
     }
-    let module = Module::from_file(engine(), path).map_err(|error| format!("{path}: {error}"))?;
-    modules
+    let component =
+        Component::from_file(engine(), path).map_err(|error| format!("{path}: {error}"))?;
+    components
         .lock()
-        .expect("module cache")
-        .insert(path.to_string(), (stamp, module.clone()));
-    Ok((module, false))
+        .expect("component cache")
+        .insert(path.to_string(), (stamp, component.clone()));
+    Ok((component, false))
 }
 
 impl Guest {
@@ -276,79 +292,61 @@ impl Guest {
         let path = &entry.path;
         let engine = engine();
         let started = Instant::now();
-        let (module, cached) = module(path)?;
+        let (component, cached) = component(path)?;
         // Tables are allocated eagerly at their declared minimum, before any
         // fuel or memory limit is consulted, so a module declaring a hundred
-        // ten-million-element tables would be gigabytes at Install.
+        // ten-million-element tables would be gigabytes at Install. A
+        // component is several core instances — the app, the stub adapters
+        // `componentize.sh` gave it, the bindings' shims — all of them the
+        // guest's own and none with a memory but the app's.
         let limits = StoreLimitsBuilder::new()
             .memory_size(MEMORY_LIMIT)
             .memories(1)
-            .instances(1)
+            .instances(8)
             .tables(4)
             .table_elements(1 << 20)
             .trap_on_grow_failure(true)
             .build();
-        let mut store = Store::new(engine, limits);
-        store.limiter(|limits| limits);
+        let mut store = Store::new(
+            engine,
+            HostState {
+                limits,
+                panic: None,
+            },
+        );
+        store.limiter(|state| &mut state.limits);
         store
             .set_fuel(FUEL_PER_TICK)
             .map_err(|error| error.to_string())?;
-        // The guest links web_time's wasm-bindgen shims for `Instant::now`;
-        // nothing on the frame path calls them, so they answer zero.
+        // The world's one import is the panic hook's; anything else the
+        // component asks for traps if it is ever called.
         let mut linker = Linker::new(engine);
+        View::add_to_linker::<HostState, wasmtime::component::HasSelf<HostState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| error.to_string())?;
         linker
-            .define_unknown_imports_as_default_values(&mut store, &module)
+            .define_unknown_imports_as_traps(&component)
             .map_err(|error| error.to_string())?;
-        let instance = linker
-            .instantiate(&mut store, &module)
-            .map_err(|error| error.to_string())?;
-        let export = |name: &str| format!("{path}: missing export `{name}`");
-        let init = instance
-            .get_typed_func::<(), ()>(&mut store, "init")
-            .map_err(|_| export("init"))?;
-        let input_ptr = instance
-            .get_typed_func::<u32, u32>(&mut store, "input_ptr")
-            .map_err(|_| export("input_ptr"))?;
-        let tick = instance
-            .get_typed_func::<u32, u32>(&mut store, "tick")
-            .map_err(|_| export("tick"))?;
-        let output_ptr = instance
-            .get_typed_func::<(), u32>(&mut store, "output_ptr")
-            .map_err(|_| export("output_ptr"))?;
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| export("memory"))?;
-        // Optional: only a module built with the sdk's wasm panic hook has
-        // somewhere to park a panic message.
-        let panic_text = instance
-            .get_typed_func::<(), u32>(&mut store, "panic_ptr")
-            .ok()
-            .zip(
-                instance
-                    .get_typed_func::<(), u32>(&mut store, "panic_len")
-                    .ok(),
-            );
+        let view = View::instantiate(&mut store, &component, &linker)
+            .map_err(|error| format!("{path}: {}", first_line(&error)))?;
         // `on mount` runs in here, so a panic in the app's boot has the same
-        // message parked as a panic in any later tick.
-        if let Err(error) = init.call(&mut store, ()) {
+        // message handed over as a panic in any later tick.
+        if let Err(error) = view.call_init(&mut store) {
             let trap = format!("{path}: init trapped: {}", first_line(&error));
-            return Err(panic_message(&mut store, &memory, &panic_text).unwrap_or(trap));
+            return Err(panic_message(&mut store).unwrap_or(trap));
         }
         LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
-        static SERIAL: AtomicU64 = AtomicU64::new(0);
         Ok(Self {
             entry: entry.clone(),
-            serial: SERIAL.fetch_add(1, Ordering::Relaxed),
             store,
-            memory,
-            input_ptr,
-            tick,
-            output_ptr,
-            panic_text,
+            view,
             alive: Arc::new(AtomicBool::new(true)),
-            size: Size::ZERO,
             pending: Vec::new(),
             frame: wire::Frame::default(),
+            frame_rev: 0,
+            inputs: Inputs::default(),
             due: Vec::new(),
             tickers: Vec::new(),
             inbox: Inbox::default(),
@@ -388,11 +386,17 @@ impl Guest {
         }
     }
 
+    /// What the user did to the tree, as the widgets report it: recorded
+    /// host-side (an input's text) and queued for the guest's next tick.
+    pub(crate) fn deliver(&mut self, output: Output) {
+        let event = self.inputs.apply(output);
+        self.pending.push(event);
+    }
+
     /// One redraw: deliver what is due, tick, answer the new requests, and
     /// say when the widget must be woken next. A guest with nothing to
-    /// deliver and no wish of its own to draw is not ticked at all — the
-    /// frame the host has is the frame it would draw — but it still says
-    /// when it next wants to run.
+    /// deliver is not ticked at all — the tree the host has is the tree it
+    /// would send — but it still says when it next wants to run.
     pub(crate) fn redraw(&mut self, now: Instant) -> Wake {
         if self.fault.is_some() {
             return Wake::default();
@@ -402,9 +406,6 @@ impl Guest {
             return self.wake(now);
         }
         self.deliver_due(now);
-        self.pending.push(wire::Event::Redraw {
-            elapsed_ms: clock::uptime_ms(now),
-        });
         self.tick();
         self.ticks += 1;
         self.recent.push_back(now);
@@ -470,36 +471,22 @@ impl Guest {
         }
     }
 
-    /// Nothing waiting, nothing ready, and the guest's own widgets did not ask
-    /// for a frame: this tick would only draw the frame the host already has.
+    /// Nothing waiting and nothing ready: this tick would only send the tree
+    /// the host already has. A guest that has never ticked has no tree to
+    /// keep, so its first redraw is never quiet.
     fn quiet(&self, now: Instant) -> bool {
-        self.pending.is_empty()
+        self.ticks > 0
+            && self.pending.is_empty()
             && self.inbox.lock().expect("inbox").is_empty()
             && !self.due.iter().any(|(at, _)| *at <= now)
             && !self.tickers.iter().any(|ticker| ticker.next <= now)
-            && !self.wants_frame(now)
-    }
-
-    /// Whether the guest's last frame asked to be drawn again by now.
-    fn wants_frame(&self, now: Instant) -> bool {
-        match self.frame.redraw {
-            wire::Redraw::Wait => false,
-            wire::Redraw::NextFrame => true,
-            wire::Redraw::At(ms) => clock::uptime_ms(now) >= ms,
-        }
     }
 
     fn next_wake(&self) -> Option<Instant> {
-        let own = match self.frame.redraw {
-            wire::Redraw::Wait => None,
-            wire::Redraw::NextFrame => Some(Instant::now()),
-            wire::Redraw::At(ms) => Some(clock::at_uptime_ms(ms)),
-        };
         self.due
             .iter()
             .map(|(at, _)| *at)
             .chain(self.tickers.iter().map(|ticker| ticker.next))
-            .chain(own)
             .min()
     }
 
@@ -718,21 +705,24 @@ impl Guest {
         self.fuel_used = FUEL_PER_TICK.saturating_sub(self.store.get_fuel().unwrap_or(0));
         match outcome {
             Ok(mut frame) => {
-                // The guest drew what the host already holds: keep those
-                // layers and take only what is new — requests, cancels, the
-                // next redraw it wants.
+                // The guest built the tree the host already holds: keep it
+                // and take only what is new — requests and cancels.
                 if frame.unchanged {
                     self.unchanged += 1;
-                    frame.layers = std::mem::take(&mut self.frame.layers);
+                    frame.root = self.frame.root.take();
+                } else {
+                    self.frame_rev += 1;
+                    if let Some(root) = &frame.root {
+                        self.inputs.adopt(root);
+                    }
                 }
                 self.frame = frame;
             }
             Err(error) => {
                 // With `panic = "abort"` a panic is a bare `unreachable`, so
-                // the reason is in the module's buffer or nowhere.
+                // the reason is what the guest's hook parked or nothing.
                 let trap = first_line(&error);
-                let reason =
-                    panic_message(&mut self.store, &self.memory, &self.panic_text).unwrap_or(trap);
+                let reason = panic_message(&mut self.store).unwrap_or(trap);
                 self.fault = Some(reason);
                 self.alive.store(false, Ordering::Relaxed);
                 FAULTED.fetch_add(1, Ordering::Relaxed);
@@ -741,66 +731,37 @@ impl Guest {
     }
 
     fn tick_inner(&mut self, bytes: &[u8]) -> wasmtime::Result<wire::Frame> {
-        let ptr = self.input_ptr.call(&mut self.store, bytes.len() as u32)? as usize;
-        // A guest chooses these offsets and lengths; the host must not index
-        // its own memory on the guest's word.
-        let input = window_mut(self.memory.data_mut(&mut self.store), ptr, bytes.len())?;
-        input.copy_from_slice(bytes);
-        let len = self.tick.call(&mut self.store, bytes.len() as u32)? as usize;
-        if len > MAX_FRAME_BYTES {
+        let frame = self.view.call_tick(&mut self.store, bytes)?;
+        if frame.len() > MAX_FRAME_BYTES {
             return Err(wasmtime::Error::msg("frame too large"));
         }
-        let ptr = self.output_ptr.call(&mut self.store, ())? as usize;
-        let frame = window(self.memory.data(&self.store), ptr, len)?;
-        let mut frame: wire::Frame = wire::decode(frame).map_err(wasmtime::Error::msg)?;
+        let len = frame.len();
+        let mut frame: wire::Frame = wire::decode(&frame).map_err(wasmtime::Error::msg)?;
         // The requests past the cap exist only so the guest learns it went
         // over; a million of them would be a million refusal strings, so the
         // host keeps enough to say so and drops the rest unanswered.
         frame.requests.truncate(2 * MAX_REQUESTS_PER_TICK);
-        // A frame that says it changed nothing must not carry layers the
-        // host would then draw unsanitized; it is treated as what it claims.
+        // A frame that says it changed nothing must not carry a tree the
+        // host would then lay out unsanitized; it is treated as what it
+        // claims.
         if frame.unchanged {
-            frame.layers.clear();
+            frame.root = None;
         } else {
             self.frame_bytes = len;
-            // The host's renderer panics on values a frame may carry and
-            // allocates by the sizes it is given; the guest chose every one.
-            wire::sanitize(&mut frame, [self.size.width, self.size.height]);
+            // The host lays out what it is given and allocates by the
+            // counts it is given; the guest chose every one.
+            wire::sanitize(&mut frame);
         }
         Ok(frame)
     }
 }
 
-/// The message the sdk's panic hook parked, if the module has the exports and
-/// something to say. Runs after a trap, so it buys its own fuel. A free
-/// function because `load` needs it before there is a `Guest`: a panic in the
-/// app's boot is a trap out of `init`.
-fn panic_message(
-    store: &mut Store<StoreLimits>,
-    memory: &wasmtime::Memory,
-    panic_text: &PanicText,
-) -> Option<String> {
-    let (ptr, len) = panic_text.clone()?;
-    let _ = store.set_fuel(FUEL_PER_TICK);
-    let ptr = ptr.call(&mut *store, ()).ok()? as usize;
-    let len = (len.call(&mut *store, ()).ok()? as usize).min(MAX_FAULT_BYTES);
-    let text = window(memory.data(&*store), ptr, len).ok()?;
-    let text = String::from_utf8_lossy(text);
-    // One line, like a trap's: the window shows it on every frame.
-    let text = text.lines().next().unwrap_or_default().to_string();
+/// The message the guest's panic hook handed over before the trap, if it
+/// had something to say. A free function because `load` needs it before
+/// there is a `Guest`: a panic in the app's boot is a trap out of `init`.
+fn panic_message(store: &mut Store<HostState>) -> Option<String> {
+    let text = store.data_mut().panic.take()?;
     (!text.is_empty()).then_some(text)
-}
-
-fn window(memory: &[u8], ptr: usize, len: usize) -> wasmtime::Result<&[u8]> {
-    ptr.checked_add(len)
-        .and_then(|end| memory.get(ptr..end))
-        .ok_or_else(|| wasmtime::Error::msg("a buffer outside the guest's memory"))
-}
-
-fn window_mut(memory: &mut [u8], ptr: usize, len: usize) -> wasmtime::Result<&mut [u8]> {
-    ptr.checked_add(len)
-        .and_then(|end| memory.get_mut(ptr..end))
-        .ok_or_else(|| wasmtime::Error::msg("a buffer outside the guest's memory"))
 }
 
 fn one_shot(id: u64, result: Result<Vec<u8>, String>) -> wire::Event {

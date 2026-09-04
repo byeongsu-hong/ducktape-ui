@@ -22,7 +22,7 @@ use std::task::{Context, Poll, Waker};
 
 use iced::futures::Stream;
 
-use crate::frame::Request;
+use crate::wire::Request;
 
 /// What one answer carries; the host's refusal is the `Err`.
 pub type Answer = Result<Vec<u8>, String>;

@@ -7,8 +7,10 @@ cd "$package_root"
 package_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' crates/ui-lang-core/Cargo.toml)
 packages=(
   ui-lang-template
+  ui-lang-wire
   ui-lang-core
   ui-lang-runtime
+  ui-lang-guest
   ui-lang-components
   ui-lang-build
   ui-lang
@@ -42,12 +44,20 @@ runtime_patch=(
 template_patch=(
   --config "patch.crates-io.ui-lang-template.path=\"$package_root/crates/ui-lang-template\""
 )
+# The tree a view module ships. The runtime renders it and the guest builds
+# it, so both and everything above the runtime need the patch.
+wire_patch=(
+  --config "patch.crates-io.ui-lang-wire.path=\"$package_root/crates/ui-lang-wire\""
+)
 
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-template
+cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-wire
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-core "${template_patch[@]}"
-cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-runtime "${template_patch[@]}"
+cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-runtime \
+  "${template_patch[@]}" "${wire_patch[@]}"
+cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-guest "${wire_patch[@]}"
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-components \
-  "${runtime_patch[@]}" "${template_patch[@]}"
+  "${runtime_patch[@]}" "${template_patch[@]}" "${wire_patch[@]}"
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang-build \
   "${core_patch[@]}" "${template_patch[@]}"
 cargo package --locked --no-verify "${dirty_args[@]}" -p ui-lang \
@@ -87,6 +97,9 @@ packaged_runtime_patch=(
 packaged_template_patch=(
   --config "patch.crates-io.ui-lang-template.path=\"$package_scratch/ui-lang-template-$package_version\""
 )
+packaged_wire_patch=(
+  --config "patch.crates-io.ui-lang-wire.path=\"$package_scratch/ui-lang-wire-$package_version\""
+)
 
 check_package() {
   local package=$1
@@ -109,10 +122,14 @@ check_package_features() {
 }
 
 check_package ui-lang-template
+check_package ui-lang-wire
 check_package ui-lang-core "${packaged_template_patch[@]}"
-check_package ui-lang-runtime "${packaged_template_patch[@]}"
-check_package_features ui-lang-runtime data-grid,x11 "${packaged_template_patch[@]}"
-check_package ui-lang-components "${packaged_runtime_patch[@]}" "${packaged_template_patch[@]}"
+check_package ui-lang-runtime "${packaged_template_patch[@]}" "${packaged_wire_patch[@]}"
+check_package_features ui-lang-runtime data-grid,x11 \
+  "${packaged_template_patch[@]}" "${packaged_wire_patch[@]}"
+check_package ui-lang-guest "${packaged_wire_patch[@]}"
+check_package ui-lang-components "${packaged_runtime_patch[@]}" "${packaged_template_patch[@]}" \
+  "${packaged_wire_patch[@]}"
 check_package ui-lang-build "${packaged_patches[@]}" "${packaged_template_patch[@]}"
 check_package ui-lang "${packaged_patches[@]}" "${packaged_build_patch[@]}" \
   "${packaged_template_patch[@]}"

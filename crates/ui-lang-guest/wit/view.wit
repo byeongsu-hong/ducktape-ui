@@ -1,0 +1,11 @@
+package ice:view@0.1.0;
+
+world view {
+    // The guest's panic hook hands the host its message before the abort
+    // that follows: a trapped instance can never be entered again, so the
+    // message has to leave first.
+    import panicked: func(message: string);
+
+    export init: func();
+    export tick: func(events: list<u8>) -> list<u8>;
+}

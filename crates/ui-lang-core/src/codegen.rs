@@ -635,6 +635,18 @@ fn comparable_type(program: &LoweredProgram, ty: &Type) -> bool {
     }
 }
 
+/// What an Ice application compiles to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Target {
+    /// iced widgets, run by `ui-lang-runtime` in a native window.
+    #[default]
+    Native,
+    /// A `ui-lang-wire` tree, built inside a wasm view module and rendered
+    /// by whichever host loads it. Only the view differs: state, handlers
+    /// and tasks compile the same way.
+    Tree,
+}
+
 /// A view published as data, with the fingerprint that decides whether a
 /// running process can accept it.
 #[derive(Clone, Debug)]
@@ -703,13 +715,21 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         rust_string(source_path)
     )
     .unwrap();
-    match &program.settings().renderer {
-        ResolvedRendererSelection::Default => writeln!(
+    match (program.target(), &program.settings().renderer) {
+        // Every generic parameter is spent on a projection that normalizes
+        // to the wire's `Node`, so the view code that names
+        // `__IceElement<'_, Message>` builds trees without knowing it.
+        (Target::Tree, _) => writeln!(
+            out,
+            "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_guest::wire::Erase>::Node;"
+        )
+        .unwrap(),
+        (Target::Native, ResolvedRendererSelection::Default) => writeln!(
             out,
             "type __IceRenderer = ::iced::Renderer; type __IceElement<'a, Message, Theme = ::iced::Theme> = ::iced::Element<'a, Message, Theme, __IceRenderer>;"
         )
         .unwrap(),
-        ResolvedRendererSelection::Custom { path, origin } => writeln!(
+        (Target::Native, ResolvedRendererSelection::Custom { path, origin }) => writeln!(
             out,
             "{}\ntype __IceRenderer = {path}; type __IceElement<'a, Message, Theme = ::iced::Theme> = ::iced::Element<'a, Message, Theme, __IceRenderer>;\n{SOURCE_MARKER_END}",
             source_marker_origin(program, *origin)
@@ -1344,17 +1364,21 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     } else {
         "::iced::Application"
     };
-    writeln!(
-        out,
-        "fn __program() -> {program_kind}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{"
-    )
-    .unwrap();
-    writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}").unwrap();
-    writeln!(
-        out,
-        "}}\n#[allow(dead_code)]\npub fn run() -> ::iced::Result {{\nSelf::__program().run()\n}}"
-    )
-    .unwrap();
+    // A view module has no window to run in: its host drives it through the
+    // wire, so the iced program and `run` exist only natively.
+    if program.target() == Target::Native {
+        writeln!(
+            out,
+            "fn __program() -> {program_kind}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{"
+        )
+        .unwrap();
+        writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}").unwrap();
+        writeln!(
+            out,
+            "}}\n#[allow(dead_code)]\npub fn run() -> ::iced::Result {{\nSelf::__program().run()\n}}"
+        )
+        .unwrap();
+    }
 
     // rustc re-checks a macro expansion as a unit, so every item the generator
     // writes into one `__ice_generated_items_*!` invocation shares one fate: a

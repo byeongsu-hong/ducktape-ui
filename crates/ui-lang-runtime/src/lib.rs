@@ -34,6 +34,7 @@ pub mod testing;
 pub mod testing;
 pub mod tray;
 mod tree_view;
+pub mod view_tree;
 mod virtual_children;
 mod virtual_list;
 mod virtual_scroll;

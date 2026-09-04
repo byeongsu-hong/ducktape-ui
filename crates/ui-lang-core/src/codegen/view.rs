@@ -283,8 +283,10 @@ pub(in crate::codegen) fn render_node(
 ) -> Result<String, Error> {
     let view = document.resolved_view(node)?;
     let rendered = if let Some(rendered) =
-        render_foundation(node, document, message, env, scope, slot)?
+        render_tree_node(node, document, message, env, scope, slot)?
     {
+        rendered
+    } else if let Some(rendered) = render_foundation(node, document, message, env, scope, slot)? {
         rendered
     } else if let Some(rendered) = render_controls(node, document, message, env, scope, slot)? {
         rendered
@@ -343,6 +345,7 @@ mod structure;
 mod table;
 mod text;
 mod themer_shader;
+mod tree;
 
 pub(super) use boolean::*;
 pub(super) use button::*;
@@ -365,3 +368,4 @@ pub(super) use structure::*;
 pub(super) use table::*;
 pub(super) use text::*;
 pub(super) use themer_shader::*;
+pub(super) use tree::*;

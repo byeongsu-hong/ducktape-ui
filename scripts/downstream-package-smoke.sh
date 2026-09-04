@@ -6,6 +6,7 @@ fixture_root="$package_root/tests/downstream-app"
 package_version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$package_root/crates/ui-lang-core/Cargo.toml")
 packages=(
   ui-lang-template
+  ui-lang-wire
   ui-lang-core
   ui-lang-runtime
   ui-lang-components
@@ -15,6 +16,7 @@ packages=(
 )
 consumer_packages=(
   ui-lang-template
+  ui-lang-wire
   ui-lang-core
   ui-lang-runtime
   ui-lang-components

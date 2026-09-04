@@ -165,6 +165,11 @@ pub(crate) struct ResolvedStyle {
 }
 
 impl ResolvedStyle {
+    /// No utility touched this node.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.set_properties == 0
+    }
+
     fn apply(&mut self, utility: &ResolvedUtility) {
         use ResolvedStyleProperty as Property;
         use ResolvedStyleVariantKind as Variant;
