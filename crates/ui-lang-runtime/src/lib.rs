@@ -4884,15 +4884,26 @@ mod tests {
         ])
         .expect("invoke exported AT-SPI action");
 
-        let mut routed = None;
+        // The AT's first query activated the adapter, and activation puts a
+        // refresh on the channel ahead of anything the AT does next; the
+        // click routed through AT-SPI is the first request after it.
+        let mut routed = Vec::new();
         for _ in 0..20 {
-            if let Ok(request) = receiver.try_recv() {
-                routed = Some(request);
+            while let Ok(request) = receiver.try_recv() {
+                routed.push(request);
+            }
+            let click_arrived = routed.iter().any(|request| !is_refresh_request(request));
+            if click_arrived {
                 break;
             }
             thread::sleep(Duration::from_millis(25));
         }
-        let request = routed.expect("native AT-SPI action was not routed to Iced");
+        let refresh_arrived = routed.iter().any(is_refresh_request);
+        assert!(refresh_arrived, "activation did not ask for a fresh tree");
+        let request = routed
+            .into_iter()
+            .find(|request| !is_refresh_request(request))
+            .expect("native AT-SPI action was not routed to Iced");
         assert_eq!(request.action, Action::Click);
         assert_eq!(request.target_node, id);
     }
