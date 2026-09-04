@@ -4,7 +4,7 @@ use crate::semantic::*;
 use crate::{Error, canonical_snake};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const RECONCILIATION_SCOPE_BINDING: &str = "\0__ice_reconciliation_scope";
 const SOURCE_MARKER: &str = "// __ICE_SOURCE ";
@@ -108,7 +108,7 @@ fn source_mapped_expression_origin(
         |path| {
             format!(
                 "::ui_lang_runtime::testing::Location::new({}, {}, {}, \"rendered view node\")",
-                rust_string(&path.display().to_string()),
+                rust_string(&shown_path(path)),
                 origin_value.line,
                 origin_value.column
             )
@@ -136,7 +136,7 @@ pub(in crate::codegen) fn span_location_code(
 ) -> String {
     let origin = program.origin(origin);
     match &origin.path {
-        Some(path) => rust_string(&format!("{}:{}", path.display(), origin.line)),
+        Some(path) => rust_string(&format!("{}:{}", shown_path(path), origin.line)),
         None => format!(
             "{SPAN_LOCATION_MARKER}{}{SPAN_LOCATION_MARKER_END}",
             origin.line
@@ -164,14 +164,30 @@ fn resolve_span_location_markers(
             continue;
         };
         let (path, line) = document.source_origin(merged_line).map_or_else(
-            || (source_path.to_owned(), merged_line),
-            |(path, line)| (path.display().to_string(), line),
+            || (shown_path(Path::new(source_path)), merged_line),
+            |(path, line)| (shown_path(path), line),
         );
         output.push_str(&rust_string(&format!("{path}:{line}")));
         remaining = &marker[end + SPAN_LOCATION_MARKER_END.len()..];
     }
     output.push_str(remaining);
     output
+}
+
+/// A `.ice` path as a compiled artifact SHOWS it: in `dev::Span` locations,
+/// panic reports and test render sources. Relative to the package cargo is
+/// building (`CARGO_MANIFEST_DIR`, set for every build script) so the same
+/// source compiles to the same bytes on every box — a wasm guest built at
+/// home must not carry `/home/<user>/...` into the module it ships as. Outside
+/// a cargo build (tests, the LSP) the path stays as given. Asset paths are
+/// NOT shown paths: `include_bytes!` needs the real one.
+fn shown_path(path: &Path) -> String {
+    let manifest = std::env::var_os("CARGO_MANIFEST_DIR").map(PathBuf::from);
+    manifest
+        .and_then(|manifest| path.strip_prefix(manifest).ok())
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 pub(crate) fn encode_source_path(path: &str) -> String {
@@ -298,8 +314,8 @@ fn resolve_render_source_markers(
             continue;
         };
         let (path, line) = document.source_origin(line).map_or_else(
-            || (source_path.to_owned(), line),
-            |(path, line)| (path.display().to_string(), line),
+            || (shown_path(Path::new(source_path)), line),
+            |(path, line)| (shown_path(path), line),
         );
         write!(
             output,

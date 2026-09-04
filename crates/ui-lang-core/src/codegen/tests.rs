@@ -192,3 +192,16 @@ mod route_snapshots;
 mod sum_types;
 #[path = "tests/testing.rs"]
 mod testing;
+
+#[test]
+fn shown_paths_are_manifest_relative_and_foreign_paths_stay_whole() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    assert_eq!(
+        super::shown_path(&manifest.join("src/ui/app.ice")),
+        "src/ui/app.ice"
+    );
+    assert_eq!(
+        super::shown_path(std::path::Path::new("/elsewhere/app.ice")),
+        "/elsewhere/app.ice"
+    );
+}
