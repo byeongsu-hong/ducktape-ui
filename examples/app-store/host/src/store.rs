@@ -20,12 +20,34 @@ use wasmtime::{
     Cache, CacheConfig, Config, Engine, OptLevel, Store, StoreLimits, StoreLimitsBuilder,
 };
 
-// The `ice:view` world, as `export_app!` exports it: `init`, `tick` and
-// `last-panic`, generated into a `View` with one `call_*` per export.
+// The `ice:view` world, as `export_app!` exports it: `init` and `tick`,
+// generated into a `View` with one `call_*` per export, and the `panicked`
+// import the guest's panic hook calls, as a trait the store's data implements.
 wasmtime::component::bindgen!({
     path: "../../../crates/ui-lang-guest/wit/view.wit",
     world: "view",
 });
+
+/// What a guest's store holds: its limits, and the message its panic hook
+/// handed over — read after the trap that follows, when the instance can no
+/// longer be asked.
+struct HostState {
+    limits: StoreLimits,
+    panic: Option<String>,
+}
+
+impl ViewImports for HostState {
+    fn panicked(&mut self, message: String) {
+        // One line, like a trap's, and no longer than the window shows.
+        let line = message.lines().next().unwrap_or_default();
+        let cut = line
+            .char_indices()
+            .map(|(at, _)| at)
+            .find(|at| *at > MAX_FAULT_BYTES)
+            .unwrap_or(line.len());
+        self.panic = Some(line[..cut].to_string());
+    }
+}
 
 pub use crate::catalog::{
     Capability, CatalogEntry, StoreError, capability_hint, catalog_dir, find_entry, scan_catalog,
@@ -145,7 +167,7 @@ pub(crate) struct Wake {
 pub struct Guest {
     /// Kept whole so a faulted instance can be reloaded in place.
     entry: CatalogEntry,
-    store: Store<StoreLimits>,
+    store: Store<HostState>,
     view: View,
     /// Cleared when this instance faults or drops, which is what prunes its
     /// bus subscriptions without locking the guest from inside a publish.
@@ -285,24 +307,35 @@ impl Guest {
             .table_elements(1 << 20)
             .trap_on_grow_failure(true)
             .build();
-        let mut store = Store::new(engine, limits);
-        store.limiter(|limits| limits);
+        let mut store = Store::new(
+            engine,
+            HostState {
+                limits,
+                panic: None,
+            },
+        );
+        store.limiter(|state| &mut state.limits);
         store
             .set_fuel(FUEL_PER_TICK)
             .map_err(|error| error.to_string())?;
-        // A component imports nothing the world names; anything else it
-        // asks for traps if it is ever called.
+        // The world's one import is the panic hook's; anything else the
+        // component asks for traps if it is ever called.
         let mut linker = Linker::new(engine);
+        View::add_to_linker::<HostState, wasmtime::component::HasSelf<HostState>>(
+            &mut linker,
+            |state| state,
+        )
+        .map_err(|error| error.to_string())?;
         linker
             .define_unknown_imports_as_traps(&component)
             .map_err(|error| error.to_string())?;
         let view = View::instantiate(&mut store, &component, &linker)
             .map_err(|error| format!("{path}: {}", first_line(&error)))?;
         // `on mount` runs in here, so a panic in the app's boot has the same
-        // message parked as a panic in any later tick.
+        // message handed over as a panic in any later tick.
         if let Err(error) = view.call_init(&mut store) {
             let trap = format!("{path}: init trapped: {}", first_line(&error));
-            return Err(panic_message(&mut store, &view).unwrap_or(trap));
+            return Err(panic_message(&mut store).unwrap_or(trap));
         }
         LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
         Ok(Self {
@@ -689,7 +722,7 @@ impl Guest {
                 // With `panic = "abort"` a panic is a bare `unreachable`, so
                 // the reason is what the guest's hook parked or nothing.
                 let trap = first_line(&error);
-                let reason = panic_message(&mut self.store, &self.view).unwrap_or(trap);
+                let reason = panic_message(&mut self.store).unwrap_or(trap);
                 self.fault = Some(reason);
                 self.alive.store(false, Ordering::Relaxed);
                 FAULTED.fetch_add(1, Ordering::Relaxed);
@@ -723,21 +756,11 @@ impl Guest {
     }
 }
 
-/// The message the guest's panic hook parked, if it has something to say.
-/// Runs after a trap, so it buys its own fuel. A free function because
-/// `load` needs it before there is a `Guest`: a panic in the app's boot is a
-/// trap out of `init`.
-fn panic_message(store: &mut Store<StoreLimits>, view: &View) -> Option<String> {
-    let _ = store.set_fuel(FUEL_PER_TICK);
-    let text = view.call_last_panic(&mut *store).ok()?;
-    // One line, like a trap's: the window shows it on every frame.
-    let text = text.lines().next().unwrap_or_default();
-    let cut = text
-        .char_indices()
-        .map(|(at, _)| at)
-        .find(|at| *at > MAX_FAULT_BYTES)
-        .unwrap_or(text.len());
-    let text = text[..cut].to_string();
+/// The message the guest's panic hook handed over before the trap, if it
+/// had something to say. A free function because `load` needs it before
+/// there is a `Guest`: a panic in the app's boot is a trap out of `init`.
+fn panic_message(store: &mut Store<HostState>) -> Option<String> {
+    let text = store.data_mut().panic.take()?;
     (!text.is_empty()).then_some(text)
 }
 

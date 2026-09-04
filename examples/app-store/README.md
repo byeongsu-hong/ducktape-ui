@@ -131,7 +131,8 @@ Target::Tree)`): the generated view builds `ui_lang_wire` nodes instead of
 iced widgets, and a construct the wire does not carry fails the build at
 its `.ice` line. `export_app!` implements the guest crate's `App` trait over
 the generated `__boot` / `__view` / `__update`, emits the `ice:view`
-component exports (`init`, `tick`, `last-panic`), and writes name,
+component exports (`init`, `tick`, and the `panicked` import the guest's
+panic hook calls before it aborts), and writes name,
 description and capabilities into an `ice.manifest` custom section, so the
 catalog lists the app — and shows what it will touch — by reading the
 file: no compilation, no instantiation.
@@ -256,7 +257,9 @@ allocated at its declared minimum when the component is instantiated,
 before any other limit is consulted. An app that spins burns its budget
 and traps; an app that allocates past the limit traps on the grow. A trap
 ends that instance — its window shows the reason (the message the guest's
-panic hook parked, read back through `last-panic`) and a Restart button
+panic hook handed the host through `panicked` on its way out: a trapped
+instance can never be entered again, so nothing is read back) and a
+Restart button
 that asks the store to reload the component on its executor, where the
 compile does not stall the window, and swap it into the same handle,
 keeping the window and everything the app wrote to storage — and nothing

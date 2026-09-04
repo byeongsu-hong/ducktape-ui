@@ -1,14 +1,11 @@
 package ice:view@0.1.0;
 
-/// An Ice app running as a view module. It has no imports: everything it
-/// wants from the host rides the frame `tick` returns as requests, answered
-/// by the events the next `tick` carries. Payloads are `ui-lang-wire`
-/// values, bincode-encoded.
 world view {
-    /// Builds the app and runs its `on mount` work. Once, before any tick.
+    // The guest's panic hook hands the host its message before the abort
+    // that follows: a trapped instance can never be entered again, so the
+    // message has to leave first.
+    import panicked: func(message: string);
+
     export init: func();
-    /// Delivers a `list<event>` and returns the `frame` it produced.
     export tick: func(events: list<u8>) -> list<u8>;
-    /// The message of the panic that trapped the last call, or empty.
-    export last-panic: func() -> string;
 }

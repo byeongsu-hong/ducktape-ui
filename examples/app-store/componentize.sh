@@ -37,6 +37,8 @@ for module in "$release"/app_store_*.wasm; do
   wat=$(mktemp); wasm-tools print "$module" > "$wat"
   adapters=()
   for import in $(grep -o '^  (import "[^"]*"' "$wat" | cut -d'"' -f2 | sort -u); do
+    # `$root` is the world's own import list — the host provides those.
+    [ "$import" = '$root' ] && continue
     stub=$(mktemp --suffix=.wasm)
     { echo "(module"; stub_for "$wat" "$import"; echo ")"; } | wasm-tools parse -o "$stub"
     adapters+=(--adapt "$import=$stub")

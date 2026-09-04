@@ -276,8 +276,6 @@ macro_rules! export_app {
         thread_local! {
             static __ICE_DRIVER: ::std::cell::RefCell<Option<$crate::Driver<__IceApp>>> =
                 const { ::std::cell::RefCell::new(None) };
-            static __ICE_PANIC: ::std::cell::RefCell<::std::string::String> =
-                const { ::std::cell::RefCell::new(::std::string::String::new()) };
         }
 
         pub fn boot_native() {
@@ -294,9 +292,10 @@ macro_rules! export_app {
                 inline: "package ice:view@0.1.0;
 
 world view {
+    import panicked: func(message: string);
+
     export init: func();
     export tick: func(events: list<u8>) -> list<u8>;
-    export last-panic: func() -> string;
 }
 ",
                 runtime_path: "::ui_lang_guest::wit_bindgen::rt",
@@ -306,6 +305,9 @@ world view {
 
             impl Guest for __IceComponent {
                 fn init() {
+                    // A trapped instance can never be entered again, so the
+                    // message leaves through the host's import before the
+                    // abort that follows the hook.
                     ::std::panic::set_hook(::std::boxed::Box::new(|info| {
                         let payload = info.payload();
                         let message = payload
@@ -317,7 +319,7 @@ world view {
                             .location()
                             .map(|location| ::std::format!("{}:{}", location.file(), location.line()))
                             .unwrap_or_else(|| "unknown".into());
-                        super::__ICE_PANIC.with(|text| *text.borrow_mut() = ::std::format!("{message} at {at}"));
+                        panicked(&::std::format!("{message} at {at}"));
                     }));
                     super::boot_native();
                 }
@@ -331,10 +333,6 @@ world view {
                         frame.root = None;
                     }
                     $crate::wire::encode(&frame)
-                }
-
-                fn last_panic() -> ::std::string::String {
-                    super::__ICE_PANIC.with(|text| text.borrow().clone())
                 }
             }
 
@@ -354,7 +352,7 @@ mod tests {
         let inline = &source[start..end];
         let file: String = super::WIT
             .lines()
-            .filter(|line| !line.trim_start().starts_with("///"))
+            .filter(|line| !line.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(inline.trim(), file.trim());
