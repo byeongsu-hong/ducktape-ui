@@ -2,7 +2,7 @@
 name = "ui-lang-wire"
 version = "0.1.0"
 edition.workspace = true
-description = "The wire between a host and an Ice app running in wasm: events in, a frame of quads and laid-out text lines out, requests and responses beside"
+description = "The wire between a host and an Ice app running in wasm: a widget tree out, meaning-level events in, requests and responses beside"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true

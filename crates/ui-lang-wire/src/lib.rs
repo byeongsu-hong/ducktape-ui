@@ -1,65 +1,36 @@
-//! The wire between a view running in wasm and the host that draws it.
+//! The wire between a host and an Ice app running in wasm.
 //!
-//! Two messages cross the boundary. Inward, a batch of [`Event`]s — the
-//! pointer, keys and the viewport, already translated into the guest's own
-//! coordinates. Outward, a [`Frame`]: what the guest's iced laid out and would
-//! have drawn, as flat lists the host replays with its own renderer.
+//! The guest ships a WIDGET TREE, not a picture: every tick it returns the
+//! [`Node`] its view built, with every value inlined — text, colours, sizes —
+//! and the host's own toolkit does layout, render, fonts, IME, clipboard and
+//! scroll. The guest never learns where anything landed, which is the point:
+//! there is nothing in it to draw with.
 //!
-//! Text crosses as laid-out lines, not glyphs: the guest has already decided
-//! where every line breaks and sits, the host only shapes one line at a time
-//! with the same font. That keeps the host renderer-agnostic — a wgpu host
-//! draws the frame as well as a tiny-skia one — at the price of one shaping
-//! pass per visible line, which iced's text cache dedups across frames.
+//! Interaction goes back as MEANING, not input. A button carries the index of
+//! the message the guest queued for it this frame ([`Node::Button`]'s
+//! `on_press`); the host sends [`Event::Message`] with that index and the
+//! guest runs its own handler. A text field carries a handler index; the host
+//! owns the text and sends [`Event::Input`] with what it now reads.
 //!
-//! Externally tagged enums on purpose: bincode cannot decode an internally
-//! tagged one, and serde's `Content` buffering for internal tags was where a
-//! JSON node tree spent 90% of its decode time.
+//! The types here are the one definition of the format: the guest serializes
+//! them and the host deserializes the same code, so a field neither side can
+//! drop silently. A host that reads a frame from an untrusted module runs
+//! [`sanitize`] first.
 
 use serde::{Deserialize, Serialize};
 
-pub type Rect = [f32; 4];
-pub type Rgba = [f32; 4];
-
+/// Something the host tells the guest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
-    /// The viewport the guest lays out into, in logical pixels.
-    Resized {
-        width: f32,
-        height: f32,
-    },
-    CursorMoved {
-        x: f32,
-        y: f32,
-    },
-    CursorLeft,
-    CursorEntered,
-    ButtonPressed(Button),
-    ButtonReleased(Button),
-    WheelLines {
-        x: f32,
-        y: f32,
-    },
-    WheelPixels {
-        x: f32,
-        y: f32,
-    },
-    KeyPressed {
-        key: Key,
-        modifiers: u32,
-        text: Option<String>,
-    },
-    KeyReleased {
-        key: Key,
-        modifiers: u32,
-    },
-    /// The host's modifier state, so a guest that missed a key release does
-    /// not keep thinking Shift is down.
-    ModifiersChanged(u32),
-    /// Runs the guest's redraw-time work (animations, caret blink).
-    /// `elapsed_ms` is the host's uptime: the guest has no clock of its own.
-    Redraw {
-        elapsed_ms: u64,
-    },
+    /// The user activated the widget the guest gave this message index to
+    /// (a button press, an input submit). Indices are per frame: they name
+    /// entries in the table the guest filled while building the tree it
+    /// last sent.
+    Message(u32),
+    /// A text field's content changed. `handler` indexes the guest's
+    /// per-frame input-handler table; `text` is the whole value the host now
+    /// holds.
+    Input { handler: u32, text: String },
     /// One answer to a [`Request`]. A one-shot request gets exactly one with
     /// `done`; a subscription gets many, the last one `done`.
     Response {
@@ -71,9 +42,7 @@ pub enum Event {
 
 /// Something the guest asked the host for. The guest never blocks on it: a
 /// future (or stream) inside the guest waits for the matching
-/// [`Event::Response`]s, which the host delivers on its own schedule — the
-/// next frame for an echo, a second later for a timer, whenever another app
-/// publishes for a bus subscription.
+/// [`Event::Response`]s, which the host delivers on its own schedule.
 ///
 /// `kind` is `<capability>.<operation>`; the host refuses a capability the
 /// app's manifest did not declare.
@@ -84,121 +53,60 @@ pub struct Request {
     pub payload: Vec<u8>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Button {
-    Left,
-    Right,
-    Middle,
-}
-
-/// The keys a view actually acts on. Anything else arrives as `Unidentified`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Key {
-    Character(String),
-    Enter,
-    Tab,
-    Space,
-    Backspace,
-    Delete,
-    Escape,
-    ArrowUp,
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    Shift,
-    Control,
-    Alt,
-    Super,
-    Unidentified,
-}
-
+/// What one tick of the guest produced.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
-    pub layers: Vec<Layer>,
-    /// The guest's mouse interaction (0 = idle, 1 = pointer, 2 = text, 3 = grab).
-    pub interaction: u8,
+    /// The tree to show. `None` with `unchanged` set means "what you have".
+    pub root: Option<Node>,
     /// What the guest asked for while producing this frame.
     pub requests: Vec<Request>,
     /// Requests the guest stopped waiting on — a dropped future or stream.
     /// The host frees whatever it kept for them and sends no more answers.
     pub cancels: Vec<u64>,
-    /// When the guest's own widgets want to draw again — a caret blink, a
-    /// hover transition — independently of anything the host delivers. A
-    /// guest with nothing pending is ticked only when this says so.
-    pub redraw: Redraw,
-    /// `layers` is empty because nothing drawn changed since the last frame:
-    /// the host keeps the layers it already has instead of decoding them
-    /// again. Requests, cancels and the redraw request still cross.
+    /// `root` is `None` because the tree is the one the guest sent last:
+    /// the host keeps what it has instead of decoding it again. Requests and
+    /// cancels still cross.
     pub unchanged: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub enum Redraw {
-    /// Nothing until the host has something to deliver.
-    #[default]
-    Wait,
-    /// As soon as the host draws next.
-    NextFrame,
-    /// At this host uptime, in milliseconds.
-    At(u64),
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Layer {
-    /// Clip bounds in guest coordinates.
-    pub bounds: Rect,
-    pub quads: Vec<Quad>,
-    pub texts: Vec<Text>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Quad {
-    pub bounds: Rect,
-    pub background: Rgba,
-    pub border_color: Rgba,
-    pub border_width: f32,
-    /// top-left, top-right, bottom-right, bottom-left
-    pub radius: [f32; 4],
-    pub shadow_color: Rgba,
-    pub shadow_offset: [f32; 2],
-    pub shadow_blur: f32,
-    pub snap: bool,
-}
-
-/// One laid-out line of text.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Text {
-    pub content: String,
-    /// The anchor point; which corner or edge it is depends on `anchor`.
-    pub x: f32,
-    pub y: f32,
-    /// How the host must align the shaped text to `(x, y)`.
-    pub anchor: Anchor,
-    pub size: f32,
-    pub line_height: f32,
-    pub font: Font,
-    pub color: Rgba,
-    pub clip: Rect,
-}
-
-/// Text laid out by the guest's paragraphs is anchored top-left at its line
-/// box; text the guest's widgets drew directly (a placeholder, a caret glyph)
-/// keeps the alignment they asked for.
+/// Red, green, blue, alpha in `0.0..=1.0`. The guest resolves its own
+/// palette; the host paints what it is told.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Anchor {
-    pub x: AlignX,
-    pub y: AlignY,
+pub struct Rgba(pub [f32; 4]);
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Length {
+    Fill,
+    FillPortion(u16),
+    Shrink,
+    Fixed(f32),
 }
 
-impl Anchor {
-    pub const TOP_LEFT: Self = Self {
-        x: AlignX::Left,
-        y: AlignY::Top,
-    };
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Edges {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
+impl Edges {
+    pub const fn all(value: f32) -> Self {
+        Self {
+            top: value,
+            right: value,
+            bottom: value,
+            left: value,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Border {
+    pub color: Rgba,
+    pub width: f32,
+    /// top-left, top-right, bottom-right, bottom-left.
+    pub radius: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -215,197 +123,450 @@ pub enum AlignY {
     Bottom,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Axis {
+    Column,
+    Row,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ScrollDirection {
+    Vertical,
+    Horizontal,
+    Both,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Weight {
+    #[default]
+    Normal,
+    Medium,
+    Semibold,
+    Bold,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Font {
-    /// Family name as fontdb knows it; `None` is the host's default family.
-    pub family: Option<String>,
-    pub weight: u16,
-    pub italic: bool,
     pub monospace: bool,
+    pub weight: Weight,
 }
 
-// ---------- what the host may draw ----------
+/// One state of a button or input.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Face {
+    pub background: Option<Rgba>,
+    pub text: Option<Rgba>,
+    pub border: Option<Border>,
+}
 
-/// How far outside its window a guest's drawing may reach, as a multiple of
-/// the window's longest side. A scrolled row or a shadow legitimately hangs
-/// off the window; a quad a thousand windows wide is a buffer the host would
-/// have to allocate for nothing anyone can see.
-const REACH: f32 = 2.0;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ButtonStyle {
+    pub active: Face,
+    pub hovered: Option<Face>,
+    pub pressed: Option<Face>,
+    pub disabled: Option<Face>,
+}
 
-/// A shadow costs a buffer the size of the quad plus this on every side.
-const MAX_BLUR: f32 = 64.0;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InputFace {
+    pub background: Option<Rgba>,
+    pub border: Option<Border>,
+    pub value: Option<Rgba>,
+    pub placeholder: Option<Rgba>,
+    pub selection: Option<Rgba>,
+}
 
-/// Text is rasterised glyph by glyph at this size and kept in the host's
-/// glyph cache; zero is an assertion inside cosmic-text.
-const MAX_TEXT: f32 = 128.0;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InputStyle {
+    pub active: InputFace,
+    pub hovered: Option<InputFace>,
+    pub focused: Option<InputFace>,
+    pub disabled: Option<InputFace>,
+}
 
-/// No display is this wide, and every geometry cap is a multiple of it.
-const MAX_WINDOW: f32 = 8192.0;
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ButtonContent {
+    Label(String),
+    Child(Box<Node>),
+}
 
-/// What one frame may cost the host to *draw*, which the byte cap does not
-/// bound: 8 MiB holds about 90 000 quads, and filling that many window-sized
-/// ones is minutes of pixel writes per redraw.
-const MAX_QUADS: usize = 16_384;
+/// One widget. `key` is the node's identity across frames — the
+/// accessibility path the compiler already computes (`App/content/count`)
+/// — which the host uses for widget state (focus, caret, scroll) and for
+/// the accessibility tree.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Node {
+    Container {
+        key: String,
+        width: Option<Length>,
+        height: Option<Length>,
+        padding: Option<Edges>,
+        align_x: Option<AlignX>,
+        align_y: Option<AlignY>,
+        background: Option<Rgba>,
+        border: Option<Border>,
+        content: Box<Node>,
+    },
+    Linear {
+        key: String,
+        axis: Axis,
+        spacing: Option<f32>,
+        padding: Option<Edges>,
+        width: Option<Length>,
+        height: Option<Length>,
+        /// Cross-axis alignment of the children.
+        align: Option<AlignX>,
+        children: Vec<Node>,
+    },
+    Scroll {
+        key: String,
+        direction: ScrollDirection,
+        width: Option<Length>,
+        height: Option<Length>,
+        content: Box<Node>,
+    },
+    Text {
+        key: String,
+        content: String,
+        size: Option<f32>,
+        color: Option<Rgba>,
+        font: Font,
+        width: Option<Length>,
+        align_x: Option<AlignX>,
+    },
+    Input {
+        key: String,
+        placeholder: String,
+        /// The guest's copy of the text. The host owns the live value and
+        /// adopts this only when it differs from what the guest reported
+        /// last frame.
+        value: String,
+        on_input: u32,
+        on_submit: Option<u32>,
+        width: Option<Length>,
+        secure: bool,
+        style: InputStyle,
+    },
+    Button {
+        key: String,
+        content: ButtonContent,
+        /// `None` is a disabled button.
+        on_press: Option<u32>,
+        width: Option<Length>,
+        height: Option<Length>,
+        padding: Option<Edges>,
+        style: ButtonStyle,
+    },
+    Space {
+        width: Option<Length>,
+        height: Option<Length>,
+    },
+    Rule {
+        key: String,
+        axis: Axis,
+        thickness: f32,
+        color: Option<Rgba>,
+    },
+}
 
-/// Every line is shaped by cosmic-text on the host's own thread.
-const MAX_TEXTS: usize = 4_096;
+/// Spends generic parameters on nothing: `<(&'a (), M, T) as Erase>::Node`
+/// is [`Node`] for every `'a`, `M` and `T`. Generated code names its element
+/// type `__IceElement<'a, Message, Theme>` for both targets, and a type
+/// alias may not drop a parameter, so the tree target's alias projects
+/// through this instead.
+pub trait Erase {
+    type Node;
+}
 
-/// One 8 MB line is 8 M glyphs to shape; a window holds a few thousand
-/// characters. Counted over the frame, so neither one long line nor many
-/// medium ones gets through.
-const MAX_TEXT_BYTES: usize = 64 << 10;
+impl<T: ?Sized> Erase for T {
+    type Node = Node;
+}
 
-/// A shadow is an SDF buffer the size of the quad plus its blur on every
-/// side, built in full before anything is clipped — a megapixel of it is tens
-/// of milliseconds of the window thread. Spent over the frame: a quad past
-/// the budget still draws, without its shadow.
-const MAX_SHADOW_PIXELS: f32 = 1024.0 * 1024.0;
+impl Node {
+    /// The node an empty view renders as.
+    pub fn empty() -> Self {
+        Self::Space {
+            width: None,
+            height: None,
+        }
+    }
 
-/// A layer is a clip, and the host rebuilds a window-sized mask for every one
-/// of them on every redraw. A real iced frame has a layer per overlay and
-/// per scrollable — a few dozen at most.
-const MAX_LAYERS: usize = 256;
+    pub fn key(&self) -> Option<&str> {
+        match self {
+            Self::Container { key, .. }
+            | Self::Linear { key, .. }
+            | Self::Scroll { key, .. }
+            | Self::Text { key, .. }
+            | Self::Input { key, .. }
+            | Self::Button { key, .. }
+            | Self::Rule { key, .. } => Some(key),
+            Self::Space { .. } => None,
+        }
+    }
 
-/// Counting quads is not the same as bounding what they fill: 16 000 quads
-/// the size of the window are billions of pixel writes per redraw. Spent over
-/// the frame in draw order, charged for the part that lands inside the window
-/// — a quad past the budget is dropped.
-const MAX_FILL_PIXELS: f32 = 8.0 * 1024.0 * 1024.0;
+    fn children_mut(&mut self) -> Vec<&mut Node> {
+        match self {
+            Self::Container { content, .. } | Self::Scroll { content, .. } => vec![content],
+            Self::Linear { children, .. } => children.iter_mut().collect(),
+            Self::Button {
+                content: ButtonContent::Child(child),
+                ..
+            } => vec![child],
+            Self::Button { .. }
+            | Self::Text { .. }
+            | Self::Input { .. }
+            | Self::Space { .. }
+            | Self::Rule { .. } => Vec::new(),
+        }
+    }
 
-/// Nor is counting text bytes the same as bounding rasterisation: a glyph is
-/// rasterised and cached at its size, so 64 KiB of distinct 128 px text is
-/// gigabytes of glyph cache. Charged as characters times size squared.
-const MAX_GLYPH_PIXELS: f32 = 4.0 * 1024.0 * 1024.0;
-
-/// Pulls every number in a frame into the range the host's renderer survives,
-/// and every count into what it can afford to draw.
-///
-/// The host draws values the guest chose: tiny-skia `expect`s colours in
-/// `0..=1` and finite rectangles, panics on a zero-sized pixmap, cosmic-text
-/// asserts a non-zero font size, and both allocate by the sizes they are
-/// given — the shadow pass builds a buffer the size of the quad. Clamped
-/// rather than refused, because "not finite" is not the same as "hostile":
-/// the base layer's clip is `Rectangle::INFINITE` in every iced frame.
-pub fn sanitize(frame: &mut Frame, window: [f32; 2]) {
-    // The window is the host's own, never the guest's, but it arrives as
-    // plain floats: clamp it too rather than trust it.
-    let width = bounded(window[0], MAX_WINDOW).max(0.0);
-    let height = bounded(window[1], MAX_WINDOW).max(0.0);
-    let reach = width.max(height).clamp(1.0, MAX_WINDOW) * REACH;
-    frame.layers.truncate(MAX_LAYERS);
-    let mut quads_left = MAX_QUADS;
-    let mut texts_left = MAX_TEXTS;
-    let mut text_bytes_left = MAX_TEXT_BYTES;
-    let mut shadow_left = MAX_SHADOW_PIXELS;
-    let mut fill_left = MAX_FILL_PIXELS;
-    let mut glyph_left = MAX_GLYPH_PIXELS;
-    for layer in &mut frame.layers {
-        // A layer IS a clip, and iced's `push_clip` sets the new clip rather
-        // than intersecting it with the one it nests in: the guest's own
-        // window is the only thing that keeps its drawing off the store's
-        // sidebar and off its neighbours' windows.
-        clip_to_window(&mut layer.bounds, width, height);
-        layer.quads.truncate(quads_left);
-        quads_left -= layer.quads.len();
-        layer.texts.truncate(texts_left);
-        texts_left -= layer.texts.len();
-        layer.quads.retain_mut(|quad| {
-            clamp_rect(&mut quad.bounds, reach);
-            clamp_rgba(&mut quad.background);
-            clamp_rgba(&mut quad.border_color);
-            clamp_rgba(&mut quad.shadow_color);
-            quad.border_width = bounded(quad.border_width, reach).max(0.0);
-            // A border on a sub-pixel quad is the one shape tiny-skia draws
-            // through a pixmap of the quad's size, and a zero-sized pixmap is
-            // an `unwrap` on `None`.
-            if quad.bounds[2] < 1.0 || quad.bounds[3] < 1.0 {
-                quad.border_width = 0.0;
-            }
-            for radius in &mut quad.radius {
-                *radius = bounded(*radius, reach).max(0.0);
-            }
-            for offset in &mut quad.shadow_offset {
-                *offset = bounded(*offset, reach);
-            }
-            quad.shadow_blur = bounded(quad.shadow_blur, MAX_BLUR).max(0.0);
-            // Only what lands in the window costs anything to fill; the rest
-            // is clipped away before a pixel is written.
-            let fill = visible_area(quad.bounds, width, height);
-            if fill > fill_left {
-                return false;
-            }
-            fill_left -= fill;
-            // What the shadow pass would allocate for this one quad.
-            let pixels = (quad.bounds[2] + 2.0 * quad.shadow_blur)
-                * (quad.bounds[3] + 2.0 * quad.shadow_blur);
-            if quad.shadow_color[3] > 0.0 {
-                match pixels <= shadow_left {
-                    true => shadow_left -= pixels,
-                    // Transparent is how the renderer skips the pass.
-                    false => quad.shadow_color = [0.0; 4],
-                }
-            }
-            true
-        });
-        layer.texts.retain_mut(|text| {
-            text.x = bounded(text.x, reach);
-            text.y = bounded(text.y, reach);
-            clamp_rect(&mut text.clip, reach);
-            clamp_rgba(&mut text.color);
-            text.size = text_size(text.size);
-            text.line_height = text_size(text.line_height);
-            let glyphs = text.content.chars().count() as f32 * text.size * text.size;
-            let affordable = text.content.len() <= text_bytes_left && glyphs <= glyph_left;
-            if affordable {
-                text_bytes_left -= text.content.len();
-                glyph_left -= glyphs;
-            }
-            affordable
-        });
+    /// Every node in the tree, depth first, this one included.
+    pub fn count(&self) -> usize {
+        1 + match self {
+            Self::Container { content, .. } | Self::Scroll { content, .. } => content.count(),
+            Self::Linear { children, .. } => children.iter().map(Node::count).sum(),
+            Self::Button {
+                content: ButtonContent::Child(child),
+                ..
+            } => child.count(),
+            Self::Button { .. }
+            | Self::Text { .. }
+            | Self::Input { .. }
+            | Self::Space { .. }
+            | Self::Rule { .. } => 0,
+        }
     }
 }
 
-/// Cuts a clip down to the window it belongs to.
-fn clip_to_window(rect: &mut Rect, width: f32, height: f32) {
-    let left = bounded(rect[0], MAX_WINDOW).clamp(0.0, width);
-    let top = bounded(rect[1], MAX_WINDOW).clamp(0.0, height);
-    let right = bounded(rect[0] + rect[2], MAX_WINDOW).clamp(left, width);
-    let bottom = bounded(rect[1] + rect[3], MAX_WINDOW).clamp(top, height);
-    *rect = [left, top, right - left, bottom - top];
-}
+/// A tree deeper than this is cut off: a guest cannot make the host's
+/// layout recurse without bound.
+pub const MAX_DEPTH: usize = 64;
+/// More nodes than this and the host stops reading: the widget tree of a
+/// screen, not of a spreadsheet.
+pub const MAX_NODES: usize = 8_192;
+/// The longest string a single node may carry (text, placeholder, key).
+pub const MAX_STRING_BYTES: usize = 64 << 10;
+/// Text and spacing sizes are pixels; nothing on a screen needs more.
+const MAX_PIXELS: f32 = 8192.0;
 
-/// How much of a rectangle the host would actually paint.
-fn visible_area(rect: Rect, width: f32, height: f32) -> f32 {
-    let mut visible = rect;
-    clip_to_window(&mut visible, width, height);
-    visible[2] * visible[3]
-}
-
-fn clamp_rect(rect: &mut Rect, reach: f32) {
-    let left = bounded(rect[0], reach);
-    let top = bounded(rect[1], reach);
-    let right = bounded(rect[0] + rect[2], reach).max(left);
-    let bottom = bounded(rect[1] + rect[3], reach).max(top);
-    *rect = [left, top, right - left, bottom - top];
-}
-
-fn clamp_rgba(color: &mut Rgba) {
-    for channel in color {
-        *channel = bounded(*channel, 1.0).max(0.0);
+/// Pulls a frame from an untrusted module into what the host is willing to
+/// lay out: the tree is truncated past [`MAX_DEPTH`] and [`MAX_NODES`],
+/// strings past [`MAX_STRING_BYTES`], and every size, colour and spacing
+/// clamped to a finite range. A frame from a well-behaved guest passes
+/// through unchanged.
+pub fn sanitize(frame: &mut Frame) {
+    let mut budget = MAX_NODES;
+    if let Some(root) = &mut frame.root {
+        sanitize_node(root, 0, &mut budget);
+    }
+    for request in &mut frame.requests {
+        truncate(&mut request.kind);
     }
 }
 
-fn bounded(value: f32, limit: f32) -> f32 {
+fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
+    // The caller guarantees one node of budget; a node too deep spends it
+    // on the empty node that stands in for it.
+    *budget -= 1;
+    if depth >= MAX_DEPTH {
+        *node = Node::empty();
+        return;
+    }
+    match node {
+        Node::Container {
+            key,
+            padding,
+            border,
+            background,
+            ..
+        } => {
+            truncate(key);
+            bound_edges(padding);
+            bound_border(border);
+            bound_color(background);
+        }
+        Node::Linear {
+            key,
+            spacing,
+            padding,
+            ..
+        } => {
+            truncate(key);
+            bound_optional(spacing);
+            bound_edges(padding);
+        }
+        Node::Scroll { key, .. } => truncate(key),
+        Node::Text {
+            key,
+            content,
+            size,
+            color,
+            ..
+        } => {
+            truncate(key);
+            truncate(content);
+            bound_optional(size);
+            bound_color(color);
+        }
+        Node::Input {
+            key,
+            placeholder,
+            value,
+            style,
+            ..
+        } => {
+            truncate(key);
+            truncate(placeholder);
+            truncate(value);
+            for face in [
+                Some(&mut style.active),
+                style.hovered.as_mut(),
+                style.focused.as_mut(),
+                style.disabled.as_mut(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                bound_color(&mut face.background);
+                bound_border(&mut face.border);
+                bound_color(&mut face.value);
+                bound_color(&mut face.placeholder);
+                bound_color(&mut face.selection);
+            }
+        }
+        Node::Button {
+            key,
+            content,
+            padding,
+            style,
+            ..
+        } => {
+            truncate(key);
+            if let ButtonContent::Label(label) = content {
+                truncate(label);
+            }
+            bound_edges(padding);
+            for face in [
+                Some(&mut style.active),
+                style.hovered.as_mut(),
+                style.pressed.as_mut(),
+                style.disabled.as_mut(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                bound_color(&mut face.background);
+                bound_color(&mut face.text);
+                bound_border(&mut face.border);
+            }
+        }
+        Node::Space { .. } => {}
+        Node::Rule {
+            key,
+            thickness,
+            color,
+            ..
+        } => {
+            truncate(key);
+            *thickness = bounded(*thickness);
+            bound_color(color);
+        }
+    }
+    for length in lengths_mut(node) {
+        if let Length::Fixed(value) = length {
+            *value = bounded(*value);
+        }
+    }
+    // Children past the budget are dropped, not stood in for: a layout of
+    // ten thousand rows becomes its first rows, which is what a host can
+    // lay out, rather than ten thousand empty nodes it still has to walk.
+    if let Node::Linear { children, .. } = node {
+        let mut kept = 0;
+        for child in children.iter_mut() {
+            if *budget == 0 {
+                break;
+            }
+            sanitize_node(child, depth + 1, budget);
+            kept += 1;
+        }
+        children.truncate(kept);
+        return;
+    }
+    for child in node.children_mut() {
+        if *budget == 0 {
+            *child = Node::empty();
+            continue;
+        }
+        sanitize_node(child, depth + 1, budget);
+    }
+}
+
+fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
+    let slots: Vec<&mut Option<Length>> = match node {
+        Node::Container { width, height, .. }
+        | Node::Linear { width, height, .. }
+        | Node::Scroll { width, height, .. }
+        | Node::Button { width, height, .. }
+        | Node::Space { width, height } => vec![width, height],
+        Node::Text { width, .. } | Node::Input { width, .. } => vec![width],
+        Node::Rule { .. } => Vec::new(),
+    };
+    slots.into_iter().flatten().collect()
+}
+
+fn truncate(text: &mut String) {
+    if text.len() <= MAX_STRING_BYTES {
+        return;
+    }
+    let mut end = MAX_STRING_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+}
+
+fn bounded(value: f32) -> f32 {
     match value.is_nan() {
         true => 0.0,
-        false => value.clamp(-limit, limit),
+        false => value.clamp(0.0, MAX_PIXELS),
     }
 }
 
-fn text_size(value: f32) -> f32 {
-    match value.is_nan() {
-        true => 1.0,
-        false => value.clamp(1.0, MAX_TEXT),
+fn bound_optional(value: &mut Option<f32>) {
+    if let Some(value) = value {
+        *value = bounded(*value);
+    }
+}
+
+fn bound_edges(edges: &mut Option<Edges>) {
+    if let Some(edges) = edges {
+        edges.top = bounded(edges.top);
+        edges.right = bounded(edges.right);
+        edges.bottom = bounded(edges.bottom);
+        edges.left = bounded(edges.left);
+    }
+}
+
+fn bound_color(color: &mut Option<Rgba>) {
+    if let Some(Rgba(channels)) = color {
+        for channel in channels {
+            *channel = match channel.is_nan() {
+                true => 0.0,
+                false => channel.clamp(0.0, 1.0),
+            };
+        }
+    }
+}
+
+fn bound_border(border: &mut Option<Border>) {
+    if let Some(border) = border {
+        let mut color = Some(border.color);
+        bound_color(&mut color);
+        border.color = color.expect("kept");
+        border.width = bounded(border.width);
+        for radius in &mut border.radius {
+            *radius = bounded(*radius);
+        }
     }
 }
 
@@ -421,17 +582,73 @@ pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, String> {
 mod tests {
     use super::*;
 
+    fn text(content: &str) -> Node {
+        Node::Text {
+            key: "App/t".into(),
+            content: content.into(),
+            size: Some(16.0),
+            color: Some(Rgba([0.1, 0.2, 0.3, 1.0])),
+            font: Font::default(),
+            width: None,
+            align_x: None,
+        }
+    }
+
+    fn column(children: Vec<Node>) -> Node {
+        Node::Linear {
+            key: "App/col".into(),
+            axis: Axis::Column,
+            spacing: Some(8.0),
+            padding: None,
+            width: Some(Length::Fill),
+            height: None,
+            align: None,
+            children,
+        }
+    }
+
     #[test]
-    fn events_round_trip() {
+    fn a_frame_round_trips() {
+        let frame = Frame {
+            root: Some(column(vec![
+                text("hello"),
+                Node::Button {
+                    key: "App/b".into(),
+                    content: ButtonContent::Label("Go".into()),
+                    on_press: Some(3),
+                    width: None,
+                    height: None,
+                    padding: Some(Edges::all(4.0)),
+                    style: ButtonStyle::default(),
+                },
+                Node::Input {
+                    key: "App/i".into(),
+                    placeholder: "Name".into(),
+                    value: "x".into(),
+                    on_input: 0,
+                    on_submit: Some(4),
+                    width: Some(Length::Fixed(200.0)),
+                    secure: false,
+                    style: InputStyle::default(),
+                },
+            ])),
+            requests: vec![Request {
+                id: 1,
+                kind: "host.echo".into(),
+                payload: b"hi".to_vec(),
+            }],
+            cancels: vec![2],
+            unchanged: false,
+        };
+        assert_eq!(decode::<Frame>(&encode(&frame)).unwrap(), frame);
         let events = vec![
-            Event::Redraw { elapsed_ms: 1234 },
-            Event::Response {
-                id: 3,
-                result: Ok(vec![1, 2]),
-                done: false,
+            Event::Message(3),
+            Event::Input {
+                handler: 0,
+                text: "xy".into(),
             },
             Event::Response {
-                id: 4,
+                id: 1,
                 result: Err("nope".into()),
                 done: true,
             },
@@ -439,279 +656,83 @@ mod tests {
         assert_eq!(decode::<Vec<Event>>(&encode(&events)).unwrap(), events);
     }
 
-    /// One quad and one text of everything the renderer would panic or
-    /// allocate the host to death on: colours past 1, an infinite width, a
-    /// sub-pixel bordered quad (a zero-sized pixmap inside tiny-skia), a
-    /// 100000-pixel shadow, a zero font size (an assertion inside
-    /// cosmic-text) and NaN.
+    #[test]
+    fn a_well_behaved_frame_is_untouched() {
+        let mut frame = Frame {
+            root: Some(column(vec![text("hello")])),
+            ..Frame::default()
+        };
+        let before = frame.clone();
+        sanitize(&mut frame);
+        assert_eq!(frame, before);
+    }
+
     #[test]
     fn a_hostile_frame_is_pulled_into_range() {
+        let mut deep = text("leaf");
+        for _ in 0..MAX_DEPTH + 10 {
+            deep = column(vec![deep]);
+        }
+        let wide = column((0..MAX_NODES + 5).map(|_| text("x")).collect());
         let mut frame = Frame {
-            layers: vec![Layer {
-                bounds: [
-                    f32::NEG_INFINITY,
-                    f32::NEG_INFINITY,
-                    f32::INFINITY,
-                    f32::INFINITY,
-                ],
-                quads: vec![
-                    Quad {
-                        bounds: [0.0, 0.0, f32::INFINITY, 100_000.0],
-                        background: [1.5, -0.5, f32::NAN, 1.0],
-                        border_color: [0.0; 4],
-                        border_width: 0.0,
-                        radius: [f32::NAN; 4],
-                        shadow_color: [0.0, 0.0, 0.0, 1.0],
-                        shadow_offset: [f32::INFINITY; 2],
-                        shadow_blur: 100_000.0,
-                        snap: false,
-                    },
-                    Quad {
-                        bounds: [0.0, 0.0, 0.5, 0.5],
-                        background: [0.0; 4],
-                        border_color: [0.0; 4],
-                        border_width: 1.0,
-                        radius: [0.1; 4],
-                        shadow_color: [0.0; 4],
-                        shadow_offset: [0.0; 2],
-                        shadow_blur: 0.0,
-                        snap: false,
-                    },
-                ],
-                texts: vec![Text {
-                    content: "hi".into(),
-                    x: f32::NAN,
-                    y: 1e30,
-                    anchor: Anchor::TOP_LEFT,
-                    size: 0.0,
-                    line_height: 20_000.0,
-                    font: Font {
-                        family: None,
-                        weight: 400,
-                        italic: false,
-                        monospace: false,
-                    },
-                    color: [2.0, 0.5, 0.5, f32::NAN],
-                    clip: [0.0, 0.0, f32::INFINITY, f32::INFINITY],
-                }],
-            }],
+            root: Some(column(vec![
+                Node::Text {
+                    key: "k".repeat(MAX_STRING_BYTES + 3),
+                    content: "é".repeat(MAX_STRING_BYTES),
+                    size: Some(f32::NAN),
+                    color: Some(Rgba([2.0, -1.0, f32::INFINITY, 0.5])),
+                    font: Font::default(),
+                    width: Some(Length::Fixed(-5.0)),
+                    align_x: None,
+                },
+                deep,
+                wide,
+            ])),
             ..Frame::default()
         };
-        sanitize(&mut frame, [500.0, 380.0]);
-
-        let reach = 1000.0;
-        let layer = &frame.layers[0];
-        for value in numbers(layer) {
-            assert!(value.is_finite(), "{value} left in {layer:?}");
-            assert!(value.abs() <= 2.0 * reach, "{value} left in {layer:?}");
-        }
-        let wide = &layer.quads[0];
-        assert_eq!(wide.bounds, [0.0, 0.0, reach, reach]);
-        assert!(wide.background.iter().all(|c| (0.0..=1.0).contains(c)));
-        assert_eq!(wide.shadow_blur, MAX_BLUR);
-        // A sub-pixel quad is drawn without its border: the pixmap tiny-skia
-        // would build for it has no pixels.
-        assert_eq!(layer.quads[1].border_width, 0.0);
-        let text = &layer.texts[0];
-        assert_eq!(text.size, 1.0);
-        assert_eq!(text.line_height, MAX_TEXT);
-        assert!(text.color.iter().all(|c| (0.0..=1.0).contains(c)));
-    }
-
-    /// The byte cap bounds what the host copies, not what drawing it costs:
-    /// quads and lines are counted, long lines are dropped, and the shadow
-    /// budget is spent in order — the first quads keep their shadow, the rest
-    /// keep only their shape.
-    #[test]
-    fn a_frame_past_what_the_host_can_draw_is_cut_down() {
-        let window = [500.0, 380.0];
-        let quad = |width: f32, height: f32| Quad {
-            bounds: [0.0, 0.0, width, height],
-            shadow_color: [0.0, 0.0, 0.0, 1.0],
-            shadow_blur: 0.0,
-            ..ordinary_frame().layers[0].quads[0].clone()
+        sanitize(&mut frame);
+        let root = frame.root.unwrap();
+        // A container whose child fell past the budget keeps an empty
+        // stand-in, one per level at most.
+        assert!(root.count() <= MAX_NODES + MAX_DEPTH, "{}", root.count());
+        let Node::Linear { children, .. } = &root else {
+            panic!()
         };
-        let line = |content: &str, size: f32| Text {
-            content: content.to_string(),
+        let Node::Text {
+            key,
+            content,
             size,
-            ..ordinary_frame().layers[0].texts[0].clone()
+            color,
+            width,
+            ..
+        } = &children[0]
+        else {
+            panic!("{:?}", children[0])
         };
-        let layer = |quads: Vec<Quad>, texts: Vec<Text>| Layer {
-            bounds: [0.0, 0.0, window[0], window[1]],
-            quads,
-            texts,
-        };
-
-        // A layer is a clip: a guest cannot name one outside its own window,
-        // and cannot hand the host more of them than a real frame has.
-        let mut frame = Frame {
-            layers: vec![layer(Vec::new(), Vec::new()); MAX_LAYERS + 8],
-            ..Frame::default()
-        };
-        frame.layers[0].bounds = [-1000.0, -40.0, 3000.0, 3000.0];
-        sanitize(&mut frame, window);
-        assert_eq!(frame.layers.len(), MAX_LAYERS);
-        assert_eq!(frame.layers[0].bounds, [0.0, 0.0, window[0], window[1]]);
-
-        // Quads are bounded by what they fill, not only by their count, and
-        // the shadow budget is spent separately.
-        let mut frame = Frame {
-            layers: vec![
-                layer(
-                    vec![quad(1000.0, 1000.0); MAX_QUADS],
-                    vec![line("hi", 16.0); MAX_TEXTS],
-                ),
-                layer(vec![quad(1000.0, 1000.0)], vec![line("still here", 16.0)]),
-            ],
-            ..Frame::default()
-        };
-        sanitize(&mut frame, window);
-        // The second layer is past both counts, so nothing of it is left.
-        assert_eq!(frame.layers[1].quads.len(), 0);
-        assert_eq!(frame.layers[1].texts.len(), 0);
-        let per_quad = window[0] * window[1];
-        assert_eq!(
-            frame.layers[0].quads.len(),
-            (MAX_FILL_PIXELS / per_quad) as usize,
-            "a window-sized quad past the fill budget is dropped"
-        );
-        let with_shadow = frame.layers[0]
-            .quads
-            .iter()
-            .filter(|quad| quad.shadow_color[3] > 0.0)
-            .count();
-        assert_eq!(
-            with_shadow,
-            (MAX_SHADOW_PIXELS / (1000.0 * 1000.0)) as usize
-        );
-
-        // Text is bounded by what it rasterises: characters times size
-        // squared, spent over the frame.
-        let big = "a".repeat(100);
-        let mut frame = Frame {
-            layers: vec![layer(Vec::new(), vec![line(&big, MAX_TEXT); 3])],
-            ..Frame::default()
-        };
-        sanitize(&mut frame, window);
-        let per_line = 100.0 * MAX_TEXT * MAX_TEXT;
-        assert_eq!(
-            frame.layers[0].texts.len(),
-            (MAX_GLYPH_PIXELS / per_line) as usize
-        );
-
-        // One line longer than the whole frame's byte budget is dropped, and
-        // the lines before it are not.
-        let mut frame = Frame {
-            layers: vec![layer(
-                Vec::new(),
-                vec![
-                    line("hi", 16.0),
-                    line(&"a".repeat(MAX_TEXT_BYTES + 1), 16.0),
-                    line("!", 16.0),
-                ],
-            )],
-            ..Frame::default()
-        };
-        sanitize(&mut frame, window);
-        let kept: Vec<&str> = frame.layers[0]
-            .texts
-            .iter()
-            .map(|text| text.content.as_str())
-            .collect();
-        assert_eq!(kept, ["hi", "!"]);
-    }
-
-    /// A frame an ordinary app draws inside its window is not touched — the
-    /// one thing every iced frame carries is the base layer's infinite clip.
-    #[test]
-    fn an_ordinary_frame_survives_untouched() {
-        let mut frame = ordinary_frame();
-        let before = frame.clone();
-        sanitize(&mut frame, [500.0, 380.0]);
-        assert_eq!(frame.layers[0].quads, before.layers[0].quads);
-        assert_eq!(frame.layers[0].texts, before.layers[0].texts);
-    }
-
-    fn numbers(layer: &Layer) -> Vec<f32> {
-        let mut values: Vec<f32> = layer.bounds.to_vec();
-        for quad in &layer.quads {
-            values.extend(quad.bounds);
-            values.extend(quad.background);
-            values.extend(quad.border_color);
-            values.extend(quad.radius);
-            values.extend(quad.shadow_color);
-            values.extend(quad.shadow_offset);
-            values.push(quad.border_width);
-            values.push(quad.shadow_blur);
-        }
-        for text in &layer.texts {
-            values.extend([text.x, text.y, text.size, text.line_height]);
-            values.extend(text.color);
-            values.extend(text.clip);
-        }
-        values
-    }
-
-    /// One layer of one quad and one line, all inside a 500x380 window.
-    fn ordinary_frame() -> Frame {
-        Frame {
-            layers: vec![Layer {
-                bounds: [0.0, 0.0, 10.0, 10.0],
-                quads: vec![Quad {
-                    bounds: [1.0, 2.0, 3.0, 4.0],
-                    background: [1.0; 4],
-                    border_color: [0.0; 4],
-                    border_width: 1.0,
-                    radius: [2.0; 4],
-                    shadow_color: [0.0; 4],
-                    shadow_offset: [0.0; 2],
-                    shadow_blur: 0.0,
-                    snap: true,
-                }],
-                texts: vec![Text {
-                    content: "hi".into(),
-                    x: 1.0,
-                    y: 2.0,
-                    anchor: Anchor::TOP_LEFT,
-                    size: 16.0,
-                    line_height: 20.0,
-                    font: Font {
-                        family: Some("Fira Sans".into()),
-                        weight: 400,
-                        italic: false,
-                        monospace: false,
-                    },
-                    color: [0.0, 0.0, 0.0, 1.0],
-                    clip: [0.0, 0.0, 10.0, 10.0],
-                }],
-            }],
-            interaction: 1,
-            requests: vec![Request {
-                id: 7,
-                kind: "host.echo".into(),
-                payload: b"hi".to_vec(),
-            }],
-            cancels: vec![9],
-            redraw: Redraw::At(1500),
-            unchanged: false,
-        }
+        assert_eq!(key.len(), MAX_STRING_BYTES);
+        assert!(content.len() <= MAX_STRING_BYTES && content.is_char_boundary(content.len()));
+        assert_eq!(*size, Some(0.0));
+        assert_eq!(*color, Some(Rgba([1.0, 0.0, 1.0, 0.5])));
+        assert_eq!(*width, Some(Length::Fixed(0.0)));
     }
 
     #[test]
-    fn frame_round_trips() {
-        let frame = ordinary_frame();
-        let back: Frame = decode(&encode(&frame)).unwrap();
-        assert_eq!(back, frame);
-        let events = vec![
-            Event::KeyPressed {
-                key: Key::Character("a".into()),
-                modifiers: 0,
-                text: Some("a".into()),
-            },
-            Event::ModifiersChanged(4),
-            Event::CursorEntered,
-        ];
-        let back: Vec<Event> = decode(&encode(&events)).unwrap();
-        assert_eq!(back, events);
+    fn depth_is_cut_before_the_host_recurses_into_it() {
+        let mut deep = text("leaf");
+        for _ in 0..MAX_DEPTH * 2 {
+            deep = column(vec![deep]);
+        }
+        let mut frame = Frame {
+            root: Some(deep),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let mut depth = 0;
+        let mut node = frame.root.as_ref().unwrap();
+        while let Node::Linear { children, .. } = node {
+            depth += 1;
+            node = &children[0];
+        }
+        assert!(depth <= MAX_DEPTH, "{depth}");
     }
 }

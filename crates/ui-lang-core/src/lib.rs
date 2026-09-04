@@ -19,7 +19,7 @@ pub use analysis_db::{
 };
 pub use api::*;
 pub use ast::*;
-pub use codegen::{GROUP_MARKER_BEGIN, GROUP_MARKER_END, ViewTemplate};
+pub use codegen::{GROUP_MARKER_BEGIN, GROUP_MARKER_END, Target, ViewTemplate};
 pub use editor::{
     CursorContext, STYLE_STATUS_NAMES, SourcePosition, cursor_context, editor_ancestor_lines,
     editor_block_end, editor_component_name, editor_first_word, editor_indentation,
@@ -466,7 +466,13 @@ pub fn analyze(source: &str) -> Result<CheckedDocument, Error> {
 }
 
 pub fn compile(source: &str, source_path: &str) -> Result<String, Error> {
+    compile_for(source, source_path, Target::Native)
+}
+
+/// [`compile`] for a chosen target.
+pub fn compile_for(source: &str, source_path: &str, target: Target) -> Result<String, Error> {
     let document = analyze(source)?;
-    let program = lower::lower(document)?;
+    let mut program = lower::lower(document)?;
+    program.set_target(target);
     codegen::generate(&program, source_path)
 }

@@ -1,50 +1,224 @@
-//! What an Ice app needs to run inside wasm: a headless [`Driver`] around the
-//! generated application, and [`export_app!`], which turns an ordinary
-//! `include_app!` into a wasm module the store can install.
+//! The guest side of `ui-lang-wire`: a generated Ice application, compiled
+//! for the `tree` target, running inside wasm as a view module.
 //!
-//! The module's ABI is four C exports — `init`, `input_ptr`, `tick`,
-//! `output_ptr` — plus an `ice.manifest` custom section carrying the name,
-//! the description and the capabilities the app needs, so a catalog can
-//! list an app (and say what it will touch) without instantiating it.
+//! The guest keeps state, runs handlers and their tasks, and builds a
+//! [`wire::Node`] tree every tick. It never lays out or draws: the host's
+//! toolkit does that, so nothing from a renderer, a font system or a
+//! windowing layer is linked here. Interaction comes back as meaning —
+//! "message 3", "input handler 0 now reads `abc`" — through the per-frame
+//! tables in [`slots`] that the generated view fills while it builds.
 //!
-//! Two more exports exist only in wasm: `panic_ptr` and `panic_len` bound
-//! the module's last panic message (`<payload> at <file>:<line>`, empty
-//! until one happens). With `panic = "abort"` the trap the host sees is a
-//! bare `unreachable`, so after a trap it reads that buffer for the reason.
-//!
-//! An app's `task`s run: the driver polls them on every tick, and anything
-//! they need from outside goes through [`host::request`] / [`host::subscribe`]
-//! and comes back as response events. There is no executor thread and no
-//! clock inside the module — only what the host sends in.
+//! [`export_app!`] turns an app into the `ice:view` component exports;
+//! `boot_native`/`tick_native` drive the same app in an ordinary test.
 
-pub use driver::Driver;
-pub use ui_lang_wire as frame;
+use std::any::Any;
+use std::cell::RefCell;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll, Wake, Waker};
 
-mod driver;
+pub use ui_lang_wire as wire;
+pub use wit_bindgen;
+
+use iced_runtime::futures::BoxStream;
+use iced_runtime::{Action, task};
+
 pub mod host;
 pub mod testing;
 
-/// The software renderer by name, not `iced::Renderer`: an app's workspace
-/// enables tiny-skia alone, so there the two are one type, while this crate
-/// also builds in a workspace where wgpu turns `iced::Renderer` into the
-/// fallback enum.
-pub type Renderer = iced_tiny_skia::Renderer;
-pub type Element<'a, Message> = iced::Element<'a, Message, iced::Theme, Renderer>;
-
-/// The generated application, seen from the driver.
-pub trait WasmApp: Sized + 'static {
+/// What `export_app!` needs from the generated application.
+pub trait App: Sized + 'static {
     type Message: Clone + iced_runtime::futures::MaybeSend + 'static;
-    const NAME: &'static str;
-    const DESCRIPTION: &'static str;
-
     fn boot() -> (Self, iced::Task<Self::Message>);
-    fn view(&self) -> Element<'_, Self::Message>;
+    fn view(&self) -> wire::Node;
     fn update(&mut self, message: Self::Message) -> iced::Task<Self::Message>;
-    fn theme(&self) -> iced::Theme;
 }
 
-/// Copies a manifest string into a fixed array at compile time, which is the
-/// form a `link_section` static must take.
+/// The per-frame tables a view fills as it builds: a button's `on_press`
+/// is the index its message took here, an input's `on_input` the index of
+/// its `String -> Message` constructor. The host echoes an index back; the
+/// driver looks the message up in the table of the frame it echoed.
+///
+/// The tables are untyped so the generated code can push through this
+/// crate without naming the app's message type; the driver downcasts.
+pub mod slots {
+    use super::*;
+
+    thread_local! {
+        static MESSAGES: RefCell<Vec<Box<dyn Any>>> = const { RefCell::new(Vec::new()) };
+        static HANDLERS: RefCell<Vec<Box<dyn Any>>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn message<M: 'static>(message: M) -> u32 {
+        MESSAGES.with_borrow_mut(|table| {
+            table.push(Box::new(message));
+            (table.len() - 1) as u32
+        })
+    }
+
+    pub fn handler<M: 'static>(handler: Box<dyn Fn(String) -> M>) -> u32 {
+        HANDLERS.with_borrow_mut(|table| {
+            table.push(Box::new(handler));
+            (table.len() - 1) as u32
+        })
+    }
+
+    pub(crate) fn reset() {
+        MESSAGES.with_borrow_mut(Vec::clear);
+        HANDLERS.with_borrow_mut(Vec::clear);
+    }
+
+    pub(crate) fn take_message<M: Clone + 'static>(index: u32) -> Option<M> {
+        MESSAGES.with_borrow(|table| {
+            table
+                .get(index as usize)
+                .and_then(|entry| entry.downcast_ref::<M>())
+                .cloned()
+        })
+    }
+
+    pub(crate) fn run_handler<M: 'static>(index: u32, text: String) -> Option<M> {
+        HANDLERS.with_borrow(|table| {
+            table
+                .get(index as usize)
+                .and_then(|entry| entry.downcast_ref::<Box<dyn Fn(String) -> M>>())
+                .map(|handler| handler(text))
+        })
+    }
+}
+
+type Tasks<M> = Vec<BoxStream<Action<M>>>;
+
+/// One running app: its state, its in-flight tasks, and the last tree it
+/// sent so an identical one crosses as `unchanged`.
+pub struct Driver<A: App> {
+    app: A,
+    tasks: Tasks<A::Message>,
+    last_root: Option<wire::Node>,
+}
+
+impl<A: App> Default for Driver<A> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<A: App> Driver<A> {
+    pub fn new() -> Self {
+        let (app, boot) = A::boot();
+        let mut tasks = Vec::new();
+        spawn(&mut tasks, boot);
+        Self {
+            app,
+            tasks,
+            last_root: None,
+        }
+    }
+
+    /// Delivers the host's events and returns the frame they produced.
+    ///
+    /// Events name entries in the tables the LAST view filled, so they are
+    /// dispatched before the tables are reset for this view. An index the
+    /// last frame did not hand out (the host raced a rebuild) is dropped.
+    pub fn tick(&mut self, events: Vec<wire::Event>) -> wire::Frame {
+        let Self {
+            app,
+            tasks,
+            last_root,
+        } = self;
+        run_tasks(app, tasks);
+        for event in events {
+            let message = match event {
+                wire::Event::Message(index) => slots::take_message::<A::Message>(index),
+                wire::Event::Input { handler, text } => {
+                    slots::run_handler::<A::Message>(handler, text)
+                }
+                wire::Event::Response { id, result, done } => {
+                    host::fulfill(id, result, done);
+                    None
+                }
+            };
+            if let Some(message) = message {
+                spawn(tasks, app.update(message));
+                run_tasks(app, tasks);
+            }
+        }
+        slots::reset();
+        let root = app.view();
+        let unchanged = last_root.as_ref() == Some(&root);
+        let mut frame = wire::Frame {
+            root: None,
+            requests: host::drain_outbox(),
+            cancels: host::drain_cancels(),
+            unchanged,
+        };
+        if !unchanged {
+            frame.root = Some(root.clone());
+            *last_root = Some(root);
+        }
+        frame
+    }
+}
+
+fn spawn<M: iced_runtime::futures::MaybeSend + 'static>(tasks: &mut Tasks<M>, task: iced::Task<M>) {
+    if let Some(stream) = task::into_stream(task) {
+        tasks.push(stream);
+    }
+}
+
+/// Polls every task; a message it produced goes through `update`, whose own
+/// task joins the pool, until a pass produces nothing. Bounded so a handler
+/// that re-emits synchronously forever cannot pin the frame.
+fn run_tasks<A: App>(app: &mut A, tasks: &mut Tasks<A::Message>) {
+    for _ in 0..8 {
+        let messages = poll_tasks(tasks);
+        if messages.is_empty() {
+            return;
+        }
+        for message in messages {
+            spawn(tasks, app.update(message));
+        }
+    }
+}
+
+struct Woken(AtomicBool);
+
+impl Wake for Woken {
+    fn wake(self: Arc<Self>) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+fn poll_tasks<M>(tasks: &mut Tasks<M>) -> Vec<M> {
+    let woken = Arc::new(Woken(AtomicBool::new(false)));
+    let waker = Waker::from(woken.clone());
+    let mut context = Context::from_waker(&waker);
+    let mut messages = Vec::new();
+    tasks.retain_mut(|stream| {
+        // A task that yields (every `Task::stream` starts with one) wakes
+        // itself; poll it again until it is waiting on something real.
+        for _ in 0..64 {
+            woken.0.store(false, Ordering::SeqCst);
+            match stream.as_mut().poll_next(&mut context) {
+                Poll::Ready(Some(Action::Output(message))) => messages.push(message),
+                // Widget operations, clipboard, window and system actions
+                // belong to the host's toolkit; a guest has none.
+                Poll::Ready(Some(_)) => {}
+                Poll::Ready(None) => return false,
+                Poll::Pending if woken.0.load(Ordering::SeqCst) => {}
+                Poll::Pending => return true,
+            }
+        }
+        true
+    });
+    messages
+}
+
+/// The `ice:view` world, as the exports are generated from it. The text is
+/// repeated inside [`export_app!`] because a proc macro takes only a
+/// literal; a test keeps the two identical.
+pub const WIT: &str = include_str!("../wit/view.wit");
+
 pub const fn manifest_bytes<const N: usize>(text: &str) -> [u8; N] {
     let bytes = text.as_bytes();
     let mut out = [0u8; N];
@@ -56,38 +230,34 @@ pub const fn manifest_bytes<const N: usize>(text: &str) -> [u8; N] {
     out
 }
 
-/// Implements [`WasmApp`] for an `include_app!` application and emits the
-/// wasm exports and manifest section. `$message` is the generated message
-/// enum (`__<App>Message`); the list names the capabilities the app's
-/// requests will use (`clock`, `storage`, `bus`), which the host shows in the
-/// catalog and enforces.
+/// Exports a generated Ice application as an `ice:view` component.
+///
+/// `$app` and `$message` are the names `include_app!` generated; `$name`
+/// and `$description` are what the host lists; the capabilities are the
+/// request kinds the app will make (`host.echo`, `clock.sleep`...), which
+/// the host checks every request against. They land in the `ice.manifest`
+/// custom section, readable without instantiating the module.
+///
+/// `boot_native` and `tick_native` drive the same app in an ordinary test.
 #[macro_export]
 macro_rules! export_app {
     ($app:ident, $message:ident, $name:expr, $description:expr, [$($capability:literal),* $(,)?]) => {
-        /// A private newtype, so the generated message enum — private to the
-        /// crate — never appears in a public interface.
         struct __IceApp($app);
 
-        impl $crate::WasmApp for __IceApp {
+        impl $crate::App for __IceApp {
             type Message = $message;
-            const NAME: &'static str = $name;
-            const DESCRIPTION: &'static str = $description;
 
             fn boot() -> (Self, ::iced::Task<Self::Message>) {
                 let (app, boot) = <$app>::__boot();
                 (Self(app), boot)
             }
 
-            fn view(&self) -> $crate::Element<'_, Self::Message> {
+            fn view(&self) -> $crate::wire::Node {
                 self.0.__view()
             }
 
             fn update(&mut self, message: Self::Message) -> ::iced::Task<Self::Message> {
                 self.0.__update(message)
-            }
-
-            fn theme(&self) -> ::iced::Theme {
-                self.0.__theme()
             }
         }
 
@@ -101,89 +271,82 @@ macro_rules! export_app {
         thread_local! {
             static __ICE_DRIVER: ::std::cell::RefCell<Option<$crate::Driver<__IceApp>>> =
                 const { ::std::cell::RefCell::new(None) };
-            static __ICE_INPUT: ::std::cell::RefCell<Vec<u8>> = const { ::std::cell::RefCell::new(Vec::new()) };
-            static __ICE_OUTPUT: ::std::cell::RefCell<Vec<u8>> = const { ::std::cell::RefCell::new(Vec::new()) };
-        }
-
-        /// Boots the app. Also the native entry point for tests.
-        pub fn boot_native() {
-            __ICE_DRIVER.with(|driver| *driver.borrow_mut() = Some($crate::Driver::new()));
-        }
-
-        /// One frame, natively: the same tick the wasm export runs.
-        pub fn tick_native(events: Vec<$crate::frame::Event>) -> $crate::frame::Frame {
-            __ICE_DRIVER.with(|driver| driver.borrow_mut().as_mut().expect("boot first").tick(events))
-        }
-
-        /// The last panic message, for a host holding a trapped instance.
-        #[cfg(target_arch = "wasm32")]
-        thread_local! {
             static __ICE_PANIC: ::std::cell::RefCell<::std::string::String> =
                 const { ::std::cell::RefCell::new(::std::string::String::new()) };
         }
 
-        #[cfg(target_arch = "wasm32")]
-        #[unsafe(no_mangle)]
-        pub extern "C" fn panic_ptr() -> u32 {
-            __ICE_PANIC.with(|text| text.borrow().as_ptr() as u32)
+        pub fn boot_native() {
+            __ICE_DRIVER.with(|driver| *driver.borrow_mut() = Some($crate::Driver::new()));
+        }
+
+        pub fn tick_native(events: Vec<$crate::wire::Event>) -> $crate::wire::Frame {
+            __ICE_DRIVER.with(|driver| driver.borrow_mut().as_mut().expect("boot first").tick(events))
         }
 
         #[cfg(target_arch = "wasm32")]
-        #[unsafe(no_mangle)]
-        pub extern "C" fn panic_len() -> u32 {
-            __ICE_PANIC.with(|text| text.borrow().len() as u32)
-        }
+        mod __ice_exports {
+            $crate::wit_bindgen::generate!({
+                inline: "package ice:view@0.1.0;
 
-        #[unsafe(no_mangle)]
-        pub extern "C" fn init() {
-            // Only in wasm: natively this would hijack the test harness's
-            // own hook, which is what reports a failing test.
-            #[cfg(target_arch = "wasm32")]
-            ::std::panic::set_hook(::std::boxed::Box::new(|info| {
-                let payload = info.payload();
-                let message = payload
-                    .downcast_ref::<&str>()
-                    .copied()
-                    .or_else(|| payload.downcast_ref::<::std::string::String>().map(|text| text.as_str()))
-                    .unwrap_or("panicked");
-                let at = info
-                    .location()
-                    .map(|location| ::std::format!("{}:{}", location.file(), location.line()))
-                    .unwrap_or_else(|| "unknown".into());
-                __ICE_PANIC.with(|text| *text.borrow_mut() = ::std::format!("{message} at {at}"));
-            }));
-            boot_native();
-        }
+world view {
+    export init: func();
+    export tick: func(events: list<u8>) -> list<u8>;
+    export last-panic: func() -> string;
+}
+",
+                runtime_path: "::ui_lang_guest::wit_bindgen::rt",
+            });
 
-        /// Reserves `len` bytes for the next event batch and returns where to write them.
-        #[unsafe(no_mangle)]
-        pub extern "C" fn input_ptr(len: u32) -> u32 {
-            __ICE_INPUT.with(|input| {
-                let mut input = input.borrow_mut();
-                input.clear();
-                input.resize(len as usize, 0);
-                input.as_mut_ptr() as u32
-            })
-        }
+            struct __IceComponent;
 
-        /// Applies the `len` bytes of events in the input buffer, draws a frame
-        /// into the output buffer, and returns the frame's length.
-        #[unsafe(no_mangle)]
-        pub extern "C" fn tick(len: u32) -> u32 {
-            // A batch that does not decode becomes no events: the host is
-            // trusted to write the buffer it just asked for.
-            let events: Vec<$crate::frame::Event> = __ICE_INPUT
-                .with(|input| $crate::frame::decode(&input.borrow()[..len as usize]))
-                .unwrap_or_default();
-            let bytes = $crate::frame::encode(&tick_native(events));
-            let len = bytes.len() as u32;
-            __ICE_OUTPUT.with(|output| *output.borrow_mut() = bytes);
-            len
-        }
+            impl Guest for __IceComponent {
+                fn init() {
+                    ::std::panic::set_hook(::std::boxed::Box::new(|info| {
+                        let payload = info.payload();
+                        let message = payload
+                            .downcast_ref::<&str>()
+                            .copied()
+                            .or_else(|| payload.downcast_ref::<::std::string::String>().map(|text| text.as_str()))
+                            .unwrap_or("panicked");
+                        let at = info
+                            .location()
+                            .map(|location| ::std::format!("{}:{}", location.file(), location.line()))
+                            .unwrap_or_else(|| "unknown".into());
+                        super::__ICE_PANIC.with(|text| *text.borrow_mut() = ::std::format!("{message} at {at}"));
+                    }));
+                    super::boot_native();
+                }
 
-        #[unsafe(no_mangle)]
-        pub extern "C" fn output_ptr() -> u32 {
-            __ICE_OUTPUT.with(|output| output.borrow().as_ptr() as u32)
+                fn tick(events: Vec<u8>) -> Vec<u8> {
+                    let events: Vec<$crate::wire::Event> =
+                        $crate::wire::decode(&events).unwrap_or_default();
+                    $crate::wire::encode(&super::tick_native(events))
+                }
+
+                fn last_panic() -> ::std::string::String {
+                    super::__ICE_PANIC.with(|text| text.borrow().clone())
+                }
+            }
+
+            export!(__IceComponent);
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_macro_carries_the_wit_file_verbatim() {
+        // The proc macro takes only a literal, so the world is spelled twice.
+        let source = include_str!("lib.rs");
+        let start = source.find("inline: \"").expect("inline wit") + "inline: \"".len();
+        let end = source[start..].find("\",").expect("wit end") + start;
+        let inline = &source[start..end];
+        let file: String = super::WIT
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("///"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(inline.trim(), file.trim());
+    }
 }

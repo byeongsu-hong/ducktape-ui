@@ -2,30 +2,24 @@
 name = "ui-lang-guest"
 version = "0.1.0"
 edition.workspace = true
-description = "Runs a generated Ice application inside wasm: a headless driver over iced's software renderer, host requests and subscriptions, and the module exports"
+description = "Runs a generated Ice application inside wasm as a view module: the tree it builds goes out, meaning-level events come in, and the component exports wrap both"
 homepage.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# The driver records through `iced_tiny_skia`'s layers and names that
-# renderer outright, so a workspace that also enables wgpu builds this crate
-# unchanged; only an app's generated view is bound to `iced::Renderer`, and
-# an app is built in a workspace of its own.
-iced = { version = "=0.14.0", default-features = false, features = ["advanced", "tiny-skia", "fira-sans"] }
+# No renderer feature on purpose: the guest builds a tree, it never draws.
+# `advanced` is what the generated app's `Task`/`Theme` code names.
+iced = { version = "=0.14.0", default-features = false, features = ["advanced"] }
 iced_runtime = "=0.14.0"
-iced_tiny_skia = { version = "=0.14.0", default-features = false }
-# Not `workspace = true`: a workspace dependency cannot have its default
-# features turned off, and the runtime's default `x11` is a window feature a
-# module has no use for.
-ui-lang-runtime = { path = "../ui-lang-runtime", version = "=0.1.0", default-features = false, features = ["full-runtime"] }
 ui-lang-wire.workspace = true
-
-# winit and iced's executor check refuse a native Linux build with no
-# platform selected; an app never opens a window either way.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-iced = { version = "=0.14.0", default-features = false, features = ["x11", "thread-pool"] }
+wit-bindgen = "0.57"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+# winit refuses a native target with no backend named, and iced pulls it in
+# regardless of renderer; the guest's own tests run natively.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+iced = { version = "=0.14.0", default-features = false, features = ["x11", "thread-pool"] }

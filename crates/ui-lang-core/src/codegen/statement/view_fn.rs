@@ -117,21 +117,32 @@ pub(in crate::codegen) fn generate_view(
     // A view the template vocabulary covers is published as data and rendered
     // by the runtime; anything else keeps its compiled tree.
     let mut slot_methods = String::new();
-    let rendered_root =
-        match crate::codegen::template::emit(program, message, &env, source_path, &root_scope)? {
-            Some(emission) => {
-                template_render_code(&emission, message, &root_scope, daemon, &mut slot_methods)
-            }
-            None => render_node_if_present(
-                program.app_view(),
-                program,
-                message,
-                &env,
-                &root_scope,
-                None,
-            )?
-            .unwrap_or_else(|| "::iced::widget::Column::new().into()".into()),
-        };
+    // A tree target has no hot-reload template and no native fallback: the
+    // whole view is data already.
+    let template = match program.target() {
+        Target::Tree => None,
+        Target::Native => {
+            crate::codegen::template::emit(program, message, &env, source_path, &root_scope)?
+        }
+    };
+    let empty_root = match program.target() {
+        Target::Tree => "::ui_lang_wire::Node::empty()",
+        Target::Native => "::iced::widget::Column::new().into()",
+    };
+    let rendered_root = match template {
+        Some(emission) => {
+            template_render_code(&emission, message, &root_scope, daemon, &mut slot_methods)
+        }
+        None => render_node_if_present(
+            program.app_view(),
+            program,
+            message,
+            &env,
+            &root_scope,
+            None,
+        )?
+        .unwrap_or_else(|| empty_root.into()),
+    };
     let window_arg = if daemon {
         ", window: ::iced::window::Id"
     } else {
@@ -150,11 +161,27 @@ pub(in crate::codegen) fn generate_view(
     let palette = format!(
         "let __ice_palette = self.__palette({callback_value}); let __ice_app_theme = Self::__app_theme(__ice_palette);"
     );
-    let navigation = navigation_code(message, daemon);
+    // Focus traversal is the host's business for a tree: the guest has no
+    // widgets to traverse.
+    let navigation = match program.target() {
+        Target::Tree => "__ice_content".to_owned(),
+        Target::Native => navigation_code(message, daemon),
+    };
+    let ready = match program.target() {
+        Target::Tree => "__ice_root",
+        Target::Native => "::ui_lang_runtime::dev::ready(__ice_root)",
+    };
+    if program.target() == Target::Tree && !mounted.is_empty() {
+        return Err(program.error_at_origin(
+            "E190",
+            program.resolved_view(program.app_view())?.origin,
+            "a mounted component is not available in a view module: the tree wire does not carry it",
+        ));
+    }
     if mounted.is_empty() {
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {span} {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = {navigation}; ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {span} {palette} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; let __ice_root: __IceElement<'_, {message}> = {navigation}; {ready} }}"
         )
         .unwrap();
     } else {

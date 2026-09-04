@@ -192,6 +192,8 @@ mod route_snapshots;
 mod sum_types;
 #[path = "tests/testing.rs"]
 mod testing;
+#[path = "tests/tree.rs"]
+mod tree;
 
 #[test]
 fn shown_paths_are_manifest_relative_and_foreign_paths_stay_whole() {

@@ -1668,6 +1668,7 @@ pub(crate) struct LoweredProgram {
     calls: Vec<ComponentCall>,
     styles: StyleProgram,
     origins: OriginArena,
+    target: crate::codegen::Target,
 }
 
 fn validate_expression_declaration_references(
@@ -3801,11 +3802,22 @@ impl LoweredProgram {
         message: impl Into<String>,
     ) -> Error {
         let message = format!("lowering invariant failed: {}", message.into());
+        self.error_at_origin("E196", origin, message)
+    }
+
+    /// A user-facing error at a node's `.ice` location.
+    pub(crate) fn error_at_origin(
+        &self,
+        code: &'static str,
+        origin: OriginId,
+        message: impl Into<String>,
+    ) -> Error {
+        let message = message.into();
         let Some(origin) = self.origins.try_get(origin) else {
-            return Error::new("E196", &Span::line(1), message);
+            return Error::new(code, &Span::line(1), message);
         };
         let mut error = Error::new(
-            "E196",
+            code,
             &Span {
                 line: origin.line,
                 column: origin.column,
@@ -3816,6 +3828,16 @@ impl LoweredProgram {
             error = error.at_path(path.display().to_string());
         }
         error
+    }
+
+    /// What the view compiles to: iced widgets, or the tree a view module
+    /// ships. Set by the analysis database before code generation.
+    pub(crate) fn target(&self) -> crate::codegen::Target {
+        self.target
+    }
+
+    pub(crate) fn set_target(&mut self, target: crate::codegen::Target) {
+        self.target = target;
     }
 
     pub(crate) fn app_handlers(&self) -> impl Iterator<Item = &ResolvedHandler> {
@@ -5006,6 +5028,7 @@ impl Lowerer {
             calls: self.calls,
             styles,
             origins: self.origins,
+            target: crate::codegen::Target::Native,
         })
     }
 

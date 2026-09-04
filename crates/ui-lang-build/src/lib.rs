@@ -8,6 +8,8 @@ use std::io::{self, Write};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub use ui_lang_core::Target;
+
 const GENERATED_DIRECTORY: &str = "ui-lang-generated";
 const GENERATED_MANIFEST: &str = "manifest.json";
 const GENERATED_MANIFEST_SCHEMA: u32 = 3;
@@ -141,11 +143,18 @@ struct GenerationTransaction {
 
 /// Compiles every app or daemon root below a manifest-relative directory.
 pub fn compile_dir(path: impl AsRef<Path>) -> Result<(), Error> {
+    compile_dir_for(path, Target::Native)
+}
+
+/// [`compile_dir`] for a chosen target: `Target::Tree` compiles every root
+/// below the directory as a view module, whose view builds a
+/// `ui-lang-wire` tree instead of iced widgets.
+pub fn compile_dir_for(path: impl AsRef<Path>, target: Target) -> Result<(), Error> {
     let path = path.as_ref().to_owned();
     compiler_thread(move || {
         let manifest = cargo_path("CARGO_MANIFEST_DIR")?;
         let out_dir = cargo_path("OUT_DIR")?;
-        compile_dir_at(&manifest, &out_dir, &path).map(|_| ())
+        compile_dir_at(&manifest, &out_dir, &path, target).map(|_| ())
     })
 }
 
@@ -237,6 +246,7 @@ fn compile_dir_at(
     manifest: &Path,
     out_dir: &Path,
     relative: &Path,
+    target: Target,
 ) -> Result<ui_lang_core::AnalysisMetrics, Error> {
     let relative = normalized_relative(relative)?;
     let directory = manifest.join(Path::new(&relative));
@@ -271,6 +281,7 @@ fn compile_dir_at(
         )));
     }
     let mut analysis_db = ui_lang_core::AnalysisDb::default();
+    analysis_db.set_target(target);
     let mut transaction = GenerationTransaction::begin(out_dir)?;
     let mut generated = HashSet::new();
     for (root, source) in roots {
@@ -877,7 +888,8 @@ fn validate_relative(relative: &str) -> Result<(), Error> {
 mod tests {
     use super::{
         GENERATED_DIRECTORY, GENERATED_MANIFEST, GeneratedManifest, GeneratedManifestEntry,
-        GenerationLock, compile_dir_at, compile_many_at, content_digest, generated_file_name,
+        GenerationLock, Target, compile_dir_at, compile_many_at, content_digest,
+        generated_file_name,
         generated_path, read_generated_manifest, rerun_directives, serialize_generated_manifest,
     };
     use std::fs;
@@ -1101,7 +1113,7 @@ mod tests {
         let untracked = stale.parent().unwrap().join("untracked.rs");
         fs::write(&untracked, "not in the canonical manifest").unwrap();
 
-        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
 
         let generated = generated_path(&out_dir, "src/ui/app.ice").unwrap();
         assert!(generated.starts_with(&out_dir));
@@ -1151,7 +1163,7 @@ mod tests {
         )
         .unwrap();
 
-        let metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
 
         assert_eq!(metrics.files_loaded, 2, "{metrics:?}");
         assert_eq!(metrics.files_scanned, 2, "{metrics:?}");
@@ -1250,13 +1262,13 @@ mod tests {
         fs::write(source_dir.join("first.ice"), app_source("First", "one")).unwrap();
         fs::write(source_dir.join("second.ice"), app_source("Second", "two")).unwrap();
 
-        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
         let directory = out_dir.join(GENERATED_DIRECTORY);
         let manifest_path = directory.join(GENERATED_MANIFEST);
         fs::write(&manifest_path, "{not-json").unwrap();
 
         reset_generated_writes();
-        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
         assert_eq!(
             generated_writes(),
             2 * FILES_PER_ROOT + 1,
@@ -1280,7 +1292,7 @@ mod tests {
         fs::write(stale_atomic.join("tmpfile.tmp"), "partial").unwrap();
 
         reset_generated_writes();
-        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
         assert_eq!(
             generated_writes(),
             2 * FILES_PER_ROOT + 1,
@@ -1302,7 +1314,7 @@ mod tests {
         fs::create_dir_all(&source_dir).unwrap();
         fs::write(source_dir.join("app.ice"), app_source("Stable", "same")).unwrap();
 
-        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
         let output = generated_path(&out_dir, "src/ui/app.ice").unwrap();
         let manifest_path = out_dir.join(GENERATED_DIRECTORY).join(GENERATED_MANIFEST);
         let output_mtime = fs::metadata(&output).unwrap().modified().unwrap();
@@ -1310,7 +1322,7 @@ mod tests {
         thread::sleep(Duration::from_millis(50));
 
         reset_generated_writes();
-        compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
 
         assert_eq!(generated_writes(), 0);
         assert_eq!(
@@ -1438,7 +1450,7 @@ mod tests {
 
         reset_generated_writes();
         let started = Instant::now();
-        let cold_metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let cold_metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
         let cold = started.elapsed();
         assert_eq!(generated_writes(), ROOTS * FILES_PER_ROOT + 1);
         assert_eq!(cold_metrics.files_loaded, ROOTS, "{cold_metrics:?}");
@@ -1450,7 +1462,7 @@ mod tests {
         reset_generated_writes();
         reset_content_comparison_reads();
         let started = Instant::now();
-        let incremental_metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui")).unwrap();
+        let incremental_metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
         let incremental = started.elapsed();
         assert_eq!(
             generated_writes(),

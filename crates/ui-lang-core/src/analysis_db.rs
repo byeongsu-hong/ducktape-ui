@@ -296,6 +296,7 @@ pub struct AnalysisDb {
     checked_roots: HashMap<PathBuf, CheckedRoot>,
     metrics: AnalysisMetrics,
     validation_policy: ValidationPolicy,
+    target: codegen::Target,
 }
 
 impl AnalysisDb {
@@ -305,6 +306,11 @@ impl AnalysisDb {
 
     pub fn take_metrics(&mut self) -> AnalysisMetrics {
         std::mem::take(&mut self.metrics)
+    }
+
+    /// What every root compiled from here on targets (native by default).
+    pub fn set_target(&mut self, target: codegen::Target) {
+        self.target = target;
     }
 
     pub fn set_validation_policy(&mut self, policy: ValidationPolicy) {
@@ -871,8 +877,9 @@ impl AnalysisDb {
     ) -> Result<FileCompilation, Error> {
         let started = Instant::now();
         let source_origins = analysis.document.source_origins().to_vec();
-        let program = lower::lower(analysis.document)
+        let mut program = lower::lower(analysis.document)
             .map_err(|error| remap_origin(error, &source_origins))?;
+        program.set_target(self.target);
         let mut rust =
             codegen::generate(&program, &path.display().to_string()).map_err(|mut error| {
                 if let Some((origin, line)) = program.source_origin(error.line) {
@@ -1550,6 +1557,7 @@ impl AnalysisDb {
             checked_roots,
             metrics: AnalysisMetrics::default(),
             validation_policy: self.validation_policy,
+            target: self.target,
         }
     }
 }

@@ -219,7 +219,7 @@ pub(in crate::codegen) fn render_input(
     ))
 }
 
-fn resolved_input_state<'a>(
+pub(super) fn resolved_input_state<'a>(
     input: &ResolvedInput,
     env: &'a dyn BindingEnvironment,
     program: &LoweredProgram,
