@@ -200,12 +200,13 @@ Visible labels are the default accessible names; explicit `label=` (and
 `description=`) override them with checked `str` expressions. A button with
 child content must declare `label=`, and an image without one is decorative.
 Enabled controls use source-order Tab focus with a visible outline; Enter/Space
-activate. Native screen-reader export covers single-window Linux and Windows
-applications through AccessKit's AT-SPI and UI Automation adapters (the Windows
-bootstrap holds the initial window hidden until the UI Automation subclass is
-ready, preserving queue order). Other targets, daemon and multi-window
-adapters, exact desktop bounds, rich text, and unlisted widgets are outside
-this Core contract.
+activate. Native screen-reader export covers single-window Linux, Windows, and
+macOS applications through AccessKit's AT-SPI, UI Automation, and
+NSAccessibility adapters (the Windows bootstrap holds the initial window hidden
+until the UI Automation subclass is ready, preserving queue order; macOS
+subclasses the AppKit view beside boot, on the main thread). Other targets,
+daemon and multi-window adapters, exact desktop bounds, rich text, and unlisted
+widgets are outside this Core contract.
 
 ## Installing a build
 

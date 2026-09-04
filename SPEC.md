@@ -127,8 +127,9 @@ numeric focus-order syntax.
 Tree construction, focus updates, duplicate-ID disambiguation, and action
 routing are deterministic across platforms. Native screen-reader export is a
 separate, narrower contract: `accesskit_unix` exports a single-window Linux
-application over AT-SPI, while `accesskit_windows` exports a single-window
-Windows application through UI Automation. The Windows bootstrap forces
+application over AT-SPI, `accesskit_windows` a single-window Windows
+application through UI Automation, and `accesskit_macos` a single-window macOS
+application through NSAccessibility. The Windows bootstrap forces
 Iced's automatically created initial main window to start hidden, windowed,
 and non-maximized, then resolves its ID with `window::oldest()`. Boot or preset
 work and received messages are held until AccessKit subclasses the Win32
@@ -137,7 +138,10 @@ selected initial task alongside queued messages, preserving queue order.
 Fullscreen takes precedence over maximized, matching Winit creation semantics;
 `visible=false`
 takes precedence over both and does not retain their latent state because Iced
-cannot preserve it without showing the window. Named windows retain their
+cannot preserve it without showing the window. macOS resolves the same ID with
+`window::oldest()` but holds nothing back: the capture runs beside boot and the
+`NSView` subclass attaches on the main thread as soon as the handle arrives,
+refusing anywhere else. Named windows retain their
 configured settings and remain outside native export. Stock Iced 0.14.0 does
 not expose the window-scoped operations or desktop transform needed for
 daemon/multi-window adapters or exact screen-coordinate bounds. Other targets
@@ -260,8 +264,9 @@ a consuming application must declare `iced = "=0.14.0"` and
 `ui-lang-build = "=0.1.0"` as a direct build dependency. The headless test
 driver is not a default feature of the runtime; test builds require
 `ui-lang-runtime` with the `test-runtime` feature as a dev dependency.
-The runtime pins AccessKit, `accesskit_unix` on Linux, and `accesskit_windows`
-on Windows; the reference application uses workspace paths with exact
+The runtime pins AccessKit, `accesskit_unix` on Linux, `accesskit_windows`
+on Windows, and `accesskit_macos` on macOS; the reference application uses
+workspace paths with exact
 versions. `cargo ice compat` verifies the lockfile and direct-manifest contract.
 
 ## 3. Source rules

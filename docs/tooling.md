@@ -378,13 +378,15 @@ let metrics = db.take_metrics();
 `cargo ice compat` analyzes every app graph, checks the exact `iced 0.14.0`,
 `iced_widget 0.14.2`, `ui-lang-build`, `ui-lang-runtime`, and AccessKit
 lockfile baseline, verifies the direct reference-app and runtime manifest
-pins—including the target-scoped Unix and Windows adapters—and runs the app
-tests.
+pins—including the target-scoped Unix, Windows, and macOS adapters—and runs the
+app tests.
 
 On Linux, `scripts/a11y-smoke.sh` creates an isolated D-Bus/AT-SPI session and
 checks that the native tree is discoverable and an AT-SPI action reaches the
 Iced bridge. `scripts/a11y-windows-check.sh` cross-compiles the Windows runtime
-and both production and test forms of the generated reference app. Headless
+and both production and test forms of the generated reference app. On macOS,
+`scripts/a11y-macos-check.sh` builds the same two and runs the runtime's
+NSAccessibility bridge tests; it needs a Mac, so no CI job runs it. Headless
 tests cover dispatch from the bridge to the app message.
 
 `cargo ice fmt` normalizes indentation and blank lines. It does not translate
