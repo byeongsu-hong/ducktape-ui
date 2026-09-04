@@ -104,6 +104,37 @@ view
     assert!(generated.contains(
         "__AgentMessage::__AccessibilityFocusNext(__window) => { return ::ui_lang_runtime::focus_next_in::<__AgentMessage>(__window)"
     ));
+
+    // Native export is per window for a daemon: a registry keyed by window
+    // id, an adapter attached when a window opens, a scoped snapshot for
+    // that window alone, and an action routed against the window it came
+    // from. A daemon's windows are not one tree.
+    for expected in [
+        "__ice_accessibility_windows: ::ui_lang_runtime::WindowBridges<__AgentMessage>",
+        "__ice_accessibility_windows: ::ui_lang_runtime::WindowBridges::new()",
+        "__AccessibilityWindowNative(::ui_lang_runtime::NativeWindow)",
+        "__AccessibilityWindowSnapshot(::iced::window::Id, ::std::boxed::Box<::ui_lang_runtime::Snapshot<__AgentMessage>>)",
+        "__AccessibilityWindowAction(::iced::window::Id, ::ui_lang_runtime::ActionRequest)",
+        "let __opened = matches!(__event, ::iced::window::Event::Opened { .. });",
+        "self.__ice_accessibility_windows.window_event(__id, __event);",
+        "return ::ui_lang_runtime::native_window(__id).map(__AgentMessage::__AccessibilityWindowNative);",
+        "if !self.__ice_accessibility_windows.attach(__window) { return ::iced::Task::none(); }",
+        "::ui_lang_runtime::snapshot_in::<__AgentMessage>(\"Agent\", __id)",
+        "self.__ice_accessibility_windows.update(__id, *__snapshot)",
+        "let __task = self.__ice_accessibility_windows.dispatch(__id, __request);",
+        "self.__ice_accessibility_windows.attached().into_iter().map(|__window| ::ui_lang_runtime::snapshot_in::<__AgentMessage>(\"Agent\", __window)",
+        "self.__ice_accessibility_windows.subscription().map(|(__id, __request)| __AgentMessage::__AccessibilityWindowAction(__id, __request))",
+        "::iced::window::events().map(|(__id, __event)| __AgentMessage::__AccessibilityWindowEvent(__id, __event))",
+    ] {
+        assert!(generated.contains(expected), "missing {expected}");
+    }
+    // The single-window attach is the app's, not a daemon's: a daemon never
+    // resolves one oldest window to subclass, it attaches per window as each
+    // one opens. (The unscoped `snapshot` still appears, and must: it feeds
+    // the shared deterministic bridge the test harness and focus traversal
+    // use. It is only the native adapters that must never see it.)
+    assert!(!generated.contains("fn __accessibility_attach()"));
+    assert!(!generated.contains("::iced::window::oldest()"));
 }
 
 #[test]
@@ -1468,6 +1499,12 @@ view
         "__pending.push(self.__update(__message))",
         "__restore.chain(::iced::Task::batch([__initial, __pending, __snapshot]))",
         "::iced::window::Mode::Windowed",
+        // macOS attaches NSAccessibility to the same captured window without
+        // Windows' deferral: boot runs, and the adapter arrives beside it.
+        "#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]",
+        "#[cfg(not(all(any(target_os = \"windows\", target_os = \"macos\"), not(test))))]\nfn __accessibility_attach() -> ::iced::Task<__AccessibleMessage> { ::iced::Task::none() }",
+        "::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()])",
+        "#[cfg(all(target_os = \"macos\", not(test)))]\n__AccessibleMessage::__AccessibilityNativeWindow(__window) => {\nif !self.__ice_accessibility.attach_window(__window) { return ::iced::Task::none(); }",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
     }
@@ -1610,6 +1647,7 @@ view
         "for __message in ::std::mem::take(&mut self.__ice_accessibility_pending)",
         "__pending.push(self.__update(__message))",
         "let __initial = self.__accessibility_initial_task();",
+        "::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()])",
         "::iced::Task::run",
     ] {
         assert!(generated.contains(expected), "missing {expected}");

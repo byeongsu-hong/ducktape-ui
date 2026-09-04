@@ -1602,6 +1602,15 @@ struct SnapshotOperation<Message> {
     translation: Vector,
     pending_translation: Option<Vector>,
     pending_set: Option<SetPosition>,
+    /// The one window this snapshot describes, or `None` for the whole tree.
+    /// A daemon runs every widget operation through every window's tree in
+    /// turn, so an unscoped snapshot of a multi-window program is one tree
+    /// holding all of them — and two windows carrying the same Ice id would
+    /// collide in it.
+    scope: Option<iced::window::Id>,
+    /// Whether the subtree being walked belongs to `scope`. Always true when
+    /// there is no scope.
+    inside: bool,
 }
 
 struct SemanticFrame {
@@ -1644,6 +1653,8 @@ impl<Message> Default for SnapshotOperation<Message> {
             translation: Vector::ZERO,
             pending_translation: None,
             pending_set: None,
+            scope: None,
+            inside: true,
         }
     }
 }
@@ -1652,6 +1663,20 @@ impl<Message> SnapshotOperation<Message> {
     fn named(root_label: impl Into<String>) -> Self {
         Self {
             root_label: root_label.into(),
+            ..Self::default()
+        }
+    }
+
+    /// The same snapshot, built only from the subtree a [`WindowScope`]
+    /// marker opens for `window`. The marker of any other window closes it
+    /// again, so every marker of one window — the semantic frame's start and
+    /// its end alike — is admitted or skipped together and the frame stack
+    /// stays balanced.
+    fn scoped(root_label: impl Into<String>, window: iced::window::Id) -> Self {
+        Self {
+            root_label: root_label.into(),
+            scope: Some(window),
+            inside: false,
             ..Self::default()
         }
     }
@@ -1673,10 +1698,22 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         translation: Vector,
         _state: &mut dyn Scrollable,
     ) {
+        if !self.inside {
+            return;
+        }
         self.pending_translation = Some(translation);
     }
 
     fn custom(&mut self, _id: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Any) {
+        if let Some(WindowScope(window)) = state.downcast_ref::<WindowScope>() {
+            if let Some(scope) = self.scope {
+                self.inside = *window == scope;
+            }
+            return;
+        }
+        if !self.inside {
+            return;
+        }
         if let Some(set) = state.downcast_mut::<SetPosition>() {
             self.pending_set = Some(SetPosition {
                 position: set.position,
@@ -1835,6 +1872,9 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         _bounds: Rectangle,
         state: &mut dyn Focusable,
     ) {
+        if !self.inside {
+            return;
+        }
         if state.is_focused()
             && let Some(id) = self.frames.iter().rev().find_map(|frame| frame.focus)
         {
@@ -1871,6 +1911,21 @@ where
     Message: Clone + Send + 'static,
 {
     iced::advanced::widget::operate(SnapshotOperation::named(root_label))
+}
+
+/// Captures the live Iced widget tree of ONE window as an AccessKit update.
+///
+/// A daemon owns several windows and one widget-operation pass walks all of
+/// them, so every native adapter it drives needs the tree of its own window
+/// and nothing else.
+pub fn snapshot_in<Message>(
+    root_label: impl Into<String>,
+    window: iced::window::Id,
+) -> Task<Snapshot<Message>>
+where
+    Message: Clone + Send + 'static,
+{
+    iced::advanced::widget::operate(SnapshotOperation::scoped(root_label, window))
 }
 
 #[derive(Clone)]
@@ -1957,6 +2012,42 @@ pub fn native_window(id: iced::window::Id) -> Task<NativeWindow> {
     })
 }
 
+/// The native AppKit view captured once Iced owns its first window.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy)]
+pub struct NativeWindow {
+    id: iced::window::Id,
+    /// The `NSView`, as an integer. `iced::window::run` delivers its value
+    /// across a `Send` boundary and a raw pointer is not `Send`; the integer
+    /// is turned back into a pointer only on the main thread, in
+    /// `Bridge::attach_window`, which is the same event-loop turn that
+    /// produced it.
+    ns_view: usize,
+}
+
+#[cfg(target_os = "macos")]
+impl NativeWindow {
+    pub fn id(self) -> iced::window::Id {
+        self.id
+    }
+}
+
+/// Captures the AppKit view handle on Iced's window-owning thread.
+#[cfg(target_os = "macos")]
+pub fn native_window(id: iced::window::Id) -> Task<NativeWindow> {
+    iced::window::run(id, move |window| {
+        let handle = window.window_handle().expect("Iced AppKit window handle");
+        let ns_view = match handle.as_raw() {
+            iced::window::raw_window_handle::RawWindowHandle::AppKit(handle) => handle.ns_view,
+            _ => unreachable!("Iced uses an AppKit window on macOS"),
+        };
+        NativeWindow {
+            id,
+            ns_view: ns_view.as_ptr() as usize,
+        }
+    })
+}
+
 /// Owns the native adapter and the action map for the latest frame.
 pub struct Bridge<Message> {
     id: u64,
@@ -1967,9 +2058,11 @@ pub struct Bridge<Message> {
     adapter: Option<accesskit_unix::Adapter>,
     #[cfg(target_os = "windows")]
     adapter: Option<accesskit_windows::SubclassingAdapter>,
-    #[cfg(target_os = "windows")]
+    #[cfg(target_os = "macos")]
+    adapter: Option<accesskit_macos::SubclassingAdapter>,
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     sender: Option<iced::futures::channel::mpsc::Sender<ActionRequest>>,
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     window: Option<iced::window::Id>,
 }
 
@@ -1982,12 +2075,12 @@ impl<Message> fmt::Debug for Bridge<Message> {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 struct Activation {
     latest_tree: Arc<Mutex<Option<TreeUpdate>>>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 impl accesskit::ActivationHandler for Activation {
     fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
         AT_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1998,12 +2091,12 @@ impl accesskit::ActivationHandler for Activation {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 struct Actions {
     sender: iced::futures::channel::mpsc::Sender<ActionRequest>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 impl accesskit::ActionHandler for Actions {
     fn do_action(&mut self, request: ActionRequest) {
         // A native callback cannot await without risking an event-loop cycle.
@@ -2050,9 +2143,9 @@ impl<Message> Bridge<Message> {
                 Deactivation,
             )
         });
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         let (adapter, sender) = (None, native.then_some(sender));
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         {
             let _ = native;
             drop(sender);
@@ -2067,9 +2160,11 @@ impl<Message> Bridge<Message> {
             adapter,
             #[cfg(target_os = "windows")]
             adapter,
-            #[cfg(target_os = "windows")]
+            #[cfg(target_os = "macos")]
+            adapter,
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
             sender,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             window: None,
         }
     }
@@ -2094,7 +2189,7 @@ impl<Message> Bridge<Message> {
         if let Some(adapter) = &mut self.adapter {
             adapter.update_if_active(|| update.clone());
         }
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
         if let Some(adapter) = &mut self.adapter
             && let Some(events) = adapter.update_if_active(|| update.clone())
         {
@@ -2104,8 +2199,8 @@ impl<Message> Bridge<Message> {
         self.snapshot = Some(snapshot);
     }
 
-    /// Returns whether UI Automation owns the initial Win32 window.
-    #[cfg(target_os = "windows")]
+    /// Returns whether the platform accessibility API owns the native window.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub fn is_attached(&self) -> bool {
         self.adapter.is_some()
     }
@@ -2124,6 +2219,47 @@ impl<Message> Bridge<Message> {
             },
             Actions { sender },
         ));
+        true
+    }
+
+    /// Attaches NSAccessibility to the AppKit view backing the Iced window.
+    ///
+    /// Refuses off the main thread: the subclass rewrites the view's
+    /// Objective-C class and every accessibility callback it installs is
+    /// delivered on the main thread, so anywhere else this is a data race on
+    /// AppKit. Generated boot also runs on worker threads — every Ice
+    /// semantic test and frame probe constructs the app off-main — and there
+    /// the refusal leaves the deterministic tree untouched, exactly as
+    /// `without_native_adapter` does.
+    #[cfg(target_os = "macos")]
+    pub fn attach_window(&mut self, window: NativeWindow) -> bool {
+        let on_main_thread = objc2::MainThreadMarker::new().is_some();
+        if !on_main_thread {
+            return false;
+        }
+        let Some(sender) = self.sender.take() else {
+            return false;
+        };
+        self.window = Some(window.id);
+        // SAFETY: `ns_view` is the `NSView` pointer AppKit gave Iced for this
+        // window through `raw-window-handle`, read in `native_window` on the
+        // window-owning thread. Iced owns the window for the whole run and
+        // the adapter retains the view, so the pointer is a live,
+        // unreleased `NSView` here.
+        #[expect(
+            unsafe_code,
+            reason = "accesskit_macos takes the NSView as a raw pointer; there is no safe constructor"
+        )]
+        let adapter = unsafe {
+            accesskit_macos::SubclassingAdapter::new(
+                window.ns_view as *mut core::ffi::c_void,
+                Activation {
+                    latest_tree: Arc::clone(&self.latest_tree),
+                },
+                Actions { sender },
+            )
+        };
+        self.adapter = Some(adapter);
         true
     }
 
@@ -2146,7 +2282,25 @@ impl<Message> Bridge<Message> {
                 _ => {}
             }
         }
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(target_os = "macos")]
+        {
+            let Some(adapter) = &mut self.adapter else {
+                return;
+            };
+            let window = self.window.get_or_insert(id);
+            if *window != id {
+                return;
+            }
+            let focused = match event {
+                iced::window::Event::Focused => true,
+                iced::window::Event::Unfocused | iced::window::Event::Closed => false,
+                _ => return,
+            };
+            if let Some(events) = adapter.update_view_focus_state(focused) {
+                events.raise();
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
         let _ = (id, event);
         #[cfg(target_os = "windows")]
         let _ = (id, event);
@@ -2165,6 +2319,236 @@ impl<Message> Default for Bridge<Message> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// One native adapter per window, for a daemon.
+///
+/// [`Bridge`] owns the single window an `app` has. A daemon owns several and
+/// opens them over its lifetime, so the native tree is not one adapter but a
+/// map keyed by [`iced::window::Id`]: a window contributes its own tree, keeps
+/// its own focus state, routes its own actions, and takes its adapter with it
+/// when it closes.
+///
+/// macOS only, and the type does not exist elsewhere: `accesskit_macos`
+/// subclasses one `NSView`, which is exactly per-window, while
+/// `accesskit_unix`'s AT-SPI adapter is per-process and `accesskit_windows`
+/// subclasses the Win32 handle a `Bridge` already owns. Neither can be keyed
+/// by window, so on those targets a daemon exports nothing and generated code
+/// never names this type — the behaviour it had before.
+#[cfg(target_os = "macos")]
+pub struct WindowBridges<Message> {
+    id: u64,
+    receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::Receiver<WindowAction>>>>,
+    sender: iced::futures::channel::mpsc::Sender<WindowAction>,
+    windows: HashMap<iced::window::Id, WindowEntry<Message>>,
+}
+
+/// An action a native adapter raised, named with the window it came from —
+/// two windows of one daemon can hold the same Ice id, so the node id alone
+/// does not say which control was pressed.
+#[cfg(target_os = "macos")]
+pub type WindowAction = (iced::window::Id, ActionRequest);
+
+#[cfg(target_os = "macos")]
+struct WindowEntry<Message> {
+    latest_tree: Arc<Mutex<Option<TreeUpdate>>>,
+    snapshot: Option<Snapshot<Message>>,
+    adapter: accesskit_macos::SubclassingAdapter,
+}
+
+#[cfg(target_os = "macos")]
+struct WindowActions {
+    window: iced::window::Id,
+    sender: iced::futures::channel::mpsc::Sender<WindowAction>,
+}
+
+#[cfg(target_os = "macos")]
+impl accesskit::ActionHandler for WindowActions {
+    fn do_action(&mut self, request: ActionRequest) {
+        // Same bounded, non-blocking hand-off as the single-window bridge.
+        let _ = self.sender.try_send((self.window, request));
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl<Message> fmt::Debug for WindowBridges<Message> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WindowBridges")
+            .field("id", &self.id)
+            .field("windows", &self.windows.len())
+            .finish()
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl<Message> WindowBridges<Message> {
+    pub fn new() -> Self {
+        let id = NEXT_BRIDGE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (sender, receiver) = iced::futures::channel::mpsc::channel(ACCESSIBILITY_ACTION_BUFFER);
+        Self {
+            id,
+            receiver: Arc::new(Mutex::new(Some(receiver))),
+            sender,
+            windows: HashMap::default(),
+        }
+    }
+
+    pub fn subscription(&self) -> Subscription<WindowAction> {
+        Subscription::run_with(
+            WindowActionSubscription {
+                id: self.id,
+                receiver: Arc::clone(&self.receiver),
+            },
+            window_action_stream,
+        )
+    }
+
+    /// The windows currently exporting a native tree, so generated code can
+    /// refresh each one after a message without walking the closed ones.
+    pub fn attached(&self) -> Vec<iced::window::Id> {
+        self.windows.keys().copied().collect()
+    }
+
+    pub fn is_attached(&self, window: iced::window::Id) -> bool {
+        self.windows.contains_key(&window)
+    }
+
+    /// Attaches NSAccessibility to one window's AppKit view.
+    ///
+    /// Refuses off the main thread and refuses a window already attached —
+    /// `accesskit_macos` panics when a view is subclassed twice, and a daemon
+    /// can be told a window opened more than once.
+    pub fn attach(&mut self, window: NativeWindow) -> bool {
+        let on_main_thread = objc2::MainThreadMarker::new().is_some();
+        if !on_main_thread || self.windows.contains_key(&window.id) {
+            return false;
+        }
+        let latest_tree = Arc::new(Mutex::new(None));
+        // SAFETY: `ns_view` is the `NSView` pointer AppKit gave Iced for this
+        // window through `raw-window-handle`, read in `native_window` on the
+        // window-owning thread; Iced owns the window until it closes, and
+        // `close` drops this adapter when it does.
+        #[expect(
+            unsafe_code,
+            reason = "accesskit_macos takes the NSView as a raw pointer; there is no safe constructor"
+        )]
+        let adapter = unsafe {
+            accesskit_macos::SubclassingAdapter::new(
+                window.ns_view as *mut core::ffi::c_void,
+                Activation {
+                    latest_tree: Arc::clone(&latest_tree),
+                },
+                WindowActions {
+                    window: window.id,
+                    sender: self.sender.clone(),
+                },
+            )
+        };
+        self.windows.insert(
+            window.id,
+            WindowEntry {
+                latest_tree,
+                snapshot: None,
+                adapter,
+            },
+        );
+        true
+    }
+
+    /// Drops the window's adapter, which restores the view's original class.
+    pub fn close(&mut self, window: iced::window::Id) {
+        self.windows.remove(&window);
+    }
+
+    /// Publishes one window's tree through that window's adapter.
+    pub fn update(&mut self, window: iced::window::Id, snapshot: Snapshot<Message>) {
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
+        let update = snapshot.update.clone();
+        if let Some(events) = entry.adapter.update_if_active(|| update.clone()) {
+            events.raise();
+        }
+        *entry.latest_tree.lock().expect("accessibility tree lock") = Some(update);
+        entry.snapshot = Some(snapshot);
+    }
+
+    /// Applies focus truth for one window.
+    pub fn window_event(&mut self, window: iced::window::Id, event: iced::window::Event) {
+        if matches!(event, iced::window::Event::Closed) {
+            self.close(window);
+            return;
+        }
+        let focused = match event {
+            iced::window::Event::Focused => true,
+            iced::window::Event::Unfocused => false,
+            _ => return,
+        };
+        let Some(entry) = self.windows.get_mut(&window) else {
+            return;
+        };
+        if let Some(events) = entry.adapter.update_view_focus_state(focused) {
+            events.raise();
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl<Message: Clone + Send + 'static> WindowBridges<Message> {
+    /// Routes an action against the snapshot of the window it came from.
+    pub fn dispatch(&self, window: iced::window::Id, request: ActionRequest) -> Task<Message> {
+        self.windows
+            .get(&window)
+            .and_then(|entry| entry.snapshot.as_ref())
+            .map_or_else(Task::none, |snapshot| snapshot.dispatch(request))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl<Message> Default for WindowBridges<Message> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+struct WindowActionSubscription {
+    id: u64,
+    receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::Receiver<WindowAction>>>>,
+}
+
+#[cfg(target_os = "macos")]
+impl PartialEq for WindowActionSubscription {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Eq for WindowActionSubscription {}
+
+#[cfg(target_os = "macos")]
+impl Hash for WindowActionSubscription {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn window_action_stream(
+    subscription: &WindowActionSubscription,
+) -> iced::futures::channel::mpsc::Receiver<WindowAction> {
+    subscription
+        .receiver
+        .lock()
+        .expect("accessibility action receiver lock")
+        .take()
+        .unwrap_or_else(|| {
+            let (_sender, receiver) =
+                iced::futures::channel::mpsc::channel(ACCESSIBILITY_ACTION_BUFFER);
+            receiver
+        })
 }
 
 /// Focuses the next enabled semantic/native focus target in view-tree order.
@@ -3630,6 +4014,82 @@ mod tests {
     }
 
     #[test]
+    fn scoped_snapshot_describes_one_window_and_the_unscoped_one_holds_all() {
+        let first = iced::window::Id::unique();
+        let second = iced::window::Id::unique();
+        let renderer = RecordingRenderer::default();
+        // The same Ice id in both windows, which is what a daemon's shared
+        // component graph produces and what an unscoped snapshot cannot tell
+        // apart. The labels differ so a captured node names its window.
+        let build = |window: iced::window::Id,
+                     label: &'static str|
+         -> (Element<'_, Message, (), RecordingRenderer>, WidgetTree) {
+            let leaf: Element<'_, Message, (), RecordingRenderer> = Element::new(Leaf);
+            let button: Element<'_, Message, (), RecordingRenderer> =
+                accessible(leaf, StableId::new("go"), Role::Button)
+                    .label(label)
+                    .on_activate(Message::Next)
+                    .into();
+            let root: Element<'_, Message, (), RecordingRenderer> = Element::new(
+                navigation(button, Message::Next, Message::Previous).in_window(window),
+            );
+            let tree = WidgetTree::new(&root);
+            (root, tree)
+        };
+
+        let labels = |operation: SnapshotOperation<Message>| -> Vec<String> {
+            let mut windows = [build(first, "First"), build(second, "Second")];
+            let viewport = Rectangle::with_size(Size::new(100.0, 100.0));
+            let mut operation: Box<dyn Operation<Snapshot<Message>>> = Box::new(operation);
+            loop {
+                for (element, tree) in windows.iter_mut() {
+                    let node = element.as_widget_mut().layout(
+                        tree,
+                        &renderer,
+                        &layout::Limits::new(Size::ZERO, viewport.size()),
+                    );
+                    element.as_widget_mut().operate(
+                        tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut widget::operation::black_box(operation.as_mut()),
+                    );
+                }
+                match operation.finish() {
+                    Outcome::Chain(next) => operation = next,
+                    Outcome::Some(snapshot) => {
+                        return snapshot
+                            .update
+                            .nodes
+                            .iter()
+                            .filter_map(|(_, node)| node.label().map(str::to_owned))
+                            .collect();
+                    }
+                    Outcome::None => return Vec::new(),
+                }
+            }
+        };
+
+        // Scoped to one window, only that window's control joins the root —
+        // even though the operation walked both windows in turn.
+        assert_eq!(
+            labels(SnapshotOperation::scoped("Daemon", first)),
+            ["Daemon", "First"]
+        );
+        assert_eq!(
+            labels(SnapshotOperation::scoped("Daemon", second)),
+            ["Daemon", "Second"]
+        );
+
+        // Unscoped, one tree holds both windows: the shape a per-window
+        // native adapter must not be handed.
+        assert_eq!(
+            labels(SnapshotOperation::named("Daemon")),
+            ["Daemon", "First", "Second"]
+        );
+    }
+
+    #[test]
     fn pointer_focused_wrapper_does_not_draw_an_outline() {
         let id = StableId::new("pointer-focus");
         let leaf: Element<'_, Message, (), RecordingRenderer> = Element::new(Leaf);
@@ -3814,7 +4274,7 @@ mod tests {
         assert_eq!(renderer.quads.len(), 1);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     #[test]
     fn native_adapter_action_handler_routes_requests_to_iced() {
         let (sender, mut receiver) =
@@ -3833,7 +4293,7 @@ mod tests {
         assert_eq!(routed, Some(request));
     }
 
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     #[test]
     fn native_adapter_action_handler_bounds_pending_requests() {
         let (sender, mut receiver) =
@@ -3892,6 +4352,86 @@ mod tests {
         assert!(disabled.adapter.is_none());
         assert!(disabled.sender.is_none());
         assert!(!disabled.is_attached());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_bridge_defers_adapter_and_refuses_attachment_off_the_main_thread() {
+        let mut bridge = Bridge::<Message>::new();
+        assert!(bridge.adapter.is_none());
+        assert!(bridge.sender.is_some());
+        assert!(!bridge.is_attached());
+
+        // The harness runs every test on a spawned thread, so this call is
+        // the off-main case by construction: it must refuse, keep the sender
+        // for a later main-thread attempt, and leave no adapter behind.
+        let window = NativeWindow {
+            id: iced::window::Id::unique(),
+            ns_view: 1,
+        };
+        assert!(!bridge.attach_window(window));
+        assert!(bridge.adapter.is_none());
+        assert!(bridge.sender.is_some());
+        assert!(!bridge.is_attached());
+
+        let disabled = Bridge::<Message>::without_native_adapter();
+        assert!(disabled.adapter.is_none());
+        assert!(disabled.sender.is_none());
+        assert!(!disabled.is_attached());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn window_bridges_start_empty_and_ignore_windows_that_never_attached() {
+        let mut bridges = WindowBridges::<Message>::new();
+        let window = iced::window::Id::unique();
+        assert!(bridges.attached().is_empty());
+        assert!(!bridges.is_attached(window));
+
+        // An action naming a window with no adapter routes nowhere rather
+        // than falling through to another window's controls.
+        let request = ActionRequest {
+            action: Action::Click,
+            target_tree: TreeId::ROOT,
+            target_node: StableId::new("go").node_id(),
+            data: None,
+        };
+        let _: Task<Message> = bridges.dispatch(window, request);
+
+        // Closing and focusing an unknown window are both no-ops, and
+        // neither invents an entry.
+        bridges.close(window);
+        bridges.window_event(window, iced::window::Event::Focused);
+        bridges.window_event(window, iced::window::Event::Closed);
+        assert!(bridges.attached().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_window_bridges_refuse_attachment_off_the_main_thread() {
+        let mut bridges = WindowBridges::<Message>::new();
+        let window = iced::window::Id::unique();
+        // The harness runs every test on a spawned thread, so this is the
+        // off-main case by construction: it must refuse and leave no adapter.
+        assert!(!bridges.attach(NativeWindow {
+            id: window,
+            ns_view: 1
+        }));
+        assert!(!bridges.is_attached(window));
+        assert!(bridges.attached().is_empty());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_window_focus_events_are_inert_without_an_attached_adapter() {
+        let (mut ui, renderer) = interface();
+        let snapshot = snapshot(&mut ui, &renderer);
+        let mut bridge = Bridge::<Message>::new();
+        bridge.update(snapshot);
+
+        let first = iced::window::Id::unique();
+        bridge.window_event(first, iced::window::Event::Focused);
+        assert_eq!(bridge.window, None);
     }
 
     #[cfg(target_os = "linux")]

@@ -15,6 +15,7 @@ pub const UI_LANG_RUNTIME_VERSION: &str = "0.1.0";
 pub const ACCESSKIT_VERSION: &str = "0.24.1";
 pub const ACCESSKIT_UNIX_VERSION: &str = "0.22.1";
 pub const ACCESSKIT_WINDOWS_VERSION: &str = "0.32.0";
+pub const ACCESSKIT_MACOS_VERSION: &str = "0.26.3";
 
 #[derive(Clone, Copy)]
 struct Completion {
@@ -2607,6 +2608,8 @@ pub fn document() -> Value {
                 "accesskit_unixTarget": "linux",
                 "accesskit_windows": ACCESSKIT_WINDOWS_VERSION,
                 "accesskit_windowsTarget": "windows",
+                "accesskit_macos": ACCESSKIT_MACOS_VERSION,
+                "accesskit_macosTarget": "macos",
             },
             "compatibilityCommand": "cargo ice compat",
         },
@@ -2976,9 +2979,9 @@ pub fn completion_items_for(categories: &[&str]) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACCESSKIT_WINDOWS_VERSION, CAPTURE_SCHEMA_VERSION, COMPLETIONS, ICED_VERSION,
-        ICED_WIDGET_VERSION, UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION, completion_items,
-        completion_items_for, document,
+        ACCESSKIT_MACOS_VERSION, ACCESSKIT_WINDOWS_VERSION, CAPTURE_SCHEMA_VERSION, COMPLETIONS,
+        ICED_VERSION, ICED_WIDGET_VERSION, UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION,
+        completion_items, completion_items_for, document,
     };
     use serde_json::json;
     use std::collections::BTreeSet;
@@ -3021,6 +3024,14 @@ mod tests {
         assert_eq!(
             schema["backend"]["runtime"]["accesskit_windowsTarget"],
             "windows"
+        );
+        assert_eq!(
+            schema["backend"]["runtime"]["accesskit_macos"],
+            ACCESSKIT_MACOS_VERSION
+        );
+        assert_eq!(
+            schema["backend"]["runtime"]["accesskit_macosTarget"],
+            "macos"
         );
         assert_eq!(constructs.len(), COMPLETIONS.len());
         assert_eq!(completions.len(), COMPLETIONS.len());

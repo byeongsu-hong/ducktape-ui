@@ -53,6 +53,21 @@ pub(in crate::codegen) fn generate_subscription(
         )
         .unwrap();
     }
+    // A daemon's native export needs the same two sources an app's does, but
+    // keyed by window: the per-window adapters' actions, and the window
+    // events that open, close and focus them.
+    if settings.kind == ProgramKind::Daemon {
+        writeln!(
+            out,
+            "#[cfg(all(target_os = \"macos\", not(test)))]\nself.__ice_accessibility_windows.subscription().map(|(__id, __request)| {message}::__AccessibilityWindowAction(__id, __request)),"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "#[cfg(all(target_os = \"macos\", not(test)))]\n::iced::window::events().map(|(__id, __event)| {message}::__AccessibilityWindowEvent(__id, __event)),"
+        )
+        .unwrap();
+    }
     // A tray installs no event source the author did not declare: a `menu`
     // subscribes only when a row is routed — an unrouted menu is a readout —
     // and a routed row reaches its handler through the message a payload-free

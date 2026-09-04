@@ -55,8 +55,13 @@ zeroize = { version = "1", features = ["alloc"] }
 accesskit_unix = "=0.22.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# Already in the graph via tray-icon's `muda`; used only for the safe
-# main-thread check guarding tray init.
+# 0.26.3 is the newest release built against `accesskit` 0.24.1 — the exact
+# version this crate pins — and it shares `accesskit_consumer` 0.38 with
+# `accesskit_unix` 0.22.1's `accesskit_atspi_common`. 0.27 moved to
+# `accesskit` 0.25 and cannot be used until the core pin moves with it.
+accesskit_macos = "=0.26.3"
+# Already in the graph via tray-icon's `muda`; used for the safe main-thread
+# checks guarding tray init and the NSAccessibility subclass.
 objc2 = "0.6"
 tray-icon = { version = "0.24", default-features = false }
 
@@ -77,5 +82,11 @@ dhat = "=0.3.3"
 serde_json = "1"
 stats_alloc = "0.1.10"
 
-[lints]
-workspace = true
+# Not `workspace = true`. The workspace forbids unsafe Rust, and `forbid`
+# cannot be lifted by an attribute; this crate needs exactly one unsafe call —
+# `accesskit_macos::SubclassingAdapter::new`, which takes the `NSView` as a
+# raw pointer — so it denies instead and that one call carries an `expect`
+# with its safety argument. The workspace table holds this lint and nothing
+# else, so nothing is lost by spelling it out.
+[lints.rust]
+unsafe_code = "deny"

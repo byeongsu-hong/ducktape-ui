@@ -1,6 +1,6 @@
 use crate::schema::{
-    ACCESSKIT_UNIX_VERSION, ACCESSKIT_VERSION, ACCESSKIT_WINDOWS_VERSION, ICED_VERSION,
-    ICED_WIDGET_VERSION, UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION,
+    ACCESSKIT_MACOS_VERSION, ACCESSKIT_UNIX_VERSION, ACCESSKIT_VERSION, ACCESSKIT_WINDOWS_VERSION,
+    ICED_VERSION, ICED_WIDGET_VERSION, UI_LANG_BUILD_VERSION, UI_LANG_RUNTIME_VERSION,
 };
 use std::fs;
 use std::path::Path;
@@ -10,6 +10,7 @@ const DIRECT_DEPENDENCIES: &str = "[dependencies]";
 const BUILD_DEPENDENCIES: &str = "[build-dependencies]";
 const LINUX_TARGET_DEPENDENCIES: &str = r#"[target.'cfg(target_os = "linux")'.dependencies]"#;
 const WINDOWS_TARGET_DEPENDENCIES: &str = r#"[target.'cfg(target_os = "windows")'.dependencies]"#;
+const MACOS_TARGET_DEPENDENCIES: &str = r#"[target.'cfg(target_os = "macos")'.dependencies]"#;
 
 pub fn verify(root: &Path) -> Result<(), String> {
     verify_lock(&root.join("Cargo.lock"))?;
@@ -79,8 +80,17 @@ pub fn verify(root: &Path) -> Result<(), String> {
         None,
         WINDOWS_TARGET_DEPENDENCIES,
     )?;
+    verify_dependency(
+        &workspace_manifest,
+        root,
+        &runtime,
+        "accesskit_macos",
+        &format!("={ACCESSKIT_MACOS_VERSION}"),
+        None,
+        MACOS_TARGET_DEPENDENCIES,
+    )?;
     println!(
-        "compatibility baseline: iced {ICED_VERSION}, iced_widget {ICED_WIDGET_VERSION}, ui-lang-build {UI_LANG_BUILD_VERSION}, ui-lang-runtime {UI_LANG_RUNTIME_VERSION}, accesskit {ACCESSKIT_VERSION}, accesskit_unix {ACCESSKIT_UNIX_VERSION} (linux), accesskit_windows {ACCESSKIT_WINDOWS_VERSION} (windows)"
+        "compatibility baseline: iced {ICED_VERSION}, iced_widget {ICED_WIDGET_VERSION}, ui-lang-build {UI_LANG_BUILD_VERSION}, ui-lang-runtime {UI_LANG_RUNTIME_VERSION}, accesskit {ACCESSKIT_VERSION}, accesskit_unix {ACCESSKIT_UNIX_VERSION} (linux), accesskit_windows {ACCESSKIT_WINDOWS_VERSION} (windows), accesskit_macos {ACCESSKIT_MACOS_VERSION} (macos)"
     );
     Ok(())
 }
@@ -100,6 +110,7 @@ fn verify_lock_contents(lock: &str) -> Result<(), String> {
         ("accesskit", ACCESSKIT_VERSION, false),
         ("accesskit_unix", ACCESSKIT_UNIX_VERSION, false),
         ("accesskit_windows", ACCESSKIT_WINDOWS_VERSION, false),
+        ("accesskit_macos", ACCESSKIT_MACOS_VERSION, false),
     ] {
         let mut actual = locked_versions(lock, name);
         let Some(first) = actual.next() else {
@@ -251,6 +262,10 @@ fn dependency_section_item<'a>(
             .get("target")?
             .get(r#"cfg(target_os = "windows")"#)?
             .get("dependencies"),
+        MACOS_TARGET_DEPENDENCIES => root
+            .get("target")?
+            .get(r#"cfg(target_os = "macos")"#)?
+            .get("dependencies"),
         "[workspace.dependencies]" => root.get("workspace")?.get("dependencies"),
         _ => None,
     }
@@ -285,8 +300,8 @@ fn locked_versions<'a>(lock: &'a str, package: &'a str) -> impl Iterator<Item = 
 mod tests {
     use super::{
         BUILD_DEPENDENCIES, DIRECT_DEPENDENCIES, Dependency, LINUX_TARGET_DEPENDENCIES,
-        WINDOWS_TARGET_DEPENDENCIES, dependency, locked_versions, read_manifest, verify_dependency,
-        verify_lock_contents,
+        MACOS_TARGET_DEPENDENCIES, WINDOWS_TARGET_DEPENDENCIES, dependency, locked_versions,
+        read_manifest, verify_dependency, verify_lock_contents,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -329,6 +344,10 @@ version = "0.22.1"
 [[package]]
 name = "accesskit_windows"
 version = "0.32.0"
+
+[[package]]
+name = "accesskit_macos"
+version = "0.26.3"
 "#;
 
         assert_eq!(
@@ -438,6 +457,9 @@ accesskit_unix = "=0.22.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 accesskit_windows = "=0.32.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+accesskit_macos = "=0.26.3"
 "#
         .parse::<DocumentMut>()
         .unwrap();
@@ -446,6 +468,7 @@ accesskit_windows = "=0.32.0"
         let unix = dependency(&manifest, "accesskit_unix", LINUX_TARGET_DEPENDENCIES).unwrap();
         let windows =
             dependency(&manifest, "accesskit_windows", WINDOWS_TARGET_DEPENDENCIES).unwrap();
+        let macos = dependency(&manifest, "accesskit_macos", MACOS_TARGET_DEPENDENCIES).unwrap();
 
         assert_eq!(runtime.version, Some("=0.1.0"));
         assert_eq!(build.version, Some("=0.1.0"));
@@ -453,8 +476,10 @@ accesskit_windows = "=0.32.0"
         assert_eq!(runtime.path, Some("../../crates/ui-lang-runtime"));
         assert_eq!(unix.version, Some("=0.22.1"));
         assert_eq!(windows.version, Some("=0.32.0"));
+        assert_eq!(macos.version, Some("=0.26.3"));
         assert!(dependency(&manifest, "accesskit_unix", DIRECT_DEPENDENCIES).is_none());
         assert!(dependency(&manifest, "accesskit_windows", LINUX_TARGET_DEPENDENCIES).is_none());
+        assert!(dependency(&manifest, "accesskit_macos", WINDOWS_TARGET_DEPENDENCIES).is_none());
 
         let not_linux = r#"
 [target.'cfg(not(target_os = "linux"))'.dependencies]

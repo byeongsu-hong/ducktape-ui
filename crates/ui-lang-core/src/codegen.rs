@@ -948,6 +948,15 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         )
         .unwrap();
     }
+    // A daemon's native export is one adapter per window, beside the shared
+    // deterministic bridge the tests and focus traversal already use.
+    if program.settings().kind == ProgramKind::Daemon {
+        writeln!(
+            out,
+            "#[cfg(all(target_os = \"macos\", not(test)))]\npub(crate) __ice_accessibility_windows: ::ui_lang_runtime::WindowBridges<{message}>,"
+        )
+        .unwrap();
+    }
     for (lane, _, mode) in app_run_lanes(program) {
         writeln!(
             out,
@@ -1076,9 +1085,16 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     writeln!(out, "#[derive(Clone)]\npub(crate) enum {message} {{").unwrap();
     writeln!(
         out,
-        "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(target_os = \"windows\", not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext(::std::option::Option<::iced::window::Id>),\n__AccessibilityFocusPrevious(::std::option::Option<::iced::window::Id>),\n__TemplateChanged,"
+        "__AccessibilitySnapshot(::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n__AccessibilityAction(::ui_lang_runtime::ActionRequest),\n__AccessibilityWindow(::iced::window::Id, ::iced::window::Event),\n#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]\n__AccessibilityNativeWindow(::ui_lang_runtime::NativeWindow),\n__AccessibilityFocusNext(::std::option::Option<::iced::window::Id>),\n__AccessibilityFocusPrevious(::std::option::Option<::iced::window::Id>),\n__TemplateChanged,"
     )
     .unwrap();
+    if program.settings().kind == ProgramKind::Daemon {
+        writeln!(
+            out,
+            "#[cfg(all(target_os = \"macos\", not(test)))]\n__AccessibilityWindowNative(::ui_lang_runtime::NativeWindow),\n#[cfg(all(target_os = \"macos\", not(test)))]\n__AccessibilityWindowSnapshot(::iced::window::Id, ::std::boxed::Box<::ui_lang_runtime::Snapshot<{message}>>),\n#[cfg(all(target_os = \"macos\", not(test)))]\n__AccessibilityWindowAction(::iced::window::Id, ::ui_lang_runtime::ActionRequest),\n#[cfg(all(target_os = \"macos\", not(test)))]\n__AccessibilityWindowEvent(::iced::window::Id, ::iced::window::Event),"
+        )
+        .unwrap();
+    }
     for (lane, kind, mode) in app_run_lanes(program) {
         let payload = if kind == EffectKind::Stream && mode == DeliveryMode::Replace {
             format!("::std::option::Option<::std::boxed::Box<{message}>>")

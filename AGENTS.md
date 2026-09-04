@@ -32,8 +32,11 @@ Platform-specific accessibility checks are in `scripts/`.
 Let `rustfmt` define Rust layout (four-space indentation). Use `snake_case` for
 modules, functions, tests, and source files; `UpperCamelCase` for types and
 components; and `SCREAMING_SNAKE_CASE` for constants. The workspace forbids
-unsafe Rust. Format `.ice` files with `cargo ice fmt`; indentation defines the
-view tree, so never align it manually for appearance.
+unsafe Rust; `crates/ui-lang-runtime` denies it instead, for the one call
+`accesskit_macos` gives no safe form — attaching NSAccessibility to the
+`NSView` — which carries an `expect` and its safety argument. Format `.ice`
+files with `cargo ice fmt`; indentation defines the view tree, so never align
+it manually for appearance.
 
 ## No Legacy or Compatibility Policy
 
