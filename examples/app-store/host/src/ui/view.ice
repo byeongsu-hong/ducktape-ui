@@ -484,7 +484,7 @@ view
                             size=11.0
                             @text-muted
                             @font-bold
-                        text "200M fuel per tick · 64 MB of memory · 256 requests per tick · one instance"
+                        text "100M fuel per tick · 64 MB of memory · 256 requests per tick · one instance"
                           with
                             size=13.0
                             font=figures

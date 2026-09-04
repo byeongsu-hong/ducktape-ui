@@ -88,7 +88,7 @@ its own, titled with the app's name, resizable and movable like any other.
   manifest: name, description, and a chip per capability, coloured by what
   it reaches. Get loads the module, adds it to the library and opens its
   window. While an app runs its card carries a fuel bar — the last tick's
-  fuel against the 200M budget — and the figures under it. A strip at the
+  fuel against the 100M budget — and the figures under it. A strip at the
   top shows what is running now; Show raises its window, Quit closes it.
   Clicking a card opens the app's page: what each capability lets it do, the
   box it runs in, and its live figures.
@@ -249,8 +249,9 @@ of its frames crossed without their tree.
 
 ## The sandbox
 
-Every tick runs with `FUEL_PER_TICK` (200M, roughly one per instruction)
-and a 64 MB memory limit, in a store that allows eight core instances (the
+Every tick runs with `FUEL_PER_TICK` (100M, roughly one per instruction —
+about a 60 Hz frame of wall clock, and two hundred times the busiest tick
+any app here has) and a 64 MB memory limit, in a store that allows eight core instances (the
 app, the stub adapters, the bindings' shims — all the component's own),
 one memory and four tables of at most a million elements — a table is
 allocated at its declared minimum when the component is instantiated,
@@ -273,6 +274,7 @@ Fuel and memory bound what a module does to itself. What it can make the
 | limit | value | what a guest past it gets |
 |---|---|---|
 | `MAX_FRAME_BYTES` | 8 MiB | the instance ends, "frame too large" |
+| `TICK_BUDGET` / `MAX_REST` | 8 ms per redraw, 250 ms of waiting | its next redraw waits as long as this one overran: an expensive guest runs at a few frames a second instead of at the window's rate, and the windows sharing that thread keep theirs |
 | `MAX_REQUESTS_PER_TICK` | 256 | `Err "too many requests this tick"` for the rest |
 | `MAX_PAYLOAD_BYTES` | 1 MiB | `Err`, whatever the request was |
 | `MAX_TICKERS` | 16 per guest | `Err` from `clock.ticks` |
@@ -294,14 +296,32 @@ Fuel and memory bound what a module does to itself. What it can make the
 
 The numbers *inside* a frame are the other half of the same boundary: the
 guest chooses every one, and the host lays out what it is given and
-allocates by the counts it is given. `wire::sanitize` pulls a tree into
-range on the way in: depth to `MAX_DEPTH` (64, the host's layout recurses
-that far and no further), nodes to `MAX_NODES` (8192, a screen's worth —
-a list past that is the guest's to window), every string to
-`MAX_STRING_BYTES` (64 KiB), sizes, spacings and paddings to finite
-pixels no larger than a wall, colours to `0..=1`. A well-behaved tree
-passes through untouched; a hostile one is cut, not refused, so a guest
-that overshoots by one node still shows.
+allocates by the counts it is given.
+
+The shape comes first, because reading a tree is itself recursive. A
+`Node` holds its children, so a chain of containers is a chain of stack
+frames in the decoder — and in `sanitize`, the renderer and `Drop` after
+it. A few thousand links is a frame of about 100 KB, well inside any byte
+cap, and walking one takes a host thread off its stack: an abort, not a
+fault, with every window in the process gone. So `wire::decode` counts
+what it descends into and refuses a frame nested past `MAX_DEPTH` or
+carrying more than `MAX_DECODED_NODES` (16 × `MAX_NODES`) before there is
+a tree to walk. That refusal ends the one instance, like any other.
+
+What survives the door, `wire::sanitize` pulls into range: depth to
+`MAX_DEPTH` (64, the host's layout recurses that far and no further),
+nodes to `MAX_NODES` (8192, a screen's worth — a list past that is the
+guest's to window), every string to `MAX_STRING_BYTES` (64 KiB), text
+sizes to `MAX_TEXT_PIXELS` (512, since every glyph at one is rasterized
+and cached), other sizes, spacings and paddings to finite pixels no
+larger than a wall, colours to `0..=1`. A key used twice is moved off the
+one already taken (`key`, then `key#2`): a key is the node's widget
+state, its focus target, its accessibility id and, for an input, the text
+the host owns on its behalf, so two nodes sharing one share all of that.
+Every frame passes through it, tree or no tree — an `unchanged` one still
+carries request kinds the host formats into refusals and shows. A
+well-behaved tree comes out untouched; a hostile one is cut, not refused,
+so a guest that overshoots by one node still shows.
 
 ## What is not here yet
 
@@ -375,10 +395,11 @@ An honest inventory, grouped by where the work would land. Items marked
   under its own name. No rate limit beyond the per-tick byte budget the
   fan-out is charged to, no replay for late subscribers, no request/reply
   between apps, no wildcard beyond `*`.
-- Beyond the sandbox table: no cumulative CPU budget (an app may burn its
-  200M every frame) and no wall-clock timeout. A request answered this tick
-  wakes the window at once, so an app that asks in a loop pins the whole
-  window's redraw rate.
+- Beyond the sandbox table: no cumulative CPU budget across ticks, and
+  nothing that ends an app for being slow — `TICK_BUDGET` lowers an
+  expensive guest's rate, it never refuses it. A request answered this tick
+  wakes the window at once, so an app that asks in a loop still runs at
+  whatever rate the governor leaves it.
 - `define_unknown_imports_as_traps` accepts every import a component
   declares and traps the first call; a component built against JS glue
   loads, and fails at the first frame that touches it instead of at

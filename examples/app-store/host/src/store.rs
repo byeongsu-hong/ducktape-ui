@@ -66,8 +66,9 @@ use crate::capabilities::{Inbox, bus, clock, host, storage};
 use crate::library::{FAULTED, LIVE_INSTANCES};
 use crate::limits::{
     BUS_WAKE_INTERVAL, FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE, MAX_FAULT_BYTES,
-    MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK,
+    MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK, MAX_REST,
     MAX_SUBSCRIPTIONS, MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT,
+    TICK_BUDGET,
 };
 
 /// The host-side handle the view holds. Identity is the instance: two
@@ -213,6 +214,8 @@ pub struct Guest {
     /// What the last tick cost, for the status line and the monitor.
     pub(crate) fuel_used: u64,
     pub(crate) tick_time: Duration,
+    /// When a guest that overran [`TICK_BUDGET`] may run again.
+    resting_until: Option<Instant>,
     pub(crate) load: Load,
     /// What the guest has cost since it was loaded: ticks run, redraws it was
     /// quiet for and therefore skipped, frames that crossed without their
@@ -362,6 +365,7 @@ impl Guest {
             storage_used: None,
             fuel_used: 0,
             tick_time: Duration::ZERO,
+            resting_until: None,
             load: Load {
                 took: started.elapsed(),
                 cached,
@@ -401,10 +405,21 @@ impl Guest {
         if self.fault.is_some() {
             return Wake::default();
         }
+        // Not "nothing to do" but "not yet": the work is waiting, and so is
+        // this guest, because its last tick cost the window more than a
+        // frame. It is woken when its rest is up.
+        if let Some(until) = self.resting(now) {
+            self.skipped += 1;
+            return Wake {
+                at: Some(until),
+                published: false,
+            };
+        }
         if self.quiet(now) {
             self.skipped += 1;
             return self.wake(now);
         }
+        let started = Instant::now();
         self.deliver_due(now);
         self.tick();
         self.ticks += 1;
@@ -438,7 +453,17 @@ impl Guest {
         if std::mem::take(&mut self.published) {
             self.wake_pending = true;
         }
+        // What the whole redraw cost the window thread, not only the call
+        // into the module: answering a tick's requests is the host's work,
+        // and the guest chose how much of it there would be.
+        self.resting_until = rest_after(started.elapsed()).map(|rest| now + rest);
         self.wake(now)
+    }
+
+    /// When this guest may run again, if it is still paying for its last
+    /// tick.
+    fn resting(&self, now: Instant) -> Option<Instant> {
+        self.resting_until.filter(|until| now < *until)
     }
 
     /// A publish wakes this window now, so a subscriber sharing it ticks
@@ -732,28 +757,49 @@ impl Guest {
 
     fn tick_inner(&mut self, bytes: &[u8]) -> wasmtime::Result<wire::Frame> {
         let frame = self.view.call_tick(&mut self.store, bytes)?;
-        if frame.len() > MAX_FRAME_BYTES {
-            return Err(wasmtime::Error::msg("frame too large"));
-        }
         let len = frame.len();
-        let mut frame: wire::Frame = wire::decode(&frame).map_err(wasmtime::Error::msg)?;
-        // The requests past the cap exist only so the guest learns it went
-        // over; a million of them would be a million refusal strings, so the
-        // host keeps enough to say so and drops the rest unanswered.
-        frame.requests.truncate(2 * MAX_REQUESTS_PER_TICK);
-        // A frame that says it changed nothing must not carry a tree the
-        // host would then lay out unsanitized; it is treated as what it
-        // claims.
-        if frame.unchanged {
-            frame.root = None;
-        } else {
+        let frame = shape(&frame).map_err(wasmtime::Error::msg)?;
+        if !frame.unchanged {
             self.frame_bytes = len;
-            // The host lays out what it is given and allocates by the
-            // counts it is given; the guest chose every one.
-            wire::sanitize(&mut frame);
         }
         Ok(frame)
     }
+}
+
+/// How long a guest waits after a redraw that cost `spent`. A tick inside
+/// [`TICK_BUDGET`] waits not at all; one over it waits as long as it
+/// overran, so a guest that spends a whole frame budget runs at half the
+/// window's rate rather than all of it, and one that spends ten frames runs
+/// a few times a second. Capped at [`MAX_REST`]: the app is expensive, not
+/// disowned, and a click still has to land.
+fn rest_after(spent: Duration) -> Option<Duration> {
+    let overran = spent.saturating_sub(TICK_BUDGET);
+    (!overran.is_zero()).then(|| overran.min(MAX_REST))
+}
+
+/// What the host is willing to take from one tick's bytes. Everything in
+/// here is the guest's to choose, so nothing in here is trusted: the length,
+/// the counts, the tree.
+fn shape(bytes: &[u8]) -> Result<wire::Frame, String> {
+    if bytes.len() > MAX_FRAME_BYTES {
+        return Err("frame too large".to_string());
+    }
+    // Refuses a tree nested deeper than the host walks — decoding one is
+    // what walks a window thread off its stack — before there is a tree.
+    let mut frame: wire::Frame = wire::decode(bytes)?;
+    // The requests past the cap exist only so the guest learns it went
+    // over; a million of them would be a million refusal strings, so the
+    // host keeps enough to say so and drops the rest unanswered.
+    frame.requests.truncate(2 * MAX_REQUESTS_PER_TICK);
+    // A frame that says it changed nothing must not carry a tree the host
+    // would then lay out unsanitized; it is treated as what it claims.
+    if frame.unchanged {
+        frame.root = None;
+    }
+    // Every frame, tree or no tree: an unchanged one still carries request
+    // kinds the host formats into refusals and shows.
+    wire::sanitize(&mut frame);
+    Ok(frame)
 }
 
 /// The message the guest's panic hook handed over before the trap, if it
@@ -792,4 +838,75 @@ fn first_line(error: &wasmtime::Error) -> String {
         .next()
         .unwrap_or("trap")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kind(bytes: usize) -> wire::Request {
+        wire::Request {
+            id: 1,
+            kind: "x".repeat(bytes),
+            payload: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn an_unchanged_frame_is_taken_at_its_word_and_still_shaped() {
+        let frame = shape(&wire::encode(&wire::Frame {
+            root: Some(wire::Node::empty()),
+            requests: vec![kind(wire::MAX_STRING_BYTES * 2)],
+            cancels: Vec::new(),
+            unchanged: true,
+        }))
+        .expect("shaped");
+        assert!(frame.root.is_none());
+        assert_eq!(frame.requests[0].kind.len(), wire::MAX_STRING_BYTES);
+    }
+
+    #[test]
+    fn a_frame_nested_past_what_the_host_walks_is_refused() {
+        let mut node = wire::Node::empty();
+        for _ in 0..wire::MAX_DEPTH + 4 {
+            node = wire::Node::Container {
+                key: String::new(),
+                width: None,
+                height: None,
+                padding: None,
+                align_x: None,
+                align_y: None,
+                background: None,
+                border: None,
+                content: Box::new(node),
+            };
+        }
+        let bytes = wire::encode(&wire::Frame {
+            root: Some(node),
+            ..wire::Frame::default()
+        });
+        assert!(bytes.len() < MAX_FRAME_BYTES);
+        assert!(shape(&bytes).is_err());
+    }
+
+    #[test]
+    fn a_frame_larger_than_the_host_copies_is_refused_before_it_is_decoded() {
+        let refused = shape(&vec![0; MAX_FRAME_BYTES + 1]).unwrap_err();
+        assert_eq!(refused, "frame too large");
+    }
+
+    #[test]
+    fn a_tick_inside_the_budget_is_never_made_to_wait() {
+        assert_eq!(rest_after(Duration::ZERO), None);
+        assert_eq!(rest_after(TICK_BUDGET), None);
+    }
+
+    #[test]
+    fn a_tick_over_the_budget_waits_what_it_overran_and_no_longer_than_the_cap() {
+        assert_eq!(
+            rest_after(TICK_BUDGET + Duration::from_millis(5)),
+            Some(Duration::from_millis(5))
+        );
+        assert_eq!(rest_after(Duration::from_secs(9)), Some(MAX_REST));
+    }
 }

@@ -19,12 +19,15 @@ getrandom = "0.3"
 iced = { workspace = true, features = ["x11", "wayland"] }
 ui-lang-runtime = { workspace = true, features = ["x11"] }
 
-# Ice's generated `#[cfg(test)]` glue needs the runtime's test driver, which
-# pulls wgpu; the host has no tests of its own.
+# Ice's generated `#[cfg(test)]` glue calls the runtime's test driver, so
+# building the host's own unit tests needs the feature that provides it. It
+# is a dev-dependency: the shipped binary never links it.
+[dev-dependencies]
+ui-lang-runtime = { workspace = true, features = ["test-runtime"] }
+
 [[bin]]
 name = "app-store-host"
 path = "src/main.rs"
-test = false
 
 [build-dependencies]
 ui-lang-build.workspace = true
