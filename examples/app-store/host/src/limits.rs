@@ -4,7 +4,24 @@ use std::time::Duration;
 
 /// What one tick may burn before the host ends the app. Roughly one fuel
 /// per wasm instruction; a busy frame of a list app is a few million.
-pub(crate) const FUEL_PER_TICK: u64 = 200_000_000;
+///
+/// Sized against the window it runs in rather than against generosity: a
+/// module burning this spends about a frame at 60 Hz, and the busiest tick
+/// any app here has is under half a million — the cap is two hundred times
+/// what a real view costs and one frame of what a runaway one can take.
+pub(crate) const FUEL_PER_TICK: u64 = 100_000_000;
+
+/// What one guest's redraw may cost the window thread before the host makes
+/// it wait. Fuel bounds one tick; this bounds the RATE of expensive ones,
+/// which is what a window shared with other guests actually feels: without
+/// it a module that spends its whole budget every tick holds every other
+/// window at its own frame rate.
+pub(crate) const TICK_BUDGET: Duration = Duration::from_millis(8);
+
+/// The longest a guest is made to wait for having overrun. Long enough that
+/// an expensive app runs at a few frames a second instead of pinning the
+/// thread, short enough that it still answers a click.
+pub(crate) const MAX_REST: Duration = Duration::from_millis(250);
 
 /// The most linear memory an app may grow to.
 pub(crate) const MEMORY_LIMIT: usize = 64 << 20;

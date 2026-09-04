@@ -57,10 +57,12 @@ impl Inputs {
     /// it; one that reports the same value keeps whatever the user typed
     /// since. Inputs no longer in the tree are forgotten.
     pub fn adopt(&mut self, root: &wire::Node) {
-        let mut seen = Vec::new();
+        // A map, not a list: the retain below asks after every field this
+        // holds, and a tree of a thousand inputs asking a list a thousand
+        // times is a million comparisons on the window thread.
+        let mut seen = HashMap::new();
         collect_inputs(root, &mut seen);
-        self.fields
-            .retain(|key, _| seen.iter().any(|(seen, _)| seen == key));
+        self.fields.retain(|key, _| seen.contains_key(key));
         for (key, value) in seen {
             match self.fields.get_mut(&key) {
                 Some(field) if field.reported == value => {}
@@ -103,9 +105,11 @@ impl Inputs {
     }
 }
 
-fn collect_inputs(node: &wire::Node, into: &mut Vec<(String, String)>) {
+fn collect_inputs(node: &wire::Node, into: &mut HashMap<String, String>) {
     match node {
-        wire::Node::Input { key, value, .. } => into.push((key.clone(), value.clone())),
+        wire::Node::Input { key, value, .. } => {
+            into.insert(key.clone(), value.clone());
+        }
         wire::Node::Container { content, .. } | wire::Node::Scroll { content, .. } => {
             collect_inputs(content, into);
         }

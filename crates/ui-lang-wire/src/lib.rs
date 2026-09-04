@@ -187,6 +187,7 @@ pub struct InputStyle {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ButtonContent {
     Label(String),
+    #[serde(deserialize_with = "decode_child")]
     Child(Box<Node>),
 }
 
@@ -205,6 +206,7 @@ pub enum Node {
         align_y: Option<AlignY>,
         background: Option<Rgba>,
         border: Option<Border>,
+        #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
     Linear {
@@ -216,6 +218,7 @@ pub enum Node {
         height: Option<Length>,
         /// Cross-axis alignment of the children.
         align: Option<AlignX>,
+        #[serde(deserialize_with = "decode_children")]
         children: Vec<Node>,
     },
     Scroll {
@@ -223,6 +226,7 @@ pub enum Node {
         direction: ScrollDirection,
         width: Option<Length>,
         height: Option<Length>,
+        #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
     Text {
@@ -351,23 +355,55 @@ pub const MAX_NODES: usize = 8_192;
 pub const MAX_STRING_BYTES: usize = 64 << 10;
 /// Text and spacing sizes are pixels; nothing on a screen needs more.
 const MAX_PIXELS: f32 = 8192.0;
+/// A text size, which is not a length: every glyph at it is rasterized and
+/// cached, so a screenful of 8192 px text is an atlas no screen asked for.
+const MAX_TEXT_PIXELS: f32 = 512.0;
 
 /// Pulls a frame from an untrusted module into what the host is willing to
 /// lay out: the tree is truncated past [`MAX_DEPTH`] and [`MAX_NODES`],
-/// strings past [`MAX_STRING_BYTES`], and every size, colour and spacing
-/// clamped to a finite range. A frame from a well-behaved guest passes
-/// through unchanged.
+/// strings past [`MAX_STRING_BYTES`], text sizes to [`MAX_TEXT_PIXELS`],
+/// every other size, colour and spacing clamped to a finite range, and a key
+/// used twice moved off the one already taken. A frame from a well-behaved
+/// guest passes through unchanged.
+///
+/// A frame that arrived as bytes has passed [`decode`] first, which refuses
+/// one nested deeper than this walk goes.
 pub fn sanitize(frame: &mut Frame) {
     let mut budget = MAX_NODES;
+    let mut taken = std::collections::HashSet::new();
     if let Some(root) = &mut frame.root {
-        sanitize_node(root, 0, &mut budget);
+        sanitize_node(root, 0, &mut budget, &mut taken);
     }
     for request in &mut frame.requests {
         truncate(&mut request.kind);
     }
 }
 
-fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
+/// A key already used in this tree, made unique. A key is the node's
+/// identity — its widget state, its focus target, its accessibility id, and
+/// the [`Node::Input`] whose text the host owns — so two nodes sharing one
+/// share all of that: typing in either edits both. The tree the guest sent
+/// is kept, with the later node moved off the taken key.
+fn claim(key: &mut String, taken: &mut std::collections::HashSet<String>) {
+    truncate(key);
+    if taken.insert(key.clone()) {
+        return;
+    }
+    let mut nth = 2;
+    let mut unique = format!("{key}#{nth}");
+    while !taken.insert(unique.clone()) {
+        nth += 1;
+        unique = format!("{key}#{nth}");
+    }
+    *key = unique;
+}
+
+fn sanitize_node(
+    node: &mut Node,
+    depth: usize,
+    budget: &mut usize,
+    taken: &mut std::collections::HashSet<String>,
+) {
     // The caller guarantees one node of budget; a node too deep spends it
     // on the empty node that stands in for it.
     *budget -= 1;
@@ -383,7 +419,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
             background,
             ..
         } => {
-            truncate(key);
+            claim(key, taken);
             bound_edges(padding);
             bound_border(border);
             bound_color(background);
@@ -394,11 +430,11 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
             padding,
             ..
         } => {
-            truncate(key);
+            claim(key, taken);
             bound_optional(spacing);
             bound_edges(padding);
         }
-        Node::Scroll { key, .. } => truncate(key),
+        Node::Scroll { key, .. } => claim(key, taken),
         Node::Text {
             key,
             content,
@@ -406,9 +442,11 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
             color,
             ..
         } => {
-            truncate(key);
+            claim(key, taken);
             truncate(content);
-            bound_optional(size);
+            if let Some(size) = size {
+                *size = bounded(*size).min(MAX_TEXT_PIXELS);
+            }
             bound_color(color);
         }
         Node::Input {
@@ -418,7 +456,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
             style,
             ..
         } => {
-            truncate(key);
+            claim(key, taken);
             truncate(placeholder);
             truncate(value);
             for face in [
@@ -445,7 +483,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
             style,
             ..
         } => {
-            truncate(key);
+            claim(key, taken);
             if let ButtonContent::Label(label) = content {
                 truncate(label);
             }
@@ -474,7 +512,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
             color,
             ..
         } => {
-            truncate(key);
+            claim(key, taken);
             *thickness = bounded(*thickness);
             bound_color(color);
         }
@@ -493,7 +531,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
             if *budget == 0 {
                 break;
             }
-            sanitize_node(child, depth + 1, budget);
+            sanitize_node(child, depth + 1, budget, taken);
             kept += 1;
         }
         children.truncate(kept);
@@ -504,7 +542,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
             *child = Node::empty();
             continue;
         }
-        sanitize_node(child, depth + 1, budget);
+        sanitize_node(child, depth + 1, budget, taken);
     }
 }
 
@@ -577,11 +615,108 @@ fn bound_border(border: &mut Option<Border>) {
     }
 }
 
+/// What one `decode` may build before it is refused: enough that
+/// [`sanitize`]'s truncation still shapes any tree a real view sends, and
+/// few enough that a hostile one cannot make the host allocate its way
+/// through a frame's worth of nodes every tick.
+const MAX_DECODED_NODES: usize = 16 * MAX_NODES;
+
+/// Bounds what a decode may descend into, since decoding is recursive: a
+/// [`Node`] holds its children and serde builds them from the inside out, so
+/// a chain of containers is a chain of stack frames. The tree the host walks
+/// afterwards — [`sanitize`], the renderer, `Drop` — recurses the same way,
+/// which is why the limit is the door rather than each walk.
+///
+/// [`MAX_FRAME_BYTES`-sized](Frame) input is no protection: a chain deep
+/// enough to overflow a host thread's stack is a few tens of kilobytes.
+mod budget {
+    use std::cell::Cell;
+
+    use super::{MAX_DECODED_NODES, MAX_DEPTH};
+
+    thread_local! {
+        static DEPTH: Cell<usize> = const { Cell::new(0) };
+        static NODES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// One node being decoded. Descending past what the host walks, or
+    /// building more nodes than it will hold, refuses the whole frame:
+    /// there is no partial tree to keep, and a truncated one would be a
+    /// tree the guest did not write.
+    pub(super) struct Node(());
+
+    impl Node {
+        pub(super) fn enter() -> Result<Self, &'static str> {
+            let depth = DEPTH.get() + 1;
+            if depth > MAX_DEPTH {
+                return Err("a tree deeper than the host renders");
+            }
+            let nodes = NODES.get() + 1;
+            if nodes > MAX_DECODED_NODES {
+                return Err("more nodes than the host holds");
+            }
+            DEPTH.set(depth);
+            NODES.set(nodes);
+            Ok(Self(()))
+        }
+    }
+
+    impl Drop for Node {
+        fn drop(&mut self) {
+            DEPTH.set(DEPTH.get().saturating_sub(1));
+        }
+    }
+
+    /// A fresh budget for one top-level [`decode`](super::decode). The depth
+    /// unwinds itself; the node count is what one frame may spend.
+    pub(super) fn reset() {
+        NODES.set(0);
+    }
+}
+
+fn decode_child<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Box<Node>, D::Error> {
+    let _node = budget::Node::enter().map_err(serde::de::Error::custom)?;
+    Box::<Node>::deserialize(deserializer)
+}
+
+fn decode_children<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<Node>, D::Error> {
+    struct Children;
+
+    impl<'de> serde::de::Visitor<'de> for Children {
+        type Value = Vec<Node>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a list of nodes")
+        }
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut children: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut nodes = Vec::new();
+            // The guard is held while one child is built and dropped before
+            // the next: siblings share a depth, and each costs a node.
+            while let Some(child) = {
+                let _node = budget::Node::enter().map_err(serde::de::Error::custom)?;
+                children.next_element::<Node>()?
+            } {
+                nodes.push(child);
+            }
+            Ok(nodes)
+        }
+    }
+
+    deserializer.deserialize_seq(Children)
+}
+
 pub fn encode<T: Serialize>(value: &T) -> Vec<u8> {
     bincode::serialize(value).expect("wire types are plain data")
 }
 
 pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, String> {
+    budget::reset();
     bincode::deserialize(bytes).map_err(|error| error.to_string())
 }
 
@@ -742,5 +877,159 @@ mod tests {
             node = &children[0];
         }
         assert!(depth <= MAX_DEPTH, "{depth}");
+    }
+
+    fn button(content: ButtonContent) -> Node {
+        Node::Button {
+            key: "App/b".into(),
+            content,
+            label: None,
+            on_press: Some(1),
+            width: None,
+            height: None,
+            padding: None,
+            style: ButtonStyle::default(),
+        }
+    }
+
+    /// A button holding a node is the third way the tree recurses, and the
+    /// only one that hangs off an enum's field rather than a struct's.
+    #[test]
+    fn a_button_holding_a_node_round_trips_and_counts_as_a_child() {
+        let frame = Frame {
+            root: Some(button(ButtonContent::Child(Box::new(text("inside"))))),
+            ..Frame::default()
+        };
+        assert_eq!(decode::<Frame>(&encode(&frame)).unwrap(), frame);
+
+        let mut nested = Node::empty();
+        for _ in 0..MAX_DEPTH + 1 {
+            nested = button(ButtonContent::Child(Box::new(nested)));
+        }
+        let bytes = encode(&Frame {
+            root: Some(nested),
+            ..Frame::default()
+        });
+        assert!(decode::<Frame>(&bytes).is_err());
+    }
+
+    /// Building and encoding a chain this deep recurses as far as decoding
+    /// it would, so the hostile frame is made where there is stack for it.
+    fn deep_chain_bytes(depth: usize) -> Vec<u8> {
+        std::thread::Builder::new()
+            .stack_size(512 << 20)
+            .spawn(move || {
+                let mut node = Node::empty();
+                for _ in 0..depth {
+                    node = column(vec![node]);
+                }
+                let frame = Frame {
+                    root: Some(node),
+                    ..Frame::default()
+                };
+                let bytes = encode(&frame);
+                // Dropping it recurses too, and this thread is the one with
+                // the stack to do it.
+                drop(frame);
+                bytes
+            })
+            .expect("hostile frame thread")
+            .join()
+            .expect("hostile frame")
+    }
+
+    #[test]
+    fn a_tree_the_host_would_not_walk_is_refused_before_it_is_built() {
+        assert!(decode::<Frame>(&deep_chain_bytes(MAX_DEPTH - 1)).is_ok());
+        let refused = decode::<Frame>(&deep_chain_bytes(MAX_DEPTH + 1)).unwrap_err();
+        assert!(
+            refused.contains("deeper than the host renders"),
+            "{refused}"
+        );
+    }
+
+    /// The bug this guards: a chain of a few thousand containers is a frame
+    /// of ~100 KB — far inside any byte cap a host sets — and decoding it
+    /// walked a host thread off its stack, aborting the process. A refusal
+    /// is a message in one app's window; an overflow is every window gone.
+    #[test]
+    fn a_chain_that_overflowed_the_host_stack_is_an_error_not_a_crash() {
+        let bytes = deep_chain_bytes(5_000);
+        assert!(bytes.len() < 1 << 20, "{} bytes", bytes.len());
+        assert!(decode::<Frame>(&bytes).is_err());
+    }
+
+    #[test]
+    fn more_nodes_than_the_host_holds_is_refused() {
+        let wide = column((0..MAX_DECODED_NODES + 2).map(|_| Node::empty()).collect());
+        let bytes = encode(&Frame {
+            root: Some(wide),
+            ..Frame::default()
+        });
+        let refused = decode::<Frame>(&bytes).unwrap_err();
+        assert!(
+            refused.contains("more nodes than the host holds"),
+            "{refused}"
+        );
+    }
+
+    /// A frame is bytes a module wrote, so every byte of it is the guest's
+    /// to choose. Whatever they say, `decode` answers rather than aborts.
+    #[test]
+    fn bytes_a_hostile_guest_could_write_are_answered_not_survived() {
+        let sound = encode(&Frame {
+            root: Some(column(vec![text("hello"), Node::empty()])),
+            requests: vec![Request {
+                id: 7,
+                kind: "host.echo".into(),
+                payload: b"hi".to_vec(),
+            }],
+            cancels: vec![1, 2],
+            unchanged: false,
+        });
+        for cut in 0..sound.len() {
+            let _ = decode::<Frame>(&sound[..cut]);
+        }
+        for at in 0..sound.len() {
+            for bit in 0..8 {
+                let mut flipped = sound.clone();
+                flipped[at] ^= 1 << bit;
+                let _ = decode::<Frame>(&flipped);
+            }
+        }
+    }
+
+    #[test]
+    fn a_key_used_twice_is_moved_off_the_one_already_taken() {
+        let mut frame = Frame {
+            root: Some(column(vec![text("one"), text("two"), text("three")])),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        let keys: Vec<&str> = children.iter().filter_map(Node::key).collect();
+        assert_eq!(keys, ["App/t", "App/t#2", "App/t#3"]);
+    }
+
+    #[test]
+    fn a_text_size_is_capped_where_a_length_is_not() {
+        let mut huge = text("huge");
+        let Node::Text { size, width, .. } = &mut huge else {
+            panic!()
+        };
+        *size = Some(f32::MAX);
+        *width = Some(Length::Fixed(f32::MAX));
+        let mut frame = Frame {
+            root: Some(huge),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Text { size, width, .. }) = &frame.root else {
+            panic!()
+        };
+        assert_eq!(*size, Some(MAX_TEXT_PIXELS));
+        assert_eq!(*width, Some(Length::Fixed(MAX_PIXELS)));
     }
 }
