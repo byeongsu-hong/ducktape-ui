@@ -275,7 +275,22 @@ where
                 return;
             }
 
-            self.sender.start_send(event).expect("Send event");
+            // The receiver of this channel lives inside `run_instance`. Once
+            // that future finishes the program is over and there is nothing
+            // left to deliver to — the same condition as `exiting()` above,
+            // seen from the other side, and reachable before winit has set
+            // its flag because a run-loop block queued earlier still lands
+            // here. The channel is unbounded, so a disconnected receiver is
+            // the ONLY way this send fails; it is never backpressure.
+            //
+            // `expect` turned that race into a panic, and on macOS this runs
+            // inside an Objective-C block that cannot unwind, so the process
+            // aborted with no Rust backtrace. Tell winit to finish instead
+            // and drop the event.
+            if self.sender.start_send(event).is_err() {
+                event_loop.exit();
+                return;
+            }
 
             loop {
                 let poll = self.instance.as_mut().poll(&mut self.context);
@@ -1755,7 +1770,27 @@ fn run_action<'a, P, C>(
             while let Some(mut operation) = current_operation.take() {
                 for (id, ui) in interfaces.iter_mut() {
                     if let Some(window) = window_manager.get_mut(*id) {
-                        ui.operate(&window.renderer, operation.as_mut());
+                        // A widget operation walks one window's whole tree,
+                        // and assistive technology drives these as well as the
+                        // program does. A widget that disagrees with its own
+                        // layout panics here — `container::operate` unwraps
+                        // the first laid-out child, which an empty container
+                        // does not have — and on macOS that unwound into an
+                        // Objective-C frame that cannot unwind, aborting the
+                        // process. Accessibility must not be able to kill an
+                        // application: drop the operation for this window and
+                        // say so.
+                        let operated =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                ui.operate(&window.renderer, operation.as_mut());
+                            }));
+
+                        if operated.is_err() {
+                            log::error!(
+                                "a widget operation panicked while walking window {id:?}; \
+                                 the operation was dropped for that window"
+                            );
+                        }
                     }
                 }
 

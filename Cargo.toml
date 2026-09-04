@@ -140,12 +140,35 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit"]
 # what is drawn changes, so no test pins it; the existing captures cover that
 # an SVG still parses and renders.
 #
-# `vendor/iced_winit` is the published 0.14.0 source with one line changed:
-# the event loop no longer keeps a `WaitUntil` deadline that has already
+# `vendor/iced_winit` is the published 0.14.0 source with three changes.
+#
+# 1. The event loop no longer keeps a `WaitUntil` deadline that has already
 # passed when a later one is asked for. Kept, it made winit poll with a zero
 # timeout until the later deadline arrived, so a daemon with two windows that
-# each ask for a timed redraw spun a whole core. Upstream master still has
-# the original line; drop the directory and the patch when a release does not.
+# each ask for a timed redraw spun a whole core.
+#
+# 2. `Runner::process_event` no longer aborts the process when it is handed an
+# event after the program has finished. The event channel is unbounded, so the
+# only way its `start_send` fails is a receiver that is gone — and the receiver
+# lives in the `run_instance` future, so that means the program is over. It is
+# the same condition as the `exiting()` guard above the send, seen from the
+# other side, and it is reachable before winit sets its flag because a run-loop
+# block queued earlier still lands there. `expect("Send event")` turned the race
+# into a panic inside an Objective-C block, which cannot unwind: the process
+# aborted with no Rust backtrace, seen on a macOS daemon under assistive
+# technology. It now asks winit to finish and drops the event.
+#
+# 3. A widget operation that panics no longer takes the process down. An
+# operation walks one window's whole tree, and assistive technology drives them
+# as well as the program does; a widget that disagrees with its own layout
+# panics inside `operate` — `container::operate` unwraps the first laid-out
+# child, which an empty container does not have. On macOS that unwound into an
+# Objective-C frame that cannot unwind and aborted the process. Accessibility
+# must not be able to kill an application, so the operation is now caught per
+# window, dropped, and logged.
+#
+# Upstream master still has all three original lines; drop the directory and
+# the patch when a release does not.
 [patch.crates-io]
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 iced_winit = { path = "vendor/iced_winit" }
