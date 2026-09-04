@@ -126,7 +126,7 @@ pub(in crate::codegen) fn generate_view(
         }
     };
     let empty_root = match program.target() {
-        Target::Tree => "::ui_lang_wire::Node::empty()",
+        Target::Tree => "::ui_lang_guest::wire::Node::empty()",
         Target::Native => "::iced::widget::Column::new().into()",
     };
     let rendered_root = match template {

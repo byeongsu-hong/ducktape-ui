@@ -33,8 +33,8 @@ pub mod testing;
 #[path = "testing_minimal.rs"]
 pub mod testing;
 pub mod tray;
-pub mod view_tree;
 mod tree_view;
+pub mod view_tree;
 mod virtual_children;
 mod virtual_list;
 mod virtual_scroll;

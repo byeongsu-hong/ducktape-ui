@@ -2,19 +2,12 @@
 //! first, each with who published it and under what topic.
 
 use app_store_activity::{boot_native, tick_native};
-use ui_lang_guest::frame::Event;
-use ui_lang_guest::testing::{has_text, item, redraw, texts};
+use ui_lang_guest::testing::{has_text, item, texts};
 
 #[test]
 fn bus_messages_become_rows_newest_first() {
     boot_native();
-    let frame = tick_native(vec![
-        Event::Resized {
-            width: 480.0,
-            height: 320.0,
-        },
-        redraw(),
-    ]);
+    let frame = tick_native(Vec::new());
     let [subscribe, theme] = frame.requests.as_slice() else {
         panic!("the bus and the theme at boot, got {:?}", frame.requests);
     };
@@ -27,7 +20,6 @@ fn bus_messages_become_rows_newest_first() {
     let frame = tick_native(vec![
         item(subscribe.id, b"app_store_counter\ncounter\n3"),
         item(subscribe.id, b"app_store_todo\ntodo\n2 items, 1 left"),
-        redraw(),
     ]);
     let rows = texts(&frame);
     assert!(has_text(&frame, "2 events"), "{rows:?}");

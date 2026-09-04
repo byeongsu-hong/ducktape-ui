@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# An ordinary Ice application, exported as a wasm module by `export_app!`.
-# `unsafe_code` is not forbidden only because the exports need
-# `#[unsafe(no_mangle)]`.
+# An ordinary Ice application, exported as an `ice:view` component by
+# `export_app!`. `unsafe_code` is not forbidden only because the component
+# exports need `#[unsafe(export_name)]`.
 [lib]
 crate-type = ["cdylib", "rlib"]
 # The generated `#[cfg(test)]` glue needs the runtime's test driver, which
@@ -16,7 +16,7 @@ test = false
 [dependencies]
 iced.workspace = true
 ui-lang.workspace = true
-ui-lang-runtime = { workspace = true, features = ["full-runtime"] }
+ui-lang-runtime.workspace = true
 ui-lang-guest.workspace = true
 
 [build-dependencies]

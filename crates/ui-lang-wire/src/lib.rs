@@ -250,6 +250,9 @@ pub enum Node {
     Button {
         key: String,
         content: ButtonContent,
+        /// The accessible name of a button whose content is not a plain
+        /// label.
+        label: Option<String>,
         /// `None` is a disabled button.
         on_press: Option<u32>,
         width: Option<Length>,
@@ -437,12 +440,16 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize) {
         Node::Button {
             key,
             content,
+            label,
             padding,
             style,
             ..
         } => {
             truncate(key);
             if let ButtonContent::Label(label) = content {
+                truncate(label);
+            }
+            if let Some(label) = label {
                 truncate(label);
             }
             bound_edges(padding);
@@ -615,6 +622,7 @@ mod tests {
                 Node::Button {
                     key: "App/b".into(),
                     content: ButtonContent::Label("Go".into()),
+                    label: None,
                     on_press: Some(3),
                     width: None,
                     height: None,

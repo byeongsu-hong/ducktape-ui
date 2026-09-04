@@ -55,30 +55,33 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
     );
     // The element type is the wire's node for every generic argument.
     assert!(generated.contains(
-        "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_wire::Erase>::Node;"
+        "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_guest::wire::Erase>::Node;"
     ));
     for expected in [
-        "::ui_lang_wire::Node::Container {",
-        "::ui_lang_wire::Node::Linear {",
-        "::ui_lang_wire::Node::Scroll {",
-        "::ui_lang_wire::Node::Text {",
-        "::ui_lang_wire::Node::Input {",
-        "::ui_lang_wire::Node::Button {",
-        "axis: ::ui_lang_wire::Axis::Row",
-        "direction: ::ui_lang_wire::ScrollDirection::Vertical",
-        "weight: ::ui_lang_wire::Weight::Bold",
-        "width: ::std::option::Option::Some(::ui_lang_wire::Length::Fill)",
-        "padding: ::std::option::Option::Some(::ui_lang_wire::Edges { top: (24.0) as f32",
+        "::ui_lang_guest::wire::Node::Container {",
+        "::ui_lang_guest::wire::Node::Linear {",
+        "::ui_lang_guest::wire::Node::Scroll {",
+        "::ui_lang_guest::wire::Node::Text {",
+        "::ui_lang_guest::wire::Node::Input {",
+        "::ui_lang_guest::wire::Node::Button {",
+        "axis: ::ui_lang_guest::wire::Axis::Row",
+        "direction: ::ui_lang_guest::wire::ScrollDirection::Vertical",
+        "weight: ::ui_lang_guest::wire::Weight::Bold",
+        "width: ::std::option::Option::Some(::ui_lang_guest::wire::Length::Fill)",
+        "padding: ::std::option::Option::Some(::ui_lang_guest::wire::Edges { top: (24.0) as f32",
         // Messages and input handlers go through the guest's per-frame tables.
         "on_press: ::std::option::Option::Some(::ui_lang_guest::slots::message(",
         "on_input: ::ui_lang_guest::slots::handler(::std::boxed::Box::new(",
         // Colours are the palette's, resolved in the guest.
-        "::ui_lang_wire::Rgba([__color.r, __color.g, __color.b, __color.a])",
+        "::ui_lang_guest::wire::Rgba([__color.r, __color.g, __color.b, __color.a])",
         // Control flow is the shared emitter's loop over the child list.
         "for (__ice_index, item) in",
         "__children.push(",
     ] {
-        assert!(generated.contains(expected), "missing {expected:?} in:\n{generated}");
+        assert!(
+            generated.contains(expected),
+            "missing {expected:?} in:\n{generated}"
+        );
     }
     // `iced::widget::Id` still names the runtime shims; no widget is BUILT.
     for forbidden in [
@@ -96,10 +99,7 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
         if let Some(at) = generated.find(forbidden) {
             let start = at.saturating_sub(200);
             let end = (at + 300).min(generated.len());
-            panic!(
-                "found {forbidden:?} at:\n{}",
-                &generated[start..end]
-            );
+            panic!("found {forbidden:?} at:\n{}", &generated[start..end]);
         }
     }
 }
@@ -126,5 +126,5 @@ fn the_native_target_is_untouched_by_the_tree_emitter() {
     let source = format!("app Demo\n{PALETTE}view\n  text \"ready\" @text-fg\n");
     let native = compile(&source, "demo.ice").unwrap();
     assert!(native.contains("::iced::Element<'a, Message, Theme, __IceRenderer>"));
-    assert!(!native.contains("::ui_lang_wire"));
+    assert!(!native.contains("::ui_lang_guest"));
 }

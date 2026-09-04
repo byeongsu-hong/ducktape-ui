@@ -120,6 +120,10 @@ impl<A: App> Driver<A> {
     /// Events name entries in the tables the LAST view filled, so they are
     /// dispatched before the tables are reset for this view. An index the
     /// last frame did not hand out (the host raced a rebuild) is dropped.
+    ///
+    /// The frame always carries the tree, `unchanged` or not, so a test can
+    /// read it; the component export drops an unchanged tree before it
+    /// crosses to the host.
     pub fn tick(&mut self, events: Vec<wire::Event>) -> wire::Frame {
         let Self {
             app,
@@ -143,20 +147,21 @@ impl<A: App> Driver<A> {
                 run_tasks(app, tasks);
             }
         }
+        // A response woke a task without a message of its own to run: poll
+        // once more so what it produced reaches `update` before the view.
+        run_tasks(app, tasks);
         slots::reset();
         let root = app.view();
         let unchanged = last_root.as_ref() == Some(&root);
-        let mut frame = wire::Frame {
-            root: None,
+        if !unchanged {
+            *last_root = Some(root.clone());
+        }
+        wire::Frame {
+            root: Some(root),
             requests: host::drain_outbox(),
             cancels: host::drain_cancels(),
             unchanged,
-        };
-        if !unchanged {
-            frame.root = Some(root.clone());
-            *last_root = Some(root);
         }
-        frame
     }
 }
 
@@ -320,7 +325,12 @@ world view {
                 fn tick(events: Vec<u8>) -> Vec<u8> {
                     let events: Vec<$crate::wire::Event> =
                         $crate::wire::decode(&events).unwrap_or_default();
-                    $crate::wire::encode(&super::tick_native(events))
+                    let mut frame = super::tick_native(events);
+                    // The host keeps the tree it has; only the rest crosses.
+                    if frame.unchanged {
+                        frame.root = None;
+                    }
+                    $crate::wire::encode(&frame)
                 }
 
                 fn last_panic() -> ::std::string::String {

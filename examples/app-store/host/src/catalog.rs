@@ -1,9 +1,9 @@
-//! The catalog: every wasm module in the catalog directory that carries an
-//! `ice.manifest` section, read without compiling any of them.
+//! The catalog: every `ice:view` component in the catalog directory that
+//! carries an `ice.manifest` section, read without compiling any of them.
 
-/// Where the catalog looks for modules. Build the apps first:
-/// `cargo build -p app-store-todo -p app-store-counter -p app-store-clock -p app-store-activity -p app-store-chaos --release --target wasm32-unknown-unknown`.
-const DEFAULT_CATALOG_DIR: &str = "target/wasm32-unknown-unknown/release";
+/// Where the catalog looks for components: what `componentize.sh` writes
+/// after `cargo build --release --target wasm32-unknown-unknown` of the apps.
+const DEFAULT_CATALOG_DIR: &str = "target/app-store-catalog";
 
 /// The custom section `export_app!` writes: `name\ndescription\ncap,cap,`.
 const MANIFEST_SECTION: &str = "ice.manifest";
@@ -126,7 +126,19 @@ const MAX_CAPABILITIES: usize = 16;
 const MAX_CAPABILITY_BYTES: usize = 32;
 
 fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
-    for payload in wasmparser::Parser::new(0).parse_all(bytes) {
+    // The parser walks into the core modules a component nests, which is
+    // where the app's own sections are.
+    let mut payloads = wasmparser::Parser::new(0).parse_all(bytes);
+    // A bare core module — an app built but not yet componentized — is not
+    // something the host can instantiate, so it is not in the catalog.
+    let Some(Ok(wasmparser::Payload::Version {
+        encoding: wasmparser::Encoding::Component,
+        ..
+    })) = payloads.next()
+    else {
+        return None;
+    };
+    for payload in payloads {
         if let Ok(wasmparser::Payload::CustomSection(section)) = payload
             && section.name() == MANIFEST_SECTION
         {

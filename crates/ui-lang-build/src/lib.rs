@@ -889,8 +889,8 @@ mod tests {
     use super::{
         GENERATED_DIRECTORY, GENERATED_MANIFEST, GeneratedManifest, GeneratedManifestEntry,
         GenerationLock, Target, compile_dir_at, compile_many_at, content_digest,
-        generated_file_name,
-        generated_path, read_generated_manifest, rerun_directives, serialize_generated_manifest,
+        generated_file_name, generated_path, read_generated_manifest, rerun_directives,
+        serialize_generated_manifest,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1163,7 +1163,8 @@ mod tests {
         )
         .unwrap();
 
-        let metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
+        let metrics =
+            compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
 
         assert_eq!(metrics.files_loaded, 2, "{metrics:?}");
         assert_eq!(metrics.files_scanned, 2, "{metrics:?}");
@@ -1450,7 +1451,8 @@ mod tests {
 
         reset_generated_writes();
         let started = Instant::now();
-        let cold_metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
+        let cold_metrics =
+            compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
         let cold = started.elapsed();
         assert_eq!(generated_writes(), ROOTS * FILES_PER_ROOT + 1);
         assert_eq!(cold_metrics.files_loaded, ROOTS, "{cold_metrics:?}");
@@ -1462,7 +1464,8 @@ mod tests {
         reset_generated_writes();
         reset_content_comparison_reads();
         let started = Instant::now();
-        let incremental_metrics = compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
+        let incremental_metrics =
+            compile_dir_at(&manifest, &out_dir, Path::new("src/ui"), Target::Native).unwrap();
         let incremental = started.elapsed();
         assert_eq!(
             generated_writes(),

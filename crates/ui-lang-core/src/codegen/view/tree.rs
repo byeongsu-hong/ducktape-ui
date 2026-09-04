@@ -19,7 +19,9 @@
 
 use super::*;
 
-const WIRE: &str = "::ui_lang_wire";
+// Reached through the guest crate, which is the app's one dependency: it
+// re-exports the wire so a module never names `ui_lang_wire` itself.
+const WIRE: &str = "::ui_lang_guest::wire";
 const SLOTS: &str = "::ui_lang_guest::slots";
 
 /// The tree rendering of `node`, or `None` when the target is native or
@@ -38,12 +40,12 @@ pub(in crate::codegen) fn render_tree_node(
     let view = document.resolved_view(node)?;
     let identity = view.identity.as_ref();
     let rendered = match &view.kind {
-        ResolvedViewKind::Layout { children } => {
-            layout(node, identity, children, document, message, env, scope, slot)?
-        }
-        ResolvedViewKind::Container { content } => {
-            container(node, identity, *content, document, message, env, scope, slot)?
-        }
+        ResolvedViewKind::Layout { children } => layout(
+            node, identity, children, document, message, env, scope, slot,
+        )?,
+        ResolvedViewKind::Container { content } => container(
+            node, identity, *content, document, message, env, scope, slot,
+        )?,
         ResolvedViewKind::Text => text(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,
         ResolvedViewKind::Button { content } => button(
@@ -279,7 +281,10 @@ fn border_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let color = surface.border_color.as_ref().or(style.border_color.as_ref());
+    let color = surface
+        .border_color
+        .as_ref()
+        .or(style.border_color.as_ref());
     let width = match surface.border_width {
         Some(width) => Some(clamped_f32_code(width, "0.0", "f32::MAX", program, env)?),
         None => (style.border_width != 0).then(|| format!("{}.0", style.border_width)),
@@ -288,9 +293,9 @@ fn border_code(
     if color.is_none() && width.is_none() && radius.is_none() {
         return Ok(option_code(None));
     }
-    let color = color.map(rgba_code).unwrap_or_else(|| {
-        format!("{WIRE}::Rgba([0.0, 0.0, 0.0, 0.0])")
-    });
+    let color = color
+        .map(rgba_code)
+        .unwrap_or_else(|| format!("{WIRE}::Rgba([0.0, 0.0, 0.0, 0.0])"));
     let width = width.unwrap_or_else(|| "0.0".into());
     let radius = radius.unwrap_or_else(|| "[0.0; 4]".into());
     Ok(option_code(Some(format!(
@@ -310,14 +315,16 @@ fn background_code(
         surface.background_alpha.is_some(),
         "a background alpha",
     )?;
-    Ok(option_code(match (&surface.background, &style.background) {
-        (Some(ResolvedContainerBackground::Color(color)), _) => Some(rgba_code(color)),
-        (Some(ResolvedContainerBackground::Linear { .. }), _) => {
-            return Err(refused(program, origin, "a gradient background"));
-        }
-        (None, Some(color)) => Some(rgba_code(color)),
-        (None, None) => None,
-    }))
+    Ok(option_code(
+        match (&surface.background, &style.background) {
+            (Some(ResolvedContainerBackground::Color(color)), _) => Some(rgba_code(color)),
+            (Some(ResolvedContainerBackground::Linear { .. }), _) => {
+                return Err(refused(program, origin, "a gradient background"));
+            }
+            (None, Some(color)) => Some(rgba_code(color)),
+            (None, None) => None,
+        },
+    ))
 }
 
 fn refuse_surface_extras(
@@ -413,7 +420,12 @@ fn layout(
             )?;
             refuse_when(program, origin, linear.max_width.is_some(), "`max-w`")?;
             refuse_when(program, origin, linear.clip.is_some(), "`clip`")?;
-            refuse_when(program, origin, style.background.is_some(), "`bg` on a layout")?;
+            refuse_when(
+                program,
+                origin,
+                style.background.is_some(),
+                "`bg` on a layout",
+            )?;
             let axis = match linear.axis {
                 ResolvedLinearAxis::Column => "Column",
                 ResolvedLinearAxis::Row => "Row",
@@ -470,8 +482,20 @@ fn layout(
             let content = render_node(children[0], program, message, env, &child_scope, slot)?;
             Ok(format!(
                 "{WIRE}::Node::Scroll {{ key: {key}, direction: {WIRE}::ScrollDirection::{direction}, width: {}, height: {}, content: ::std::boxed::Box::new({content}) }}",
-                dimension_code(scroll.width.as_ref(), style.width_fill, program, env, origin)?,
-                dimension_code(scroll.height.as_ref(), style.height_fill, program, env, origin)?,
+                dimension_code(
+                    scroll.width.as_ref(),
+                    style.width_fill,
+                    program,
+                    env,
+                    origin
+                )?,
+                dimension_code(
+                    scroll.height.as_ref(),
+                    style.height_fill,
+                    program,
+                    env,
+                    origin
+                )?,
             ))
         }
         ResolvedLayoutMode::Grid(_) => Err(refused(program, origin, "grid")),
@@ -527,8 +551,20 @@ fn container(
     let content = render_node(content, program, message, env, &child_scope, slot)?;
     Ok(format!(
         "{WIRE}::Node::Container {{ key: {key}, width: {}, height: {}, padding: {}, align_x: {}, align_y: {}, background: {}, border: {}, content: ::std::boxed::Box::new({content}) }}",
-        dimension_code(container.width.as_ref(), style.width_fill, program, env, origin)?,
-        dimension_code(container.height.as_ref(), style.height_fill, program, env, origin)?,
+        dimension_code(
+            container.width.as_ref(),
+            style.width_fill,
+            program,
+            env,
+            origin
+        )?,
+        dimension_code(
+            container.height.as_ref(),
+            style.height_fill,
+            program,
+            env,
+            origin
+        )?,
         edges_code(&container.padding, style.padding, program, env)?,
         option_code(container.align_x.map(align_x_code)),
         option_code(container.align_y.map(align_y_code)),
@@ -558,7 +594,12 @@ fn text(
         options.line_height.is_some() || style.text_line_height.is_some(),
         "a line height",
     )?;
-    refuse_when(program, origin, options.align_y.is_some(), "`align-y` on text")?;
+    refuse_when(
+        program,
+        origin,
+        options.align_y.is_some(),
+        "`align-y` on text",
+    )?;
     refuse_when(
         program,
         origin,
@@ -641,7 +682,13 @@ fn text(
         "{WIRE}::Node::Text {{ key: {key}, content: {content}, size: {}, color: {}, font: {WIRE}::Font {{ monospace: {monospace}, weight: {WIRE}::Weight::{weight} }}, width: {}, align_x: {} }}",
         option_code(size),
         option_code(style.text_color.as_ref().map(rgba_code)),
-        dimension_code(options.width.as_ref(), style.width_fill, program, env, origin)?,
+        dimension_code(
+            options.width.as_ref(),
+            style.width_fill,
+            program,
+            env,
+            origin
+        )?,
         option_code(align_x),
     ))
 }
@@ -696,7 +743,12 @@ fn input(
         "a secret input",
     )?;
     refuse_when(program, origin, input.hint.is_some(), "an input hint")?;
-    refuse_when(program, origin, input.disabled.is_some(), "`disabled=` on an input")?;
+    refuse_when(
+        program,
+        origin,
+        input.disabled.is_some(),
+        "`disabled=` on an input",
+    )?;
     refuse_when(
         program,
         origin,
@@ -786,9 +838,24 @@ fn input(
         state.code,
         option_code(on_submit),
         dimension_code(input.width.as_ref(), false, program, env, origin)?,
-        option_code(input_face_code(input.styles.hovered.as_ref(), program, env, origin)?),
-        option_code(input_face_code(input.styles.focused.as_ref(), program, env, origin)?),
-        option_code(input_face_code(input.styles.disabled.as_ref(), program, env, origin)?),
+        option_code(input_face_code(
+            input.styles.hovered.as_ref(),
+            program,
+            env,
+            origin
+        )?),
+        option_code(input_face_code(
+            input.styles.focused.as_ref(),
+            program,
+            env,
+            origin
+        )?),
+        option_code(input_face_code(
+            input.styles.disabled.as_ref(),
+            program,
+            env,
+            origin
+        )?),
     ))
 }
 
@@ -833,9 +900,16 @@ fn button(
     refuse_when(
         program,
         origin,
-        button.accessibility_label.is_some() || button.accessibility_description.is_some(),
-        "an accessibility label on a button",
+        button.accessibility_description.is_some(),
+        "an accessibility description on a button",
     )?;
+    let label = match button.accessibility_label {
+        Some(label) => Some(format!(
+            "::std::string::String::from({})",
+            resolved_expr_use_code(program, label, env, ValueMode::Owned)?
+        )),
+        None => None,
+    };
     refuse_when(program, origin, button.clip.is_some(), "`clip` on a button")?;
     refuse_when(
         program,
@@ -888,13 +962,29 @@ fn button(
     let active = button_face_code(button.styles.active.as_ref(), program, env, origin)?
         .unwrap_or_else(|| format!("{WIRE}::Face::default()"));
     Ok(format!(
-        "{WIRE}::Node::Button {{ key: {key}, content: {content}, on_press: {on_press}, width: {}, height: {}, padding: {}, style: {WIRE}::ButtonStyle {{ active: {active}, hovered: {}, pressed: {}, disabled: {} }} }}",
+        "{WIRE}::Node::Button {{ key: {key}, content: {content}, label: {}, on_press: {on_press}, width: {}, height: {}, padding: {}, style: {WIRE}::ButtonStyle {{ active: {active}, hovered: {}, pressed: {}, disabled: {} }} }}",
+        option_code(label),
         dimension_code(button.width.as_ref(), false, program, env, origin)?,
         dimension_code(button.height.as_ref(), false, program, env, origin)?,
         option_code(padding),
-        option_code(button_face_code(button.styles.hovered.as_ref(), program, env, origin)?),
-        option_code(button_face_code(button.styles.pressed.as_ref(), program, env, origin)?),
-        option_code(button_face_code(button.styles.disabled.as_ref(), program, env, origin)?),
+        option_code(button_face_code(
+            button.styles.hovered.as_ref(),
+            program,
+            env,
+            origin
+        )?),
+        option_code(button_face_code(
+            button.styles.pressed.as_ref(),
+            program,
+            env,
+            origin
+        )?),
+        option_code(button_face_code(
+            button.styles.disabled.as_ref(),
+            program,
+            env,
+            origin
+        )?),
     ))
 }
 

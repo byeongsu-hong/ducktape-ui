@@ -294,8 +294,8 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
             border: edge,
             content,
         } => {
-            let mut container = widget::container(render_node(content, inputs))
-                .id(widget::Id::from(key.clone()));
+            let mut container =
+                widget::container(render_node(content, inputs)).id(widget::Id::from(key.clone()));
             if let Some(edges) = edges {
                 container = container.padding(padding(*edges));
             }
@@ -390,7 +390,9 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
         } => {
             let scrollbar = widget::scrollable::Scrollbar::new();
             let direction = match direction {
-                wire::ScrollDirection::Vertical => widget::scrollable::Direction::Vertical(scrollbar),
+                wire::ScrollDirection::Vertical => {
+                    widget::scrollable::Direction::Vertical(scrollbar)
+                }
                 wire::ScrollDirection::Horizontal => {
                     widget::scrollable::Direction::Horizontal(scrollbar)
                 }
@@ -434,10 +436,14 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
             if let Some(align) = align_x {
                 text = text.align_x(horizontal(*align));
             }
-            accessible(crate::selectable_text(text), StableId::new(key), Role::Label)
-                .logical_id(key.clone())
-                .value(content.clone())
-                .into()
+            accessible(
+                crate::selectable_text(text),
+                StableId::new(key),
+                Role::Label,
+            )
+            .logical_id(key.clone())
+            .value(content.clone())
+            .into()
         }
         wire::Node::Input {
             key,
@@ -484,6 +490,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
         wire::Node::Button {
             key,
             content,
+            label: name,
             on_press,
             width,
             height,
@@ -496,6 +503,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 }
                 wire::ButtonContent::Child(child) => (None, render_node(child, inputs)),
             };
+            let label = name.clone().or(label);
             let activate = on_press.map(Output::Activate);
             let style = *style;
             let mut button = widget::button(inner)
@@ -547,13 +555,9 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 wire::Axis::Row => widget::rule::horizontal(thickness).style(styled).into(),
                 wire::Axis::Column => widget::rule::vertical(thickness).style(styled).into(),
             };
-            accessible(
-                widget::container(rule),
-                StableId::new(key),
-                Role::Splitter,
-            )
-            .logical_id(key.clone())
-            .into()
+            accessible(widget::container(rule), StableId::new(key), Role::Splitter)
+                .logical_id(key.clone())
+                .into()
         }
     }
 }
@@ -641,6 +645,7 @@ mod tests {
                     wire::Node::Button {
                         key: "App/content/add".into(),
                         content: wire::ButtonContent::Label("Add".into()),
+                        label: None,
                         on_press: Some(2),
                         width: None,
                         height: None,

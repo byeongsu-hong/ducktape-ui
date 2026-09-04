@@ -721,7 +721,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         // `__IceElement<'_, Message>` builds trees without knowing it.
         (Target::Tree, _) => writeln!(
             out,
-            "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_wire::Erase>::Node;"
+            "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_guest::wire::Erase>::Node;"
         )
         .unwrap(),
         (Target::Native, ResolvedRendererSelection::Default) => writeln!(
@@ -1364,17 +1364,21 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     } else {
         "::iced::Application"
     };
-    writeln!(
-        out,
-        "fn __program() -> {program_kind}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{"
-    )
-    .unwrap();
-    writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}").unwrap();
-    writeln!(
-        out,
-        "}}\n#[allow(dead_code)]\npub fn run() -> ::iced::Result {{\nSelf::__program().run()\n}}"
-    )
-    .unwrap();
+    // A view module has no window to run in: its host drives it through the
+    // wire, so the iced program and `run` exist only natively.
+    if program.target() == Target::Native {
+        writeln!(
+            out,
+            "fn __program() -> {program_kind}<impl ::iced::Program<State = Self, Message = {message}, Theme = ::iced::Theme>> {{"
+        )
+        .unwrap();
+        writeln!(out, "{root}{title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}").unwrap();
+        writeln!(
+            out,
+            "}}\n#[allow(dead_code)]\npub fn run() -> ::iced::Result {{\nSelf::__program().run()\n}}"
+        )
+        .unwrap();
+    }
 
     // rustc re-checks a macro expansion as a unit, so every item the generator
     // writes into one `__ice_generated_items_*!` invocation shares one fate: a

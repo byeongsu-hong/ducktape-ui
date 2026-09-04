@@ -18,7 +18,9 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
         Node::Container { content, .. } | Node::Scroll { content, .. } => {
             collect_texts(content, out)
         }
-        Node::Linear { children, .. } => children.iter().for_each(|child| collect_texts(child, out)),
+        Node::Linear { children, .. } => {
+            children.iter().for_each(|child| collect_texts(child, out))
+        }
         Node::Text { content, .. } => out.push(content.clone()),
         Node::Input {
             value, placeholder, ..
@@ -41,20 +43,22 @@ pub fn has_text(frame: &Frame, content: &str) -> bool {
 
 /// The node under `key` (`App/content/count`), if the tree has one.
 pub fn find<'a>(frame: &'a Frame, key: &str) -> Option<&'a Node> {
-    frame.root.as_ref().and_then(|root| find_in(root, key))
+    let root = frame.root.as_ref()?;
+    find_by(root, &|node| node.key() == Some(key))
 }
 
-fn find_in<'a>(node: &'a Node, key: &str) -> Option<&'a Node> {
-    if node.key() == Some(key) {
+/// The first node `matches` accepts, depth first.
+fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a Node> {
+    if matches(node) {
         return Some(node);
     }
     match node {
-        Node::Container { content, .. } | Node::Scroll { content, .. } => find_in(content, key),
-        Node::Linear { children, .. } => children.iter().find_map(|child| find_in(child, key)),
+        Node::Container { content, .. } | Node::Scroll { content, .. } => find_by(content, matches),
+        Node::Linear { children, .. } => children.iter().find_map(|child| find_by(child, matches)),
         Node::Button {
             content: ButtonContent::Child(child),
             ..
-        } => find_in(child, key),
+        } => find_by(child, matches),
         Node::Button { .. }
         | Node::Text { .. }
         | Node::Input { .. }
@@ -63,21 +67,52 @@ fn find_in<'a>(node: &'a Node, key: &str) -> Option<&'a Node> {
     }
 }
 
-/// The events the host sends when the user presses the button under `key`.
-pub fn press(frame: &Frame, key: &str) -> Vec<Event> {
-    let Some(Node::Button { on_press, .. }) = find(frame, key) else {
-        panic!("no button {key:?} in {:?}", keys(frame));
+/// The button whose key, label or accessible name is `name`.
+fn button<'a>(frame: &'a Frame, name: &str) -> Option<&'a Node> {
+    let root = frame.root.as_ref()?;
+    find_by(root, &|node| match node {
+        Node::Button {
+            key,
+            content,
+            label,
+            ..
+        } => {
+            key == name
+                || label.as_deref() == Some(name)
+                || matches!(content, ButtonContent::Label(label) if label == name)
+        }
+        _ => false,
+    })
+}
+
+/// The input whose key or placeholder is `name`.
+fn input<'a>(frame: &'a Frame, name: &str) -> Option<&'a Node> {
+    let root = frame.root.as_ref()?;
+    find_by(root, &|node| match node {
+        Node::Input {
+            key, placeholder, ..
+        } => key == name || placeholder == name,
+        _ => false,
+    })
+}
+
+/// The events the host sends when the user presses the button with key or
+/// label `name`.
+pub fn press(frame: &Frame, name: &str) -> Vec<Event> {
+    let Some(Node::Button { on_press, .. }) = button(frame, name) else {
+        panic!("no button {name:?} in {:?}", texts(frame));
     };
     let Some(message) = on_press else {
-        panic!("button {key:?} is disabled");
+        panic!("button {name:?} is disabled");
     };
     vec![Event::Message(*message)]
 }
 
-/// The events the host sends when the input under `key` now reads `text`.
-pub fn type_into(frame: &Frame, key: &str, text: &str) -> Vec<Event> {
-    let Some(Node::Input { on_input, .. }) = find(frame, key) else {
-        panic!("no input {key:?} in {:?}", keys(frame));
+/// The events the host sends when the input with key or placeholder `name`
+/// now reads `text`.
+pub fn type_into(frame: &Frame, name: &str, text: &str) -> Vec<Event> {
+    let Some(Node::Input { on_input, .. }) = input(frame, name) else {
+        panic!("no input {name:?} in {:?}", texts(frame));
     };
     vec![Event::Input {
         handler: *on_input,
@@ -85,13 +120,14 @@ pub fn type_into(frame: &Frame, key: &str, text: &str) -> Vec<Event> {
     }]
 }
 
-/// The events the host sends when the user submits the input under `key`.
-pub fn submit(frame: &Frame, key: &str) -> Vec<Event> {
-    let Some(Node::Input { on_submit, .. }) = find(frame, key) else {
-        panic!("no input {key:?} in {:?}", keys(frame));
+/// The events the host sends when the user submits the input with key or
+/// placeholder `name`.
+pub fn submit(frame: &Frame, name: &str) -> Vec<Event> {
+    let Some(Node::Input { on_submit, .. }) = input(frame, name) else {
+        panic!("no input {name:?} in {:?}", texts(frame));
     };
     let Some(message) = on_submit else {
-        panic!("input {key:?} has no submit route");
+        panic!("input {name:?} has no submit route");
     };
     vec![Event::Message(*message)]
 }
