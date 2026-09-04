@@ -1462,9 +1462,30 @@ impl<Message> fmt::Debug for Snapshot<Message> {
     }
 }
 
+/// The node no snapshot ever assigns: the target of a [`refresh_request`].
+const REFRESH_NODE: NodeId = NodeId(u64::MAX);
+
+/// The request an activation sends itself to get the tree re-snapshotted. It
+/// targets no node, so dispatching it does nothing; it carries `Focus`
+/// because that is the action after which the generated single-window arm
+/// chains a snapshot (the per-window arm chains one after every action).
+pub fn refresh_request() -> ActionRequest {
+    ActionRequest {
+        action: Action::Focus,
+        target_tree: TreeId::ROOT,
+        target_node: REFRESH_NODE,
+        data: None,
+    }
+}
+
+/// Whether a request is the activation refresh rather than a user action.
+pub fn is_refresh_request(request: &ActionRequest) -> bool {
+    request.target_node == REFRESH_NODE
+}
+
 impl<Message: Clone + Send + 'static> Snapshot<Message> {
     pub fn dispatch(&self, request: ActionRequest) -> Task<Message> {
-        if request.target_tree != TreeId::ROOT {
+        if request.target_tree != TreeId::ROOT || is_refresh_request(&request) {
             return Task::none();
         }
         let Some(target) = self.actions.get(&request.target_node) else {
@@ -2075,15 +2096,29 @@ impl<Message> fmt::Debug for Bridge<Message> {
     }
 }
 
+/// What an activation does after handing out the cached tree: asks the program
+/// for a fresh one. Sends [`refresh_request`] down the adapter's own action
+/// channel, so the generated action arm re-snapshots exactly as it does after
+/// any other assistive-technology request.
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+type Refresh = Box<dyn FnMut() + Send>;
+
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 struct Activation {
     latest_tree: Arc<Mutex<Option<TreeUpdate>>>,
+    refresh: Refresh,
 }
 
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 impl accesskit::ActivationHandler for Activation {
     fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
         AT_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+        // The cached tree is as old as the last program message: snapshots are
+        // taken only while assistive technology is active, and activation is
+        // this very call. A reader that activates after the program has gone
+        // quiet (a boot that finished before the first AX query) would keep
+        // that stale tree until the next message, so ask for a fresh one now.
+        (self.refresh)();
         self.latest_tree
             .lock()
             .expect("accessibility tree lock")
@@ -2135,9 +2170,13 @@ impl<Message> Bridge<Message> {
         let latest_tree = Arc::new(Mutex::new(None));
         #[cfg(target_os = "linux")]
         let adapter = native.then(|| {
+            let mut refresh = sender.clone();
             accesskit_unix::Adapter::new(
                 Activation {
                     latest_tree: Arc::clone(&latest_tree),
+                    refresh: Box::new(move || {
+                        let _ = refresh.try_send(refresh_request());
+                    }),
                 },
                 Actions { sender },
                 Deactivation,
@@ -2221,10 +2260,14 @@ impl<Message> Bridge<Message> {
             return false;
         };
         self.window = Some(window.id);
+        let mut refresh = sender.clone();
         self.adapter = Some(accesskit_windows::SubclassingAdapter::new(
             accesskit_windows::HWND(window.hwnd.get() as *mut core::ffi::c_void),
             Activation {
                 latest_tree: Arc::clone(&self.latest_tree),
+                refresh: Box::new(move || {
+                    let _ = refresh.try_send(refresh_request());
+                }),
             },
             Actions { sender },
         ));
@@ -2255,6 +2298,7 @@ impl<Message> Bridge<Message> {
         // window-owning thread. Iced owns the window for the whole run and
         // the adapter retains the view, so the pointer is a live,
         // unreleased `NSView` here.
+        let mut refresh = sender.clone();
         #[expect(
             unsafe_code,
             reason = "accesskit_macos takes the NSView as a raw pointer; there is no safe constructor"
@@ -2264,6 +2308,9 @@ impl<Message> Bridge<Message> {
                 window.ns_view as *mut core::ffi::c_void,
                 Activation {
                     latest_tree: Arc::clone(&self.latest_tree),
+                    refresh: Box::new(move || {
+                        let _ = refresh.try_send(refresh_request());
+                    }),
                 },
                 Actions { sender },
             )
@@ -2485,6 +2532,8 @@ impl<Message> WindowBridges<Message> {
         // window through `raw-window-handle`, read in `native_window` on the
         // window-owning thread; Iced owns the window until it closes, and
         // `close` drops this adapter when it does.
+        let mut refresh = self.sender.clone();
+        let refresh_window = window.id;
         #[expect(
             unsafe_code,
             reason = "accesskit_macos takes the NSView as a raw pointer; there is no safe constructor"
@@ -2494,6 +2543,9 @@ impl<Message> WindowBridges<Message> {
                 window.ns_view as *mut core::ffi::c_void,
                 Activation {
                     latest_tree: Arc::clone(&latest_tree),
+                    refresh: Box::new(move || {
+                        let _ = refresh.try_send((refresh_window, refresh_request()));
+                    }),
                 },
                 WindowActions {
                     window: window.id,
@@ -4545,6 +4597,34 @@ mod tests {
         assert_eq!(bridge.window, None);
     }
 
+    /// Activation hands out the cached tree and asks for a fresh one; the ask
+    /// targets no node, so the snapshot it reaches has nothing to run. The
+    /// Linux test above covers the same on the platform whose adapter also
+    /// deactivates, and only one test per platform may flip the active flag.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn activation_asks_for_a_fresh_tree() {
+        let (mut ui, renderer) = interface();
+        let snapshot = snapshot(&mut ui, &renderer);
+        let latest_tree = Arc::new(Mutex::new(Some(snapshot.update.clone())));
+        let (mut refresh, mut refreshed) = iced::futures::channel::mpsc::channel(1);
+        let mut activation = Activation {
+            latest_tree,
+            refresh: Box::new(move || {
+                let _ = refresh.try_send(refresh_request());
+            }),
+        };
+
+        let initial = accesskit::ActivationHandler::request_initial_tree(&mut activation)
+            .expect("latest tree");
+        assert_eq!(initial.nodes, snapshot.update.nodes);
+        assert!(accessibility_active());
+
+        let request = refreshed.try_recv().expect("refresh sent");
+        assert!(is_refresh_request(&request));
+        assert!(!snapshot.actions.contains_key(&request.target_node));
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_bridge_activation_uses_latest_tree_and_one_window() {
@@ -4552,14 +4632,21 @@ mod tests {
         let snapshot = snapshot(&mut ui, &renderer);
         let mut bridge = Bridge::<Message>::new();
         bridge.update(snapshot.clone());
+        let (mut refresh, mut refreshed) = iced::futures::channel::mpsc::channel(1);
         let mut activation = Activation {
             latest_tree: Arc::clone(&bridge.latest_tree),
+            refresh: Box::new(move || {
+                let _ = refresh.try_send(refresh_request());
+            }),
         };
 
         let initial = accesskit::ActivationHandler::request_initial_tree(&mut activation)
             .expect("latest tree");
         assert_eq!(initial.nodes, snapshot.update.nodes);
         assert_eq!(initial.focus, snapshot.update.focus);
+        // The tree it handed out may be stale, so it also asked for a new one.
+        let request = refreshed.try_recv().expect("refresh sent");
+        assert!(is_refresh_request(&request));
 
         // Activation is also what opens the generated per-update snapshot
         // gate, and deactivation is what closes it. Asserted here — in the
@@ -4797,15 +4884,26 @@ mod tests {
         ])
         .expect("invoke exported AT-SPI action");
 
-        let mut routed = None;
+        // The AT's first query activated the adapter, and activation puts a
+        // refresh on the channel ahead of anything the AT does next; the
+        // click routed through AT-SPI is the first request after it.
+        let mut routed = Vec::new();
         for _ in 0..20 {
-            if let Ok(request) = receiver.try_recv() {
-                routed = Some(request);
+            while let Ok(request) = receiver.try_recv() {
+                routed.push(request);
+            }
+            let click_arrived = routed.iter().any(|request| !is_refresh_request(request));
+            if click_arrived {
                 break;
             }
             thread::sleep(Duration::from_millis(25));
         }
-        let request = routed.expect("native AT-SPI action was not routed to Iced");
+        let refresh_arrived = routed.iter().any(is_refresh_request);
+        assert!(refresh_arrived, "activation did not ask for a fresh tree");
+        let request = routed
+            .into_iter()
+            .find(|request| !is_refresh_request(request))
+            .expect("native AT-SPI action was not routed to Iced");
         assert_eq!(request.action, Action::Click);
         assert_eq!(request.target_node, id);
     }
