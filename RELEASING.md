@@ -122,8 +122,8 @@ it now.
 
 The first crates.io publication must respect this dependency graph:
 
-1. `ui-lang-core`, `ui-lang-runtime`, and `ui-lang-components`
-2. `ui-lang-build`
+1. `ui-lang-core`, `ui-lang-runtime`, `ui-lang-components`, and `ui-lang-wire`
+2. `ui-lang-build` and `ui-lang-guest`
 3. `ui-lang` and `cargo-ice`
 
 Wait until each preceding version is visible in the registry index before

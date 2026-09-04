@@ -17,7 +17,7 @@ test = false
 iced.workspace = true
 ui-lang.workspace = true
 ui-lang-runtime = { workspace = true, features = ["full-runtime"] }
-app-store-sdk.workspace = true
+ui-lang-guest.workspace = true
 
 [build-dependencies]
 ui-lang-build.workspace = true

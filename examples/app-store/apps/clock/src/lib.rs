@@ -4,7 +4,7 @@ pub mod host;
 
 ui_lang::include_app!("src/ui/app.ice");
 
-app_store_sdk::export_app!(
+ui_lang_guest::export_app!(
     Clock,
     __ClockMessage,
     "Clock",

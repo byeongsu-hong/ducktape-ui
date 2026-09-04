@@ -2,8 +2,8 @@
 //! tick the host streams against both.
 
 use app_store_clock::{boot_native, tick_native};
-use app_store_sdk::frame::{Event, Frame, Request};
-use app_store_sdk::testing::{answer, has_text, item, redraw, texts};
+use ui_lang_guest::frame::{Event, Frame, Request};
+use ui_lang_guest::testing::{answer, has_text, item, redraw, texts};
 
 /// 2025-01-01T13:45:00Z.
 const NOW_MS: u64 = 1_735_739_100_000;

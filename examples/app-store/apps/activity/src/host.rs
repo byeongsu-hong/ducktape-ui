@@ -1,6 +1,6 @@
 //! A feed of everything on the host's bus.
 
-use app_store_sdk::host;
+use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

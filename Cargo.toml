@@ -7,6 +7,8 @@ members = [
     "crates/ui-lang",
     "crates/cargo-ice",
     "crates/ui-lang-components",
+    "crates/ui-lang-wire",
+    "crates/ui-lang-guest",
     "examples/ai-chat",
     "examples/apple-music",
     "examples/candles",
@@ -162,6 +164,8 @@ ui-lang-build = { path = "crates/ui-lang-build", version = "=0.1.0" }
 ui-lang-core = { path = "crates/ui-lang-core", version = "=0.1.0" }
 ui-lang-runtime = { path = "crates/ui-lang-runtime", version = "=0.1.0" }
 ui-lang-template = { path = "crates/ui-lang-template", version = "=0.1.0" }
+ui-lang-wire = { path = "crates/ui-lang-wire", version = "=0.1.0" }
+ui-lang-guest = { path = "crates/ui-lang-guest", version = "=0.1.0" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

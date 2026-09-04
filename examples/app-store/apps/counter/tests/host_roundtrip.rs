@@ -2,10 +2,10 @@
 //! frame, the matching response completes the task, and the view shows it.
 
 use app_store_counter::{boot_native, tick_native};
-use app_store_sdk::frame::{Event, Request};
-use app_store_sdk::testing::{answer, click, find, has_text, redraw, texts};
+use ui_lang_guest::frame::{Event, Request};
+use ui_lang_guest::testing::{answer, click, find, has_text, redraw, texts};
 
-fn boot() -> app_store_sdk::frame::Frame {
+fn boot() -> ui_lang_guest::frame::Frame {
     boot_native();
     tick_native(vec![
         Event::Resized {

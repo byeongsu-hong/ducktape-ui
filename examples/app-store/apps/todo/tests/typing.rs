@@ -1,12 +1,12 @@
 //! The todo, driven natively: it loads from storage at boot, typing and
 //! Add append a row, and every change is written back then announced.
 
-use app_store_sdk::frame::{Event, Frame, Key, Request};
-use app_store_sdk::testing::{answer, click, has_text, item, redraw, texts};
+use ui_lang_guest::frame::{Event, Frame, Key, Request};
+use ui_lang_guest::testing::{answer, click, has_text, item, redraw, texts};
 use app_store_todo::items::{Item, decode, encode};
 use app_store_todo::{boot_native, tick_native};
 
-fn boot_with(stored: &[Item]) -> app_store_sdk::frame::Frame {
+fn boot_with(stored: &[Item]) -> ui_lang_guest::frame::Frame {
     boot_native();
     let frame = tick_native(vec![
         Event::Resized {
@@ -73,11 +73,11 @@ fn typing_into_the_input_and_adding_appends_a_row_and_saves_it() {
     assert!(has_text(&frame, "0 left"), "{:?}", texts(&frame));
 
     // Focus the input by clicking it, then type and press Add.
-    let (x, y) = app_store_sdk::testing::find(&frame, "What needs doing?");
+    let (x, y) = ui_lang_guest::testing::find(&frame, "What needs doing?");
     tick_native(vec![
         Event::CursorMoved { x, y: y + 40.0 },
-        Event::ButtonPressed(app_store_sdk::frame::Button::Left),
-        Event::ButtonReleased(app_store_sdk::frame::Button::Left),
+        Event::ButtonPressed(ui_lang_guest::frame::Button::Left),
+        Event::ButtonReleased(ui_lang_guest::frame::Button::Left),
         redraw(),
     ]);
     let frame = tick_native(type_text("Hello"));

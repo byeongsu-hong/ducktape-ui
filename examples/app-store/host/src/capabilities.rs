@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use app_store_frame as wire;
+use ui_lang_wire as wire;
 
 use crate::limits::{MAX_INBOX, MAX_INBOX_BYTES};
 
