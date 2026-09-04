@@ -879,6 +879,40 @@ mod tests {
         assert!(depth <= MAX_DEPTH, "{depth}");
     }
 
+    fn button(content: ButtonContent) -> Node {
+        Node::Button {
+            key: "App/b".into(),
+            content,
+            label: None,
+            on_press: Some(1),
+            width: None,
+            height: None,
+            padding: None,
+            style: ButtonStyle::default(),
+        }
+    }
+
+    /// A button holding a node is the third way the tree recurses, and the
+    /// only one that hangs off an enum's field rather than a struct's.
+    #[test]
+    fn a_button_holding_a_node_round_trips_and_counts_as_a_child() {
+        let frame = Frame {
+            root: Some(button(ButtonContent::Child(Box::new(text("inside"))))),
+            ..Frame::default()
+        };
+        assert_eq!(decode::<Frame>(&encode(&frame)).unwrap(), frame);
+
+        let mut nested = Node::empty();
+        for _ in 0..MAX_DEPTH + 1 {
+            nested = button(ButtonContent::Child(Box::new(nested)));
+        }
+        let bytes = encode(&Frame {
+            root: Some(nested),
+            ..Frame::default()
+        });
+        assert!(decode::<Frame>(&bytes).is_err());
+    }
+
     /// Building and encoding a chain this deep recurses as far as decoding
     /// it would, so the hostile frame is made where there is stack for it.
     fn deep_chain_bytes(depth: usize) -> Vec<u8> {
