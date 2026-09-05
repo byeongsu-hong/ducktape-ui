@@ -117,7 +117,7 @@ view
         "__AccessibilityWindowAction(::iced::window::Id, ::ui_lang_runtime::ActionRequest)",
         "let __opened = matches!(__event, ::iced::window::Event::Opened { .. });",
         "self.__ice_accessibility_windows.window_event(__id, __event);",
-        "return ::ui_lang_runtime::native_window(__id).map(__AgentMessage::__AccessibilityWindowNative);",
+        "return ::ui_lang_runtime::native_window(__id).map(__AgentMessage::__AccessibilityWindowNative).chain(::iced::window::scale_factor(__id).map(move |__scale| __AgentMessage::__AccessibilityWindowEvent(__id, ::iced::window::Event::Rescaled(__scale))));",
         "if !self.__ice_accessibility_windows.attach(__window) { return ::iced::Task::none(); }",
         "::ui_lang_runtime::snapshot_in::<__AgentMessage>(\"Agent\", __id)",
         "self.__ice_accessibility_windows.update(__id, *__snapshot)",
@@ -1239,6 +1239,10 @@ view
     );
     assert!(generated.contains("fn __theme(&self, window: ::iced::window::Id) -> ::iced::Theme"));
     assert!(generated.contains("fn __scale_factor(&self, window: ::iced::window::Id) -> f32"));
+    assert!(generated.contains(
+        "self.__ice_accessibility_windows.set_application_scale(__id, self.__scale_factor(__id)); self.__ice_accessibility_windows.update(__id, *__snapshot);"
+    ));
+    assert!(!generated.contains("self.__ice_accessibility.set_application_scale("));
     assert!(generated.contains("fn __view(&self, window: ::iced::window::Id) -> __IceElement"));
     assert!(generated.contains("crate::backend::label(window)"));
     assert!(generated.contains("crate::backend::scale(window)"));
@@ -1371,6 +1375,7 @@ view
         "#[cfg(target_arch = \"wasm32\")]",
         ".scale_factor(Self::__scale_factor)",
         "fn __scale_factor(&self) -> f32",
+        "self.__ice_accessibility.set_application_scale(self.__scale_factor()); self.__ice_accessibility.update(*__snapshot);",
         ".max(f32::EPSILON).min(f32::MAX)",
     ] {
         assert!(generated.contains(expected), "missing {expected}");
@@ -1502,7 +1507,10 @@ view
         // macOS attaches NSAccessibility to the same captured window without
         // Windows' deferral: boot runs, and the adapter arrives beside it.
         "#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]",
-        "#[cfg(not(all(any(target_os = \"windows\", target_os = \"macos\"), not(test))))]\nfn __accessibility_attach() -> ::iced::Task<__AccessibleMessage> { ::iced::Task::none() }",
+        "::ui_lang_runtime::native_window(__id).map(__AccessibleMessage::__AccessibilityNativeWindow).chain(Self::__accessibility_scale(__id))",
+        "#[cfg(all(target_os = \"linux\", not(test)))]\nfn __accessibility_attach() -> ::iced::Task<__AccessibleMessage> {\n::iced::window::oldest().then(|__id| match __id {\n::std::option::Option::Some(__id) => Self::__accessibility_scale(__id),",
+        "#[cfg(not(all(any(target_os = \"linux\", target_os = \"windows\", target_os = \"macos\"), not(test))))]\nfn __accessibility_attach() -> ::iced::Task<__AccessibleMessage> { ::iced::Task::none() }",
+        "::iced::window::scale_factor(__id).map(move |__scale| __AccessibleMessage::__AccessibilityWindow(__id, ::iced::window::Event::Rescaled(__scale)))",
         "::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()])",
         "#[cfg(all(target_os = \"macos\", not(test)))]\n__AccessibleMessage::__AccessibilityNativeWindow(__window) => {\nif !self.__ice_accessibility.attach_window(__window) { return ::iced::Task::none(); }",
     ] {
