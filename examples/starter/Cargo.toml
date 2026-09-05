@@ -1,8 +1,8 @@
 [package]
 name = "ice-starter"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.88"
+edition.workspace = true
+rust-version.workspace = true
 publish = false
 
 [dependencies]
@@ -13,8 +13,8 @@ ui-lang-runtime.workspace = true
 [build-dependencies]
 ui-lang-build.workspace = true
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true
 
 [dev-dependencies]
 ui-lang-runtime = { workspace = true, features = ["test-runtime"] }

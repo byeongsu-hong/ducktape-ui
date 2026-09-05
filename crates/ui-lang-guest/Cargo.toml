@@ -16,8 +16,8 @@ iced_runtime = "=0.14.0"
 ui-lang-wire.workspace = true
 wit-bindgen = "0.61"
 
-[lints.rust]
-unsafe_code = "forbid"
+[lints]
+workspace = true
 
 # winit refuses a native target with no backend named, and iced pulls it in
 # regardless of renderer; the guest's own tests run natively.
