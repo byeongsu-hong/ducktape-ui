@@ -705,6 +705,7 @@ pub struct TextOptions {
     pub custom_style: Option<ExternCall>,
     pub underline: Option<Expr>,
     pub strikethrough: Option<Expr>,
+    pub live: Option<TextLive>,
 }
 
 #[derive(Clone, Debug)]

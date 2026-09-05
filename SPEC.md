@@ -522,7 +522,7 @@ produce a deterministic AccessKit tree:
 
 | Ice node | AccessKit role | Semantic state |
 | --- | --- | --- |
-| `text` | `Label` | the visible text is its value |
+| `text` | `Label` | the visible text is its value; `live=polite\|assertive` makes it a live region, announced when the value changes |
 | `input` | `TextInput` | label, optional description, value, disabled/focus state |
 | secure or `secret` `input` | `PasswordInput` | label, optional description, disabled/focus state; no value is exported |
 | `button` | `Button` | label, optional description, toggled/expanded state, disabled/focus state, click action |

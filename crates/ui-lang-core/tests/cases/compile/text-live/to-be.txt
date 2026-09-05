@@ -1,0 +1,2 @@
+.value(__text_value).live(::ui_lang_runtime::AccessibilityLive::Polite).into()
+.value(__text_value).live(::ui_lang_runtime::AccessibilityLive::Assertive).into()

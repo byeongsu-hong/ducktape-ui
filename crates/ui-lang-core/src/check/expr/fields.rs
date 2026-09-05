@@ -365,7 +365,8 @@ pub(crate) fn field_type(
             | "accessibility_role"
             | "accessibility_name"
             | "accessibility_description"
-            | "accessibility_value" => Some(Type::Str),
+            | "accessibility_value"
+            | "accessibility_live" => Some(Type::Str),
             "visible"
             | "pixel_aligned"
             | "focused"

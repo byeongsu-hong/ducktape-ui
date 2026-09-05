@@ -192,6 +192,7 @@ fn checks_expanded_semantic_test_actions_and_inspection_fields() {
   expect root.accessibility_name == ""
   expect root.accessibility_description == ""
   expect root.accessibility_value == ""
+  expect root.accessibility_live == "off"
   expect root.accessibility_checked == false
   expect root.accessibility_disabled == false
   expect root.accessibility_supports_activate == false

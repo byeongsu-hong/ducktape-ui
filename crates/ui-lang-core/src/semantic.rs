@@ -607,6 +607,15 @@ pub enum TextShaping {
     Advanced,
 }
 
+/// How assistive technology announces a text's value when it changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextLive {
+    /// After the current utterance finishes.
+    Polite,
+    /// Interrupting whatever is being read.
+    Assertive,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextWrapping {
     None,

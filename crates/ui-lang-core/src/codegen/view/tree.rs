@@ -658,6 +658,7 @@ fn text(
         options.tracking.is_some_and(|tracking| tracking != 0.0),
         "tracking",
     )?;
+    refuse_when(program, origin, options.live.is_some(), "a live region")?;
     refuse_when(
         program,
         origin,
