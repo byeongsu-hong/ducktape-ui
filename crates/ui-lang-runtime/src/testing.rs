@@ -6873,6 +6873,13 @@ mod tests {
     }
 
     static CLIFF_BOOTS: AtomicUsize = AtomicUsize::new(0);
+    /// A cliff step sleeps this long; the campaign deadline sits at half of it.
+    /// The gap is the margin a loaded box gets: an innocent headless step
+    /// (a click, a redraw) costs a few milliseconds idle but tens under a
+    /// full build, and a 60 ms / 30 ms pair let one cross the deadline and
+    /// steal the finding from the real cliff.
+    const CLIFF_SLEEP: Duration = Duration::from_millis(200);
+    const CLIFF_DEADLINE_MS: f64 = 100.0;
 
     fn cliff_boot() -> CliffState {
         CLIFF_BOOTS.fetch_add(1, Ordering::Relaxed);
@@ -6884,7 +6891,7 @@ mod tests {
             CliffMessage::Arm => state.armed = true,
             CliffMessage::Hit => {
                 if state.armed {
-                    std::thread::sleep(Duration::from_millis(60));
+                    std::thread::sleep(CLIFF_SLEEP);
                 }
                 state.hits += 1;
             }
@@ -6942,7 +6949,7 @@ mod tests {
                 seed: Some(SEED),
                 steps: Some(STEPS),
                 confirmations: 2,
-                deadline_ms: Some(30.0),
+                deadline_ms: Some(CLIFF_DEADLINE_MS),
                 max_to_median_ratio: None,
                 replay: None,
             },
@@ -6981,7 +6988,7 @@ mod tests {
                 seed: artifact.seed,
                 steps: Some(artifact.actions.len()),
                 confirmations: 1,
-                deadline_ms: Some(30.0),
+                deadline_ms: Some(CLIFF_DEADLINE_MS),
                 max_to_median_ratio: None,
                 replay: Some(artifact.clone()),
             },
@@ -7008,7 +7015,7 @@ mod tests {
         match message {
             CliffMessage::Arm => state.armed = true,
             CliffMessage::Hit if state.armed && state.slow => {
-                std::thread::sleep(Duration::from_millis(60));
+                std::thread::sleep(CLIFF_SLEEP);
             }
             CliffMessage::Hit => {}
         }
@@ -7041,7 +7048,7 @@ mod tests {
                 seed: Some(2),
                 steps: Some(21),
                 confirmations: 2,
-                deadline_ms: Some(30.0),
+                deadline_ms: Some(CLIFF_DEADLINE_MS),
                 max_to_median_ratio: None,
                 replay: None,
             },
