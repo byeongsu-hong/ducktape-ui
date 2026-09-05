@@ -312,10 +312,14 @@ a tree to walk. That refusal ends the one instance, like any other.
 What survives the door, `wire::sanitize` pulls into range: depth to
 `MAX_DEPTH` (64, the host's layout recurses that far and no further),
 nodes to `MAX_NODES` (8192, a screen's worth — a list past that is the
-guest's to window), every string to `MAX_STRING_BYTES` (64 KiB), text
-sizes to `MAX_TEXT_PIXELS` (512, since every glyph at one is rasterized
-and cached), other sizes, spacings and paddings to finite pixels no
-larger than a wall, colours to `0..=1`. A key used twice is moved off the
+guest's to window), every string to `MAX_STRING_BYTES` (64 KiB), the
+shaped text of the whole tree — contents, input values and placeholders,
+plain button labels — to `MAX_TEXT_BYTES_PER_FRAME` (64 KiB, taken in
+tree order so a tail past it comes out empty, because the 8 MiB of text
+the frame cap alone allows is seconds of cosmic-text on the window
+thread every redraw), text sizes to `MAX_TEXT_PIXELS` (512, since every
+glyph at one is rasterized and cached), other sizes, spacings and
+paddings to finite pixels no larger than a wall, colours to `0..=1`. A key used twice is moved off the
 one already taken (`key`, then `key#2`): a key is the node's widget
 state, its focus target, its accessibility id and, for an input, the text
 the host owns on its behalf, so two nodes sharing one share all of that.

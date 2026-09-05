@@ -353,6 +353,23 @@ pub const MAX_DEPTH: usize = 64;
 pub const MAX_NODES: usize = 8_192;
 /// The longest string a single node may carry (text, placeholder, key).
 pub const MAX_STRING_BYTES: usize = 64 << 10;
+/// The most SHAPED text one frame may carry in total — every [`Node::Text`]
+/// content, input value and placeholder, and plain button label together.
+///
+/// The per-string and per-node caps do not bound this: 128 strings of
+/// [`MAX_STRING_BYTES`] are a legal 8 MiB frame, and the host reshapes all
+/// of it on the window thread every time the guest changes a character.
+/// Measured on a desk machine, that frame took 6.2 s and allocated 3.3 GiB;
+/// held to one full-length string's worth of text it takes 69 ms and 26 MiB.
+/// A screen shows a couple of kilobytes, so this leaves a guest that means
+/// well thirty times what it needs while taking two orders of magnitude off
+/// what a hostile one can spend.
+///
+/// It bounds bytes and nothing else. Two other costs live outside it and are
+/// the host's to attack: [`MAX_NODES`] nodes cost around a hundred
+/// milliseconds to lay out however short their text, and a byte of Hangul,
+/// Han or emoji costs some twenty times a byte of ASCII to shape.
+pub const MAX_TEXT_BYTES_PER_FRAME: usize = MAX_STRING_BYTES;
 /// Text and spacing sizes are pixels; nothing on a screen needs more.
 const MAX_PIXELS: f32 = 8192.0;
 /// A text size, which is not a length: every glyph at it is rasterized and
@@ -361,7 +378,8 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 
 /// Pulls a frame from an untrusted module into what the host is willing to
 /// lay out: the tree is truncated past [`MAX_DEPTH`] and [`MAX_NODES`],
-/// strings past [`MAX_STRING_BYTES`], text sizes to [`MAX_TEXT_PIXELS`],
+/// strings past [`MAX_STRING_BYTES`], shaped text past
+/// [`MAX_TEXT_BYTES_PER_FRAME`] in total, text sizes to [`MAX_TEXT_PIXELS`],
 /// every other size, colour and spacing clamped to a finite range, and a key
 /// used twice moved off the one already taken. A frame from a well-behaved
 /// guest passes through unchanged.
@@ -370,9 +388,10 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 /// one nested deeper than this walk goes.
 pub fn sanitize(frame: &mut Frame) {
     let mut budget = MAX_NODES;
+    let mut text_budget = MAX_TEXT_BYTES_PER_FRAME;
     let mut taken = Taken::new();
     if let Some(root) = &mut frame.root {
-        sanitize_node(root, 0, &mut budget, &mut taken);
+        sanitize_node(root, 0, &mut budget, &mut text_budget, &mut taken);
     }
     for request in &mut frame.requests {
         truncate(&mut request.kind);
@@ -408,7 +427,21 @@ fn claim(key: &mut String, taken: &mut Taken) {
     taken.insert(unique, 2);
 }
 
-fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize, taken: &mut Taken) {
+/// Truncates one shaped string to what is left of the frame's text budget
+/// and spends what survives. Nodes are walked in tree order, so a frame past
+/// the budget keeps its head and loses its tail.
+fn spend_text(text: &mut String, text_budget: &mut usize) {
+    truncate_to(text, (*text_budget).min(MAX_STRING_BYTES));
+    *text_budget -= text.len();
+}
+
+fn sanitize_node(
+    node: &mut Node,
+    depth: usize,
+    budget: &mut usize,
+    text_budget: &mut usize,
+    taken: &mut Taken,
+) {
     // The caller guarantees one node of budget; a node too deep spends it
     // on the empty node that stands in for it.
     *budget -= 1;
@@ -448,7 +481,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize, taken: &mut 
             ..
         } => {
             claim(key, taken);
-            truncate(content);
+            spend_text(content, text_budget);
             if let Some(size) = size {
                 *size = bounded(*size).min(MAX_TEXT_PIXELS);
             }
@@ -462,8 +495,8 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize, taken: &mut 
             ..
         } => {
             claim(key, taken);
-            truncate(placeholder);
-            truncate(value);
+            spend_text(placeholder, text_budget);
+            spend_text(value, text_budget);
             for face in [
                 Some(&mut style.active),
                 style.hovered.as_mut(),
@@ -490,7 +523,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize, taken: &mut 
         } => {
             claim(key, taken);
             if let ButtonContent::Label(label) = content {
-                truncate(label);
+                spend_text(label, text_budget);
             }
             if let Some(label) = label {
                 truncate(label);
@@ -536,7 +569,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize, taken: &mut 
             if *budget == 0 {
                 break;
             }
-            sanitize_node(child, depth + 1, budget, taken);
+            sanitize_node(child, depth + 1, budget, text_budget, taken);
             kept += 1;
         }
         children.truncate(kept);
@@ -547,7 +580,7 @@ fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize, taken: &mut 
             *child = Node::empty();
             continue;
         }
-        sanitize_node(child, depth + 1, budget, taken);
+        sanitize_node(child, depth + 1, budget, text_budget, taken);
     }
 }
 
@@ -565,10 +598,14 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
 }
 
 fn truncate(text: &mut String) {
-    if text.len() <= MAX_STRING_BYTES {
+    truncate_to(text, MAX_STRING_BYTES);
+}
+
+fn truncate_to(text: &mut String, limit: usize) {
+    if text.len() <= limit {
         return;
     }
-    let mut end = MAX_STRING_BYTES;
+    let mut end = limit;
     while !text.is_char_boundary(end) {
         end -= 1;
     }
@@ -813,6 +850,85 @@ mod tests {
         let before = frame.clone();
         sanitize(&mut frame);
         assert_eq!(frame, before);
+    }
+
+    #[test]
+    fn a_frame_past_the_text_budget_keeps_its_head_and_loses_its_tail() {
+        const NODES: usize = 8;
+        const EACH: usize = MAX_TEXT_BYTES_PER_FRAME / 4;
+
+        let mut frame = Frame {
+            root: Some(column(
+                (0..NODES).map(|_| text(&"é".repeat(EACH / 2))).collect(),
+            )),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        let shaped: Vec<usize> = children
+            .iter()
+            .map(|child| match child {
+                Node::Text { content, .. } => content.len(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(shaped.iter().sum::<usize>(), MAX_TEXT_BYTES_PER_FRAME);
+        assert_eq!(&shaped[..4], &[EACH; 4]);
+        assert_eq!(&shaped[4..], &[0; NODES - 4]);
+    }
+
+    #[test]
+    fn every_shaped_string_spends_the_same_budget() {
+        let long = "x".repeat(MAX_TEXT_BYTES_PER_FRAME);
+        let mut frame = Frame {
+            root: Some(column(vec![
+                Node::Input {
+                    key: "App/i".into(),
+                    placeholder: long.clone(),
+                    value: long.clone(),
+                    on_input: 0,
+                    on_submit: None,
+                    width: None,
+                    secure: false,
+                    style: InputStyle::default(),
+                },
+                Node::Button {
+                    key: "App/b".into(),
+                    content: ButtonContent::Label(long.clone()),
+                    label: Some(long),
+                    on_press: None,
+                    width: None,
+                    height: None,
+                    padding: None,
+                    style: ButtonStyle::default(),
+                },
+                text("tail"),
+            ])),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        let Node::Input {
+            placeholder, value, ..
+        } = &children[0]
+        else {
+            panic!()
+        };
+        // The placeholder took the frame's whole budget and everything
+        // shaped after it came out empty. The accessible name is not shaped,
+        // so it answers to the per-string cap alone.
+        assert_eq!(placeholder.len(), MAX_TEXT_BYTES_PER_FRAME);
+        assert!(value.is_empty());
+        let Node::Button { content, label, .. } = &children[1] else {
+            panic!()
+        };
+        assert_eq!(*content, ButtonContent::Label(String::new()));
+        assert_eq!(label.as_deref().map(str::len), Some(MAX_STRING_BYTES));
+        assert_eq!(children[2], text(""));
     }
 
     #[test]
