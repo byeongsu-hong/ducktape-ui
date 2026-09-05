@@ -126,3 +126,22 @@ pub(crate) const MAX_APP_KEYS: usize = 1024;
 /// window at its frame rate. The last publish of a burst is never lost:
 /// its wake comes when the interval is up.
 pub(crate) const BUS_WAKE_INTERVAL: Duration = Duration::from_millis(50);
+
+// ---------- what a tick may take on the clock ----------
+
+/// How often the process-wide epoch thread advances the engine's counter:
+/// the granularity of every wall-clock deadline below, and one thread wake
+/// per interval for the whole host.
+pub(crate) const EPOCH_TICK: Duration = Duration::from_millis(10);
+
+/// The longest one call into a guest may take on the clock, fuel or no fuel.
+///
+/// Fuel counts wasm instructions, and time spent inside a host import is not
+/// fuel: a module calling an import in a loop buys an unbounded tick for a
+/// bounded amount of fuel. This bounds the tick itself.
+///
+/// Twelve times [`TICK_BUDGET`], so no view that merely costs a frame is ever
+/// killed by it — the rest governor already slows those — and shorter than
+/// [`MAX_REST`], so a guest the deadline ends never held the window thread
+/// longer than the wait it would have earned for overrunning.
+pub(crate) const TICK_DEADLINE: Duration = Duration::from_millis(100);

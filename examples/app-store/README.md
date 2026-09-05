@@ -274,6 +274,7 @@ Fuel and memory bound what a module does to itself. What it can make the
 | limit | value | what a guest past it gets |
 |---|---|---|
 | `MAX_FRAME_BYTES` | 8 MiB | the instance ends, "frame too large" |
+| `TICK_DEADLINE` | 100 ms of wall clock per call into the guest, in 10 ms epochs | the instance ends, "tick exceeded 100 ms". Fuel counts wasm instructions, and time inside a host import is not fuel — this is what bounds a tick that spends its time on the host's side of an import |
 | `TICK_BUDGET` / `MAX_REST` | 8 ms per redraw, 250 ms of waiting | its next redraw waits as long as this one overran: an expensive guest runs at a few frames a second instead of at the window's rate, and the windows sharing that thread keep theirs |
 | `MAX_REQUESTS_PER_TICK` | 256 | `Err "too many requests this tick"` for the rest |
 | `MAX_PAYLOAD_BYTES` | 1 MiB | `Err`, whatever the request was |
@@ -401,9 +402,13 @@ An honest inventory, grouped by where the work would land. Items marked
   under its own name. No rate limit beyond the per-tick byte budget the
   fan-out is charged to, no replay for late subscribers, no request/reply
   between apps, no wildcard beyond `*`.
-- Beyond the sandbox table: no cumulative CPU budget across ticks, and
-  nothing that ends an app for being slow — `TICK_BUDGET` lowers an
-  expensive guest's rate, it never refuses it. A request answered this tick
+- Beyond the sandbox table: no cumulative CPU budget across ticks.
+  `TICK_DEADLINE` ends one call that runs past 100 ms, and `TICK_BUDGET`
+  lowers an expensive guest's rate without refusing it; neither notices a
+  guest that is merely slow every tick, forever. The deadline is checked at
+  wasm loop back-edges and function entries, so a host import already
+  running finishes first: it bounds how many long imports one tick makes,
+  not how long one of them takes. A request answered this tick
   wakes the window at once, so an app that asks in a loop still runs at
   whatever rate the governor leaves it.
 - `define_unknown_imports_as_traps` accepts every import a component
