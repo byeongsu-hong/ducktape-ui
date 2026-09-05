@@ -1105,9 +1105,13 @@ pub fn for_each_child<'a>(node: &'a ViewNode, visit: &mut impl FnMut(&'a ViewNod
     }
 }
 
-/// The view nodes directly under `node`, collected; see [`for_each_child`].
+/// The view nodes directly under `node`, collected in one exactly-sized
+/// allocation; see [`for_each_child`]. Counting first costs a second match
+/// per node and saves the growth reallocations the lowering contracts pin.
 pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
-    let mut children = Vec::new();
+    let mut count = 0;
+    for_each_child(node, &mut |_| count += 1);
+    let mut children = Vec::with_capacity(count);
     for_each_child(node, &mut |child| children.push(child));
     children
 }
