@@ -10,7 +10,10 @@ type Renderer = iced_test::renderer::Renderer;
 fn tree_callbacks_share_one_allocation() {
     const FRAMES: usize = 256;
     const ALLOCATIONS: usize = 5_120;
-    const ALLOCATED_BYTES: usize = 356_096;
+    // 356_096 before the accessible node grew two boxed `Option`s — a range
+    // control's numeric contract and its step messages, `None` everywhere
+    // else — 16 bytes in the one node this tree renders per frame.
+    const ALLOCATED_BYTES: usize = 360_192;
 
     let config = TreeViewConfig::new(20.0).unwrap();
     let items = [1_u64];

@@ -29,6 +29,12 @@ test dark_keyboard_and_focus
   capture dark_keyboard_and_focus
 ```
 
+`a11y activate|focus|increment|decrement <target>` performs an assistive
+technology's action on a semantic node — activate runs its click route, focus
+moves keyboard focus to it, and increment/decrement run a range control's
+change route with the value one step away — and `expect a11y <target> action
+click|focus|increment|decrement [bool]` asserts whether the node exports it.
+
 `theme` replaces the headless program theme result with `Theme::default(mode)`;
 it does not switch application-owned palette state, which should be selected
 through a preset or `dispatch`. `scale` overrides the headless program scale

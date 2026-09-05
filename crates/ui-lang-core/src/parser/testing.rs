@@ -961,17 +961,19 @@ fn parse_accessibility_action(
         return Err(error(
             TEST_ERROR,
             line,
-            "a11y actions use `a11y activate|focus target`",
+            "a11y actions use `a11y activate|focus|increment|decrement target`",
         ));
     };
     let action = match *action {
         "activate" => TestAccessibilityAction::Activate,
         "focus" => TestAccessibilityAction::Focus,
+        "increment" => TestAccessibilityAction::Increment,
+        "decrement" => TestAccessibilityAction::Decrement,
         _ => {
             return Err(error(
                 TEST_ERROR,
                 line,
-                "a11y action must be activate or focus",
+                "a11y action must be activate, focus, increment, or decrement",
             ));
         }
     };
@@ -1098,13 +1100,15 @@ fn parse_accessibility_expectation(
 }
 
 fn validate_accessibility_action_name(source: &str, line: &Line) -> Result<(), Error> {
-    if matches!(source, "click" | "focus") {
+    if matches!(source, "click" | "focus" | "increment" | "decrement") {
         Ok(())
     } else {
         Err(error(
             TEST_ERROR,
             line,
-            format!("unsupported accessibility action `{source}`; tests support click and focus"),
+            format!(
+                "unsupported accessibility action `{source}`; tests support click, focus, increment, and decrement"
+            ),
         ))
     }
 }

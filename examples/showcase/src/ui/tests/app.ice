@@ -121,6 +121,12 @@ test generated_control_accessibility
   expect a11y slider name "Slider"
   expect a11y slider value "58"
   expect a11y slider action focus
+  expect a11y slider action increment
+  expect a11y slider action decrement
+  a11y increment slider
+  expect a11y slider value "59"
+  a11y decrement slider
+  expect a11y slider value "58"
   expect a11y progress role "progress-indicator"
   expect a11y progress name "Progress"
   expect a11y progress value "58"
@@ -129,6 +135,7 @@ test generated_control_accessibility
   expect slider.accessibility_live == "off"
   dispatch density_changed("compact")
   expect a11y status value "compact"
+  expect a11y progress action increment false
   dispatch framework_changed("iced")
   expect a11y pick role "combo-box"
   expect a11y pick name "Framework"

@@ -619,6 +619,8 @@ pub struct Capture {
 pub enum AccessibilityAction {
     Click,
     Focus,
+    Increment,
+    Decrement,
 }
 
 /// The part of the status item a `expect tray` step asserts.
@@ -1119,6 +1121,8 @@ struct AccessibilityData {
     supports_activate: bool,
     supports_focus: bool,
     live: Option<crate::AccessibilityLive>,
+    supports_increment: bool,
+    supports_decrement: bool,
 }
 
 /// A fresh post-layout snapshot of an identified rendered widget.
@@ -1483,6 +1487,14 @@ impl Target {
         self.accessibility("focus action").supports_focus
     }
 
+    pub fn accessibility_supports_increment(&self) -> bool {
+        self.accessibility("increment action").supports_increment
+    }
+
+    pub fn accessibility_supports_decrement(&self) -> bool {
+        self.accessibility("decrement action").supports_decrement
+    }
+
     fn required_number(&self, field: &str, value: Option<f64>) -> f64 {
         value.unwrap_or_else(|| {
             self.fail(
@@ -1617,6 +1629,8 @@ struct IdSelector<Message> {
 struct SemanticActionTarget<Message> {
     activate: Option<Message>,
     focus: Option<crate::SemanticFocus>,
+    increment: Option<Message>,
+    decrement: Option<Message>,
     disabled: bool,
 }
 
@@ -1656,6 +1670,8 @@ impl<Message: Clone + 'static> Selector for SemanticActionSelector<Message> {
                         occurrence: current,
                     },
                 ),
+                increment: state.semantics.increment().cloned(),
+                decrement: state.semantics.decrement().cloned(),
                 disabled: state.semantics.disabled,
             }
         })
@@ -1841,6 +1857,8 @@ impl<Message: 'static> Selector for IdSelector<Message> {
                             supports_focus: !state.disabled
                                 && state.focus != crate::FocusBehavior::None,
                             live: state.live,
+                            supports_increment: !state.disabled && state.supports_increment,
+                            supports_decrement: !state.disabled && state.supports_decrement,
                         }),
                         Some(state.focused),
                         state.source,
@@ -2932,6 +2950,8 @@ where
         let actual = match action {
             AccessibilityAction::Click => target.accessibility_supports_activate(),
             AccessibilityAction::Focus => target.accessibility_supports_focus(),
+            AccessibilityAction::Increment => target.accessibility_supports_increment(),
+            AccessibilityAction::Decrement => target.accessibility_supports_decrement(),
         };
         if actual != expected {
             self.accessibility_expectation_failed(
@@ -3103,6 +3123,8 @@ where
             Action::Accessibility { action, target } => match action {
                 AccessibilityAction::Click => self.accessibility_activate(&target, source),
                 AccessibilityAction::Focus => self.accessibility_focus(&target, source),
+                AccessibilityAction::Increment => self.accessibility_step(&target, true, source),
+                AccessibilityAction::Decrement => self.accessibility_step(&target, false, source),
             },
         }
         None
@@ -3798,6 +3820,39 @@ where
                 "accessibility activate",
                 "a target supporting the Click action",
                 format!("{id} has no activation action"),
+                source,
+            )
+        });
+        self.dispatch(message, source);
+    }
+
+    /// Steps a range control the way a screen reader's increment or decrement
+    /// does: the change route runs with the next value in the range.
+    pub fn accessibility_step(&mut self, id: &str, up: bool, source: Location) {
+        let (verb, action) = if up {
+            ("accessibility increment", "Increment")
+        } else {
+            ("accessibility decrement", "Decrement")
+        };
+        let target = self.require_semantic_action_target(id, source);
+        if target.disabled {
+            self.invalid_action(
+                verb,
+                "an enabled semantic target",
+                format!("{id} is disabled"),
+                source,
+            );
+        }
+        let step = if up {
+            target.increment
+        } else {
+            target.decrement
+        };
+        let message = step.unwrap_or_else(|| {
+            self.invalid_action(
+                verb,
+                &format!("a target supporting the {action} action"),
+                format!("{id} cannot step that way"),
                 source,
             )
         });
@@ -6007,6 +6062,8 @@ fn target_manifest(target: &Target) -> serde_json::Value {
             "actions": {
                 "click": data.supports_activate,
                 "focus": data.supports_focus,
+                "increment": data.supports_increment,
+                "decrement": data.supports_decrement,
             },
         })
     });

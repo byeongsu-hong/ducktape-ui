@@ -242,6 +242,8 @@ pub enum TestTouchPhase {
 pub enum TestAccessibilityAction {
     Activate,
     Focus,
+    Increment,
+    Decrement,
 }
 
 #[derive(Clone, Debug)]
@@ -820,6 +822,8 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
             match action {
                 TestAccessibilityAction::Activate => "activate",
                 TestAccessibilityAction::Focus => "focus",
+                TestAccessibilityAction::Increment => "increment",
+                TestAccessibilityAction::Decrement => "decrement",
             },
             target_ref_source(target)
         ),

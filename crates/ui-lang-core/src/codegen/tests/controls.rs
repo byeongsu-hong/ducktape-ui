@@ -656,7 +656,7 @@ view
         2
     );
     assert!(generated.contains(
-        "let __slider_value = self.precise; let __slider = ::iced::widget::slider((crate::backend::slider_number(0.0))..=(crate::backend::slider_number(100.0)), __slider_value, move |__value| __ControlsMessage::PreciseChanged(__value)).step(crate::backend::slider_number(5.0))"
+        "let __slider_value = self.precise; let __slider_min = crate::backend::slider_number(0.0); let __slider_max = crate::backend::slider_number(100.0); let __slider_step = crate::backend::slider_number(5.0); let __slider_change = move |__value| __ControlsMessage::PreciseChanged(__value); let __slider_up = ::ui_lang_runtime::step_value(__slider_value, __slider_min, __slider_max, __slider_step, true).map(&__slider_change); let __slider_down = ::ui_lang_runtime::step_value(__slider_value, __slider_min, __slider_max, __slider_step, false).map(&__slider_change); let __slider = ::iced::widget::slider(__slider_min..=__slider_max, __slider_value, __slider_change).step(__slider_step)"
     ));
     assert!(!generated.contains("self.precise.clone()"));
     assert!(generated.contains("::ui_lang_runtime::Role::Switch"));
@@ -671,7 +671,16 @@ view
     assert!(generated.contains("__style.rail.backgrounds.1 = ::iced::Background::from"));
     assert!(generated.contains("__style.handle.background = ::iced::Background::from"));
     assert!(generated.contains("::iced::widget::progress_bar"));
-    assert!(generated.contains("::ui_lang_runtime::progress_range(0.0, 100.0, __progress_input)"));
+    assert!(generated.contains("let __progress_min = 0.0; let __progress_max = 100.0;"));
+    assert!(generated.contains(
+        "::ui_lang_runtime::progress_range(__progress_min, __progress_max, __progress_input)"
+    ));
+    assert!(generated.contains(
+        ".numeric(__progress_input, __progress_min, __progress_max, ::std::option::Option::None)"
+    ));
+    assert!(generated.contains(
+        ".numeric(__slider_value.into(), __slider_min.into(), __slider_max.into(), ::std::option::Option::Some(__slider_step.into())).on_increment_maybe(__slider_up).on_decrement_maybe(__slider_down)"
+    ));
     assert!(generated.contains(".vertical()"));
     assert!(generated.contains(".length(::iced::Length::FillPortion(2)).girth(20.0 as f32)"));
     assert!(generated.contains("crate::backend::dynamic_progress(__theme, self.enabled)"));

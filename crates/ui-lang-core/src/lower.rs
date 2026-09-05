@@ -152,6 +152,8 @@ pub(crate) enum ResolvedTestTouchPhase {
 pub(crate) enum ResolvedTestAccessibilityAction {
     Activate,
     Focus,
+    Increment,
+    Decrement,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

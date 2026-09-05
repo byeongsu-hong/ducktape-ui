@@ -270,6 +270,8 @@ test interactions
   capture dark_controls
   a11y activate field
   a11y focus field
+  a11y increment field
+  a11y decrement field
   expect a11y field role "text_input"
   expect a11y field name "Draft"
   expect a11y field value ""
@@ -278,6 +280,7 @@ test interactions
   expect a11y field focused true
   expect a11y field action click
   expect a11y field action focus false
+  expect a11y field action decrement false
 "#;
 
     let document = parse(source).unwrap();
@@ -336,7 +339,14 @@ fn rejects_native_event_shapes_the_semantic_driver_cannot_represent() {
             "key-down \"x\" text=\"\"",
             "keyboard text must not be empty",
         ),
-        ("expect a11y field action expand", "support click and focus"),
+        (
+            "expect a11y field action expand",
+            "support click, focus, increment, and decrement",
+        ),
+        (
+            "a11y expand field",
+            "activate, focus, increment, or decrement",
+        ),
     ] {
         let source = format!(
             "app Demo\nview\n  text \"ok\" #field\ntest invalid\n  target field = #field\n  {step}\n"

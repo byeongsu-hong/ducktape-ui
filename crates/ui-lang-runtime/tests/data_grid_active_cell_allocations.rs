@@ -13,7 +13,10 @@ type Renderer = iced_test::renderer::Renderer;
 fn active_cell_moves_into_the_rendered_grid() {
     const FRAMES: usize = 256;
     const ALLOCATIONS: usize = 14_336;
-    const ALLOCATED_BYTES: usize = 1_269_760;
+    // 1_269_760 before the accessible node grew two boxed `Option`s — a range
+    // control's numeric contract and its step messages, `None` everywhere
+    // else — 16 bytes in the node's element box and again in its tree state.
+    const ALLOCATED_BYTES: usize = 1_290_240;
 
     let config = DataGridConfig::new(20.0, 20.0).unwrap();
     let rows = [String::from("row-key-owned")];
