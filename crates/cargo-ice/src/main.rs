@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 #[cfg(test)]
+#[cfg(test)]
 mod allocation;
 mod api;
 mod bundle;
@@ -665,7 +666,6 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(count(orphan_ice_files(&files, &dependencies)), 1);
 
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(0, || {
             for _ in 0..CALLS {
                 assert_eq!(

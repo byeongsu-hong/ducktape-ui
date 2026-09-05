@@ -3071,11 +3071,11 @@ mod tests {
         ];
 
         let expected = completion_items_for(CATEGORIES).len();
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let before = crate::allocation::GLOBAL.stats();
         for _ in 0..REQUESTS {
             std::hint::black_box(completion_items_for(std::hint::black_box(CATEGORIES)));
         }
-        let heap = dhat::HeapStats::get();
+        let heap = crate::allocation::since(before);
 
         eprintln!(
             "{REQUESTS} filtered completion requests ({expected} items): {} heap blocks / {} bytes",

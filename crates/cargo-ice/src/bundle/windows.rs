@@ -309,7 +309,6 @@ mod tests {
         const CODES: u64 = 100;
 
         let expected = upgrade_code("dev.ducktape.ui.showcase");
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(CODES, || {
             for _ in 0..CODES {
                 assert_eq!(upgrade_code("dev.ducktape.ui.showcase"), expected);

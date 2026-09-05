@@ -2064,7 +2064,6 @@ mod tests {
         let current = baseline.clone();
         let mut differences = Vec::new();
 
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(0, || {
             compare_json("", &baseline, &current, 0.0, &mut differences);
         });

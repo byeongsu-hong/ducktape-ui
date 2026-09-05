@@ -114,7 +114,6 @@ mod tests {
         let arguments = ["--release".to_owned()];
         assert!(explicit_files(cwd, &arguments).is_empty());
 
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(0, || {
             for _ in 0..REQUESTS {
                 assert!(

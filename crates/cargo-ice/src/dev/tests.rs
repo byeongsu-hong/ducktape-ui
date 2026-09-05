@@ -55,13 +55,13 @@ fn performance_contract_initial_snapshot_moves_owned_paths() {
         FILES
     );
 
-    let _profiler = dhat::Profiler::builder().testing().build();
+    let before = crate::allocation::GLOBAL.stats();
     let snapshot = std::hint::black_box(dev_stamps_with_cargo_inputs(
         &[],
         &[],
         std::hint::black_box(&graph),
     ));
-    let heap = dhat::HeapStats::get();
+    let heap = crate::allocation::since(before);
 
     assert_eq!(snapshot.1.len(), FILES);
     assert!(
@@ -586,10 +586,10 @@ fn performance_contract_source_stamp_fingerprint_streams_inputs() {
         })
         .collect();
 
-    let _profiler = dhat::Profiler::builder().testing().build();
+    let before = crate::allocation::GLOBAL.stats();
     let fingerprint = source_stamp_fingerprint(&stamp);
     std::hint::black_box(&fingerprint);
-    let stats = dhat::HeapStats::get();
+    let stats = crate::allocation::since(before);
 
     assert!(stats.total_blocks <= 2, "{stats:?}");
     assert!(stats.total_bytes <= 64, "{stats:?}");

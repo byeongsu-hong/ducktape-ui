@@ -381,7 +381,6 @@ version = "0.26.3"
         let lock = include_str!("../../../Cargo.lock");
         assert_eq!(verify_lock_contents(lock), Ok(()));
 
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(0, || {
             for _ in 0..SCANS {
                 std::hint::black_box(verify_lock_contents(std::hint::black_box(lock))).unwrap();

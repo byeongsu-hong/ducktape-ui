@@ -802,7 +802,6 @@ mod tests {
 
         const EXPECTED: (u64, u64) = (6, 123);
         let mut result = None;
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(EXPECTED.0, || {
             result = Some(validate_capture_manifest(
                 Path::new("other.json"),

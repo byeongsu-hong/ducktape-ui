@@ -30,7 +30,7 @@ ui-lang-core.workspace = true
 ui-lang-template.workspace = true
 
 [dev-dependencies]
-dhat = "0.3"
+stats_alloc = "0.1.10"
 tempfile = "3.27"
 
 [lints]

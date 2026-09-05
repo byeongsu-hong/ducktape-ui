@@ -1372,7 +1372,6 @@ mod tests {
         ];
 
         const EXPECTED: (u64, u64) = (256, 1_792);
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(EXPECTED.0, || {
             for _ in 0..RUNS {
                 std::hint::black_box(parse_review(&args).unwrap());
