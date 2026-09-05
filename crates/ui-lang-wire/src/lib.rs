@@ -394,7 +394,7 @@ pub fn sanitize(frame: &mut Frame) {
         sanitize_node(root, 0, &mut budget, &mut text_budget, &mut taken);
     }
     for request in &mut frame.requests {
-        truncate(&mut request.kind);
+        truncate_string(&mut request.kind);
     }
 }
 
@@ -411,7 +411,7 @@ type Taken = std::collections::HashMap<String, usize>;
 /// share all of that: typing in either edits both. The tree the guest sent
 /// is kept, with the later node moved off the taken key.
 fn claim(key: &mut String, taken: &mut Taken) {
-    truncate(key);
+    truncate_string(key);
     let Some(mut nth) = taken.get(key.as_str()).copied() else {
         taken.insert(key.clone(), 2);
         return;
@@ -526,7 +526,7 @@ fn sanitize_node(
                 spend_text(label, text_budget);
             }
             if let Some(label) = label {
-                truncate(label);
+                truncate_string(label);
             }
             bound_edges(padding);
             for face in [
@@ -597,7 +597,11 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
     slots.into_iter().flatten().collect()
 }
 
-fn truncate(text: &mut String) {
+/// Cuts `text` down to [`MAX_STRING_BYTES`] on a char boundary, in place.
+/// Shared by [`sanitize`] (a guest's outbound frame) and the host's inbound
+/// edit path (a user's keystroke or paste into an [`Node::Input`]) — one
+/// bound on any string either side of the wire sends the other.
+pub fn truncate_string(text: &mut String) {
     truncate_to(text, MAX_STRING_BYTES);
 }
 
