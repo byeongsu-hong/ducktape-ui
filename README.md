@@ -187,7 +187,7 @@ Ice lowers its checked control surface into a deterministic AccessKit tree:
 | Ice node | AccessKit role | Exported state |
 | --- | --- | --- |
 | `text` | `Label` | visible text value; `live=polite\|assertive` announces changes to it |
-| `input` | `TextInput`, or `PasswordInput` when `secure=true` | current value for non-secure input; passwords never export their value |
+| `input` | `TextInput`, or `PasswordInput` when `secure=true` | current value, caret/selection position, and a caret a screen reader can move, for non-secure input; passwords never export their value |
 | `button` | `Button` | name, description, optional checked/expanded state, disabled state, focus/click actions |
 | `checkbox` | `CheckBox` | name, description, checked/disabled state, focus/click actions |
 | `toggler` | `Switch` | name, description, checked/disabled state, focus/click actions |

@@ -667,6 +667,37 @@ where
     }
 }
 
+/// Where a text input's caret sits, in grapheme indices into its value — the
+/// unit iced's cursor counts in and the unit AccessKit's `character_lengths`
+/// describe — plus the widget to steer when assistive technology moves it.
+struct TextCaret {
+    anchor: usize,
+    focus: usize,
+    target: widget::Id,
+}
+
+/// The paragraph type every renderer the runtime ships with shares, so a
+/// wrapped `text_input`'s state can be recognised without a paragraph bound
+/// on every wrapper: `Tree::tag` says whether the child is one.
+type TextInputState = iced::widget::text_input::State<iced::advanced::graphics::text::Paragraph>;
+
+fn text_caret(child: &widget::Tree, value: Option<&str>, target: &widget::Id) -> Option<TextCaret> {
+    if child.tag != tree::Tag::of::<TextInputState>() {
+        return None;
+    }
+    let value = iced::widget::text_input::Value::new(value?);
+    let cursor = child.state.downcast_ref::<TextInputState>().cursor();
+    let (anchor, focus) = match cursor.state(&value) {
+        iced::widget::text_input::cursor::State::Index(index) => (index, index),
+        iced::widget::text_input::cursor::State::Selection { start, end } => (start, end),
+    };
+    Some(TextCaret {
+        anchor,
+        focus,
+        target: target.clone(),
+    })
+}
+
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for Accessible<'_, Message, Theme, Renderer>
 where
@@ -748,6 +779,13 @@ where
         }
         operation.custom(None, layout.bounds(), &mut state.semantics.snapshot);
         operation.custom(Some(&focus_id), layout.bounds(), state);
+        if let Some(mut caret) = text_caret(
+            &tree.children[0],
+            state.semantics.value.as_deref(),
+            &focus_id,
+        ) {
+            operation.custom(None, layout.bounds(), &mut caret);
+        }
 
         if !state.semantics.disabled && state.semantics.focus == FocusBehavior::Wrapper {
             operation.focusable(Some(&focus_id), layout.bounds(), state);
@@ -1452,6 +1490,8 @@ where
 struct ActionTarget<Message> {
     activate: Option<Message>,
     focus: Option<SemanticFocus>,
+    /// The text input whose caret a `SetTextSelection` request moves.
+    caret: Option<widget::Id>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1508,6 +1548,19 @@ impl<Message: Clone + Send + 'static> Snapshot<Message> {
         match request.action {
             Action::Click => target.activate.clone().map_or_else(Task::none, Task::done),
             Action::Focus => target.focus.map_or_else(Task::none, focus_semantic),
+            // iced moves a caret, not an arbitrary selection: the focus end
+            // is where the reader asked the insertion point to land.
+            Action::SetTextSelection => match (&target.caret, &request.data) {
+                (Some(input), Some(accesskit::ActionData::SetTextSelection(selection))) => {
+                    iced::advanced::widget::operate(
+                        iced::advanced::widget::operation::text_input::move_cursor_to::<Message>(
+                            input.clone(),
+                            selection.focus.character_index,
+                        ),
+                    )
+                }
+                _ => Task::none(),
+            },
             _ => Task::none(),
         }
     }
@@ -1695,6 +1748,53 @@ impl<Message> Default for SnapshotOperation<Message> {
 }
 
 impl<Message> SnapshotOperation<Message> {
+    /// Gives the node on top of the stack — the text input whose `operate`
+    /// just reported the caret — one `TextRun` child carrying its value
+    /// grapheme by grapheme, and points the input's text selection into it.
+    /// That pair is what a screen reader reads a caret position from and
+    /// what `SetTextSelection` addresses when it moves one.
+    fn text_run(&mut self, caret: &TextCaret) {
+        let Some(frame) = self.frames.last_mut() else {
+            return;
+        };
+        let Some(index) = frame.node_index else {
+            return;
+        };
+        let input_id = self.nodes[index].0;
+        let Some(value) = self.nodes[index].1.value().map(str::to_owned) else {
+            return;
+        };
+        let mut run_id = duplicate_node_id(input_id, u64::MAX);
+        while !self.used_ids.insert(run_id) {
+            run_id = duplicate_node_id(run_id, u64::MAX);
+        }
+        let input = &mut self.nodes[index].1;
+        let lengths: Box<[u8]> =
+            unicode_segmentation::UnicodeSegmentation::graphemes(value.as_str(), true)
+                .map(|grapheme| u8::try_from(grapheme.len()).unwrap_or(u8::MAX))
+                .collect();
+        let count = lengths.len();
+        let position = |index: usize| accesskit::TextPosition {
+            node: run_id,
+            character_index: index.min(count),
+        };
+        input.set_text_selection(accesskit::TextSelection {
+            anchor: position(caret.anchor),
+            focus: position(caret.focus),
+        });
+        let mut run = Node::new(Role::TextRun);
+        if let Some(bounds) = input.bounds() {
+            run.set_bounds(bounds);
+        }
+        run.set_value(value);
+        run.set_character_lengths(lengths);
+        frame.children.push(run_id);
+        self.nodes.push((run_id, run));
+        if let Some(target) = self.actions.get_mut(&input_id) {
+            target.caret = Some(caret.target.clone());
+        }
+    }
+
     fn named(root_label: impl Into<String>) -> Self {
         Self {
             root_label: root_label.into(),
@@ -1765,6 +1865,10 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
             }
             return;
         }
+        if let Some(caret) = state.downcast_mut::<TextCaret>() {
+            self.text_run(caret);
+            return;
+        }
         if let Some(state) = state.downcast_mut::<SemanticState<Message>>() {
             let Some(frame) = self.frames.last() else {
                 return;
@@ -1786,6 +1890,7 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
                     ActionTarget {
                         activate: state.semantics.activate.clone(),
                         focus: (state.semantics.focus != FocusBehavior::None).then_some(focus),
+                        caret: None,
                     },
                 );
             }
@@ -3951,6 +4056,98 @@ mod tests {
         assert_eq!(snapshot(&mut ui, &renderer).update.focus, ROOT_ID);
     }
 
+    #[test]
+    fn a_text_input_exports_its_caret_as_a_text_run_and_moves_it_on_request() {
+        let id = StableId::new("caret-input");
+        let value = "h\u{e9}llo w\u{f6}rld";
+        let native: TestElement<'static> = iced::widget::text_input("", value)
+            .id(id.widget_id())
+            .into();
+        let root: TestElement<'static> = accessible(native, id, Role::TextInput)
+            .label("Greeting")
+            .value(value)
+            .focus_id(id.widget_id())
+            .into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(400.0, 80.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut place = operation::text_input::move_cursor_to::<()>(id.widget_id(), 3);
+        ui.operate(&renderer, &mut operation::black_box(&mut place));
+
+        let before = snapshot(&mut ui, &renderer);
+        let input = |snapshot: &Snapshot<Message>| {
+            snapshot
+                .update
+                .nodes
+                .iter()
+                .find(|(candidate, _)| *candidate == id.node_id())
+                .map(|(_, node)| node.clone())
+                .expect("input node")
+        };
+        let node = input(&before);
+        let [run_id] = node.children() else {
+            panic!(
+                "the input owns exactly one text run, got {:?}",
+                node.children()
+            );
+        };
+        let (_, run) = before
+            .update
+            .nodes
+            .iter()
+            .find(|(candidate, _)| candidate == run_id)
+            .expect("text run node");
+        assert_eq!(run.role(), Role::TextRun);
+        assert_eq!(run.value(), Some(value));
+        assert_eq!(
+            run.character_lengths(),
+            &[1, 2, 1, 1, 1, 1, 1, 2, 1, 1, 1],
+            "one entry per grapheme, in UTF-8 bytes"
+        );
+        let selection = node.text_selection().expect("a caret");
+        assert_eq!(selection.focus.node, *run_id);
+        assert_eq!(selection.focus.character_index, 3);
+        assert_eq!(selection.anchor.character_index, 3);
+
+        let request = before.dispatch(ActionRequest {
+            action: Action::SetTextSelection,
+            target_tree: TreeId::ROOT,
+            target_node: id.node_id(),
+            data: Some(accesskit::ActionData::SetTextSelection(
+                accesskit::TextSelection {
+                    anchor: accesskit::TextPosition {
+                        node: *run_id,
+                        character_index: 7,
+                    },
+                    focus: accesskit::TextPosition {
+                        node: *run_id,
+                        character_index: 7,
+                    },
+                },
+            )),
+        });
+        let mut stream = iced_test::runtime::task::into_stream(request).expect("caret task");
+        let action = iced_test::futures::futures::executor::block_on(stream.next())
+            .expect("caret operation");
+        let iced_test::runtime::Action::Widget(mut operation) = action else {
+            panic!("a caret request must produce a widget operation");
+        };
+        ui.operate(&renderer, operation.as_mut());
+        let after = input(&snapshot(&mut ui, &renderer));
+        assert_eq!(
+            after
+                .text_selection()
+                .expect("a caret")
+                .focus
+                .character_index,
+            7
+        );
+    }
+
     struct CapturesTab;
 
     impl Widget<Message, Theme, TestRenderer> for CapturesTab {
@@ -4896,6 +5093,7 @@ mod tests {
                 ActionTarget {
                     activate: Some(Message::First),
                     focus: None,
+                    caret: None,
                 },
             )]),
         };
