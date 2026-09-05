@@ -103,6 +103,10 @@ jobs:
           cargo test --locked -p markdown-example -- --test-threads=1
       - name: Test the macOS status item
         run: cargo test --locked -p ui-lang-runtime tray --lib
+      - name: Smoke the NSAccessibility bridge in process
+        run: |
+          cargo test --locked -p ui-lang-runtime --lib -- macos_ window_bridges scoped_snapshot
+          cargo test --locked -p ui-lang-runtime --test macos_native_smoke
       - name: Run baseline-free selected review smoke
         run: |
           cargo ice review examples/showcase/src/ui/app.ice \

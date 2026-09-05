@@ -816,8 +816,15 @@ action.
 the Linux AT-SPI tree is discoverable and an invoked action reaches the Iced
 bridge; `scripts/a11y-windows-check.sh` cross-compiles the Windows adapter and
 the generated reference app's production and test forms;
-`scripts/a11y-macos-check.sh` builds both natively and runs the runtime's
-NSAccessibility bridge tests, including the per-window ones.
+`scripts/a11y-macos-check.sh` builds both natively, runs the runtime's
+NSAccessibility bridge tests, including the per-window ones, and runs
+`macos_native_smoke`, the macOS counterpart of the Linux smoke: a harness-free
+test binary that builds a real `NSWindow` on the main thread, attaches the
+bridge's subclass to its view, publishes a tree, and asks the view what
+VoiceOver asks — children, role, label, frame, press — asserting the frame
+round-trips its layout-unit size through the backing scale and the press
+reaches the bridge's channel as a `Click` on the button. It stays in process,
+so it needs no Accessibility permission; the release `macOS gate` job runs it.
 `examples/two-windows` is the daemon that holds the per-window claim: two
 windows over one shared state, which is the desktop shape a Ducktape app has. Headless tests cover
 dispatch to the app message. On Windows, Iced's automatically created initial
