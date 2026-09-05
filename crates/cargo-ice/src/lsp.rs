@@ -1439,9 +1439,7 @@ fn visit_view<'a>(
     visitor: &mut impl FnMut(&'a ui_lang_core::ViewNode),
 ) {
     visitor(node);
-    for child in ui_lang_core::view_children(node) {
-        visit_view(child, visitor);
-    }
+    ui_lang_core::for_each_child(node, &mut |child| visit_view(child, visitor));
 }
 
 #[derive(Clone, Copy)]

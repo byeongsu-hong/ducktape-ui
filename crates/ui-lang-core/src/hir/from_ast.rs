@@ -1024,14 +1024,19 @@ fn index_view_declarations(
     }
 }
 
-/// The view nodes directly under `node`, in source order: every child a
-/// walker must descend into, whatever the node's shape.
-pub fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
+/// Calls `visit` on every view node directly under `node`, in source order:
+/// each child a walker must descend into, whatever the node's shape. This is
+/// the one place the shapes are enumerated; it allocates nothing, so a walk
+/// over a large document costs its callback and no more.
+pub fn for_each_child<'a>(node: &'a ViewNode, visit: &mut impl FnMut(&'a ViewNode)) {
     match node {
         ViewNode::Layout { children, .. }
         | ViewNode::If { children, .. }
-        | ViewNode::For { children, .. } => children.iter().collect(),
-        ViewNode::Match { arms, .. } => arms.iter().flat_map(|arm| arm.children.iter()).collect(),
+        | ViewNode::For { children, .. } => children.iter().for_each(visit),
+        ViewNode::Match { arms, .. } => arms
+            .iter()
+            .flat_map(|arm| arm.children.iter())
+            .for_each(visit),
         ViewNode::Button {
             content: Some(content),
             ..
@@ -1044,25 +1049,32 @@ pub fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
         | ViewNode::Pin { content, .. }
         | ViewNode::Sensor { content, .. }
         | ViewNode::KeyedColumn { child: content, .. }
-        | ViewNode::Lazy { child: content, .. } => vec![content],
-        ViewNode::Tooltip { content, tip, .. } => vec![content, tip],
-        ViewNode::Overlay { content, layer, .. } => vec![content, layer],
+        | ViewNode::Lazy { child: content, .. } => visit(content),
+        ViewNode::Tooltip { content, tip, .. } => {
+            visit(content);
+            visit(tip);
+        }
+        ViewNode::Overlay { content, layer, .. } => {
+            visit(content);
+            visit(layer);
+        }
         ViewNode::PaneGrid {
             panes, templates, ..
         } => panes
             .iter()
             .flat_map(PaneView::nodes)
             .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-            .collect(),
+            .for_each(visit),
         ViewNode::Table { columns, .. } => columns
             .iter()
             .flat_map(|column| [&column.header, &column.cell])
-            .collect(),
-        ViewNode::Component { slots, .. } => {
-            slots.iter().map(|slot| slot.content.as_ref()).collect()
-        }
+            .for_each(visit),
+        ViewNode::Component { slots, .. } => slots
+            .iter()
+            .map(|slot| slot.content.as_ref())
+            .for_each(visit),
         ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Size { content, .. } => vec![content],
+            ResponsiveContent::Size { content, .. } => visit(content),
         },
         // Spelled out rather than caught by `_`, because every walk that
         // recurses through this function inherits its blind spots: a new
@@ -1089,8 +1101,15 @@ pub fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
         | ViewNode::Themer { .. }
         | ViewNode::Shader { .. }
         | ViewNode::Media { .. }
-        | ViewNode::Canvas { .. } => Vec::new(),
+        | ViewNode::Canvas { .. } => {}
     }
+}
+
+/// The view nodes directly under `node`, collected; see [`for_each_child`].
+pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
+    let mut children = Vec::new();
+    for_each_child(node, &mut |child| children.push(child));
+    children
 }
 
 pub(crate) fn dynamic_pane_grids(document: &Document) -> HashSet<String> {

@@ -25,7 +25,7 @@ pub use editor::{
     editor_block_end, editor_component_name, editor_first_word, editor_indentation,
 };
 pub use format::{format_fragment, format_source};
-pub use hir::view_children;
+pub use hir::for_each_child;
 pub use semantic::*;
 pub use source::{
     FileAnalysis, FileCompilation, analyze_file, analyze_file_graph, analyze_file_with_overlays,
