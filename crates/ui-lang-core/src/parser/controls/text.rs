@@ -40,6 +40,14 @@ pub(in crate::parser) fn parse_text(
             options.wrapping = Some(parse_text_wrapping(value, line, "E063")?);
         } else if let Some(value) = part.strip_prefix("tracking=") {
             options.tracking = Some(parse_text_tracking(value, line)?);
+        } else if let Some(value) = part.strip_prefix("live=") {
+            options.live = Some(match value {
+                "polite" => TextLive::Polite,
+                "assertive" => TextLive::Assertive,
+                _ => {
+                    return Err(error("E063", line, "text live must be polite or assertive"));
+                }
+            });
         } else if let Some(value) = part.strip_prefix("style=") {
             options.custom_style = Some(parse_extern_call(
                 value,

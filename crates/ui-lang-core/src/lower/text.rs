@@ -65,6 +65,7 @@ pub(crate) struct ResolvedTextOptions {
     pub(crate) custom_style: Option<ResolvedTextCustomStyle>,
     pub(crate) underline: Option<CheckedExprUseId>,
     pub(crate) strikethrough: Option<CheckedExprUseId>,
+    pub(crate) live: Option<TextLive>,
 }
 
 #[derive(Clone, Debug)]
@@ -427,6 +428,7 @@ impl Lowerer {
             custom_style,
             underline,
             strikethrough,
+            live: options.live,
         })
     }
 

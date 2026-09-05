@@ -1118,6 +1118,7 @@ struct AccessibilityData {
     focused: bool,
     supports_activate: bool,
     supports_focus: bool,
+    live: Option<crate::AccessibilityLive>,
 }
 
 /// A fresh post-layout snapshot of an identified rendered widget.
@@ -1440,6 +1441,12 @@ impl Target {
                     "expected: retained accessibility value\nactual: property is absent",
                 )
             })
+    }
+
+    /// The live-region politeness a screen reader announces this node's
+    /// value changes with: `off`, `polite`, or `assertive`.
+    pub fn accessibility_live(&self) -> String {
+        accessibility_live_name(self.accessibility("live").live).to_owned()
     }
 
     pub fn accessibility_checked(&self) -> bool {
@@ -1833,6 +1840,7 @@ impl<Message: 'static> Selector for IdSelector<Message> {
                             supports_activate: !state.disabled && state.supports_activate,
                             supports_focus: !state.disabled
                                 && state.focus != crate::FocusBehavior::None,
+                            live: state.live,
                         }),
                         Some(state.focused),
                         state.source,
@@ -1891,6 +1899,14 @@ fn role_name(role: accesskit::Role) -> &'static str {
         Role::Slider => "slider",
         Role::ProgressIndicator => "progress",
         _ => "semantic",
+    }
+}
+
+fn accessibility_live_name(live: Option<crate::AccessibilityLive>) -> &'static str {
+    match live {
+        None | Some(crate::AccessibilityLive::Off) => "off",
+        Some(crate::AccessibilityLive::Polite) => "polite",
+        Some(crate::AccessibilityLive::Assertive) => "assertive",
     }
 }
 
@@ -5987,6 +6003,7 @@ fn target_manifest(target: &Target) -> serde_json::Value {
             "expanded": data.expanded,
             "disabled": data.disabled,
             "focused": data.focused,
+            "live": accessibility_live_name(data.live),
             "actions": {
                 "click": data.supports_activate,
                 "focus": data.supports_focus,

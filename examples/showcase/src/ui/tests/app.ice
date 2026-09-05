@@ -92,6 +92,7 @@ test generated_control_accessibility
           checked=accepted
       slider volume #slider min=0.0 max=100.0 -> volume_changed _
       progress volume #progress
+      text density #status live=polite
       pick ["Ice", "iced", "Rust"] native_select_framework #pick -> framework_changed _
         with
           hint="Framework"
@@ -104,6 +105,7 @@ test generated_control_accessibility
   target toggle = #toggle
   target slider = #slider
   target progress = #progress
+  target status = #status
   target pick = #pick
   target combo = #combo
   target editor = #editor
@@ -123,6 +125,10 @@ test generated_control_accessibility
   expect a11y progress name "Progress"
   expect a11y progress value "58"
   expect a11y progress action focus false
+  expect status.accessibility_live == "polite"
+  expect slider.accessibility_live == "off"
+  dispatch density_changed("compact")
+  expect a11y status value "compact"
   dispatch framework_changed("iced")
   expect a11y pick role "combo-box"
   expect a11y pick name "Framework"

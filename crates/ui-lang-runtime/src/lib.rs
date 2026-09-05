@@ -67,6 +67,7 @@ pub use virtual_scroll::*;
 pub use zstack::*;
 
 #[cfg(feature = "data-grid")]
+pub use accesskit::Live as AccessibilityLive;
 pub use accesskit::SortDirection as AccessibilitySortDirection;
 pub use accesskit::{Action, ActionRequest, Node, NodeId, Role, Toggled, TreeUpdate};
 
@@ -259,6 +260,9 @@ struct SemanticSnapshot {
     position_in_set: Option<usize>,
     size_of_set: Option<usize>,
     active_descendant: Option<StableId>,
+    /// A live region: assistive technology announces this node's value when
+    /// it changes, without the user moving to it.
+    live: Option<accesskit::Live>,
     disabled: bool,
     focus: FocusBehavior,
     focused: bool,
@@ -327,6 +331,7 @@ impl<Message> Semantics<Message> {
                 position_in_set: None,
                 size_of_set: None,
                 active_descendant: None,
+                live: None,
                 disabled: false,
                 focus,
                 focused: false,
@@ -618,6 +623,14 @@ where
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.semantics.disabled = disabled;
+        self
+    }
+
+    /// Makes this node a live region: a screen reader announces its value
+    /// when it changes — politely, after the current utterance, or
+    /// assertively, interrupting it.
+    pub fn live(mut self, live: accesskit::Live) -> Self {
+        self.semantics.live = Some(live);
         self
     }
 
@@ -1860,6 +1873,9 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if let Some(active_descendant) = semantics.active_descendant {
             node.set_active_descendant(active_descendant.node_id());
+        }
+        if let Some(live) = semantics.live {
+            node.set_live(live);
         }
         if semantics.disabled {
             node.set_disabled();
@@ -3351,6 +3367,32 @@ mod tests {
             Outcome::Some(snapshot) => snapshot,
             _ => panic!("snapshot operation did not finish"),
         }
+    }
+
+    #[test]
+    fn a_live_text_exports_its_politeness() {
+        let native: TestElement<'static> = iced::widget::text("Saved").into();
+        let root: TestElement<'static> = accessible(native, StableId::new("status"), Role::Label)
+            .value("Saved")
+            .live(accesskit::Live::Polite)
+            .into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(400.0, 240.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let snapshot = snapshot(&mut ui, &renderer);
+        let id = StableId::new("status").node_id();
+        let (_, node) = snapshot
+            .update
+            .nodes
+            .iter()
+            .find(|(candidate, _)| *candidate == id)
+            .expect("status node");
+        assert_eq!(node.live(), Some(accesskit::Live::Polite));
+        assert_eq!(node.value(), Some("Saved"));
     }
 
     #[test]

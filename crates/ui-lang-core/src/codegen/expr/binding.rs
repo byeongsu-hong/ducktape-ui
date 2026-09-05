@@ -439,7 +439,8 @@ pub(in crate::codegen) fn native_field_projection(
                 | "accessibility_role"
                 | "accessibility_name"
                 | "accessibility_description"
-                | "accessibility_value" => Type::Str,
+                | "accessibility_value"
+                | "accessibility_live" => Type::Str,
                 "visible"
                 | "pixel_aligned"
                 | "focused"

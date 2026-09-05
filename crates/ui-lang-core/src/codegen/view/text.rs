@@ -35,8 +35,9 @@ pub(in crate::codegen) fn render_text(
             } else {
                 ""
             };
+            let live = text_live_code(text.options.live);
             Ok(format!(
-                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; {selection} ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).value(__text_value).into() }}"
+                "{{ let __a11y_key = {accessibility_key}; let __text_value = ({value}).to_string(); let __text = {code}; {selection} ::ui_lang_runtime::accessible(__text, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Label).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).value(__text_value){live}.into() }}"
             ))
         }
         ResolvedTextContent::Rich {
@@ -640,6 +641,15 @@ fn resolved_text_vertical_alignment_code(alignment: ResolvedTextVerticalAlignmen
         ResolvedTextVerticalAlignment::Top => "Top",
         ResolvedTextVerticalAlignment::Center => "Center",
         ResolvedTextVerticalAlignment::Bottom => "Bottom",
+    }
+}
+
+/// The live-region call a text's `live=` adds to its accessible wrapper.
+fn text_live_code(live: Option<TextLive>) -> &'static str {
+    match live {
+        None => "",
+        Some(TextLive::Polite) => ".live(::ui_lang_runtime::AccessibilityLive::Polite)",
+        Some(TextLive::Assertive) => ".live(::ui_lang_runtime::AccessibilityLive::Assertive)",
     }
 }
 

@@ -445,6 +445,22 @@ view
         matches!(options.border_dash.as_slice(), [Expr::F64(on), Expr::F64(off)] if *on == 4.0 && *off == 3.0)
     );
 
+    let live = parse(&source.replace("tracking=1.2", "live=assertive")).unwrap();
+    let ViewNode::Layout { children, .. } = &live.view else {
+        panic!("expected a layout");
+    };
+    let ViewNode::Text { options, .. } = &children[0] else {
+        panic!("expected a text");
+    };
+    assert_eq!(options.live, Some(TextLive::Assertive));
+    let error = parse(&source.replace("tracking=1.2", "live=loud")).unwrap_err();
+    assert_eq!(error.code, "E063");
+    assert!(
+        error.message.contains("polite or assertive"),
+        "{}",
+        error.message
+    );
+
     // Tracking decides the lowering, so it cannot be deferred to runtime.
     for value in ["tracking=(size)", "tracking=-1.0", "tracking=2"] {
         let error = parse(&source.replace("tracking=1.2", value)).unwrap_err();

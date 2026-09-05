@@ -501,6 +501,9 @@ impl Builder<'_> {
             || options.custom_style.is_some()
             || options.underline.is_some()
             || options.strikethrough.is_some()
+            // A live region is an accessibility property the template format
+            // does not carry; the compiled wrapper exports it.
+            || options.live.is_some()
             || !style_is_only_text_color(&text.utility_style)
         {
             return Ok(None);
