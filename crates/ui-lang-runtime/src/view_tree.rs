@@ -92,10 +92,23 @@ impl Inputs {
     }
 
     /// Records what the user did and returns the event the guest hears.
+    ///
+    /// An edit is bounded to [`wire::MAX_STRING_BYTES`] here, the one place
+    /// every host goes through before a keystroke or paste reaches a guest:
+    /// a wasm component's whole memory is bounded, and a pasted-in string
+    /// it decodes and keeps is copies of copies of whatever the clipboard
+    /// held. The host's own copy of the field is cut the same way, so the
+    /// widget shows exactly what the guest was told — a paste past the
+    /// bound is cut, not refused, and the next render paints the cut value.
     pub fn apply(&mut self, output: Output) -> wire::Event {
         match output {
             Output::Activate(index) => wire::Event::Message(index),
-            Output::Edit { key, handler, text } => {
+            Output::Edit {
+                key,
+                handler,
+                mut text,
+            } => {
+                wire::truncate_string(&mut text);
                 if let Some(field) = self.fields.get_mut(&key) {
                     field.text = text.clone();
                 }
@@ -621,6 +634,49 @@ mod tests {
         // Gone from the tree, gone from the host.
         inputs.adopt(&wire::Node::empty());
         assert_eq!(inputs.text("App/draft", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn an_edit_inside_the_bound_is_untouched() {
+        let mut inputs = Inputs::default();
+        inputs.adopt(&input(""));
+        let text = "milk and éclairs".to_string();
+        let event = inputs.apply(Output::Edit {
+            key: "App/draft".into(),
+            handler: 0,
+            text: text.clone(),
+        });
+        assert_eq!(
+            event,
+            wire::Event::Input {
+                handler: 0,
+                text: text.clone()
+            }
+        );
+        assert_eq!(inputs.text("App/draft", ""), text);
+    }
+
+    #[test]
+    fn a_paste_past_the_bound_reaches_the_guest_cut_on_a_char_boundary() {
+        // A 3-byte char straddles the cut: MAX_STRING_BYTES itself lands
+        // mid-character, so the real cut must back up to the char before it.
+        let prefix = "a".repeat(wire::MAX_STRING_BYTES - 1);
+        let pasted = format!("{prefix}€€€");
+        let mut inputs = Inputs::default();
+        inputs.adopt(&input(""));
+        let event = inputs.apply(Output::Edit {
+            key: "App/draft".into(),
+            handler: 0,
+            text: pasted,
+        });
+        let wire::Event::Input { text, .. } = event else {
+            panic!("expected an Input event");
+        };
+        assert_eq!(text.len(), wire::MAX_STRING_BYTES - 1);
+        assert!(text.is_char_boundary(text.len()));
+        assert_eq!(text, prefix);
+        // The host's own copy of the field agrees with what the guest heard.
+        assert_eq!(inputs.text("App/draft", ""), prefix);
     }
 
     #[test]
