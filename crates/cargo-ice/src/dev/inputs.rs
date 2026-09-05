@@ -678,9 +678,7 @@ fn visit_cargo_inputs(
             }
         };
         if file_type.is_dir() {
-            if !ignored_dir(&entry_path)
-                && entry_path.file_name().and_then(|name| name.to_str()) != Some("vendor")
-            {
+            if !ignored_dir(&entry_path) {
                 visit_cargo_inputs(&entry_path, output, visited, excluded_roots, include_ice);
             }
         } else if file_type.is_file() && (include_ice || !is_ice_input(&entry_path)) {
