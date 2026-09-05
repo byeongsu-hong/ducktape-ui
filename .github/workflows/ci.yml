@@ -169,9 +169,16 @@ jobs:
           if-no-files-found: error
       - name: Run remaining performance contracts
         run: |
-          cargo test --locked -p ui-lang-core performance_contract -- --ignored --test-threads=1
+          # Every ignored test in ui-lang-core and ui-lang-template is a
+          # contract, so no name filter: `performance_contract` alone left
+          # seven `allocation contract` tests never run in CI.
+          cargo test --locked -p ui-lang-core -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p ui-lang-template -- --ignored --test-threads=1
           cargo test --locked -p ui-lang-runtime performance_contract -- --ignored --test-threads=1
-          cargo test --locked -p ui-lang-components --all-features performance_contract_cached_draw_borrows_derived_axes -- --ignored --nocapture --test-threads=1
+          # `performance_contract`, not one test's name: naming the candle
+          # chart's contract alone left the OTP allocation contract
+          # (`tests/input_otp_allocations.rs`) never run in CI.
+          cargo test --locked -p ui-lang-components --all-features performance_contract -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test virtual_list_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test log_timeline_performance -- --ignored --nocapture --test-threads=1
           cargo test --release --locked -p ui-lang-runtime --test tree_view_performance -- --ignored --nocapture --test-threads=1
@@ -183,7 +190,6 @@ jobs:
           # filters here meant the five `allocation_contract_*` ones matched
           # neither and had never run in CI at all.
           cargo test --locked -p cargo-ice -- --ignored --nocapture --test-threads=1
-          cargo test --locked -p ui-lang-core lowering_wide_component_calls_scales -- --ignored --nocapture --test-threads=1
       # Not a contract — a compile guard, and it belongs here because this is
       # the only job that already holds a release build of this crate. Nothing
       # else in CI builds the runtime's lib tests with `debug_assertions` off,
