@@ -224,6 +224,26 @@ fn poll_tasks<M>(tasks: &mut Tasks<M>) -> Vec<M> {
 /// literal; a test keeps the two identical.
 pub const WIT: &str = include_str!("../wit/view.wit");
 
+/// The most a panic message may carry across the `panicked` import. A host
+/// shows one line of it, and every byte over that is one the host lifts out
+/// of guest memory before it can refuse anything — so the message is cut
+/// here, where the guest still owns it, on a char boundary.
+pub const MAX_PANIC_BYTES: usize = 1024;
+
+/// The line the panic hook hands the host: the payload and where it came
+/// from, cut to [`MAX_PANIC_BYTES`].
+pub fn panic_line(message: &str, at: &str) -> String {
+    let mut line = format!("{message} at {at}");
+    if line.len() > MAX_PANIC_BYTES {
+        let cut = (0..=MAX_PANIC_BYTES)
+            .rev()
+            .find(|at| line.is_char_boundary(*at))
+            .unwrap_or(0);
+        line.truncate(cut);
+    }
+    line
+}
+
 pub const fn manifest_bytes<const N: usize>(text: &str) -> [u8; N] {
     let bytes = text.as_bytes();
     let mut out = [0u8; N];
@@ -319,7 +339,7 @@ world view {
                             .location()
                             .map(|location| ::std::format!("{}:{}", location.file(), location.line()))
                             .unwrap_or_else(|| "unknown".into());
-                        panicked(&::std::format!("{message} at {at}"));
+                        panicked(&$crate::panic_line(message, &at));
                     }));
                     super::boot_native();
                 }
@@ -356,5 +376,19 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(inline.trim(), file.trim());
+    }
+
+    #[test]
+    fn a_panic_message_crosses_bounded_and_on_a_char_boundary() {
+        let line = super::panic_line(&"목".repeat(4096), "app.ice:1");
+        assert!(line.len() <= super::MAX_PANIC_BYTES);
+        assert!(line.len() > super::MAX_PANIC_BYTES - 4);
+        // Truncated inside a character would not be a `String` at all.
+        assert!(line.chars().all(|glyph| glyph == '목'));
+    }
+
+    #[test]
+    fn a_short_panic_message_keeps_its_location() {
+        assert_eq!(super::panic_line("boom", "app.ice:1"), "boom at app.ice:1");
     }
 }

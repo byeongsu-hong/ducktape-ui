@@ -37,6 +37,12 @@ struct HostState {
 }
 
 impl ViewImports for HostState {
+    /// The guest's panic hook truncates its message before it calls this, so
+    /// an honest guest's string is already small. A hostile one calling the
+    /// import directly with a memory-sized string is bounded by
+    /// [`TICK_DEADLINE`] instead: bindgen lifts the whole string out of guest
+    /// memory before this runs, so the copy is not this function's to refuse
+    /// — only the number of such calls in one tick is bounded.
     fn panicked(&mut self, message: String) {
         // One line, like a trap's, and no longer than the window shows.
         let line = message.lines().next().unwrap_or_default();
@@ -65,10 +71,11 @@ pub use crate::library::{
 use crate::capabilities::{Inbox, bus, clock, host, storage};
 use crate::library::{FAULTED, LIVE_INSTANCES};
 use crate::limits::{
-    BUS_WAKE_INTERVAL, FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE, MAX_FAULT_BYTES,
-    MAX_FRAME_BYTES, MAX_MODULE_BYTES, MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK,
-    MAX_REQUESTS_PER_TICK, MAX_REST, MAX_SUBSCRIPTIONS, MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS,
-    MAX_TOPIC_BYTES, MEMORY_LIMIT, TICK_BUDGET,
+    BUS_WAKE_INTERVAL, EPOCH_TICK, FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE,
+    MAX_FAULT_BYTES, MAX_FRAME_BYTES, MAX_MODULE_BYTES, MAX_PAYLOAD_BYTES,
+    MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK, MAX_REST, MAX_SUBSCRIPTIONS,
+    MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT, TICK_BUDGET,
+    TICK_DEADLINE,
 };
 
 /// The host-side handle the view holds. Identity is the instance: two
@@ -252,10 +259,14 @@ impl Drop for Guest {
 /// read the next time, not a second of cranelift on the executor.
 fn engine() -> &'static Engine {
     static ENGINE: OnceLock<Engine> = OnceLock::new();
-    ENGINE.get_or_init(|| {
+    static EPOCH_THREAD: OnceLock<()> = OnceLock::new();
+    let engine = ENGINE.get_or_init(|| {
         let mut config = Config::new();
         config.cranelift_opt_level(OptLevel::Speed);
         config.consume_fuel(true);
+        // The clock every guest's tick deadline is measured against. Fuel
+        // alone cannot bound a tick: an import's time is not fuel.
+        config.epoch_interruption(true);
         let mut cache = CacheConfig::new();
         cache.with_directory(storage::data_dir().join("cache"));
         // A cache that cannot be set up costs a compile per load, not the
@@ -263,7 +274,27 @@ fn engine() -> &'static Engine {
         // anyway, and reports itself there.
         config.cache(Cache::new(cache).ok());
         Engine::new(&config).expect("wasmtime engine")
-    })
+    });
+    // One thread for the whole process, started with the engine and never
+    // stopped: every store reads the same counter, so a deadline costs a
+    // store nothing but the number it was armed with.
+    EPOCH_THREAD.get_or_init(|| {
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(EPOCH_TICK);
+                engine.increment_epoch();
+            }
+        });
+    });
+    engine
+}
+
+/// [`TICK_DEADLINE`] in epochs, rounded up: the deadline is never shorter
+/// than it says, and at most one [`EPOCH_TICK`] longer.
+fn deadline_epochs() -> u64 {
+    let deadline = TICK_DEADLINE.as_nanos();
+    let epoch = EPOCH_TICK.as_nanos();
+    (deadline.div_ceil(epoch)) as u64
 }
 
 /// The components loaded this run, by path and modification time. Reopening,
@@ -328,9 +359,10 @@ impl Guest {
             },
         );
         store.limiter(|state| &mut state.limits);
-        store
-            .set_fuel(FUEL_PER_TICK)
-            .map_err(|error| error.to_string())?;
+        // The default already traps on the deadline; named here because the
+        // whole point of the deadline is that it ends the instance.
+        store.epoch_deadline_trap();
+        arm(&mut store);
         // The world's one import is the panic hook's; anything else the
         // component asks for traps if it is ever called.
         let mut linker = Linker::new(engine);
@@ -345,7 +377,9 @@ impl Guest {
         let view = View::instantiate(&mut store, &component, &linker)
             .map_err(|error| format!("{path}: {}", first_line(&error)))?;
         // `on mount` runs in here, so a panic in the app's boot has the same
-        // message handed over as a panic in any later tick.
+        // message handed over as a panic in any later tick — and the boot
+        // gets a budget of its own, not what instantiation left of one.
+        arm(&mut store);
         if let Err(error) = view.call_init(&mut store) {
             let trap = format!("{path}: init trapped: {}", first_line(&error));
             return Err(panic_message(&mut store).unwrap_or(trap));
@@ -734,7 +768,7 @@ impl Guest {
         let events = std::mem::take(&mut self.pending);
         let bytes = wire::encode(&events);
         let started = Instant::now();
-        let _ = self.store.set_fuel(FUEL_PER_TICK);
+        arm(&mut self.store);
         let outcome = self.tick_inner(&bytes);
         self.tick_time = started.elapsed();
         self.fuel_used = FUEL_PER_TICK.saturating_sub(self.store.get_fuel().unwrap_or(0));
@@ -838,9 +872,25 @@ fn theme_item(id: u64, dark: bool) -> wire::Event {
     }
 }
 
+/// What one call into a guest may spend: instructions, and time.
+///
+/// The epoch deadline is checked at wasm loop back-edges and function
+/// entries, so a host import already running finishes before the trap fires:
+/// it bounds the NUMBER of long imports in one tick, not the length of one.
+/// Bounding a single one is the import's own job — the guest-side truncation
+/// of the panic message is that, for the one import this world has.
+fn arm(store: &mut Store<HostState>) {
+    let _ = store.set_fuel(FUEL_PER_TICK);
+    store.set_epoch_deadline(deadline_epochs());
+}
+
 /// Why a call failed: the trap itself, not the "error while executing"
-/// wrapper and wasm backtrace wasmtime prints around it.
+/// wrapper and wasm backtrace wasmtime prints around it. The deadline's own
+/// trap says only "interrupt", which names nothing an app author can act on.
 fn first_line(error: &wasmtime::Error) -> String {
+    if let Some(wasmtime::Trap::Interrupt) = error.root_cause().downcast_ref::<wasmtime::Trap>() {
+        return format!("tick exceeded {} ms", TICK_DEADLINE.as_millis());
+    }
     error
         .root_cause()
         .to_string()
@@ -903,6 +953,40 @@ mod tests {
     fn a_frame_larger_than_the_host_copies_is_refused_before_it_is_decoded() {
         let refused = shape(&vec![0; MAX_FRAME_BYTES + 1]).unwrap_err();
         assert_eq!(refused, "frame too large");
+    }
+
+    #[test]
+    fn the_deadline_is_rounded_up_to_whole_epochs() {
+        assert_eq!(deadline_epochs(), 10);
+        // Never shorter than the deadline asks for, at most one epoch longer.
+        let armed = EPOCH_TICK * deadline_epochs() as u32;
+        assert!(armed >= TICK_DEADLINE);
+        assert!(armed < TICK_DEADLINE + EPOCH_TICK);
+    }
+
+    /// What the world's one import costs the host per call, which is what
+    /// fuel does not count: bindgen lifts the whole string out of guest
+    /// memory before the host's impl runs. A guest call to `panicked` is
+    /// around a hundred fuel, so [`FUEL_PER_TICK`] buys on the order of a
+    /// million of them — at the cost below, that is hours on the window
+    /// thread for a tick that never runs out of fuel. Bounded loosely: this
+    /// is evidence that the call is expensive, not a performance contract.
+    #[test]
+    fn one_import_call_costs_the_host_a_whole_guest_memory_copy() {
+        let mut state = HostState {
+            limits: StoreLimitsBuilder::new().build(),
+            panic: None,
+        };
+        let huge = "x".repeat(60 << 20);
+        let started = std::time::Instant::now();
+        for _ in 0..20 {
+            // The lift is the copy; the impl truncates what it was handed.
+            state.panicked(huge.clone());
+        }
+        let each = started.elapsed() / 20;
+        let kept = state.panic.as_deref().map(str::len).expect("a message");
+        assert!(kept <= MAX_FAULT_BYTES + 1, "kept {kept} bytes");
+        assert!(each > Duration::from_micros(100), "one call took {each:?}");
     }
 
     #[test]
