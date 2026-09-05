@@ -504,6 +504,9 @@ impl Builder<'_> {
             // A live region is an accessibility property the template format
             // does not carry; the compiled wrapper exports it.
             || options.live.is_some()
+            // A heading is an accessibility role the template format does
+            // not carry; the compiled wrapper exports it.
+            || options.heading.is_some()
             || !style_is_only_text_color(&text.utility_style)
         {
             return Ok(None);

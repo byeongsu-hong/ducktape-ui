@@ -706,6 +706,9 @@ pub struct TextOptions {
     pub underline: Option<Expr>,
     pub strikethrough: Option<Expr>,
     pub live: Option<TextLive>,
+    /// A heading level, 1 to 6: the text is a `Heading` to assistive
+    /// technology instead of a `Label`.
+    pub heading: Option<u8>,
 }
 
 #[derive(Clone, Debug)]

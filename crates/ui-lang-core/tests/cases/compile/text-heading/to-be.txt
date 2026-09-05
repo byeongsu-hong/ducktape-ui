@@ -1,0 +1,2 @@
+::ui_lang_runtime::Role::Heading).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).value(__text_value).level(1).into()
+::ui_lang_runtime::Role::Heading).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).value(__text_value).level(3).into()
