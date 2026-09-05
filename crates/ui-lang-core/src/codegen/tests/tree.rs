@@ -141,10 +141,43 @@ enum Outcome {
     Refused(&'static str),
 }
 
-/// The prelude every coverage fixture is compiled against: enough theme,
-/// state, handlers and externs that any one construct can be written as a
-/// view body on its own.
-const PRELUDE: &str = concat!(
+/// One row of the coverage table: the construct, the handlers its fixture
+/// routes to, the view body, and what the tree target does with it.
+struct Coverage {
+    construct: &'static str,
+    handlers: &'static str,
+    view: &'static str,
+    outcome: Outcome,
+}
+
+const fn emitted(construct: &'static str, handlers: &'static str, view: &'static str) -> Coverage {
+    Coverage {
+        construct,
+        handlers,
+        view,
+        outcome: Outcome::Emitted,
+    }
+}
+
+const fn refused(
+    construct: &'static str,
+    handlers: &'static str,
+    view: &'static str,
+    phrase: &'static str,
+) -> Coverage {
+    Coverage {
+        construct,
+        handlers,
+        view,
+        outcome: Outcome::Refused(phrase),
+    }
+}
+
+/// The head every coverage fixture is compiled against: enough theme, state,
+/// externs and one component that any single construct can be written as a
+/// view body on its own. A handler with a parameter is typed by its route,
+/// so each fixture brings the parameterised handlers it routes to.
+const HEAD: &str = concat!(
     "app Demo\n",
     "extern crate::backend\n",
     "  component native_help(active:bool) -> bool\n",
@@ -167,24 +200,20 @@ const PRELUDE: &str = concat!(
     "  box #frame\n",
     "    slot\n",
     "on add\n  draft = \"\"\n",
-    "on flip(value)\n  busy = value\n",
-    "on choose(value)\n  draft = value\n",
-    "on slide(value)\n  amount = value\n",
-    "on link_opened(_url)\n",
-    "on resized(_dx, _dy)\n",
-    "on measured(_width, _height)\n",
-    "on hidden\n",
-    "view\n",
 );
+
+const FLIP: &str = "on flip(value)\n  busy = value\n";
+const CHOOSE: &str = "on choose(value)\n  draft = value\n";
+const SLIDE: &str = "on slide(value)\n  amount = value\n";
 
 /// The tree target's coverage contract.
 ///
 /// Every view construct the native target compiles is listed here with what
-/// the tree target does to it: `Emitted` when the wire's eight nodes carry
-/// it, `Refused` with the phrase the build error names when they do not.
-/// Nothing is silently dropped — a construct the wire cannot carry fails the
-/// build at its `.ice` line, so a view module never renders as something it
-/// did not ask for.
+/// the tree target does to it: emitted when the wire's eight nodes carry it,
+/// refused — with the phrase the `E190` build error names — when they do
+/// not. Nothing is silently dropped: a construct the wire cannot carry fails
+/// the build at its `.ice` line, so a view module never renders as something
+/// its author did not write.
 ///
 /// The construct column names the emitter's `kind_name` for the construct,
 /// suffixed after a colon where one name covers several spellings (the three
@@ -194,278 +223,270 @@ const PRELUDE: &str = concat!(
 /// match has no wildcard: a construct added to the native target grows a
 /// `ResolvedViewKind` variant, that match must name it, and this table must
 /// then classify the name.
-const COVERAGE: &[(&str, &str, Outcome)] = &[
+const COVERAGE: &[Coverage] = &[
     // The wire's eight nodes.
-    (
+    emitted(
         "layout: col",
+        "",
         "  col gap=4.0\n    text \"a\" @text-fg\n",
-        Outcome::Emitted,
     ),
-    (
+    emitted(
         "layout: row",
+        "",
         "  row gap=4.0\n    text \"a\" @text-fg\n",
-        Outcome::Emitted,
     ),
-    (
-        "layout: scroll",
-        "  scroll\n    text \"a\" @text-fg\n",
-        Outcome::Emitted,
-    ),
-    ("box", "  box\n    text \"a\" @text-fg\n", Outcome::Emitted),
-    ("text", "  text \"a\" @text-fg\n", Outcome::Emitted),
-    ("input", "  input \"p\" <-> draft\n", Outcome::Emitted),
-    ("button", "  button \"go\" -> add\n", Outcome::Emitted),
-    ("space", "  space w=24.0 h=8.0\n", Outcome::Emitted),
-    ("rule", "  rule horizontal\n", Outcome::Emitted),
+    emitted("layout: scroll", "", "  scroll\n    text \"a\" @text-fg\n"),
+    emitted("box", "", "  box\n    text \"a\" @text-fg\n"),
+    emitted("text", "", "  text \"a\" @text-fg\n"),
+    emitted("input", "", "  input \"p\" <-> draft\n"),
+    emitted("button", "", "  button \"go\" -> add\n"),
+    emitted("space", "", "  space w=24.0 h=8.0\n"),
+    emitted("rule", "", "  rule horizontal\n"),
     // Control flow, components and slots: the shared emitters, which push
     // whatever `render_node` returns into the parent's child list.
-    (
-        "if",
-        "  if busy\n    text \"a\" @text-fg\n",
-        Outcome::Emitted,
-    ),
-    (
+    emitted("if", "", "  col\n    if busy\n      text \"a\" @text-fg\n"),
+    emitted(
         "match",
-        "  match choice\n    some(label)\n      text label @text-fg\n    none\n      text \"none\" @text-fg\n",
-        Outcome::Emitted,
+        "",
+        "  col\n    match choice\n      some(label)\n        text label @text-fg\n      none\n        text \"none\" @text-fg\n",
     ),
-    (
+    emitted(
         "for",
-        "  for item in items\n    text item @text-fg\n",
-        Outcome::Emitted,
+        "",
+        "  col\n    for item in items\n      text item @text-fg\n",
     ),
-    (
-        "component",
-        "  Slotted\n    text \"a\" @text-fg\n",
-        Outcome::Emitted,
-    ),
-    (
-        "slot",
-        "  Slotted\n    text \"slotted\" @text-fg\n",
-        Outcome::Emitted,
-    ),
+    emitted("component", "", "  Slotted\n    text \"a\" @text-fg\n"),
+    emitted("slot", "", "  Slotted\n    text \"slotted\" @text-fg\n"),
     // The layouts the wire has no node for.
-    (
+    refused(
         "layout: grid",
+        "",
         "  grid cols=2\n    text \"a\" @text-fg\n",
-        Outcome::Refused("`grid`"),
+        "`grid`",
     ),
-    (
+    refused(
         "layout: stack",
+        "",
         "  stack w=fill h=24.0\n    text \"a\" @text-fg\n    text \"b\" @text-fg\n",
-        Outcome::Refused("`stack`"),
+        "`stack`",
     ),
-    (
+    refused(
         "layout: hover",
+        "",
         "  hover\n    text \"a\" @text-fg\n    text \"b\" @text-fg\n",
-        Outcome::Refused("`hover`"),
+        "`hover`",
     ),
-    (
+    refused(
         "layout: flex",
+        "",
         "  flex gap=4.0\n    text \"a\" @text-fg\n",
-        Outcome::Refused("`flex`"),
+        "`flex`",
     ),
     // The widgets the wire has no node for.
-    (
+    refused(
         "overlay",
+        "",
         "  overlay when=busy dismiss=add\n    content\n      text \"a\" @text-fg\n    layer\n      text \"b\" @text-fg\n",
-        Outcome::Refused("`overlay`"),
+        "`overlay`",
     ),
-    (
+    refused(
         "pane grid",
+        "",
         "  panes #work w=fill h=80.0\n    pane first\n      text \"a\" @text-fg\n",
-        Outcome::Refused("`pane grid`"),
+        "`pane grid`",
     ),
-    (
+    refused(
         "rich text",
+        "",
         "  rich-text\n    span \"a\"\n",
-        Outcome::Refused("`rich text`"),
+        "`rich text`",
     ),
-    (
+    refused(
         "checkbox",
+        FLIP,
         "  checkbox \"e\" checked=busy -> flip _\n",
-        Outcome::Refused("`checkbox`"),
+        "`checkbox`",
     ),
-    (
+    refused(
         "toggler",
+        FLIP,
         "  toggler \"e\" checked=busy -> flip _\n",
-        Outcome::Refused("`toggler`"),
+        "`toggler`",
     ),
-    (
+    refused(
         "slider",
-        "  slider amount -> slide _\n",
-        Outcome::Refused("`slider`"),
+        SLIDE,
+        "  slider amount min=0.0 max=100.0 -> slide _\n",
+        "`slider`",
     ),
-    (
-        "progress",
-        "  progress amount\n",
-        Outcome::Refused("`progress`"),
-    ),
-    (
+    refused("progress", "", "  progress amount\n", "`progress`"),
+    refused(
         "radio",
-        "  radio \"a\" -> flip _\n",
-        Outcome::Refused("`radio`"),
+        SLIDE,
+        "  radio \"a\" value=1.0 selected=(amount == 1.0) -> slide _\n",
+        "`radio`",
     ),
-    (
+    refused(
         "pick list",
-        "  pick [\"One\", \"Two\"] draft -> choose _\n",
-        Outcome::Refused("`pick list`"),
+        CHOOSE,
+        "  pick [\"One\", \"Two\"] choice -> choose _\n",
+        "`pick list`",
     ),
-    (
+    refused(
         "combo box",
-        "  combo search draft \"Search\" -> choose _\n",
-        Outcome::Refused("`combo box`"),
+        CHOOSE,
+        "  combo search choice \"Search\" -> choose _\n",
+        "`combo box`",
     ),
-    ("qr code", "  qr draft\n", Outcome::Refused("`qr code`")),
-    (
+    refused("qr code", "", "  qr draft\n", "`qr code`"),
+    refused(
         "keyed column",
-        "  keyed item in items by=item\n    text item @text-fg\n",
-        Outcome::Refused("`keyed column`"),
+        "",
+        "  keyed item in [1, 2] by=item\n    text item @text-fg\n",
+        "`keyed column`",
     ),
-    (
+    refused(
         "lazy",
+        "",
         "  lazy draft as cached\n    text cached @text-fg\n",
-        Outcome::Refused("`lazy`"),
+        "`lazy`",
     ),
-    (
+    refused(
         "mouse area",
+        "",
         "  mouse press=add\n    text \"a\" @text-fg\n",
-        Outcome::Refused("`mouse area`"),
+        "`mouse area`",
     ),
-    (
+    refused(
         "resize handle",
+        "on resized(_dx, _dy)\n",
         "  resize-handle drag=resized\n    box w=24.0 h=12.0\n      text \"a\" @text-fg\n",
-        Outcome::Refused("`resize handle`"),
+        "`resize handle`",
     ),
-    (
+    refused(
         "theme",
+        "",
         "  theme dark\n    text \"a\" @text-fg\n",
-        Outcome::Refused("`theme`"),
+        "`theme`",
     ),
-    (
+    refused(
         "float",
+        "",
         "  float x=2.0 y=3.0\n    text \"a\" @text-fg\n",
-        Outcome::Refused("`float`"),
+        "`float`",
     ),
-    (
+    refused(
         "pin",
+        "",
         "  pin w=64.0 h=24.0 x=2.0 y=3.0\n    text \"a\" @text-fg\n",
-        Outcome::Refused("`pin`"),
+        "`pin`",
     ),
-    (
+    refused(
         "sensor",
+        "on measured(_width, _height)\non hidden\n",
         "  sensor show=measured resize=measured hide=hidden\n    text \"a\" @text-fg\n",
-        Outcome::Refused("`sensor`"),
+        "`sensor`",
     ),
-    (
+    refused(
         "tooltip",
+        "",
         "  tooltip delay=0\n    text \"a\" @text-fg\n    text \"tip\" @text-fg\n",
-        Outcome::Refused("`tooltip`"),
+        "`tooltip`",
     ),
-    (
+    refused(
         "responsive size",
+        "",
         "  responsive size=(available_width, available_height)\n    text available_width @text-fg\n",
-        Outcome::Refused("`responsive size`"),
+        "`responsive size`",
     ),
-    (
+    refused(
         "table",
+        "",
         "  table item in items\n    col\n      header\n        text \"h\" @text-fg\n      cell\n        text item @text-fg\n",
-        Outcome::Refused("`table`"),
+        "`table`",
     ),
-    (
+    refused(
         "markdown",
+        "on link_opened(_url)\n",
         "  markdown docs -> link_opened _\n",
-        Outcome::Refused("`markdown`"),
+        "`markdown`",
     ),
-    (
-        "editor",
-        "  editor <-> notes\n",
-        Outcome::Refused("`editor`"),
-    ),
-    (
+    refused("editor", "", "  editor <-> notes\n", "`editor`"),
+    refused(
         "extern widget",
+        FLIP,
         "  extern native_help(busy) -> flip _\n",
-        Outcome::Refused("`extern widget`"),
+        "`extern widget`",
     ),
-    (
-        "themer",
-        "  themer alternate_panel(true)\n",
-        Outcome::Refused("`themer`"),
-    ),
-    (
+    refused("themer", "", "  themer alternate_panel(true)\n", "`themer`"),
+    refused(
         "shader",
+        FLIP,
         "  shader status_shader(1.0) w=fill h=24.0 -> flip _\n",
-        Outcome::Refused("`shader`"),
+        "`shader`",
     ),
-    (
-        "media: image",
-        "  image picture\n",
-        Outcome::Refused("`media`"),
-    ),
-    (
-        "media: svg",
-        "  svg \"<svg/>\" memory\n",
-        Outcome::Refused("`media`"),
-    ),
-    (
-        "media: viewer",
-        "  viewer picture\n",
-        Outcome::Refused("`media`"),
-    ),
-    (
-        "canvas",
-        "  canvas w=40.0 h=24.0\n",
-        Outcome::Refused("`canvas`"),
-    ),
+    refused("media: image", "", "  image picture\n", "`media`"),
+    refused("media: svg", "", "  svg \"<svg/>\" memory\n", "`media`"),
+    refused("media: viewer", "", "  viewer picture\n", "`media`"),
+    refused("canvas", "", "  canvas w=40.0 h=24.0\n", "`canvas`"),
     // Options on the nodes the wire does carry: painted, driven or measured
     // by widgets the wire has no room for.
-    (
+    refused(
         "layout: surface utility",
-        "  col @bg-primary\n    text \"a\" @text-fg\n",
-        Outcome::Refused("a surface utility style on a layout"),
+        "",
+        "  col\n    with\n      @bg-primary\n      @rounded-md\n    text \"a\" @text-fg\n",
+        "a surface utility style on a layout",
     ),
-    (
+    refused(
         "box: px-snap",
+        "",
         "  box px-snap=true\n    text \"a\" @text-fg\n",
-        Outcome::Refused("`px-snap` on a surface"),
+        "`px-snap` on a surface",
     ),
-    (
+    refused(
         "layout: scroll bar option",
+        "",
         "  scroll bar=hidden\n    text \"a\" @text-fg\n",
-        Outcome::Refused("a scroll bar option"),
+        "a scroll bar option",
     ),
-    (
+    refused(
         "layout: scroll anchor",
+        "",
         "  scroll anchor-y=end\n    text \"a\" @text-fg\n",
-        Outcome::Refused("a scroll anchor"),
+        "a scroll anchor",
     ),
-    (
+    refused(
         "layout: scroll auto",
+        "",
         "  scroll auto=busy\n    text \"a\" @text-fg\n",
-        Outcome::Refused("a scroll route"),
+        "a scroll route",
     ),
-    (
+    refused(
         "rule: style preset",
+        "",
         "  rule horizontal style=weak\n",
-        Outcome::Refused("a rule style preset"),
+        "a rule style preset",
     ),
-    (
+    refused(
         "rule: snap",
+        "",
         "  rule horizontal snap=busy\n",
-        Outcome::Refused("`snap` on a rule"),
+        "`snap` on a rule",
     ),
-    (
+    refused(
         "rule: radius",
+        "",
         "  rule horizontal r=2.0\n",
-        Outcome::Refused("a rule radius"),
+        "a rule radius",
     ),
 ];
 
 #[test]
 fn the_tree_target_carries_or_refuses_every_construct() {
     let mut wrong = Vec::new();
-    for (construct, view, expected) in COVERAGE {
-        let source = format!("{PRELUDE}{view}");
+    for case in COVERAGE {
+        let construct = case.construct;
+        let source = format!("{HEAD}{}view\n{}", case.handlers, case.view);
         if let Err(error) = compile(&source, "demo.ice") {
             wrong.push(format!(
                 "{construct}: the fixture does not compile natively: {}",
@@ -476,7 +497,7 @@ fn the_tree_target_carries_or_refuses_every_construct() {
         let rendered = compile_for(&source, "demo.ice", Target::Tree)
             .err()
             .map(|error| error.render("demo.ice"));
-        match (expected, rendered) {
+        match (case.outcome, rendered) {
             (Outcome::Emitted, None) => {}
             (Outcome::Emitted, Some(rendered)) => {
                 wrong.push(format!(
@@ -514,9 +535,9 @@ fn every_view_kind_is_classified() {
             .0
     });
     for name in names {
-        let classified = COVERAGE.iter().any(|(construct, _, _)| {
-            *construct == name || construct.starts_with(&format!("{name}: "))
-        });
+        let classified = COVERAGE
+            .iter()
+            .any(|case| case.construct == name || case.construct.starts_with(&format!("{name}: ")));
         assert!(
             classified,
             "`{name}` is not in the tree target's coverage table"
