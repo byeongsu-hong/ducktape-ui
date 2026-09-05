@@ -477,3 +477,65 @@ jobs:
         if: matrix.label != 'Linux'
         shell: bash
         run: '"${{ matrix.helper }}" "${{ matrix.executable }}"'
+
+  app-store:
+    name: App store (guests + host)
+    # examples/app-store is its own workspace (separate Cargo.toml and
+    # Cargo.lock, on purpose — see its root comment): five guest apps that
+    # compile to wasm32 and componentize into the catalog the host reads,
+    # plus the wasmtime/iced host itself. Linux only, like the windowing
+    # features (`x11`, `wayland`) the host's Cargo.toml gates on
+    # `cfg(target_os = "linux")`.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mozilla-actions/sccache-action@v0.0.11
+        id: sccache
+        continue-on-error: true
+      - name: Disable sccache after failed setup
+        if: steps.sccache.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
+      - run: rustup target add wasm32-unknown-unknown
+      - name: Install wasm-tools
+        # componentize.sh shells out to `wasm-tools print`/`parse`/`component
+        # new`/`strip`. A pinned release binary is faster than `cargo install`
+        # (a from-source build of this crate is minutes on its own) and, like
+        # every other tool version in this file, moves only when re-pinned.
+        env:
+          WASM_TOOLS_VERSION: 1.253.0
+        run: |
+          curl --retry 10 --retry-connrefused -fsSL \
+            "https://github.com/bytecodealliance/wasm-tools/releases/download/v${WASM_TOOLS_VERSION}/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux.tar.gz" \
+            | tar xz -C /tmp
+          install -m 0755 "/tmp/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux/wasm-tools" /usr/local/bin/wasm-tools
+          wasm-tools --version
+      - name: Build guest apps for wasm32
+        working-directory: examples/app-store
+        run: |
+          cargo build --locked -p app-store-todo -p app-store-counter -p app-store-clock \
+            -p app-store-activity -p app-store-chaos \
+            --release --target wasm32-unknown-unknown
+      - name: Componentize the catalog
+        working-directory: examples/app-store
+        run: ./componentize.sh
+      - name: Prove the catalog is real
+        working-directory: examples/app-store
+        run: |
+          shopt -s nullglob
+          catalog=(target/app-store-catalog/*.wasm)
+          echo "catalog components: ${#catalog[@]}"
+          printf '%s\n' "${catalog[@]}"
+          if [ "${#catalog[@]}" -lt 5 ]; then
+            echo "::error::expected at least 5 componentized apps in the catalog, found ${#catalog[@]}"
+            exit 1
+          fi
+      - name: Lint the app-store workspace
+        working-directory: examples/app-store
+        run: cargo clippy --locked --workspace --tests --no-deps -- -D warnings
+      - name: Test the app-store workspace
+        working-directory: examples/app-store
+        run: cargo test --locked --workspace
