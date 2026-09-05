@@ -247,6 +247,10 @@ impl ChildGuard {
                     }
                     return Ok(());
                 }
+                // A token is never empty, so an empty file is one that exists
+                // but has not been written yet: a writer that creates and then
+                // fills it is still on its way, not reporting nonsense.
+                Ok(value) if value.is_empty() => {}
                 Ok(value) => {
                     return Err(format!(
                         "candidate reported unexpected readiness token {value:?}; expected {token:?}"
