@@ -340,6 +340,12 @@ fn refuse_surface_extras(
             || surface.shadow_y.is_some()
             || surface.shadow_blur.is_some(),
         "a shadow",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        surface.pixel_snap.is_some(),
+        "`px-snap` on a surface",
     )
 }
 
@@ -361,9 +367,9 @@ fn align_y_code(align: ResolvedContainerAlignment) -> String {
     format!("{WIRE}::AlignY::{name}")
 }
 
-/// The utility styles a layout or box may carry: geometry and surface. The
-/// text and interaction utilities belong to leaves and are refused here.
-fn refuse_leaf_utilities(
+/// The utility styles a box may carry: geometry and surface. The text and
+/// interaction utilities belong to leaves and are refused here.
+fn refuse_box_utilities(
     style: &ResolvedStyle,
     program: &LoweredProgram,
     origin: OriginId,
@@ -386,7 +392,28 @@ fn refuse_leaf_utilities(
             || style.focus_border_color.is_some()
             || style.focus_visible_border_color.is_some()
             || style.disabled_opacity.is_some(),
-        "this utility style on a layout",
+        "this utility style on a box",
+    )
+}
+
+/// A layout carries geometry only. Natively a surface utility (`@bg-…`,
+/// `@border-…`, `@r-…`) wraps the row or column in a styled container, and
+/// the wire has no node for that wrapper: a `Linear` paints nothing. Wrap the
+/// layout in a `box` to paint it.
+fn refuse_layout_utilities(
+    style: &ResolvedStyle,
+    program: &LoweredProgram,
+    origin: OriginId,
+) -> Result<(), Error> {
+    refuse_box_utilities(style, program, origin)?;
+    refuse_when(
+        program,
+        origin,
+        style.background.is_some()
+            || style.border_color.is_some()
+            || style.border_width != 0
+            || style.radius != 0,
+        "a surface utility style on a layout",
     )
 }
 
@@ -406,7 +433,7 @@ fn layout(
     let layout = program.resolved_layout(id)?;
     let origin = layout.origin;
     let style = &layout.utility_style;
-    refuse_leaf_utilities(style, program, origin)?;
+    refuse_layout_utilities(style, program, origin)?;
     let key = key_code(identity, "layout", origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     match &layout.mode {
@@ -420,12 +447,6 @@ fn layout(
             )?;
             refuse_when(program, origin, linear.max_width.is_some(), "`max-w`")?;
             refuse_when(program, origin, linear.clip.is_some(), "`clip`")?;
-            refuse_when(
-                program,
-                origin,
-                style.background.is_some(),
-                "`bg` on a layout",
-            )?;
             let axis = match linear.axis {
                 ResolvedLinearAxis::Column => "Column",
                 ResolvedLinearAxis::Row => "Row",
@@ -471,8 +492,33 @@ fn layout(
             refuse_when(
                 program,
                 origin,
-                scroll.route.is_some() || scroll.auto_scroll.is_some(),
+                scroll.route.is_some()
+                    || scroll.viewport_route.is_some()
+                    || scroll.auto_scroll.is_some(),
                 "a scroll route",
+            )?;
+            refuse_when(
+                program,
+                origin,
+                scroll.hidden_bar
+                    || scroll.bar_width.is_some()
+                    || scroll.bar_margin.is_some()
+                    || scroll.scroller_width.is_some()
+                    || scroll.bar_spacing.is_some(),
+                "a scroll bar option",
+            )?;
+            refuse_when(
+                program,
+                origin,
+                scroll.anchor_x != ResolvedScrollAnchor::Start
+                    || scroll.anchor_y != ResolvedScrollAnchor::Start,
+                "a scroll anchor",
+            )?;
+            refuse_when(
+                program,
+                origin,
+                scroll.custom_style.is_some() || !scroll.styles.is_empty(),
+                "a scroll style",
             )?;
             let direction = match scroll.direction {
                 ResolvedScrollDirection::Vertical => "Vertical",
@@ -519,7 +565,7 @@ fn container(
     let container = program.resolved_container(id)?;
     let origin = container.origin;
     let style = &container.utility_style;
-    refuse_leaf_utilities(style, program, origin)?;
+    refuse_box_utilities(style, program, origin)?;
     refuse_when(
         program,
         origin,
@@ -1011,6 +1057,19 @@ fn rule(
     let rule = program.resolved_rule(id)?;
     let origin = rule.origin;
     refuse_when(program, origin, rule.fill.is_some(), "a rule fill")?;
+    refuse_when(
+        program,
+        origin,
+        rule.preset != ResolvedRulePreset::Default,
+        "a rule style preset",
+    )?;
+    refuse_when(program, origin, rule.snap.is_some(), "`snap` on a rule")?;
+    let rounded = rule.radius.all.is_some()
+        || rule.radius.top_left.is_some()
+        || rule.radius.top_right.is_some()
+        || rule.radius.bottom_right.is_some()
+        || rule.radius.bottom_left.is_some();
+    refuse_when(program, origin, rounded, "a rule radius")?;
     let axis = match rule.axis {
         ResolvedRuleAxis::Horizontal => "Row",
         ResolvedRuleAxis::Vertical => "Column",
