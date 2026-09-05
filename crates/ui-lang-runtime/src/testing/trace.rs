@@ -4,7 +4,7 @@ use std::fs;
 use ui_lang_template::trace::{
     ARTIFACT_KIND, Action as RecordedAction, Artifact, Configuration, Environment, Finding,
     FindingKind, GENERATOR_VERSION, Mode, Phase, Reduction, ReductionAttempt, SCHEMA_VERSION,
-    Sample, SourceLocation, Summary, WorstState,
+    Sample, SourceLocation, Summary, WorstState, percentile,
 };
 
 pub(super) struct Campaign {
@@ -1617,11 +1617,6 @@ pub(super) fn summaries(samples: &[Sample]) -> Vec<Summary> {
         .collect()
 }
 
-fn percentile(values: &[u64], rank: usize) -> u64 {
-    let index = (values.len() * rank).div_ceil(100).saturating_sub(1);
-    values[index]
-}
-
 fn deadline_misses(values: &[u64], frames_per_second: u64) -> usize {
     let deadline = 1_000_000_000 / frames_per_second;
     values.iter().filter(|value| **value > deadline).count()
@@ -1717,9 +1712,11 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let summary = summaries(&samples).pop().unwrap();
+        // The probe index rule, `(len - 1) * p / 100`: five samples put p50
+        // at index 2 and p95/p99 at index 3, and only `max` reaches the tail.
         assert_eq!(summary.p50_ns, 3);
-        assert_eq!(summary.p95_ns, 20_000_000);
-        assert_eq!(summary.p99_ns, 20_000_000);
+        assert_eq!(summary.p95_ns, 4);
+        assert_eq!(summary.p99_ns, 4);
         assert_eq!(summary.max_ns, 20_000_000);
         assert_eq!(summary.deadline_misses_60hz, 1);
         assert_eq!(summary.deadline_misses_120hz, 1);

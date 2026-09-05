@@ -40,7 +40,7 @@ use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use trace::Recorder as TraceRecorder;
-use ui_lang_template::trace::Phase;
+use ui_lang_template::trace::{Phase, percentile};
 
 const MAX_SCREENSHOT_PIXELS: usize = 16_777_216;
 
@@ -2286,17 +2286,11 @@ fn frames_json(frames: Frames) -> serde_json::Value {
     })
 }
 
-/// `(p50, p95)` by the index rule `examples/showcase/src/frame_probe.rs` uses.
+/// `(p50, p95)` by the one index rule, [`ui_lang_template::trace::percentile`].
 fn percentiles(mut samples: Vec<u64>) -> (u64, u64) {
     debug_assert!(!samples.is_empty(), "percentiles need at least one sample");
     samples.sort_unstable();
-    let at = |percentile: usize| {
-        samples
-            .get(samples.len().saturating_sub(1) * percentile / 100)
-            .copied()
-            .unwrap_or_default()
-    };
-    (at(50), at(95))
+    (percentile(&samples, 50), percentile(&samples, 95))
 }
 
 pub struct Driver<P>

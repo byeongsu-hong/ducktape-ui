@@ -79,8 +79,10 @@ fn here() -> Location {
     )
 }
 
+/// The probe index rule, `(len - 1) * num / den`: the same rule
+/// `ui_lang_template::trace::percentile` and every other probe use.
 fn percentile(sorted: &[u128], num: usize, den: usize) -> u128 {
-    sorted[(sorted.len() * num / den).min(sorted.len() - 1)]
+    sorted[(sorted.len() - 1) * num / den]
 }
 
 /// p50 and p95, plus the interquartile spread: on a shared machine a wide
