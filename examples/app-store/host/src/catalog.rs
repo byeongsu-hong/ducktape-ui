@@ -1,6 +1,8 @@
 //! The catalog: every `ice:view` component in the catalog directory that
 //! carries an `ice.manifest` section, read without compiling any of them.
 
+use crate::limits::MAX_MODULE_BYTES;
+
 /// Where the catalog looks for components: what `componentize.sh` writes
 /// after `cargo build --release --target wasm32-unknown-unknown` of the apps.
 const DEFAULT_CATALOG_DIR: &str = "target/app-store-catalog";
@@ -36,16 +38,27 @@ pub fn catalog_dir() -> String {
 
 /// Lists every wasm module in the catalog directory that carries a manifest.
 /// Reading the section needs no compilation, so a catalog of a hundred apps
-/// costs a hundred file reads, not a hundred cranelift runs.
+/// costs a hundred file reads, not a hundred cranelift runs. A file past
+/// [`MAX_MODULE_BYTES`] is left out before it is read at all, the same way a
+/// bad manifest leaves a module out.
 pub fn scan_catalog() -> Vec<CatalogEntry> {
-    let dir = catalog_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
+    scan_dir(std::path::Path::new(&catalog_dir()))
+}
+
+/// The scan itself, over a directory named directly rather than through the
+/// `APP_STORE_CATALOG` env var — so a test can point it at a scratch
+/// directory without touching process-global state.
+fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     let mut catalog: Vec<CatalogEntry> = entries
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "wasm"))
+        .filter(|path| {
+            std::fs::metadata(path).is_ok_and(|metadata| metadata.len() <= MAX_MODULE_BYTES)
+        })
         .filter_map(|path| {
             let bytes = std::fs::read(&path).ok()?;
             let manifest = read_manifest(&bytes)?;
@@ -173,5 +186,76 @@ impl Manifest {
                 .capabilities
                 .iter()
                 .all(|capability| capability.len() <= MAX_CAPABILITY_BYTES)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    /// A scratch directory under the OS temp dir, named for the test that
+    /// owns it and removed when the guard drops — nothing here survives a
+    /// panic mid-test.
+    struct ScratchDir(std::path::PathBuf);
+
+    impl ScratchDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("app-store-catalog-test-{name}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("scratch dir");
+            Self(dir)
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// One real built component, copied in from the catalog `componentize.sh`
+    /// writes — `None` when the workspace hasn't built the demo apps, so the
+    /// half of the test that needs a real manifest is skipped rather than
+    /// failed.
+    fn a_built_component() -> Option<std::path::PathBuf> {
+        std::fs::read_dir(DEFAULT_CATALOG_DIR)
+            .ok()?
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|ext| ext == "wasm"))
+    }
+
+    #[test]
+    fn an_oversized_module_is_left_out_of_the_catalog() {
+        let scratch = ScratchDir::new("oversized_module_is_left_out");
+
+        // A sparse file: its declared length crosses the limit, but no bytes
+        // are actually written, so the test costs no disk and no time to
+        // create.
+        let oversized = scratch.0.join("too_big.wasm");
+        let file = File::create(&oversized).expect("create oversized file");
+        file.set_len(MAX_MODULE_BYTES + 1).expect("set_len");
+        drop(file);
+
+        let mut real_component_id = None;
+        if let Some(built) = a_built_component() {
+            let real = scratch.0.join("real.wasm");
+            std::fs::copy(&built, &real).expect("copy built component");
+            real_component_id = Some(real.file_stem().unwrap().to_string_lossy().into_owned());
+        }
+
+        let catalog = scan_dir(&scratch.0);
+
+        assert!(
+            catalog.iter().all(|entry| entry.id != "too_big"),
+            "an oversized module must not reach the catalog"
+        );
+        if let Some(id) = real_component_id {
+            assert!(
+                catalog.iter().any(|entry| entry.id == id),
+                "a component within the size limit must still be found"
+            );
+        }
     }
 }

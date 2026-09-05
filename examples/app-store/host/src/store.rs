@@ -66,9 +66,9 @@ use crate::capabilities::{Inbox, bus, clock, host, storage};
 use crate::library::{FAULTED, LIVE_INSTANCES};
 use crate::limits::{
     BUS_WAKE_INTERVAL, FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE, MAX_FAULT_BYTES,
-    MAX_FRAME_BYTES, MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK, MAX_REST,
-    MAX_SUBSCRIPTIONS, MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT,
-    TICK_BUDGET,
+    MAX_FRAME_BYTES, MAX_MODULE_BYTES, MAX_PAYLOAD_BYTES, MAX_REPLY_BYTES_PER_TICK,
+    MAX_REQUESTS_PER_TICK, MAX_REST, MAX_SUBSCRIPTIONS, MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS,
+    MAX_TOPIC_BYTES, MEMORY_LIMIT, TICK_BUDGET,
 };
 
 /// The host-side handle the view holds. Identity is the instance: two
@@ -272,14 +272,24 @@ fn engine() -> &'static Engine {
 /// is noticed by its timestamp and loaded again.
 fn component(path: &str) -> Result<(Component, bool), String> {
     static COMPONENTS: OnceLock<Mutex<HashMap<String, (SystemTime, Component)>>> = OnceLock::new();
-    let stamp = std::fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
+    let metadata = std::fs::metadata(path).map_err(|error| format!("{path}: {error}"))?;
+    let stamp = metadata
+        .modified()
         .map_err(|error| format!("{path}: {error}"))?;
     let components = COMPONENTS.get_or_init(Mutex::default);
     if let Some((known, component)) = components.lock().expect("component cache").get(path)
         && *known == stamp
     {
         return Ok((component.clone(), true));
+    }
+    // The catalog already left an oversized file out, but the path a guest
+    // is loaded from is not necessarily one the catalog just scanned — an
+    // app reopened after its file grew past the scan that found it, say —
+    // so cranelift never sees it either.
+    if metadata.len() > MAX_MODULE_BYTES {
+        return Err(format!(
+            "{path}: past the {MAX_MODULE_BYTES} byte module limit"
+        ));
     }
     let component =
         Component::from_file(engine(), path).map_err(|error| format!("{path}: {error}"))?;
