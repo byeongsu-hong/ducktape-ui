@@ -4,7 +4,7 @@ use std::fs;
 use ui_lang_template::trace::{
     ARTIFACT_KIND, Action as RecordedAction, Artifact, Configuration, Environment, Finding,
     FindingKind, GENERATOR_VERSION, Mode, Phase, Reduction, ReductionAttempt, SCHEMA_VERSION,
-    Sample, SourceLocation, Summary, WorstState, percentile,
+    Sample, SourceLocation, WorstState, summaries,
 };
 
 pub(super) struct Campaign {
@@ -1588,38 +1588,6 @@ where
         }
         .into(),
     }
-}
-
-pub(super) fn summaries(samples: &[Sample]) -> Vec<Summary> {
-    let mut grouped = std::collections::BTreeMap::<(usize, Phase), Vec<u64>>::new();
-    for sample in samples {
-        grouped
-            .entry((sample.action_index, sample.phase))
-            .or_default()
-            .push(sample.duration_ns);
-    }
-    grouped
-        .into_iter()
-        .map(|((action_index, phase), mut values)| {
-            values.sort_unstable();
-            Summary {
-                action_index,
-                phase,
-                samples: values.len(),
-                p50_ns: percentile(&values, 50),
-                p95_ns: percentile(&values, 95),
-                p99_ns: percentile(&values, 99),
-                max_ns: *values.last().expect("sample group is non-empty"),
-                deadline_misses_60hz: deadline_misses(&values, 60),
-                deadline_misses_120hz: deadline_misses(&values, 120),
-            }
-        })
-        .collect()
-}
-
-fn deadline_misses(values: &[u64], frames_per_second: u64) -> usize {
-    let deadline = 1_000_000_000 / frames_per_second;
-    values.iter().filter(|value| **value > deadline).count()
 }
 
 fn duration_ns(duration: Duration) -> u64 {
