@@ -2,12 +2,11 @@
 
 mod common;
 
-use common::{GLOBAL, clean_window};
+use common::{clean_window, clean_window_allocations};
 
 use std::hint::black_box;
 
 use iced::Element;
-use stats_alloc::Region;
 use ui_lang_components::ui::input_otp::{OtpPattern, input_otp};
 use ui_lang_components::ui::theme::LIGHT;
 
@@ -16,19 +15,22 @@ use ui_lang_components::ui::theme::LIGHT;
 fn performance_contract_otp_render_streams_characters() {
     const RENDERS: usize = 4_000;
 
-    let region = Region::new(GLOBAL);
-    for _ in 0..RENDERS {
-        let element: Element<'_, ()> = input_otp(
-            "한2三4A6",
-            6,
-            OtpPattern::Custom(char::is_alphanumeric),
-            |_| (),
-            &LIGHT,
-        )
-        .into();
-        black_box(element);
-    }
-    let stats = region.change();
+    // Measured through the shared window policy: this contract sorts first
+    // in its binary, and libtest's main-thread setup landed +2 allocations in
+    // a bare region on the CI runner.
+    let stats = clean_window_allocations(172_000, || {
+        for _ in 0..RENDERS {
+            let element: Element<'_, ()> = input_otp(
+                "한2三4A6",
+                6,
+                OtpPattern::Custom(char::is_alphanumeric),
+                |_| (),
+                &LIGHT,
+            )
+            .into();
+            black_box(element);
+        }
+    });
 
     eprintln!(
         "{RENDERS} OTP renders: {} allocations / {} reallocations / {} bytes",
