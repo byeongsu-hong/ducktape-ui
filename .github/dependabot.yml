@@ -5,6 +5,18 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # The accesskit family is pinned as one coupled set in
+      # crates/ui-lang-runtime/Cargo.toml (the comments there say which
+      # versions share a consumer); a bump has to move all four by hand.
+      - dependency-name: "accesskit"
+      - dependency-name: "accesskit_unix"
+      - dependency-name: "accesskit_macos"
+      - dependency-name: "accesskit_windows"
+      # bincode 2+ is a different API and a different encoding; the wire
+      # crate moves off 1.x as a deliberate change, not a routine bump.
+      - dependency-name: "bincode"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

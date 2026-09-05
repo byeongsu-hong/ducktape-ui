@@ -471,7 +471,9 @@ fn write_ready_marker(path: &Path, token: &[u8]) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(debug_assertions)]
     use std::sync::Arc;
+    #[cfg(debug_assertions)]
     use std::sync::atomic::AtomicU8;
 
     static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);

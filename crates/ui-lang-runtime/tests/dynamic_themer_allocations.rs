@@ -1,3 +1,7 @@
+// iced implements `Renderer` for `()` only under `debug_assertions`; the
+// same gate keeps `cargo build --release --tests` compiling this crate.
+#![cfg(debug_assertions)]
+
 use std::alloc::System;
 
 use iced::advanced::{Layout, Widget, layout, renderer, widget::Tree};
