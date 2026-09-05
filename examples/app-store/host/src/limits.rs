@@ -26,6 +26,15 @@ pub(crate) const MAX_REST: Duration = Duration::from_millis(250);
 /// The most linear memory an app may grow to.
 pub(crate) const MEMORY_LIMIT: usize = 64 << 20;
 
+/// The largest `.wasm` file the catalog will read or the store will compile.
+/// The five demo components built by `componentize.sh` land between 610 KB
+/// and 626 KB; this is generous past that, not tight against it. Past this a
+/// file is left out of the catalog the same way a bad manifest is, because
+/// nothing here is sandboxed yet: `scan_catalog` reads it whole to look for
+/// the manifest section, and `Component::from_file` would run cranelift over
+/// the whole thing on the executor.
+pub(crate) const MAX_MODULE_BYTES: u64 = 64 << 20;
+
 // ---------- what a hostile guest may not do ----------
 //
 // Fuel and memory bound what a module does to itself. These bound what it can

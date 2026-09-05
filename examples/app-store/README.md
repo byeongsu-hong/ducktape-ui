@@ -293,6 +293,7 @@ Fuel and memory bound what a module does to itself. What it can make the
 | `MAX_LOG_BYTES` | 1024 per line | the rest is cut, and the line is escaped before it reaches a terminal |
 | `MAX_FAULT_BYTES` | 1024 | its window shows the first line of that |
 | `MAX_NAME_BYTES` · `MAX_DESCRIPTION_BYTES` · `MAX_CAPABILITIES` | 64 B · 256 B · 16 of 32 B | its module is left out of the catalog — the sidebar shapes every manifest field of every entry, before anything is installed |
+| `MAX_MODULE_BYTES` | 64 MiB | its `.wasm` file is left out of the catalog, unread — or, loaded by a path the catalog didn't just scan, `Err` naming the limit before cranelift ever sees it |
 
 The numbers *inside* a frame are the other half of the same boundary: the
 guest chooses every one, and the host lays out what it is given and
