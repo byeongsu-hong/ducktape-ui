@@ -732,6 +732,32 @@ fn candidate_reports_the_exact_opaque_ready_token() {
     assert_eq!(std::fs::read_to_string(ready).unwrap(), token);
 }
 
+/// A writer that creates the marker before it fills it — a shell's `>`, or
+/// any candidate without the runtime's rename — leaves an empty file for a
+/// moment. The file is made empty here BEFORE the wait starts, so the wait
+/// meets that moment every time rather than when a scheduler happens to
+/// interleave it; it must keep waiting for the token, not report it wrong.
+#[cfg(unix)]
+#[test]
+fn an_empty_ready_file_is_a_report_still_being_written() {
+    let fixture = tempfile::tempdir().unwrap();
+    let ready = fixture.path().join("ready");
+    let token = "runner-8-token";
+    std::fs::write(&ready, "").unwrap();
+    let args = [
+        "-c".to_owned(),
+        "sleep 0.05; printf '%s' \"$ICE_DEV_READY_TOKEN\" > \"$ICE_DEV_READY_PATH\"; sleep 5"
+            .to_owned(),
+    ];
+    let mut candidate =
+        ChildGuard::spawn_with_ready(fixture.path(), Path::new("/bin/sh"), &args, &ready, token)
+            .unwrap();
+
+    candidate.wait_ready(&ready, token).unwrap();
+
+    assert_eq!(std::fs::read_to_string(ready).unwrap(), token);
+}
+
 #[cfg(unix)]
 #[test]
 fn wrong_candidate_token_keeps_the_previous_process_alive() {
