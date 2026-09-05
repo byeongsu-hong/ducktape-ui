@@ -73,7 +73,7 @@ pub use accesskit::{Action, ActionRequest, Node, NodeId, Role, Toggled, TreeUpda
 
 use accesskit::{Rect, Tree, TreeId};
 use iced::advanced::widget::operation::{
-    Focusable, Operation, Outcome, Scrollable, TextInput, focusable,
+    self, Focusable, Operation, Outcome, Scrollable, TextInput, focusable,
 };
 use iced::advanced::widget::{self, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
@@ -1588,7 +1588,8 @@ where
 #[derive(Clone)]
 struct ActionTarget<Message> {
     activate: Option<Message>,
-    focus: Option<SemanticFocus>,
+    node: SemanticFocus,
+    focusable: bool,
     /// The text input whose caret a `SetTextSelection` request moves.
     caret: Option<widget::Id>,
     increment: Option<Message>,
@@ -1661,7 +1662,8 @@ impl<Message: Clone + Send + 'static> Snapshot<Message> {
         };
         match request.action {
             Action::Click => target.activate.clone().map_or_else(Task::none, Task::done),
-            Action::Focus => target.focus.map_or_else(Task::none, focus_semantic),
+            Action::Focus if target.focusable => focus_semantic(target.node),
+            Action::ScrollIntoView => scroll_into_view(target.node),
             // iced moves a caret, not an arbitrary selection: the focus end
             // is where the reader asked the insertion point to land.
             Action::SetTextSelection => match (&target.caret, &request.data) {
@@ -1794,6 +1796,150 @@ fn focus_semantic<Message: Send + 'static>(target: SemanticFocus) -> Task<Messag
     .discard()
 }
 
+/// Scrolls the nearest identified scroll enclosing `target` until the node is
+/// in view. Only the nearest one moves, and only as far as it must: a node
+/// already in view moves nothing, a node above or left of the viewport lands on
+/// its leading edge, one below or right lands on its trailing edge.
+fn scroll_into_view<Message: Send + 'static>(target: SemanticFocus) -> Task<Message> {
+    iced::advanced::widget::operate(ScrollIntoViewOperation::<Message>::new(target)).discard()
+}
+
+/// A scroll the walk is inside of, in its own untranslated coordinates.
+struct ScrollFrame {
+    id: widget::Id,
+    viewport: Rectangle,
+    content: Rectangle,
+    translation: Vector,
+}
+
+struct ScrollIntoViewOperation<Message> {
+    target: SemanticFocus,
+    occurrences: HashMap<NodeId, u64>,
+    used_ids: HashSet<NodeId>,
+    /// One entry per open semantic frame, `true` for an atomic one, mirroring
+    /// the snapshot so the same node gets the same occurrence here.
+    frames: Vec<bool>,
+    scrolls: Vec<ScrollFrame>,
+    pending_scroll: Option<ScrollFrame>,
+    found: Option<(
+        widget::Id,
+        operation::scrollable::AbsoluteOffset<Option<f32>>,
+    )>,
+    marker: std::marker::PhantomData<Message>,
+}
+
+impl<Message> ScrollIntoViewOperation<Message> {
+    fn new(target: SemanticFocus) -> Self {
+        Self {
+            target,
+            occurrences: HashMap::new(),
+            used_ids: HashSet::from([ROOT_ID]),
+            frames: Vec::new(),
+            scrolls: Vec::new(),
+            pending_scroll: None,
+            found: None,
+            marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Whether the walk found the target inside an identified scroll.
+    pub(crate) fn found_scroll(&self) -> bool {
+        self.found.is_some()
+    }
+}
+
+/// The offset that brings `[start, end)` of the content into a viewport `len`
+/// long currently showing from `shown`, or `None` when it is already in view.
+fn reveal(start: f32, end: f32, shown: f32, len: f32) -> Option<f32> {
+    if start < shown {
+        Some(start)
+    } else if end > shown + len {
+        Some((end - len).max(0.0))
+    } else {
+        None
+    }
+}
+
+impl<Message: Send + 'static> Operation<()> for ScrollIntoViewOperation<Message> {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<()>)) {
+        let scroll = self.pending_scroll.take();
+        let entered = scroll.is_some();
+        self.scrolls.extend(scroll);
+        operate(self);
+        if entered {
+            self.scrolls.pop();
+        }
+    }
+
+    fn scrollable(
+        &mut self,
+        id: Option<&widget::Id>,
+        bounds: Rectangle,
+        content_bounds: Rectangle,
+        translation: Vector,
+        _state: &mut dyn Scrollable,
+    ) {
+        self.pending_scroll = id.map(|id| ScrollFrame {
+            id: id.clone(),
+            viewport: bounds,
+            content: content_bounds,
+            translation,
+        });
+    }
+
+    fn custom(&mut self, _id: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Any) {
+        if state.downcast_ref::<SemanticEnd>().is_some() {
+            self.frames.pop();
+            return;
+        }
+        let Some(semantics) = state.downcast_ref::<SemanticSnapshot>() else {
+            return;
+        };
+        if self.frames.iter().any(|atomic| *atomic) {
+            self.frames.push(false);
+            return;
+        }
+        let (_, current) =
+            disambiguate_semantic_id(semantics.id, &mut self.occurrences, &mut self.used_ids);
+        self.frames.push(atomic_role(semantics.role));
+        if current != self.target {
+            return;
+        }
+        let Some(scroll) = self.scrolls.last() else {
+            return;
+        };
+        let x = bounds.x - scroll.content.x;
+        let y = bounds.y - scroll.content.y;
+        self.found = Some((
+            scroll.id.clone(),
+            operation::scrollable::AbsoluteOffset {
+                x: reveal(
+                    x,
+                    x + bounds.width,
+                    scroll.translation.x,
+                    scroll.viewport.width,
+                ),
+                y: reveal(
+                    y,
+                    y + bounds.height,
+                    scroll.translation.y,
+                    scroll.viewport.height,
+                ),
+            },
+        ));
+    }
+
+    fn finish(&self) -> Outcome<()> {
+        match &self.found {
+            Some((id, offset)) => Outcome::Chain(Box::new(operation::scrollable::scroll_to::<()>(
+                id.clone(),
+                *offset,
+            ))),
+            None => Outcome::None,
+        }
+    }
+}
+
 struct SnapshotOperation<Message> {
     nodes: Vec<(NodeId, Node)>,
     root_children: Vec<NodeId>,
@@ -1805,6 +1951,11 @@ struct SnapshotOperation<Message> {
     root_label: String,
     translation: Vector,
     pending_translation: Option<Vector>,
+    /// How many identified scrolls enclose the subtree being walked. A node
+    /// inside one supports `ScrollIntoView`; the request finds the scroll
+    /// again when it arrives, so nothing about it is stored per node.
+    scroll_depth: usize,
+    pending_scroll: bool,
     pending_set: Option<SetPosition>,
     /// The one window this snapshot describes, or `None` for the whole tree.
     /// A daemon runs every widget operation through every window's tree in
@@ -1856,6 +2007,8 @@ impl<Message> Default for SnapshotOperation<Message> {
             root_label: "Ice application".into(),
             translation: Vector::ZERO,
             pending_translation: None,
+            scroll_depth: 0,
+            pending_scroll: false,
             pending_set: None,
             scope: None,
             inside: true,
@@ -1936,14 +2089,17 @@ impl<Message> SnapshotOperation<Message> {
 impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotOperation<Message> {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<Snapshot<Message>>)) {
         let translation = self.pending_translation.take().unwrap_or(Vector::ZERO);
+        let scroll = std::mem::take(&mut self.pending_scroll);
         self.translation += translation;
+        self.scroll_depth += usize::from(scroll);
         operate(self);
+        self.scroll_depth -= usize::from(scroll);
         self.translation -= translation;
     }
 
     fn scrollable(
         &mut self,
-        _id: Option<&widget::Id>,
+        id: Option<&widget::Id>,
         _bounds: Rectangle,
         _content_bounds: Rectangle,
         translation: Vector,
@@ -1953,6 +2109,7 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
             return;
         }
         self.pending_translation = Some(translation);
+        self.pending_scroll = id.is_some();
     }
 
     fn custom(&mut self, _id: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Any) {
@@ -1993,28 +2150,35 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
                 return;
             };
             let id = self.nodes[index].0;
-            if !state.semantics.disabled {
-                let node = &mut self.nodes[index].1;
-                if state.semantics.focus != FocusBehavior::None {
-                    node.add_action(Action::Focus);
-                }
-                if state.semantics.activate.is_some() {
-                    node.add_action(Action::Click);
-                }
-                if state.semantics.increment().is_some() {
-                    node.add_action(Action::Increment);
-                }
-                if state.semantics.decrement().is_some() {
-                    node.add_action(Action::Decrement);
-                }
+            let node = &mut self.nodes[index].1;
+            let enabled = !state.semantics.disabled;
+            let focusable = enabled && state.semantics.focus != FocusBehavior::None;
+            let scrollable = self.scroll_depth > 0;
+            if focusable {
+                node.add_action(Action::Focus);
+            }
+            if enabled && state.semantics.activate.is_some() {
+                node.add_action(Action::Click);
+            }
+            if enabled && state.semantics.increment().is_some() {
+                node.add_action(Action::Increment);
+            }
+            if enabled && state.semantics.decrement().is_some() {
+                node.add_action(Action::Decrement);
+            }
+            if scrollable {
+                node.add_action(Action::ScrollIntoView);
+            }
+            if enabled || scrollable {
                 self.actions.insert(
                     id,
                     ActionTarget {
-                        activate: state.semantics.activate.clone(),
-                        focus: (state.semantics.focus != FocusBehavior::None).then_some(focus),
+                        activate: state.semantics.activate.clone().filter(|_| enabled),
+                        node: focus,
+                        focusable,
                         caret: None,
-                        increment: state.semantics.increment().cloned(),
-                        decrement: state.semantics.decrement().cloned(),
+                        increment: state.semantics.increment().cloned().filter(|_| enabled),
+                        decrement: state.semantics.decrement().cloned().filter(|_| enabled),
                     },
                 );
             }
@@ -3616,6 +3780,69 @@ mod tests {
             Err(CropError::OutOfBounds)
         ));
         assert!(crop_screenshot(&valid, one).is_ok());
+    }
+
+    #[test]
+    fn a_node_inside_an_identified_scroll_scrolls_into_view_on_request() {
+        let far = StableId::new("far");
+        let button: TestElement<'static> =
+            iced::widget::button("Far").on_press(Message::First).into();
+        let content: TestElement<'static> = iced::widget::column![
+            iced::widget::Space::new().height(500),
+            accessible(button, far, Role::Button).label("Far"),
+        ]
+        .into();
+        let root: TestElement<'static> = iced::widget::scrollable(content)
+            .id(widget::Id::new("list"))
+            .height(100)
+            .into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(400.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let node = |snapshot: &Snapshot<Message>| {
+            snapshot
+                .update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == far.node_id())
+                .map(|(_, node)| node.clone())
+                .expect("far node")
+        };
+
+        let before = snapshot(&mut ui, &renderer);
+        assert!(node(&before).supports_action(Action::ScrollIntoView));
+        assert!(node(&before).bounds().expect("bounds").y0 >= 100.0);
+
+        let task = before.dispatch(ActionRequest {
+            action: Action::ScrollIntoView,
+            target_tree: TreeId::ROOT,
+            target_node: far.node_id(),
+            data: None,
+        });
+        let mut stream = iced_test::runtime::task::into_stream(task).expect("scroll task");
+        let iced_test::runtime::Action::Widget(mut operation) =
+            iced_test::futures::futures::executor::block_on(stream.next()).expect("scroll output")
+        else {
+            panic!("a scroll request is a widget operation");
+        };
+        loop {
+            ui.operate(&renderer, operation.as_mut());
+            match operation.finish() {
+                Outcome::Chain(next) => operation = next,
+                Outcome::None | Outcome::Some(()) => break,
+            }
+        }
+
+        let after = snapshot(&mut ui, &renderer);
+        let bounds = node(&after).bounds().expect("bounds");
+        assert!(
+            bounds.y0 >= 0.0 && bounds.y1 <= 100.0,
+            "the far button is still offscreen: {bounds:?}"
+        );
     }
 
     fn renderer() -> TestRenderer {
@@ -5353,7 +5580,11 @@ mod tests {
                 id,
                 ActionTarget {
                     activate: Some(Message::First),
-                    focus: None,
+                    node: SemanticFocus {
+                        base: StableId::new("button"),
+                        occurrence: 0,
+                    },
+                    focusable: false,
                     caret: None,
                     increment: None,
                     decrement: None,

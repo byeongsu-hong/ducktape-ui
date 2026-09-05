@@ -196,6 +196,7 @@ Ice lowers its checked control surface into a deterministic AccessKit tree:
 | `pick`, `combo` | `ComboBox` | placeholder name, selected value, focus action |
 | `editor` | `MultilineTextInput` | placeholder/default name, current value, disabled state, focus action |
 | labeled `image` | `Image` | name and description |
+| any node inside an identified `scroll` | its own role | `ScrollIntoView` scrolls it into view |
 
 Visible labels are the default accessible names; explicit `label=` (and
 `description=`) override them with checked `str` expressions. A button with

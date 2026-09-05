@@ -154,6 +154,7 @@ pub(crate) enum ResolvedTestAccessibilityAction {
     Focus,
     Increment,
     Decrement,
+    ScrollIntoView,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

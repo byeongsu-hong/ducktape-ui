@@ -961,7 +961,7 @@ fn parse_accessibility_action(
         return Err(error(
             TEST_ERROR,
             line,
-            "a11y actions use `a11y activate|focus|increment|decrement target`",
+            "a11y actions use `a11y activate|focus|increment|decrement|scroll-into-view target`",
         ));
     };
     let action = match *action {
@@ -969,11 +969,12 @@ fn parse_accessibility_action(
         "focus" => TestAccessibilityAction::Focus,
         "increment" => TestAccessibilityAction::Increment,
         "decrement" => TestAccessibilityAction::Decrement,
+        "scroll-into-view" => TestAccessibilityAction::ScrollIntoView,
         _ => {
             return Err(error(
                 TEST_ERROR,
                 line,
-                "a11y action must be activate, focus, increment, or decrement",
+                "a11y action must be activate, focus, increment, decrement, or scroll-into-view",
             ));
         }
     };

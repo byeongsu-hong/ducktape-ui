@@ -607,3 +607,18 @@ test embedded_component_scrollbars
     box p=24.0
       extern command(command) -> command_changed _
   capture command_embedded_scrollbar
+
+// A screen reader asks for a control it knows about but cannot see with
+// `ScrollIntoView`; the nearest identified scroll moves just far enough.
+test accessibility_scroll_into_view_reaches_an_offscreen_control
+  preset test
+  viewport 720 560
+  target app = #app
+  target scroller = app/catalog-scroll
+  target page = scroller/page
+  target open_dialog = page/open-dialog
+  expect scroller.scroll_y == 0.0
+  expect !open_dialog.visible
+  a11y scroll-into-view open_dialog
+  expect open_dialog.visible
+  expect scroller.scroll_y > 0.0

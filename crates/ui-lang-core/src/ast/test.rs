@@ -244,6 +244,7 @@ pub enum TestAccessibilityAction {
     Focus,
     Increment,
     Decrement,
+    ScrollIntoView,
 }
 
 #[derive(Clone, Debug)]
@@ -824,6 +825,7 @@ pub(crate) fn test_step_source(step: &TestStep) -> String {
                 TestAccessibilityAction::Focus => "focus",
                 TestAccessibilityAction::Increment => "increment",
                 TestAccessibilityAction::Decrement => "decrement",
+                TestAccessibilityAction::ScrollIntoView => "scroll-into-view",
             },
             target_ref_source(target)
         ),
