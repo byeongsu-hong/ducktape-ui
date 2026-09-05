@@ -319,10 +319,11 @@ tree order so a tail past it comes out empty, because the 8 MiB of text
 the frame cap alone allows is seconds of cosmic-text on the window
 thread every redraw), text sizes to `MAX_TEXT_PIXELS` (512, since every
 glyph at one is rasterized and cached), other sizes, spacings and
-paddings to finite pixels no larger than a wall, colours to `0..=1`. A key used twice is moved off the
-one already taken (`key`, then `key#2`): a key is the node's widget
-state, its focus target, its accessibility id and, for an input, the text
-the host owns on its behalf, so two nodes sharing one share all of that.
+paddings to finite pixels no larger than a wall, colours to `0..=1`. A
+key used twice is moved off the one already taken (`key`, then `key#2`):
+a key is the node's widget state, its focus target, its accessibility id
+and, for an input, the text the host owns on its behalf, so two nodes
+sharing one share all of that.
 Every frame passes through it, tree or no tree — an `unchanged` one still
 carries request kinds the host formats into refusals and shows. A
 well-behaved tree comes out untouched; a hostile one is cut, not refused,
