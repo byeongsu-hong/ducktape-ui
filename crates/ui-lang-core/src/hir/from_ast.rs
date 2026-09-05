@@ -1024,7 +1024,9 @@ fn index_view_declarations(
     }
 }
 
-pub(crate) fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
+/// The view nodes directly under `node`, in source order: every child a
+/// walker must descend into, whatever the node's shape.
+pub fn view_children(node: &ViewNode) -> Vec<&ViewNode> {
     match node {
         ViewNode::Layout { children, .. }
         | ViewNode::If { children, .. }

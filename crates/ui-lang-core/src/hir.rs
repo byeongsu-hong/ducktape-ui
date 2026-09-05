@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod from_ast;
+pub use from_ast::view_children;
 pub(crate) use from_ast::{
-    dynamic_pane_grids, handler_operation_contract, statement_semantic_key, view_children,
-    view_kind,
+    dynamic_pane_grids, handler_operation_contract, statement_semantic_key, view_kind,
 };
 
 /// A builtin whose result is not a function of its arguments: it reads the

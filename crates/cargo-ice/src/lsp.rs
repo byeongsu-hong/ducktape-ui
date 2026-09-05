@@ -1438,69 +1438,9 @@ fn visit_view<'a>(
     node: &'a ui_lang_core::ViewNode,
     visitor: &mut impl FnMut(&'a ui_lang_core::ViewNode),
 ) {
-    use ui_lang_core::{ResponsiveContent, ViewNode};
     visitor(node);
-    match node {
-        ViewNode::Layout { children, .. }
-        | ViewNode::If { children, .. }
-        | ViewNode::For { children, .. } => {
-            for child in children {
-                visit_view(child, visitor);
-            }
-        }
-        ViewNode::Match { arms, .. } => {
-            for child in arms.iter().flat_map(|arm| &arm.children) {
-                visit_view(child, visitor);
-            }
-        }
-        ViewNode::Button {
-            content: Some(content),
-            ..
-        }
-        | ViewNode::MouseArea { content, .. }
-        | ViewNode::ResizeHandle { content, .. }
-        | ViewNode::Container { content, .. }
-        | ViewNode::Theme { content, .. }
-        | ViewNode::Float { content, .. }
-        | ViewNode::Pin { content, .. }
-        | ViewNode::Sensor { content, .. }
-        | ViewNode::KeyedColumn { child: content, .. }
-        | ViewNode::Lazy { child: content, .. } => visit_view(content, visitor),
-        ViewNode::Tooltip { content, tip, .. }
-        | ViewNode::Overlay {
-            content,
-            layer: tip,
-            ..
-        } => {
-            visit_view(content, visitor);
-            visit_view(tip, visitor);
-        }
-        ViewNode::PaneGrid {
-            panes, templates, ..
-        } => {
-            for child in panes
-                .iter()
-                .flat_map(ui_lang_core::PaneView::nodes)
-                .chain(templates.iter().flat_map(|template| template.pane.nodes()))
-            {
-                visit_view(child, visitor);
-            }
-        }
-        ViewNode::Table { columns, .. } => {
-            for column in columns {
-                visit_view(&column.header, visitor);
-                visit_view(&column.cell, visitor);
-            }
-        }
-        ViewNode::Component { slots, .. } => {
-            for slot in slots {
-                visit_view(&slot.content, visitor);
-            }
-        }
-        ViewNode::Responsive { content, .. } => match content {
-            ResponsiveContent::Size { content, .. } => visit_view(content, visitor),
-        },
-        _ => {}
+    for child in ui_lang_core::view_children(node) {
+        visit_view(child, visitor);
     }
 }
 
@@ -3463,10 +3403,7 @@ fn same_file(left: &Path, right: &Path) -> bool {
 }
 
 fn canonical_path(path: &Path) -> Option<PathBuf> {
-    path.canonicalize().ok().or_else(|| {
-        let parent = path.parent()?.canonicalize().ok()?;
-        Some(parent.join(path.file_name()?))
-    })
+    ui_lang_core::canonical_path(path).ok()
 }
 
 fn file_uri_path(uri: &str) -> Option<PathBuf> {

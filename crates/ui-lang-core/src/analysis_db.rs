@@ -421,7 +421,7 @@ impl AnalysisDb {
         let path = self
             .overlay_alias(&lexical_path)
             .cloned()
-            .map_or_else(|| normalize_path(&lexical_path), Ok)
+            .map_or_else(|| canonical_path(&lexical_path), Ok)
             .map_err(|error| {
                 file_error(
                     "E181",
@@ -502,7 +502,7 @@ impl AnalysisDb {
         };
         let path = opened_path
             .or_else(|| opened.as_ref().map(|source| source.canonical_path.clone()))
-            .map_or_else(|| normalize_path(&lexical_path), Ok)
+            .map_or_else(|| canonical_path(&lexical_path), Ok)
             .map_err(|error| {
                 file_error(
                     "E181",
@@ -770,7 +770,7 @@ impl AnalysisDb {
                 format!("cannot resolve input path: {error}"),
             )
         })?;
-        let resolved_path = normalize_path(&lexical_path).unwrap_or_else(|_| lexical_path.clone());
+        let resolved_path = canonical_path(&lexical_path).unwrap_or_else(|_| lexical_path.clone());
         let mut affected_roots = self.roots_for_input(&lexical_path, &resolved_path);
         let resolution_changed = self.input_resolution_changed(&lexical_path);
         let source_input = self.current_files.contains_key(&resolved_path)
@@ -811,7 +811,7 @@ impl AnalysisDb {
         &mut self,
         path: impl AsRef<Path>,
     ) -> Result<Option<codegen::ViewTemplate>, Error> {
-        let path = normalize_path(path.as_ref()).map_err(|error| {
+        let path = canonical_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
                 path.as_ref(),
@@ -833,7 +833,7 @@ impl AnalysisDb {
     }
 
     pub fn compile_root(&mut self, path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
-        let path = normalize_path(path.as_ref()).map_err(|error| {
+        let path = canonical_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
                 path.as_ref(),
@@ -854,7 +854,7 @@ impl AnalysisDb {
         path: impl AsRef<Path>,
         contents: impl Into<Vec<u8>>,
     ) -> Result<FileCompilation, Error> {
-        let path = normalize_path(path.as_ref()).map_err(|error| {
+        let path = canonical_path(path.as_ref()).map_err(|error| {
             file_error(
                 "E181",
                 path.as_ref(),
@@ -996,7 +996,7 @@ impl AnalysisDb {
         let source_stamps = source_paths
             .into_iter()
             .map(|path| {
-                let content_hash = normalize_path(&path)
+                let content_hash = canonical_path(&path)
                     .ok()
                     .and_then(|resolved| self.current_files.get(&resolved))
                     .map(FileKey::content_hash)
@@ -1041,7 +1041,7 @@ impl AnalysisDb {
         if self.is_overlay_path(&lexical_path) {
             return Ok(());
         }
-        let path = normalize_path(&lexical_path).map_err(|error| {
+        let path = canonical_path(&lexical_path).map_err(|error| {
             file_error(
                 "E181",
                 &source.path,
@@ -1226,7 +1226,7 @@ impl AnalysisDb {
                     resolved_imports.push((target, child_namespace, *line));
                 }
                 Err(error) => {
-                    if let Ok(target) = normalize_path(&candidate) {
+                    if let Ok(target) = canonical_path(&candidate) {
                         direct.insert(target);
                     }
                     if first_import_error.is_none() {
@@ -1295,7 +1295,7 @@ impl AnalysisDb {
         match candidate.canonicalize() {
             Ok(path) => Ok(path),
             Err(error) => {
-                let normalized = normalize_path(candidate).map_err(|_| {
+                let normalized = canonical_path(candidate).map_err(|_| {
                     file_error(
                         "E181",
                         source,
@@ -1415,7 +1415,7 @@ impl AnalysisDb {
         let lexical = absolute_lexical_path(path)?;
         self.overlay_alias(&lexical)
             .cloned()
-            .map_or_else(|| normalize_path(&lexical), Ok)
+            .map_or_else(|| canonical_path(&lexical), Ok)
     }
 
     fn is_overlay_path(&self, path: &Path) -> bool {
@@ -1424,7 +1424,7 @@ impl AnalysisDb {
                 .ok()
                 .and_then(|lexical| self.overlay_alias(&lexical))
                 .is_some_and(|key| self.contains_overlay(key))
-            || normalize_path(path)
+            || canonical_path(path)
                 .ok()
                 .is_some_and(|resolved| self.contains_overlay(&resolved))
     }
@@ -1602,7 +1602,11 @@ fn remap_origin(mut error: Error, origins: &[(PathBuf, usize)]) -> Error {
     error
 }
 
-fn normalize_path(path: &Path) -> std::io::Result<PathBuf> {
+/// The canonical form of `path`, for a path that may not exist yet: the
+/// longest existing ancestor is canonicalized and the missing tail is
+/// appended lexically, so an unsaved editor buffer keys the same as the file
+/// it will become. Fails only when no ancestor exists.
+pub fn canonical_path(path: &Path) -> std::io::Result<PathBuf> {
     match path.canonicalize() {
         Ok(path) => Ok(path),
         Err(original_error) => {
@@ -1656,7 +1660,21 @@ fn absolute_lexical_path(path: &Path) -> std::io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnalysisDb, ValidationPolicy};
+    use super::{AnalysisDb, ValidationPolicy, canonical_path};
+
+    #[test]
+    fn canonical_path_keeps_the_missing_tail_of_an_unsaved_file() {
+        let root = tempfile::tempdir().unwrap();
+        let unsaved = root.path().join("new").join("deeper").join("screen.ice");
+        let expected = root
+            .path()
+            .canonicalize()
+            .unwrap()
+            .join("new")
+            .join("deeper")
+            .join("screen.ice");
+        assert_eq!(canonical_path(&unsaved).unwrap(), expected);
+    }
     use stats_alloc::{INSTRUMENTED_SYSTEM, Region};
     use std::collections::BTreeSet;
     use std::fs;
