@@ -345,7 +345,7 @@ fn rejects_native_event_shapes_the_semantic_driver_cannot_represent() {
         ),
         (
             "a11y expand field",
-            "activate, focus, increment, or decrement",
+            "activate, focus, increment, decrement, or scroll-into-view",
         ),
     ] {
         let source = format!(

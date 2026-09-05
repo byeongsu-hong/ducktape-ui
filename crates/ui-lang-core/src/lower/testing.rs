@@ -785,6 +785,7 @@ fn resolve_accessibility_action(value: TestAccessibilityAction) -> ResolvedTestA
         TestAccessibilityAction::Focus => ResolvedTestAccessibilityAction::Focus,
         TestAccessibilityAction::Increment => ResolvedTestAccessibilityAction::Increment,
         TestAccessibilityAction::Decrement => ResolvedTestAccessibilityAction::Decrement,
+        TestAccessibilityAction::ScrollIntoView => ResolvedTestAccessibilityAction::ScrollIntoView,
     }
 }
 

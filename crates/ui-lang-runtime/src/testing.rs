@@ -621,6 +621,7 @@ pub enum AccessibilityAction {
     Focus,
     Increment,
     Decrement,
+    ScrollIntoView,
 }
 
 /// The part of the status item a `expect tray` step asserts.
@@ -1628,6 +1629,7 @@ struct IdSelector<Message> {
 #[derive(Clone)]
 struct SemanticActionTarget<Message> {
     activate: Option<Message>,
+    node: crate::SemanticFocus,
     focus: Option<crate::SemanticFocus>,
     increment: Option<Message>,
     decrement: Option<Message>,
@@ -1662,14 +1664,14 @@ impl<Message: Clone + 'static> Selector for SemanticActionSelector<Message> {
         let current = *occurrence;
         *occurrence += 1;
         (state.semantics.logical_id.as_deref() == Some(&self.logical_id)).then(|| {
+            let node = crate::SemanticFocus {
+                base: state.semantics.id,
+                occurrence: current,
+            };
             SemanticActionTarget {
                 activate: state.semantics.activate.clone(),
-                focus: (state.semantics.focus != crate::FocusBehavior::None).then_some(
-                    crate::SemanticFocus {
-                        base: state.semantics.id,
-                        occurrence: current,
-                    },
-                ),
+                node,
+                focus: (state.semantics.focus != crate::FocusBehavior::None).then_some(node),
                 increment: state.semantics.increment().cloned(),
                 decrement: state.semantics.decrement().cloned(),
                 disabled: state.semantics.disabled,
@@ -2952,6 +2954,12 @@ where
             AccessibilityAction::Focus => target.accessibility_supports_focus(),
             AccessibilityAction::Increment => target.accessibility_supports_increment(),
             AccessibilityAction::Decrement => target.accessibility_supports_decrement(),
+            AccessibilityAction::ScrollIntoView => self.invalid_action(
+                "expect a11y action",
+                "click, focus, increment, or decrement",
+                "scroll-into-view".to_owned(),
+                source,
+            ),
         };
         if actual != expected {
             self.accessibility_expectation_failed(
@@ -3125,6 +3133,9 @@ where
                 AccessibilityAction::Focus => self.accessibility_focus(&target, source),
                 AccessibilityAction::Increment => self.accessibility_step(&target, true, source),
                 AccessibilityAction::Decrement => self.accessibility_step(&target, false, source),
+                AccessibilityAction::ScrollIntoView => {
+                    self.accessibility_scroll_into_view(&target, source)
+                }
             },
         }
         None
@@ -3878,6 +3889,32 @@ where
             )
         });
         self.run_task(crate::focus_semantic(focus), Some(source));
+        self.settle(Some(source));
+    }
+
+    /// Scrolls the nearest identified scroll around the target until the
+    /// target is in view, the way a screen reader's `ScrollIntoView` request
+    /// does. A target no identified scroll encloses is an error: there is
+    /// nothing the request could move.
+    pub fn accessibility_scroll_into_view(&mut self, id: &str, source: Location) {
+        let target = self.require_semantic_action_target(id, source);
+        let scrolled = self.with_interface(|interface, renderer, _| {
+            let mut operation = crate::ScrollIntoViewOperation::<P::Message>::new(target.node);
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            let found = operation.found_scroll();
+            if let Outcome::Chain(mut scroll) = operation.finish() {
+                interface.operate(renderer, scroll.as_mut());
+            }
+            found
+        });
+        if !scrolled {
+            self.invalid_action(
+                "accessibility scroll-into-view",
+                "a target inside an identified scroll",
+                format!("{id} has no identified scroll around it"),
+                source,
+            );
+        }
         self.settle(Some(source));
     }
 

@@ -534,6 +534,7 @@ produce a deterministic AccessKit tree:
 | `pick` / `combo` | `ComboBox` | placeholder or search label, selected value, focus state |
 | `editor` | `MultilineTextInput` | placeholder or default label, current value, disabled/focus state |
 | labeled `image` | `Image` | label and optional description |
+| any node inside an identified `scroll` | its own role | `ScrollIntoView`: the nearest identified scroll moves just far enough to show the node |
 
 A positional input label, compact button string, and visible checkbox or toggler
 label are default accessible names; `label=` overrides them. A button whose

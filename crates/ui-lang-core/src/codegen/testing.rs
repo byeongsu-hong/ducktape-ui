@@ -611,6 +611,7 @@ fn generate_test(
                     ResolvedTestAccessibilityAction::Focus => "Focus",
                     ResolvedTestAccessibilityAction::Increment => "Increment",
                     ResolvedTestAccessibilityAction::Decrement => "Decrement",
+                    ResolvedTestAccessibilityAction::ScrollIntoView => "ScrollIntoView",
                 };
                 writeln!(
                     out,
