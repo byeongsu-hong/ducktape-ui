@@ -16,10 +16,6 @@ use ui_lang_core::{
     editor_indentation as indentation,
 };
 
-#[cfg(test)]
-#[global_allocator]
-static TEST_ALLOCATOR: dhat::Alloc = dhat::Alloc;
-
 struct DiagnosticReport {
     diagnostics: Vec<(String, Value)>,
     reachable_components: BTreeSet<(String, usize)>,
@@ -3991,10 +3987,10 @@ mod tests {
             expected.push_str("  item\n");
         }
 
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let before = crate::allocation::GLOBAL.stats();
         let formatted =
             std::hint::black_box(ui_lang_core::format_fragment(std::hint::black_box(&source)));
-        let heap = dhat::HeapStats::get();
+        let heap = crate::allocation::since(before);
         eprintln!(
             "formatted {LINES} indented lines: {} heap blocks / {} bytes",
             heap.total_blocks, heap.total_bytes
@@ -4027,7 +4023,7 @@ mod tests {
         let mut db = seeded_db(&documents);
         let retained = db.query_root(&root).unwrap();
 
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let before = crate::allocation::GLOBAL.stats();
         for _ in 0..REQUESTS {
             let SemanticDocument::Retained(semantic) =
                 checked_document(&mut db, &documents, &uri).unwrap()
@@ -4036,7 +4032,7 @@ mod tests {
             };
             assert!(Arc::ptr_eq(&retained, &semantic));
         }
-        let stats = dhat::HeapStats::get();
+        let stats = crate::allocation::since(before);
         assert!(
             stats.total_blocks <= REQUESTS * MAX_BLOCKS_PER_REQUEST,
             "semantic lookup allocated too many blocks: {stats:?}"
@@ -4096,7 +4092,7 @@ mod tests {
             .unwrap();
         let documents = Documents::from([(target_uri.clone(), target)]);
 
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let before = crate::allocation::GLOBAL.stats();
         let actions = code_actions_at_with_db(
             &mut db,
             &documents,
@@ -4110,7 +4106,7 @@ mod tests {
             }),
         )
         .unwrap();
-        let heap = dhat::HeapStats::get();
+        let heap = crate::allocation::since(before);
         let metrics = db.take_metrics();
 
         assert!(actions.iter().any(|action| {
@@ -5429,8 +5425,7 @@ mod tests {
         assert_eq!(warm["activeParameter"], 1);
         db.take_metrics();
 
-        let expected = (REQUESTS as u64 * 59, REQUESTS as u64 * 5_474);
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let expected = (REQUESTS as u64 * 59, REQUESTS as u64 * 5_354);
         let measured = crate::allocation::clean_window(expected.0, || {
             for _ in 0..REQUESTS {
                 let signature = signature_help_at_with_db(&mut db, &documents, &position).unwrap();
@@ -5513,7 +5508,7 @@ mod tests {
         db.take_metrics();
         workspace_index.take_metrics();
 
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let before = crate::allocation::GLOBAL.stats();
         let started = Instant::now();
         for _ in 0..REQUESTS {
             let items = completion_items_at_with_db(&mut db, &documents, &position(10)).unwrap();
@@ -5531,7 +5526,7 @@ mod tests {
             .unwrap();
         }
         let elapsed = started.elapsed();
-        let heap = dhat::HeapStats::get();
+        let heap = crate::allocation::since(before);
         let metrics = db.take_metrics();
         let index_metrics = workspace_index.take_metrics();
         assert!(
@@ -6157,7 +6152,6 @@ mod tests {
         const SOURCE: &str = r#"one,(two,three),"four,five",six"#;
         assert_eq!(count(super::top_level_positions(SOURCE, ',')), 3);
 
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(0, || {
             for _ in 0..CALLS {
                 assert_eq!(

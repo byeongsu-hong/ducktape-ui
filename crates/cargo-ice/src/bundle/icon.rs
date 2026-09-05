@@ -223,11 +223,11 @@ mod tests {
         let source = source();
         drop(ico(&source).expect("warm the icon renderer"));
 
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let before = crate::allocation::GLOBAL.stats();
         for _ in 0..RENDERS {
             std::hint::black_box(ico(std::hint::black_box(&source)).expect("render the icon"));
         }
-        let heap = dhat::HeapStats::get();
+        let heap = crate::allocation::since(before);
 
         eprintln!(
             "{RENDERS} ICO renders: {} heap blocks / {} bytes",

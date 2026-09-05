@@ -647,11 +647,11 @@ mod tests {
             .collect();
         drop(watch_excluded_roots(&graph));
 
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let before = crate::allocation::GLOBAL.stats();
         for _ in 0..REFRESHES {
             std::hint::black_box(watch_excluded_roots(std::hint::black_box(&graph)));
         }
-        let heap = dhat::HeapStats::get();
+        let heap = crate::allocation::since(before);
 
         eprintln!(
             "{REFRESHES} excluded-root refreshes: {} heap blocks / {} bytes",

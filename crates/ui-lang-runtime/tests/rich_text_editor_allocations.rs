@@ -6,6 +6,8 @@ use iced::keyboard::key::{Code, Named, Physical};
 use iced::keyboard::{Key, Location, Modifiers};
 use iced::widget::text_editor::{self, Content, Cursor, Edit, Position};
 use iced::{Color, Event, Font, Length, Pixels, Point, Rectangle, Size, Theme};
+use stats_alloc::{INSTRUMENTED_SYSTEM, StatsAlloc};
+use std::alloc::System;
 use std::fs::OpenOptions;
 use std::hint::black_box;
 use std::io::Write as _;
@@ -15,7 +17,7 @@ use ui_lang_runtime::rich_text_editor::Format;
 use ui_lang_runtime::{ContentVersion, EditorChange, RichTextEditor, rich_text_editor::Action};
 
 #[global_allocator]
-static ALLOCATOR: dhat::Alloc = dhat::Alloc;
+static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 const LINE_COUNT: usize = 100_000;
 
@@ -59,8 +61,7 @@ fn performance_contract_rich_motion_allocations() {
         (Named::PageUp, Code::PageUp),
         (Named::PageDown, Code::PageDown),
     ];
-    let profiler = dhat::Profiler::builder().testing().build();
-    let before = dhat::HeapStats::get();
+    let before = GLOBAL.stats();
     for (named, code) in commands {
         let key = Key::Named(named);
         let event = Event::Keyboard(keyboard::Event::KeyPressed {
@@ -84,8 +85,7 @@ fn performance_contract_rich_motion_allocations() {
             &viewport,
         );
     }
-    let after = dhat::HeapStats::get();
-    drop(profiler);
+    let after = GLOBAL.stats();
 
     assert_eq!(messages.len(), commands.len());
     assert!(
@@ -94,8 +94,8 @@ fn performance_contract_rich_motion_allocations() {
             .all(|message| matches!(message, Action::MoveTo(_)))
     );
     let allocated = (
-        after.total_blocks - before.total_blocks,
-        after.total_bytes - before.total_bytes,
+        after.allocations - before.allocations,
+        after.bytes_allocated - before.bytes_allocated,
     );
     eprintln!(
         "six rich-motion commands: {} allocations, {} bytes",
@@ -171,18 +171,17 @@ fn gutter_drag_moves_do_not_allocate_boundary_buffers() {
         iced::event::Status::Captured
     );
 
-    // The `clean_window` policy the stats_alloc contracts use, spelled against
-    // dhat's counters: dhat measures the whole process, so libtest's own
-    // main-thread setup can land inside a measured window. A drag that
+    // The `clean_window` policy the other allocation contracts use: the
+    // allocator counts the whole process, so libtest's own main-thread setup
+    // can land inside a measured window. A drag that
     // allocated would dirty *every* window; a one-time foreign block dirties
     // at most one, so the drag is measured up to `WINDOWS` times and the
     // contract asks for one clean window rather than a clean process.
     const WINDOWS: usize = 4;
 
-    let profiler = dhat::Profiler::builder().testing().build();
     let mut allocated = (0, 0);
     for _ in 0..WINDOWS {
-        let before = dhat::HeapStats::get();
+        let before = GLOBAL.stats();
         for index in 0..MOVES {
             let point = Point::new(45.0, if index % 2 == 0 { 90.0 } else { 110.0 });
             assert_eq!(
@@ -193,16 +192,15 @@ fn gutter_drag_moves_do_not_allocate_boundary_buffers() {
                 iced::event::Status::Captured
             );
         }
-        let after = dhat::HeapStats::get();
+        let after = GLOBAL.stats();
         allocated = (
-            after.total_blocks - before.total_blocks,
-            after.total_bytes - before.total_bytes,
+            after.allocations - before.allocations,
+            after.bytes_allocated - before.bytes_allocated,
         );
         if allocated == (0, 0) {
             break;
         }
     }
-    drop(profiler);
 
     eprintln!(
         "{MOVES} gutter drag moves across {LINES} lines: {} allocations, {} bytes",
@@ -269,9 +267,8 @@ fn allocation_contract_100k_total_allocations() {
     drop(editor);
 
     // Starting after the 100k-line fixture is fully shaped isolates allocation
-    // totals for the named operation. HeapStats snapshots do not allocate and
-    // total_blocks/total_bytes are monotonic while this profiler is active.
-    let profiler = dhat::Profiler::builder().testing().build();
+    // totals for the named operation. `stats()` snapshots do not allocate and
+    // allocations/bytes_allocated are monotonic.
     let mut records = Vec::with_capacity(6);
 
     measure(&mut records, "caret_1000", 1_000, 2_000, 1_000_000, || {
@@ -471,7 +468,6 @@ fn allocation_contract_100k_total_allocations() {
         },
     );
 
-    drop(profiler);
     assert_allocation_budgets(&records);
 }
 
@@ -483,11 +479,11 @@ fn measure(
     allocated_bytes_budget: u64,
     operation: impl FnOnce(),
 ) {
-    let before = dhat::HeapStats::get();
+    let before = GLOBAL.stats();
     operation();
-    let after = dhat::HeapStats::get();
-    let allocation_count = after.total_blocks - before.total_blocks;
-    let allocated_bytes = after.total_bytes - before.total_bytes;
+    let after = GLOBAL.stats();
+    let allocation_count = (after.allocations - before.allocations) as u64;
+    let allocated_bytes = (after.bytes_allocated - before.bytes_allocated) as u64;
     let injected = std::env::var_os("ICE_EDITOR_PERF_INJECT_HEAP_FAILURE");
     let (allocation_count_budget, allocated_bytes_budget) = allocation_budgets(
         scenario,
@@ -583,7 +579,7 @@ fn write_record_to(path: &std::path::Path, record: &AllocationRecord) {
         "scenario": record.scenario,
         "document_lines": LINE_COUNT + 1,
         "iterations": record.iterations,
-        "collector": "dhat-0.3.3",
+        "collector": "stats_alloc-0.1.10",
         "scope": "operation-only",
         "allocation_count": record.allocation_count,
         "allocated_bytes": record.allocated_bytes,

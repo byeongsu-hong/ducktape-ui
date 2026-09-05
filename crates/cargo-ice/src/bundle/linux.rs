@@ -253,7 +253,7 @@ mod tests {
 
         let meta = showcase_meta();
         let expected = control_file(&meta, "amd64", 42, "libc6 (>= 2.34)").len();
-        let _profiler = dhat::Profiler::builder().testing().build();
+        let before = crate::allocation::GLOBAL.stats();
         for _ in 0..DOCUMENTS {
             std::hint::black_box(control_file(
                 std::hint::black_box(&meta),
@@ -262,7 +262,7 @@ mod tests {
                 "libc6 (>= 2.34)",
             ));
         }
-        let heap = dhat::HeapStats::get();
+        let heap = crate::allocation::since(before);
 
         eprintln!(
             "{DOCUMENTS} Debian control files ({expected} bytes): {} heap blocks / {} bytes",

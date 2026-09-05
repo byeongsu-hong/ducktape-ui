@@ -712,7 +712,6 @@ mod tests {
         // what this pins; the bytes are reported, not asserted.
         const BLOCKS: u64 = 9_558;
         let mut resolved = None;
-        let _profiler = dhat::Profiler::builder().testing().build();
         let measured = crate::allocation::clean_window(BLOCKS, || {
             resolved = Some(BundleMeta::resolve(&package, Platform::MacOs).expect("resolve"));
         });
