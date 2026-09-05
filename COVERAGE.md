@@ -64,14 +64,14 @@ copying unrelated workspace state or invalidating the retained root. The LSP
 synchronizes overlay strings only on open/change/close, retains a
 workspace app-root index instead of rediscovering and rereading every `.ice`
 file during navigation, and carries `Arc<FileAnalysis>` through diagnostics and
-all semantic request families. Pointer-identity and `dhat` allocation contracts
+all semantic request families. Pointer-identity and `stats_alloc` allocation contracts
 guard against checked-document and open-overlay copies. A 500-node mixed-request
 performance contract uses a nonempty workspace plus an open imported fragment,
 exercises all five request families including navigation, and proves zero
 source loads, hashes, import scans, semantic checks, workspace rescans, or
 workspace source reads under explicit wall-time and heap-allocation budgets. A
 1,000-file real-disk closure contract proves repeated requests perform no
-metadata calls inside the validation epoch, and a many-root/many-alias `dhat`
+metadata calls inside the validation epoch, and a many-root/many-alias allocation
 contract exercises the actual qualification branch.
 The server dynamically registers a `**/*` workspace watch so both Ice sources
 and arbitrary font/icon asset paths are covered, records pending, accepted, and
@@ -179,9 +179,9 @@ layout. The contracts record materialized source bytes, owned parsed-line
 strings and bytes, owned styled text, line-vector slots, mapping and
 styled-signature comparisons, highlighting, rebuilding, and shaping.
 
-A separate release-mode integration-test process installs the safe `dhat`
-allocator wrapper and starts its profiler only after the initial 100,001
-logical lines have been shaped. Monotonic `HeapStats` snapshots give the total
+A separate release-mode integration-test process installs the `stats_alloc`
+counting allocator and takes its first snapshot only after the initial 100,001
+logical lines have been shaped. Monotonic `stats()` snapshots give the total
 allocation count and requested bytes routed through Rust's global allocator
 for each exact operation scope, including allocations in runtime dependencies.
 The wrapper keeps unsafe allocator implementation out of this workspace's
