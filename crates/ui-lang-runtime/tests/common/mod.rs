@@ -55,11 +55,12 @@ pub fn clean_window_allocations(expected: usize, mut batch: impl FnMut()) -> Sta
     stats
 }
 
+/// The sample at percentile `rank`, by the one index rule
+/// [`ui_lang_template::trace::percentile`] fixes: `(len - 1) * rank / 100`.
 pub fn percentile(samples: &[u128], rank: usize) -> u128 {
     let mut sorted = samples.to_vec();
     sorted.sort_unstable();
-    let index = (sorted.len() * rank).div_ceil(100).saturating_sub(1);
-    sorted[index]
+    sorted[(sorted.len() - 1) * rank / 100]
 }
 
 pub fn percentile_usize(samples: &[usize], rank: usize) -> usize {
