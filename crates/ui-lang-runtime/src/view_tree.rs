@@ -323,7 +323,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 ..widget::container::Style::default()
             });
             accessible(container, StableId::new(key), Role::GenericContainer)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
         }
         wire::Node::Linear {
@@ -382,7 +382,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 StableId::new(key),
                 Role::GenericContainer,
             )
-            .logical_id(key.clone())
+            .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .into()
         }
         wire::Node::Scroll {
@@ -415,7 +415,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 scroll = scroll.height(length(*height));
             }
             accessible(scroll, StableId::new(key), Role::ScrollView)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
         }
         wire::Node::Text {
@@ -445,7 +445,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 StableId::new(key),
                 Role::Label,
             )
-            .logical_id(key.clone())
+            .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .value(content.clone())
             .into()
         }
@@ -459,7 +459,12 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
             secure,
             style,
         } => {
-            let current = inputs.text(key, value).to_owned();
+            // Borrowed for the widget, which copies it into its own owned
+            // state right away (`TextInput::new` builds a `String` and a
+            // `Value` from these references) — an owned copy here is only
+            // ever needed for the accessible value below, and a secure field
+            // never reports one.
+            let current = inputs.text(key, value);
             let role = match secure {
                 true => Role::PasswordInput,
                 false => Role::TextInput,
@@ -474,7 +479,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 }
             };
             let style = *style;
-            let mut input = widget::text_input(placeholder, &current)
+            let mut input = widget::text_input(placeholder, current)
                 .id(widget::Id::from(key.clone()))
                 .secure(*secure)
                 .on_input(edit)
@@ -484,10 +489,10 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 input = input.width(length(*width));
             }
             accessible(input, StableId::new(key), role)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .focus_id(widget::Id::from(key.clone()))
                 .label(placeholder.clone())
-                .value_maybe((!secure).then_some(current))
+                .value_maybe((!secure).then(|| current.to_owned()))
                 .disabled(false)
                 .into()
         }
@@ -501,13 +506,18 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
             padding: edges,
             style,
         } => {
-            let (label, inner): (Option<String>, IceElement<'static, Output>) = match content {
+            // The label fallback is only cloned into an owned `String` when
+            // an explicit accessible `name` is absent — `name.clone()` wins
+            // over it via `.or_else` whenever one is set, so a button that
+            // names its own accessible label never pays for the fallback.
+            let (label_fallback, inner): (Option<&str>, IceElement<'static, Output>) = match content
+            {
                 wire::ButtonContent::Label(label) => {
-                    (Some(label.clone()), widget::text(label.clone()).into())
+                    (Some(label.as_str()), widget::text(label.clone()).into())
                 }
                 wire::ButtonContent::Child(child) => (None, render_node(child, inputs)),
             };
-            let label = name.clone().or(label);
+            let label = name.clone().or_else(|| label_fallback.map(str::to_owned));
             let activate = on_press.map(Output::Activate);
             let style = *style;
             let mut button = widget::button(inner)
@@ -523,7 +533,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 button = button.padding(padding(*edges));
             }
             accessible(button, StableId::new(key), Role::Button)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .focus_id(widget::Id::from(key.clone()))
                 .label(label.unwrap_or_default())
                 .disabled(on_press.is_none())
@@ -560,7 +570,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 wire::Axis::Column => widget::rule::vertical(thickness).style(styled).into(),
             };
             accessible(widget::container(rule), StableId::new(key), Role::Splitter)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
         }
     }
