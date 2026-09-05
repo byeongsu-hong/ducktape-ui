@@ -38,7 +38,7 @@ test-runtime = [
 ]
 
 [dependencies]
-accesskit = "=0.24.1"
+accesskit = "=0.25.0"
 ouroboros = "0.18"
 rustc-hash = "2.0"
 iced = { version = "=0.14.0", default-features = false, features = ["advanced", "canvas", "qr_code"] }
