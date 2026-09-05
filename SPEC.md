@@ -564,6 +564,14 @@ and action behavior without a native adapter, and a daemon on them exports
 nothing. Rich text and advanced widgets are outside this Core semantic
 contract.
 
+The preferences a user sets in the operating system that no assistive
+technology relays — Reduce Motion, Increase Contrast, and whether a screen
+reader is running — are read through `ui_lang_runtime::accessibility_settings()`.
+macOS answers from `NSWorkspace`; the other platforms report no motion or
+contrast preference and a screen reader only once one activates the tree. Ice
+has no startup hook that seeds state from it: a program reads it through an
+`extern`.
+
 ### Theme and style
 
 A `theme contract` declares semantic tokens; each `palette` provides exactly one

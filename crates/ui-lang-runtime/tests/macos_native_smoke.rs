@@ -171,8 +171,16 @@ mod macos {
             .expect("the channel is open");
         assert_eq!(request.action, Action::Click);
         assert_eq!(request.target_node, BUTTON);
+
+        // The display preferences come from the same `NSWorkspace` a shipped
+        // app asks; the values depend on the machine, reaching them does not.
+        let settings = ui_lang_runtime::accessibility_settings();
+        assert!(
+            settings.screen_reader,
+            "the tree was just activated, so a screen reader counts as running"
+        );
         println!(
-            "macos_native_smoke: exported {label} at scale {scale}, frame {frame:?}, press routed"
+            "macos_native_smoke: exported {label} at scale {scale}, frame {frame:?}, press routed, settings {settings:?}"
         );
     }
 }
