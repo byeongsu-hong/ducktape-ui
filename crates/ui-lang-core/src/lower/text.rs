@@ -66,6 +66,7 @@ pub(crate) struct ResolvedTextOptions {
     pub(crate) underline: Option<CheckedExprUseId>,
     pub(crate) strikethrough: Option<CheckedExprUseId>,
     pub(crate) live: Option<TextLive>,
+    pub(crate) heading: Option<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -429,6 +430,7 @@ impl Lowerer {
             underline,
             strikethrough,
             live: options.live,
+            heading: options.heading,
         })
     }
 

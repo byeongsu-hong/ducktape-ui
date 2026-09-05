@@ -659,6 +659,7 @@ fn text(
         "tracking",
     )?;
     refuse_when(program, origin, options.live.is_some(), "a live region")?;
+    refuse_when(program, origin, options.heading.is_some(), "a heading")?;
     refuse_when(
         program,
         origin,

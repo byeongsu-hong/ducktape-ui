@@ -48,6 +48,14 @@ pub(in crate::parser) fn parse_text(
                     return Err(error("E063", line, "text live must be polite or assertive"));
                 }
             });
+        } else if let Some(value) = part.strip_prefix("heading=") {
+            options.heading = Some(
+                value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|level| (1..=6).contains(level))
+                    .ok_or_else(|| error("E063", line, "text heading must be 1 to 6"))?,
+            );
         } else if let Some(value) = part.strip_prefix("style=") {
             options.custom_style = Some(parse_extern_call(
                 value,

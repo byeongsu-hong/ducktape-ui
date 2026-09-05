@@ -85,6 +85,7 @@ test generated_control_accessibility
   viewport 520 420
   mount
     col p=20.0 gap=12.0
+      text "Controls" #title heading=2
       toggler "Feature" #toggle -> accepted_changed _
         with
           label="Feature toggle"
@@ -102,6 +103,7 @@ test generated_control_accessibility
           hint="Notes"
           disabled=true
           h=72.0
+  target title = #title
   target toggle = #toggle
   target slider = #slider
   target progress = #progress
@@ -109,6 +111,8 @@ test generated_control_accessibility
   target pick = #pick
   target combo = #combo
   target editor = #editor
+  expect a11y title role "heading"
+  expect a11y title value "Controls"
   expect a11y toggle role "switch"
   expect a11y toggle name "Feature toggle"
   expect toggle.accessibility_description == "Controls feature state"

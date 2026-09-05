@@ -460,6 +460,23 @@ view
         "{}",
         error.message
     );
+    let heading = parse(&source.replace("tracking=1.2", "heading=2")).unwrap();
+    let ViewNode::Layout { children, .. } = &heading.view else {
+        panic!("expected a layout");
+    };
+    let ViewNode::Text { options, .. } = &children[0] else {
+        panic!("expected a text");
+    };
+    assert_eq!(options.heading, Some(2));
+    for value in ["heading=0", "heading=7", "heading=two"] {
+        let error = parse(&source.replace("tracking=1.2", value)).unwrap_err();
+        assert_eq!(error.code, "E063", "{value}");
+        assert!(
+            error.message.contains("1 to 6"),
+            "{value}: {}",
+            error.message
+        );
+    }
 
     // Tracking decides the lowering, so it cannot be deferred to runtime.
     for value in ["tracking=(size)", "tracking=-1.0", "tracking=2"] {
