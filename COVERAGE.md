@@ -802,9 +802,13 @@ where the gap was found, not where it lives.
 AccessKit tree construction and action dispatch are deterministic on every
 target. Native export is single-window on Linux and Windows, and on macOS it is
 per window: an `app` exports its one window and a `daemon` exports each window
-it opens. Daemon export on Linux and Windows, native export on other targets,
-and exact desktop screen-coordinate bounds are unsupported on stock Iced
-0.14.0. Rich text and
+it opens. Daemon export on Linux and Windows and native export on other targets
+are unsupported on stock Iced 0.14.0. Exported bounds are physical pixels, as
+AccessKit requires: the bridge multiplies iced's layout units by the window's
+backing scale — captured with the native handle and kept current by `Rescaled`
+events — and by the application's `scale` setting, and publishes the product as
+the root node's transform, so a Retina display reads the same frames the widgets
+draw. Rich text and
 widgets outside the table above have no Core semantics claim. First-class
 showcase tests exercise every newly mapped control role, exported state, and
 action.

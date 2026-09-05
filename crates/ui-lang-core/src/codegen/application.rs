@@ -461,7 +461,7 @@ pub(in crate::codegen) fn generate_boot(
     } else {
         writeln!(
             out,
-            "#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{\n::iced::window::oldest().then(|__id| match __id {{\n::std::option::Option::Some(__id) => ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityNativeWindow),\n::std::option::Option::None => ::iced::Task::none(),\n}})\n}}\n#[cfg(not(all(any(target_os = \"windows\", target_os = \"macos\"), not(test))))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{ ::iced::Task::none() }}\nfn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}#[cfg(all(target_os = \"windows\", not(test)))]\n{{\nstate.__ice_accessibility_initial = ::std::option::Option::Some(0);\n(state, Self::__accessibility_attach())\n}}\n#[cfg(not(all(target_os = \"windows\", not(test))))]\n{{\nlet task = state.__boot_task();\n{tray_sync}let __accessibility = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n(state, ::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()]))\n}}\n}}"
+            "#[cfg(all(any(target_os = \"windows\", target_os = \"macos\"), not(test)))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{\n::iced::window::oldest().then(|__id| match __id {{\n::std::option::Option::Some(__id) => ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityNativeWindow).chain(Self::__accessibility_scale(__id)),\n::std::option::Option::None => ::iced::Task::none(),\n}})\n}}\n#[cfg(all(target_os = \"linux\", not(test)))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{\n::iced::window::oldest().then(|__id| match __id {{\n::std::option::Option::Some(__id) => Self::__accessibility_scale(__id),\n::std::option::Option::None => ::iced::Task::none(),\n}})\n}}\n#[cfg(not(all(any(target_os = \"linux\", target_os = \"windows\", target_os = \"macos\"), not(test))))]\nfn __accessibility_attach() -> ::iced::Task<{message}> {{ ::iced::Task::none() }}\n// The bridge learns the backing scale from `Rescaled`; winit reports changes but not the initial value, so the attach asks once and delivers it through the same arm.\n#[cfg(all(any(target_os = \"linux\", target_os = \"windows\", target_os = \"macos\"), not(test)))]\nfn __accessibility_scale(__id: ::iced::window::Id) -> ::iced::Task<{message}> {{\n::iced::window::scale_factor(__id).map(move |__scale| {message}::__AccessibilityWindow(__id, ::iced::window::Event::Rescaled(__scale)))\n}}\nfn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}#[cfg(all(target_os = \"windows\", not(test)))]\n{{\nstate.__ice_accessibility_initial = ::std::option::Option::Some(0);\n(state, Self::__accessibility_attach())\n}}\n#[cfg(not(all(target_os = \"windows\", not(test))))]\n{{\nlet task = state.__boot_task();\n{tray_sync}let __accessibility = ::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)));\n(state, ::iced::Task::batch([task, __accessibility, Self::__accessibility_attach()]))\n}}\n}}"
         )
         .unwrap();
     }
@@ -706,9 +706,27 @@ pub(in crate::codegen) fn generate_update(
         )
         .unwrap();
     }
+    // A `scale` setting divides the layout the widgets see, so the bridge
+    // multiplies it back in before publishing physical-pixel bounds. An app's
+    // one bridge takes it as a whole; a daemon's shared bridge exports nothing
+    // natively, so only its per-window adapters below need it.
+    let application_scale = match (
+        program.settings().scale_factor.is_some(),
+        program.settings().kind,
+    ) {
+        (true, ProgramKind::Application) => {
+            "self.__ice_accessibility.set_application_scale(self.__scale_factor()); "
+        }
+        _ => "",
+    };
+    let window_scale = if program.settings().scale_factor.is_some() {
+        "self.__ice_accessibility_windows.set_application_scale(__id, self.__scale_factor(__id)); "
+    } else {
+        ""
+    };
     writeln!(
         out,
-        "{task_binding}match message {{\n{message}::__AccessibilitySnapshot(__snapshot) => {{ self.__ice_accessibility.update(*__snapshot); return ::iced::Task::none(); }},\n{message}::__AccessibilityAction(__request) => {{ let __refresh = matches!(__request.action, ::ui_lang_runtime::Action::Focus); let __task = self.__ice_accessibility.dispatch(__request); return if __refresh {{ __task.chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))) }} else {{ __task }}; }},\n{message}::__AccessibilityWindow(__id, __event) => {{ self.__ice_accessibility.window_event(__id, __event); return ::iced::Task::none(); }},"
+        "{task_binding}match message {{\n{message}::__AccessibilitySnapshot(__snapshot) => {{ {application_scale}self.__ice_accessibility.update(*__snapshot); return ::iced::Task::none(); }},\n{message}::__AccessibilityAction(__request) => {{ let __refresh = matches!(__request.action, ::ui_lang_runtime::Action::Focus); let __task = self.__ice_accessibility.dispatch(__request); return if __refresh {{ __task.chain(::ui_lang_runtime::snapshot::<{message}>({accessibility_root}).map(|__snapshot| {message}::__AccessibilitySnapshot(::std::boxed::Box::new(__snapshot)))) }} else {{ __task }}; }},\n{message}::__AccessibilityWindow(__id, __event) => {{ self.__ice_accessibility.window_event(__id, __event); return ::iced::Task::none(); }},"
     )
     .unwrap();
     if program.settings().kind == ProgramKind::Daemon {
@@ -723,7 +741,7 @@ pub(in crate::codegen) fn generate_update(
         // still sees every event, so the deterministic tree is unchanged.
         writeln!(
             out,
-            "#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowEvent(__id, __event) => {{\nlet __opened = matches!(__event, ::iced::window::Event::Opened {{ .. }});\nself.__ice_accessibility.window_event(__id, __event.clone());\nself.__ice_accessibility_windows.window_event(__id, __event);\nif __opened {{\nreturn ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityWindowNative);\n}}\nreturn ::iced::Task::none();\n}},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowNative(__window) => {{\nlet __id = __window.id();\nif !self.__ice_accessibility_windows.attach(__window) {{ return ::iced::Task::none(); }}\nreturn ::ui_lang_runtime::snapshot_in::<{message}>({accessibility_root}, __id).map(move |__snapshot| {message}::__AccessibilityWindowSnapshot(__id, ::std::boxed::Box::new(__snapshot)));\n}},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowSnapshot(__id, __snapshot) => {{ self.__ice_accessibility_windows.update(__id, *__snapshot); return ::iced::Task::none(); }},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowAction(__id, __request) => {{\nlet __task = self.__ice_accessibility_windows.dispatch(__id, __request);\nreturn __task.chain(::ui_lang_runtime::snapshot_in::<{message}>({accessibility_root}, __id).map(move |__snapshot| {message}::__AccessibilityWindowSnapshot(__id, ::std::boxed::Box::new(__snapshot))));\n}},"
+            "#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowEvent(__id, __event) => {{\nlet __opened = matches!(__event, ::iced::window::Event::Opened {{ .. }});\nself.__ice_accessibility.window_event(__id, __event.clone());\nself.__ice_accessibility_windows.window_event(__id, __event);\nif __opened {{\nreturn ::ui_lang_runtime::native_window(__id).map({message}::__AccessibilityWindowNative).chain(::iced::window::scale_factor(__id).map(move |__scale| {message}::__AccessibilityWindowEvent(__id, ::iced::window::Event::Rescaled(__scale))));\n}}\nreturn ::iced::Task::none();\n}},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowNative(__window) => {{\nlet __id = __window.id();\nif !self.__ice_accessibility_windows.attach(__window) {{ return ::iced::Task::none(); }}\nreturn ::ui_lang_runtime::snapshot_in::<{message}>({accessibility_root}, __id).map(move |__snapshot| {message}::__AccessibilityWindowSnapshot(__id, ::std::boxed::Box::new(__snapshot)));\n}},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowSnapshot(__id, __snapshot) => {{ {window_scale}self.__ice_accessibility_windows.update(__id, *__snapshot); return ::iced::Task::none(); }},\n#[cfg(all(target_os = \"macos\", not(test)))]\n{message}::__AccessibilityWindowAction(__id, __request) => {{\nlet __task = self.__ice_accessibility_windows.dispatch(__id, __request);\nreturn __task.chain(::ui_lang_runtime::snapshot_in::<{message}>({accessibility_root}, __id).map(move |__snapshot| {message}::__AccessibilityWindowSnapshot(__id, ::std::boxed::Box::new(__snapshot))));\n}},"
         )
         .unwrap();
     } else {

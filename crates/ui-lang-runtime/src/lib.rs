@@ -2070,12 +2070,52 @@ pub fn native_window(id: iced::window::Id) -> Task<NativeWindow> {
     })
 }
 
+/// The factor from iced's layout units to the physical pixels AccessKit
+/// expects: the window's backing scale times the application's `scale`
+/// setting. Published as the root node's transform, so the consumer scales
+/// every descendant's bounds and hit-tests through the same matrix.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Scale {
+    window: f32,
+    application: f32,
+}
+
+impl Default for Scale {
+    fn default() -> Self {
+        Self {
+            window: 1.0,
+            application: 1.0,
+        }
+    }
+}
+
+impl Scale {
+    fn apply(self, update: &mut TreeUpdate) {
+        let factor = f64::from(self.window) * f64::from(self.application);
+        if factor == 1.0 || !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        let root = update.tree.as_ref().map_or(ROOT_ID, |tree| tree.root);
+        if let Some((_, node)) = update.nodes.iter_mut().find(|(id, _)| *id == root) {
+            node.set_transform(accesskit::Affine::scale(factor));
+        }
+    }
+}
+
 /// Owns the native adapter and the action map for the latest frame.
 pub struct Bridge<Message> {
     id: u64,
     snapshot: Option<Snapshot<Message>>,
     receiver: Arc<Mutex<Option<iced::futures::channel::mpsc::Receiver<ActionRequest>>>>,
     latest_tree: Arc<Mutex<Option<TreeUpdate>>>,
+    /// Physical pixels per layout unit: the window's backing scale times the
+    /// application's own `scale` setting. AccessKit takes physical pixels —
+    /// every native adapter divides by the backing scale on its way to the
+    /// platform — while iced lays out in logical units, so the published root
+    /// carries this as its transform. The backing scale arrives as a
+    /// `Rescaled` event: generated code asks `iced::window::scale_factor` once
+    /// the native adapter is attached, and winit reports every later change.
+    scale: Scale,
     #[cfg(target_os = "linux")]
     adapter: Option<accesskit_unix::Adapter>,
     #[cfg(target_os = "windows")]
@@ -2196,6 +2236,7 @@ impl<Message> Bridge<Message> {
             snapshot: None,
             receiver,
             latest_tree,
+            scale: Scale::default(),
             #[cfg(target_os = "linux")]
             adapter,
             #[cfg(target_os = "windows")]
@@ -2224,7 +2265,8 @@ impl<Message> Bridge<Message> {
         // `update_if_active`'s closure, so it is paid only while assistive
         // technology is actually listening, and the activation cache takes
         // the value by move.
-        let update = snapshot.update.clone();
+        let mut update = snapshot.update.clone();
+        self.scale.apply(&mut update);
         #[cfg(target_os = "linux")]
         if let Some(adapter) = &mut self.adapter {
             adapter.update_if_active(|| update.clone());
@@ -2320,8 +2362,23 @@ impl<Message> Bridge<Message> {
         true
     }
 
-    /// Applies focus truth for the single native window owned by this bridge.
+    /// The application's own `scale` setting, multiplied into the window's
+    /// backing scale for every tree published from here on.
+    pub fn set_application_scale(&mut self, scale: f32) {
+        self.scale.application = scale;
+    }
+
+    /// Applies focus and scale truth for the single native window owned by
+    /// this bridge.
     pub fn window_event(&mut self, id: iced::window::Id, event: iced::window::Event) {
+        if let iced::window::Event::Rescaled(scale) = event {
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+            if *self.window.get_or_insert(id) != id {
+                return;
+            }
+            self.scale.window = scale;
+            return;
+        }
         #[cfg(target_os = "linux")]
         {
             let Some(adapter) = &mut self.adapter else {
@@ -2411,6 +2468,7 @@ struct WindowEntry<Message> {
     latest_tree: Arc<Mutex<Option<TreeUpdate>>>,
     snapshot: Option<Snapshot<Message>>,
     adapter: accesskit_macos::SubclassingAdapter,
+    scale: Scale,
 }
 
 /// Hands a tree update's NSAccessibility notifications to the next turn of the
@@ -2560,6 +2618,7 @@ impl<Message> WindowBridges<Message> {
                 latest_tree,
                 snapshot: None,
                 adapter,
+                scale: Scale::default(),
             },
         );
         true
@@ -2575,7 +2634,8 @@ impl<Message> WindowBridges<Message> {
         let Some(entry) = self.windows.get_mut(&window) else {
             return;
         };
-        let update = snapshot.update.clone();
+        let mut update = snapshot.update.clone();
+        entry.scale.apply(&mut update);
         if let Some(events) = entry.adapter.update_if_active(|| update.clone()) {
             raise_on_next_turn(events);
         }
@@ -2583,10 +2643,23 @@ impl<Message> WindowBridges<Message> {
         entry.snapshot = Some(snapshot);
     }
 
-    /// Applies focus truth for one window.
+    /// One window's share of the daemon's `scale` setting.
+    pub fn set_application_scale(&mut self, window: iced::window::Id, scale: f32) {
+        if let Some(entry) = self.windows.get_mut(&window) {
+            entry.scale.application = scale;
+        }
+    }
+
+    /// Applies focus and scale truth for one window.
     pub fn window_event(&mut self, window: iced::window::Id, event: iced::window::Event) {
         if matches!(event, iced::window::Event::Closed) {
             self.close(window);
+            return;
+        }
+        if let iced::window::Event::Rescaled(scale) = event {
+            if let Some(entry) = self.windows.get_mut(&window) {
+                entry.scale.window = scale;
+            }
             return;
         }
         let focused = match event {
@@ -4382,6 +4455,29 @@ mod tests {
         );
 
         assert_eq!(renderer.quads.len(), 1);
+    }
+
+    #[test]
+    fn exported_bounds_follow_the_window_scale() {
+        let (mut ui, renderer) = interface();
+        let snapshot = snapshot(&mut ui, &renderer);
+        let mut bridge = Bridge::<Message>::without_native_adapter();
+        let window = iced::window::Id::unique();
+        bridge.window_event(window, iced::window::Event::Rescaled(2.0));
+        bridge.update(snapshot);
+
+        let tree = bridge
+            .latest_tree
+            .lock()
+            .expect("accessibility tree lock")
+            .clone()
+            .expect("published tree");
+        let (_, root) = tree
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == ROOT_ID)
+            .expect("root node");
+        assert_eq!(root.transform(), Some(&accesskit::Affine::scale(2.0)));
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
