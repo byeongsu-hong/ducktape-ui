@@ -4,14 +4,19 @@
 
 This is a Rust 2024 workspace for the Ice UI language. `crates/ui-lang-core/`
 contains the parser, AST, semantic checker, formatter, and Rust code generator.
-`crates/ui-lang/` provides the proc-macro adapter, `crates/ui-lang-runtime/`
+`crates/ui-lang/` provides the proc-macro adapter, `crates/ui-lang-build/` the
+build-script integration that compiles `.ice` sources, `crates/ui-lang-runtime/`
 contains runtime widgets and accessibility support, `crates/ui-lang-template/`
 defines the published view format both the generator and the runtime use,
 `crates/ui-lang-components/` provides the default component library, and `crates/cargo-ice/`
-implements the `cargo ice` tooling. Runnable applications live in `examples/`;
-their `.ice` sources are under `src/ui/` and supporting Rust code under `src/`.
-End-to-end language fixtures are in `crates/ui-lang-core/tests/cases/`. Do not
-edit `target/`.
+implements the `cargo ice` tooling. `crates/ui-lang-wire/` and
+`crates/ui-lang-guest/` carry an Ice app running in wasm: the wire between it
+and a host, and the guest runtime it is built on. Runnable applications live in
+`examples/`; their `.ice` sources are under `src/ui/` and supporting Rust code
+under `src/`. `examples/app-store/` is a separate workspace on purpose (its apps
+target wasm32 and its host pulls wasmtime). End-to-end language fixtures are in
+`crates/ui-lang-core/tests/cases/`; `conformance/ice/` holds the conformance
+suite. Do not edit `target/`.
 
 ## Build, Test, and Development Commands
 

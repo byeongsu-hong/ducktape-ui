@@ -331,9 +331,10 @@ rather than about compiler flags.
 cargo test --release -p showcase -- --ignored --nocapture --test-threads=1 frame_probe
 ```
 
-Every example carries one: `examples/<app>/src/frame_probe.rs` drives the real
-generated app through `testing::Driver` and prints p50/p95 per phase, each
-probing what that app's shape makes expensive — starter is the framework's own
+Every example but `terminal` and `two-windows` carries one:
+`examples/<app>/src/frame_probe.rs` drives the real generated app through
+`testing::Driver` and prints p50/p95 per phase, each probing what that app's
+shape makes expensive — starter is the framework's own
 floor, trading its dense terminal, cef-browser the browser's 16ms tick.
 `crates/ui-lang-runtime/tests/frame_probe.rs` is their counterpart for
 hand-written iced trees; use that one when the question is about a runtime

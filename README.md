@@ -242,6 +242,8 @@ cargo run -p candles-example   # native lightweight financial chart (see example
 cargo run -p trading-example   # live Hyperliquid markets, positions, and fills (see examples/trading)
 cargo run -p tray-example      # the smallest macOS menu bar app: status item, live label, native menu
 cargo run -p ai-chat-example   # streaming Codex chat: reasoning, tool calls, Markdown (see examples/ai-chat)
+cargo run -p hotreload-example # edit `.ice` while it runs: `cargo ice dev` hot reload (see examples/hotreload)
+cargo run -p two-windows-example # a daemon with two windows sharing one state
 ```
 
 Importing a wallet needs a signed build: the Secure Enclave and the
