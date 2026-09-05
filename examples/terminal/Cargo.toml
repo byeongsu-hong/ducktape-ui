@@ -10,7 +10,7 @@ shell-words = "=1.1.1"
 ui-lang-components = { path = "../../crates/ui-lang-components", default-features = false, features = ["terminal"] }
 ui-lang.workspace = true
 ui-lang-runtime.workspace = true
-which = "=8.0.5"
+which = "=8.0.6"
 
 [build-dependencies]
 ui-lang-build.workspace = true
