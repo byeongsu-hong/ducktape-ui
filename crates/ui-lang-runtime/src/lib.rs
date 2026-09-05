@@ -2035,6 +2035,41 @@ pub fn accessibility_active() -> bool {
     AT_ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The accessibility preferences a user sets in the operating system that a
+/// program has to honour itself, because no assistive technology relays them:
+/// motion to tone down, contrast to raise, and whether a screen reader is
+/// running at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AccessibilitySettings {
+    /// The user asked for less motion (macOS "Reduce motion").
+    pub reduce_motion: bool,
+    /// The user asked for more contrast (macOS "Increase contrast").
+    pub increase_contrast: bool,
+    /// A screen reader is running: VoiceOver on macOS, or any assistive
+    /// technology that has activated this process's tree.
+    pub screen_reader: bool,
+}
+
+/// Reads the settings as they are now. macOS answers from `NSWorkspace`; the
+/// other platforms report no motion or contrast preference and learn about a
+/// screen reader only once it activates the tree.
+pub fn accessibility_settings() -> AccessibilitySettings {
+    #[cfg(target_os = "macos")]
+    {
+        let workspace = objc2_app_kit::NSWorkspace::sharedWorkspace();
+        AccessibilitySettings {
+            reduce_motion: workspace.accessibilityDisplayShouldReduceMotion(),
+            increase_contrast: workspace.accessibilityDisplayShouldIncreaseContrast(),
+            screen_reader: workspace.isVoiceOverEnabled() || accessibility_active(),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    AccessibilitySettings {
+        screen_reader: accessibility_active(),
+        ..AccessibilitySettings::default()
+    }
+}
+
 /// The native Win32 handle captured before Iced shows its first window.
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone, Copy)]
@@ -4826,8 +4861,10 @@ mod tests {
         // one test that calls the activation handler — so no parallel test
         // races the process-wide flag.
         assert!(accessibility_active());
+        assert!(accessibility_settings().screen_reader);
         accesskit::DeactivationHandler::deactivate_accessibility(&mut Deactivation);
         assert!(!accessibility_active());
+        assert!(!accessibility_settings().screen_reader);
 
         let first = iced::window::Id::unique();
         let second = iced::window::Id::unique();

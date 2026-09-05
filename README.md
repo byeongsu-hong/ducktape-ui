@@ -210,7 +210,10 @@ subclasses the AppKit view beside boot, on the main thread). On macOS a
 opens, publishes a tree scoped to itself, keeps its own focus state, and takes
 its adapter with it when it closes. Daemon export on Linux and Windows, exact
 desktop bounds, rich text, and unlisted widgets are outside this Core
-contract.
+contract. `ui_lang_runtime::accessibility_settings()` reads the system
+preferences no screen reader relays — Reduce Motion, Increase Contrast, and
+whether a screen reader is running — from `NSWorkspace` on macOS; elsewhere it
+reports a screen reader only once one activates the tree.
 
 ## Installing a build
 

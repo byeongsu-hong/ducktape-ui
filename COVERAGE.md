@@ -773,6 +773,7 @@ Linux and Windows still exports nothing.
 | `editor` | `MultilineTextInput` with a placeholder/default name, current value, disabled state, and descendant focus action |
 | `image` | a labeled image is an `Image`; an unlabeled image is decorative and omitted, and `description=` requires `label=` |
 | focus | source/view-tree read and Tab/Shift+Tab order, disabled-target skip, button Enter/Space, checkbox/toggler Space, and a visible wrapper focus outline; no numeric focus order |
+| system preferences | `accessibility_settings()` returns Reduce Motion, Increase Contrast, and screen-reader-running as booleans. macOS reads all three from `NSWorkspace` (`isVoiceOverEnabled` or an activated tree counts as a screen reader); Linux and Windows report no motion or contrast preference and a screen reader only once one activates the tree — Windows' `SPI_GETCLIENTAREAANIMATION`/high-contrast and the GNOME `gtk-enable-animations` setting are not read. There is no Ice-level hook: a program reads it through an `extern`. Evidence: the Linux activation test sees `screen_reader` follow activation and deactivation; the macOS in-process smoke reads the settings after activating its tree and asserts the screen-reader bit |
 
 ### Gap: an extern's published accessibility node cannot be targeted
 

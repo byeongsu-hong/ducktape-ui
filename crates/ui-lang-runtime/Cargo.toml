@@ -68,6 +68,13 @@ dispatch2 = "=0.3.1"
 # Already in the graph via tray-icon's `muda`; used for the safe main-thread
 # checks guarding tray init and the NSAccessibility subclass.
 objc2 = "0.6"
+# Already in the graph via winit; `NSWorkspace` answers the accessibility
+# display preferences (`accessibility_settings`).
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSAccessibility",
+    "NSWorkspace",
+] }
 tray-icon = { version = "0.24", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]

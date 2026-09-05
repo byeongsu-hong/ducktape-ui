@@ -4244,6 +4244,7 @@ dependencies = [
  "iced_test",
  "iced_tiny_skia",
  "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
  "ouroboros",
  "png",
  "rustc-hash 2.1.3",
