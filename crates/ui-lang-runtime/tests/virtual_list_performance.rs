@@ -1,6 +1,7 @@
 #![cfg(not(debug_assertions))]
 
 mod common;
+use common::GLOBAL;
 
 use common::{assert_wall_clock_budgets, percentile_usize};
 
@@ -8,16 +9,12 @@ use iced::advanced::renderer;
 use iced::{Element, Font, Pixels, Size, Theme, mouse};
 use iced_test::runtime::UserInterface;
 use iced_test::runtime::user_interface;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-use std::alloc::System;
+use stats_alloc::Region;
 use std::cell::Cell;
 use std::sync::Arc;
 use ui_lang_runtime::{
     VirtualListConfig, VirtualListEvent, VirtualListId, VirtualListState, virtual_list,
 };
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[derive(Debug, Clone)]
 enum Message {

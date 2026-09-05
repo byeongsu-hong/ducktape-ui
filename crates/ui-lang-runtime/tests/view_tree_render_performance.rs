@@ -12,37 +12,13 @@
 #![cfg(not(debug_assertions))]
 
 mod common;
+use common::clean_window_allocations;
 
-use std::alloc::System;
 use std::time::Instant;
 
 use common::assert_wall_clock_budgets;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use ui_lang_runtime::view_tree::{Inputs, render};
 use ui_lang_wire as wire;
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
-
-/// A measured window may carry one foreign one-off: libtest sets up its own
-/// main-thread channel while the first test is already running, and that
-/// lands inside whichever region is open. So each batch runs in its own
-/// window, up to [`WINDOWS`] times, and the contract asks for one clean
-/// window rather than a clean process.
-const WINDOWS: usize = 4;
-
-fn clean_window(expected: usize, mut batch: impl FnMut()) -> stats_alloc::Stats {
-    let mut stats = Region::new(GLOBAL).change();
-    for _ in 0..WINDOWS {
-        let region = Region::new(GLOBAL);
-        batch();
-        stats = region.change();
-        if stats.allocations == expected {
-            break;
-        }
-    }
-    stats
-}
 
 fn text_node(nth: usize) -> wire::Node {
     wire::Node::Text {
@@ -109,7 +85,7 @@ fn render_within_budget(
     p95_budget_us: u128,
 ) {
     drop(render(root, inputs));
-    let stats = clean_window(expected_allocations, || {
+    let stats = clean_window_allocations(expected_allocations, || {
         drop(render(std::hint::black_box(root), inputs));
     });
     assert!(

@@ -1,14 +1,12 @@
-use std::alloc::System;
-
 use iced::advanced::layout;
 use iced::advanced::renderer::Headless;
 use iced::advanced::widget::Tree;
 use iced::{Element, Font, Pixels, Size, Theme};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_runtime::{FlexItem, flex, flex_item};
 
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+mod common;
+use common::GLOBAL;
 
 type Renderer = iced_test::renderer::Renderer;
 

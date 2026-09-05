@@ -3,12 +3,11 @@ use iced::advanced::renderer::Headless;
 use iced::advanced::{Layout, Shell, Widget, input_method, layout, mouse, widget};
 use iced::widget::text_editor::Content;
 use iced::{Event, Font, Length, Pixels, Point, Rectangle, Size, Theme};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-use std::alloc::System;
+use stats_alloc::Region;
 use ui_lang_runtime::{ContentVersion, RichTextEditor, rich_text_editor::Action};
 
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+mod common;
+use common::GLOBAL;
 
 #[test]
 #[ignore = "rich-text editor allocation contract run explicitly in CI"]

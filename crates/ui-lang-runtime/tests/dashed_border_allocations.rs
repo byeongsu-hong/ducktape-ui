@@ -8,43 +8,21 @@
 //! (448 + 768 over 64 frames, 100_864 bytes); the cached stroke measures 1 and
 //! 0 (64 over 64 frames, 6_144 bytes). The one that remains is the
 //! `Vec<Geometry>` `Program::draw` returns by signature, so it is the floor.
-use std::alloc::System;
 use std::hint::black_box;
 
 use iced::advanced::renderer::Headless;
 use iced::border::Radius;
 use iced::widget::canvas::Program;
 use iced::{Color, Font, Pixels, Rectangle, Size, Theme, mouse};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+use stats_alloc::Region;
 use ui_lang_runtime::{DashedBorder, DashedBorderCache};
 
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
-
-/// A measured window may carry one foreign one-off: libtest sets up its own
-/// main-thread channel while the first test is already running, and that lands
-/// inside the region. Code under test that allocated would dirty *every*
-/// window; a one-time foreign block dirties at most one. So the frames run in
-/// their own window, up to [`WINDOWS`] times, and the contract asks for one
-/// clean window rather than a clean process.
-const WINDOWS: usize = 4;
+mod common;
+use common::{GLOBAL, clean_window_allocations};
 
 /// The frame budget of one dashed border that only ever redraws: the
 /// `Vec<Geometry>` `Program::draw` returns by signature, and nothing else.
 const PER_CACHED_FRAME: usize = 1;
-
-fn clean_window(expected: usize, mut batch: impl FnMut()) -> stats_alloc::Stats {
-    let mut stats = Region::new(GLOBAL).change();
-    for _ in 0..WINDOWS {
-        let region = Region::new(GLOBAL);
-        batch();
-        stats = region.change();
-        if stats.allocations == expected {
-            break;
-        }
-    }
-    stats
-}
 
 fn border(color: Color) -> DashedBorder {
     DashedBorder::new(color, 1.5, Radius::new(6.0), vec![4.0, 3.0])
@@ -87,7 +65,7 @@ fn performance_contract_dashed_border_tessellates_once_per_parameter_change() {
     // rebuilding it.
     let warm = draw(&red, &state, &renderer);
     assert_eq!(warm, first);
-    let unchanged = clean_window(FRAMES * PER_CACHED_FRAME, || {
+    let unchanged = clean_window_allocations(FRAMES * PER_CACHED_FRAME, || {
         for _ in 0..FRAMES {
             drop(black_box(Program::<()>::draw(
                 black_box(&red),
