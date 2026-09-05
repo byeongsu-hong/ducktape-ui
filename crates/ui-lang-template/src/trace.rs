@@ -109,6 +109,41 @@ pub fn percentile(sorted: &[u64], rank: usize) -> u64 {
     sorted[(sorted.len() - 1) * rank / 100]
 }
 
+/// One [`Summary`] per `(action_index, phase)` group of `samples`, in
+/// ascending group order: the tail quantiles by [`percentile`], the maximum,
+/// and how many samples missed a 60Hz and a 120Hz frame deadline.
+pub fn summaries(samples: &[Sample]) -> Vec<Summary> {
+    let mut grouped = std::collections::BTreeMap::<(usize, Phase), Vec<u64>>::new();
+    for sample in samples {
+        grouped
+            .entry((sample.action_index, sample.phase))
+            .or_default()
+            .push(sample.duration_ns);
+    }
+    grouped
+        .into_iter()
+        .map(|((action_index, phase), mut values)| {
+            values.sort_unstable();
+            Summary {
+                action_index,
+                phase,
+                samples: values.len(),
+                p50_ns: percentile(&values, 50),
+                p95_ns: percentile(&values, 95),
+                p99_ns: percentile(&values, 99),
+                max_ns: *values.last().expect("sample group is non-empty"),
+                deadline_misses_60hz: deadline_misses(&values, 60),
+                deadline_misses_120hz: deadline_misses(&values, 120),
+            }
+        })
+        .collect()
+}
+
+fn deadline_misses(values: &[u64], frames_per_second: u64) -> usize {
+    let deadline = 1_000_000_000 / frames_per_second;
+    values.iter().filter(|value| **value > deadline).count()
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Summary {

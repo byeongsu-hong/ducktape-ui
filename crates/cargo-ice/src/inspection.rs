@@ -2,7 +2,6 @@ use crate::evidence::{
     CAPTURE_DIFF_ARTIFACT_KIND, REVIEW_SCHEMA_VERSION, validate_capture_manifest,
 };
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{BufReader, BufWriter};
@@ -12,8 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ui_lang_template::trace::{
     ARTIFACT_KIND as TRACE_ARTIFACT_KIND, Action as TraceAction, Artifact as TraceArtifact,
     Configuration as TraceConfiguration, Finding as TraceFinding, FindingKind, Mode as TraceMode,
-    Phase as TracePhase, Sample as TraceSample, Summary as TraceSummary,
-    WorstState as TraceWorstState, percentile,
+    Phase as TracePhase, WorstState as TraceWorstState, summaries,
 };
 
 const INSPECT_TEST: &str = "__ice_agent_inspect";
@@ -564,45 +562,11 @@ fn aggregate_authored(
         max_to_median_ratio,
         generator_version: None,
     };
-    artifact.summaries = trace_summaries(&artifact.samples);
+    artifact.summaries = summaries(&artifact.samples);
     artifact.finding = authored_latency_finding(&artifact);
     artifact.worst_states.clear();
     artifact.validate()?;
     Ok(artifact)
-}
-
-fn trace_summaries(samples: &[TraceSample]) -> Vec<TraceSummary> {
-    let mut groups = BTreeMap::<(usize, TracePhase), Vec<u64>>::new();
-    for sample in samples {
-        groups
-            .entry((sample.action_index, sample.phase))
-            .or_default()
-            .push(sample.duration_ns);
-    }
-    groups
-        .into_iter()
-        .map(|((action_index, phase), mut values)| {
-            values.sort_unstable();
-            let percentile = |rank: usize| percentile(&values, rank);
-            TraceSummary {
-                action_index,
-                phase,
-                samples: values.len(),
-                p50_ns: percentile(50),
-                p95_ns: percentile(95),
-                p99_ns: percentile(99),
-                max_ns: *values.last().expect("sample group is non-empty"),
-                deadline_misses_60hz: values
-                    .iter()
-                    .filter(|value| **value > 1_000_000_000 / 60)
-                    .count(),
-                deadline_misses_120hz: values
-                    .iter()
-                    .filter(|value| **value > 1_000_000_000 / 120)
-                    .count(),
-            }
-        })
-        .collect()
 }
 
 fn authored_latency_finding(artifact: &TraceArtifact) -> Option<TraceFinding> {
@@ -1658,6 +1622,7 @@ mod tests {
         Environment as TraceEnvironment, SCHEMA_VERSION as TRACE_SCHEMA_VERSION,
         SourceLocation as TraceSource,
     };
+    use ui_lang_template::trace::{Sample as TraceSample, Summary as TraceSummary};
 
     fn capture_manifest(name: &str) -> Value {
         json!({
