@@ -60,7 +60,7 @@ accesskit_unix = "=0.22.1"
 # version this crate pins — and it shares `accesskit_consumer` 0.38 with
 # `accesskit_unix` 0.22.1's `accesskit_atspi_common`. 0.27 moved to
 # `accesskit` 0.25 and cannot be used until the core pin moves with it.
-accesskit_macos = "=0.26.3"
+accesskit_macos = "=0.27.0"
 # Already in the graph via objc2; used only to hand a tree update's
 # NSAccessibility notifications to the next main-queue turn, so raising them
 # can never re-enter the winit event loop from inside one of its own frames.
