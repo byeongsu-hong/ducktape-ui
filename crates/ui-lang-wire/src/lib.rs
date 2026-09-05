@@ -370,7 +370,7 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 /// one nested deeper than this walk goes.
 pub fn sanitize(frame: &mut Frame) {
     let mut budget = MAX_NODES;
-    let mut taken = std::collections::HashSet::new();
+    let mut taken = Taken::new();
     if let Some(root) = &mut frame.root {
         sanitize_node(root, 0, &mut budget, &mut taken);
     }
@@ -379,31 +379,36 @@ pub fn sanitize(frame: &mut Frame) {
     }
 }
 
+/// Every key claimed in one tree, each with the suffix its next duplicate
+/// will try. Remembering the suffix is what keeps a tree of one key linear:
+/// searching upward from `#2` on every duplicate walks past every earlier
+/// one, and a screen of eight thousand nodes sharing a key — the guest's to
+/// send — took nine seconds of the window thread that way.
+type Taken = std::collections::HashMap<String, usize>;
+
 /// A key already used in this tree, made unique. A key is the node's
 /// identity — its widget state, its focus target, its accessibility id, and
 /// the [`Node::Input`] whose text the host owns — so two nodes sharing one
 /// share all of that: typing in either edits both. The tree the guest sent
 /// is kept, with the later node moved off the taken key.
-fn claim(key: &mut String, taken: &mut std::collections::HashSet<String>) {
+fn claim(key: &mut String, taken: &mut Taken) {
     truncate(key);
-    if taken.insert(key.clone()) {
+    let Some(mut nth) = taken.get(key.as_str()).copied() else {
+        taken.insert(key.clone(), 2);
         return;
-    }
-    let mut nth = 2;
+    };
+    // The guest may itself have sent `key#2`: a suffix already taken is
+    // skipped, and the count moves past it for good.
     let mut unique = format!("{key}#{nth}");
-    while !taken.insert(unique.clone()) {
+    while taken.contains_key(unique.as_str()) {
         nth += 1;
         unique = format!("{key}#{nth}");
     }
-    *key = unique;
+    taken.insert(std::mem::replace(key, unique.clone()), nth + 1);
+    taken.insert(unique, 2);
 }
 
-fn sanitize_node(
-    node: &mut Node,
-    depth: usize,
-    budget: &mut usize,
-    taken: &mut std::collections::HashSet<String>,
-) {
+fn sanitize_node(node: &mut Node, depth: usize, budget: &mut usize, taken: &mut Taken) {
     // The caller guarantees one node of budget; a node too deep spends it
     // on the empty node that stands in for it.
     *budget -= 1;
@@ -1011,6 +1016,45 @@ mod tests {
         };
         let keys: Vec<&str> = children.iter().filter_map(Node::key).collect();
         assert_eq!(keys, ["App/t", "App/t#2", "App/t#3"]);
+    }
+
+    /// A screen where every node claims the same key, and one where the
+    /// guest pre-empted the suffixes: each duplicate must cost one lookup,
+    /// not a walk past every earlier one. Measured, not asserted, in debug;
+    /// in release a quadratic claim took nine seconds here and a linear one
+    /// takes a few milliseconds.
+    #[test]
+    fn a_screen_of_one_key_is_claimed_in_linear_time() {
+        let mut same = text("x");
+        let Node::Text { key, .. } = &mut same else {
+            panic!()
+        };
+        *key = "App/t".into();
+        let mut children: Vec<Node> = (0..MAX_NODES - 1).map(|_| same.clone()).collect();
+        // The guest sent `App/t#2` and `App/t#3` itself: the count skips them.
+        for (child, taken) in children.iter_mut().zip(["App/t#2", "App/t#3"]) {
+            let Node::Text { key, .. } = child else {
+                panic!()
+            };
+            *key = taken.into();
+        }
+        let mut frame = Frame {
+            root: Some(column(children)),
+            ..Frame::default()
+        };
+        let started = std::time::Instant::now();
+        sanitize(&mut frame);
+        let took = started.elapsed();
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        let keys: std::collections::HashSet<&str> = children.iter().filter_map(Node::key).collect();
+        assert_eq!(keys.len(), children.len(), "every key unique");
+        assert_eq!(children[2].key(), Some("App/t"));
+        assert_eq!(children[3].key(), Some("App/t#4"));
+        if cfg!(not(debug_assertions)) {
+            assert!(took < std::time::Duration::from_millis(200), "{took:?}");
+        }
     }
 
     #[test]
