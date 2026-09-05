@@ -1484,6 +1484,19 @@ pub fn is_refresh_request(request: &ActionRequest) -> bool {
     request.target_node == REFRESH_NODE
 }
 
+#[cfg(feature = "test-runtime")]
+impl<Message> Snapshot<Message> {
+    /// A tree with no action targets, for a smoke that publishes a hand-built
+    /// update through a native adapter and reads the request back off the
+    /// bridge's channel rather than dispatching it.
+    pub fn from_update(update: TreeUpdate) -> Self {
+        Self {
+            update,
+            actions: HashMap::default(),
+        }
+    }
+}
+
 impl<Message: Clone + Send + 'static> Snapshot<Message> {
     pub fn dispatch(&self, request: ActionRequest) -> Task<Message> {
         if request.target_tree != TreeId::ROOT || is_refresh_request(&request) {
@@ -2052,6 +2065,14 @@ impl NativeWindow {
     pub fn id(self) -> iced::window::Id {
         self.id
     }
+
+    /// A handle for an `NSView` a test created itself, on the main thread,
+    /// for the in-process NSAccessibility smoke; a shipped app only ever
+    /// gets one from [`native_window`].
+    #[cfg(feature = "test-runtime")]
+    pub fn for_view(id: iced::window::Id, ns_view: usize) -> Self {
+        Self { id, ns_view }
+    }
 }
 
 /// Captures the AppKit view handle on Iced's window-owning thread.
@@ -2258,6 +2279,19 @@ impl<Message> Bridge<Message> {
             },
             action_stream,
         )
+    }
+
+    /// The channel the native adapter's requests arrive on, taken the way
+    /// [`Bridge::subscription`] would take it, for a smoke with no iced
+    /// runtime to run that subscription.
+    #[cfg(feature = "test-runtime")]
+    pub fn take_action_receiver(
+        &self,
+    ) -> Option<iced::futures::channel::mpsc::Receiver<ActionRequest>> {
+        self.receiver
+            .lock()
+            .expect("accessibility action receiver lock")
+            .take()
     }
 
     pub fn update(&mut self, snapshot: Snapshot<Message>) {
