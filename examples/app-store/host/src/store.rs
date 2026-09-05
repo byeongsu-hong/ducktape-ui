@@ -984,6 +984,7 @@ mod tests {
             state.panicked(huge.clone());
         }
         let each = started.elapsed() / 20;
+        println!("one `panicked` call with a 60 MB string: {each:?}");
         let kept = state.panic.as_deref().map(str::len).expect("a message");
         assert!(kept <= MAX_FAULT_BYTES + 1, "kept {kept} bytes");
         assert!(each > Duration::from_micros(100), "one call took {each:?}");
