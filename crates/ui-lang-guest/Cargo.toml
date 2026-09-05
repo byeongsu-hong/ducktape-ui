@@ -14,7 +14,7 @@ rust-version.workspace = true
 iced = { version = "=0.14.0", default-features = false, features = ["advanced"] }
 iced_runtime = "=0.14.0"
 ui-lang-wire.workspace = true
-wit-bindgen = "0.57"
+wit-bindgen = "0.61"
 
 [lints.rust]
 unsafe_code = "forbid"
