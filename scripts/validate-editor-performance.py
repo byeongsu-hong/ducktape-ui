@@ -126,7 +126,7 @@ def validate_records(records: list[dict[str, object]]) -> None:
             for name, value in metrics.items():
                 integer(value, f"operation/{scenario}.metrics.{name}")
         else:
-            if record["collector"] != "dhat-0.3.3":
+            if record["collector"] != "stats_alloc-0.1.10":
                 fail(f"heap/{scenario} has an unsupported collector")
             if record["scope"] != "operation-only":
                 fail(f"heap/{scenario} has an unsupported measurement scope")
@@ -175,7 +175,7 @@ def heap_record(scenario: str) -> dict[str, object]:
         "scenario": scenario,
         "document_lines": 100_001,
         "iterations": SCENARIOS[scenario],
-        "collector": "dhat-0.3.3",
+        "collector": "stats_alloc-0.1.10",
         "scope": "operation-only",
         "allocation_count": 1,
         "allocated_bytes": 1,
