@@ -98,6 +98,17 @@ pub struct Sample {
     pub duration_ns: u64,
 }
 
+/// The sample at percentile `rank` of `sorted`, by the one index rule every
+/// p50/p95 in this workspace uses: `(len - 1) * rank / 100`. Four samples put
+/// p50 at index 1 and p95 at index 2; a single sample answers every rank.
+///
+/// # Panics
+///
+/// Panics when `sorted` is empty.
+pub fn percentile(sorted: &[u64], rank: usize) -> u64 {
+    sorted[(sorted.len() - 1) * rank / 100]
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Summary {
@@ -451,5 +462,20 @@ mod tests {
         assert_eq!(stats.allocations, 0, "{stats:?}");
         assert_eq!(stats.reallocations, 0, "{stats:?}");
         assert_eq!(stats.bytes_allocated, 0, "{stats:?}");
+    }
+}
+
+#[cfg(test)]
+mod percentile_tests {
+    use super::percentile;
+
+    #[test]
+    fn percentile_uses_the_probe_index_rule() {
+        let sorted = [10, 20, 30, 40];
+        assert_eq!(percentile(&sorted, 50), 20);
+        assert_eq!(percentile(&sorted, 95), 30);
+        assert_eq!(percentile(&sorted, 99), 30);
+        assert_eq!(percentile(&sorted, 100), 40);
+        assert_eq!(percentile(&[7], 95), 7);
     }
 }

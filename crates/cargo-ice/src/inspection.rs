@@ -13,7 +13,7 @@ use ui_lang_template::trace::{
     ARTIFACT_KIND as TRACE_ARTIFACT_KIND, Action as TraceAction, Artifact as TraceArtifact,
     Configuration as TraceConfiguration, Finding as TraceFinding, FindingKind, Mode as TraceMode,
     Phase as TracePhase, Sample as TraceSample, Summary as TraceSummary,
-    WorstState as TraceWorstState,
+    WorstState as TraceWorstState, percentile,
 };
 
 const INSPECT_TEST: &str = "__ice_agent_inspect";
@@ -583,8 +583,7 @@ fn trace_summaries(samples: &[TraceSample]) -> Vec<TraceSummary> {
         .into_iter()
         .map(|((action_index, phase), mut values)| {
             values.sort_unstable();
-            let percentile =
-                |rank: usize| values[(values.len() * rank).div_ceil(100).saturating_sub(1)];
+            let percentile = |rank: usize| percentile(&values, rank);
             TraceSummary {
                 action_index,
                 phase,
