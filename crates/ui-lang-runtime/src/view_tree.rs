@@ -323,7 +323,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 ..widget::container::Style::default()
             });
             accessible(container, StableId::new(key), Role::GenericContainer)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
         }
         wire::Node::Linear {
@@ -382,7 +382,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 StableId::new(key),
                 Role::GenericContainer,
             )
-            .logical_id(key.clone())
+            .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .into()
         }
         wire::Node::Scroll {
@@ -415,7 +415,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 scroll = scroll.height(length(*height));
             }
             accessible(scroll, StableId::new(key), Role::ScrollView)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
         }
         wire::Node::Text {
@@ -445,7 +445,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 StableId::new(key),
                 Role::Label,
             )
-            .logical_id(key.clone())
+            .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .value(content.clone())
             .into()
         }
@@ -484,7 +484,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 input = input.width(length(*width));
             }
             accessible(input, StableId::new(key), role)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .focus_id(widget::Id::from(key.clone()))
                 .label(placeholder.clone())
                 .value_maybe((!secure).then_some(current))
@@ -523,7 +523,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 button = button.padding(padding(*edges));
             }
             accessible(button, StableId::new(key), Role::Button)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .focus_id(widget::Id::from(key.clone()))
                 .label(label.unwrap_or_default())
                 .disabled(on_press.is_none())
@@ -560,7 +560,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 wire::Axis::Column => widget::rule::vertical(thickness).style(styled).into(),
             };
             accessible(widget::container(rule), StableId::new(key), Role::Splitter)
-                .logical_id(key.clone())
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
         }
     }
