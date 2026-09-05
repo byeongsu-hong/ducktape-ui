@@ -354,16 +354,21 @@ fn ice_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(output)
 }
 
+/// Directories no `cargo ice` command looks inside, whether it scans for
+/// `.ice` sources, walks a package's Cargo inputs, or watches for changes.
+/// `tests/cases` joins them through [`ignored_dir`]'s parent check.
+pub(crate) const IGNORED_DIRS: [&str; 4] = [".git", ".worktree", "target", "vendor"];
+
 fn ignored_dir(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some(".git" | ".worktree" | "target")
-    ) || (path.file_name().and_then(|name| name.to_str()) == Some("cases")
-        && path
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            == Some("tests"))
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| IGNORED_DIRS.contains(&name))
+        || (path.file_name().and_then(|name| name.to_str()) == Some("cases")
+            && path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+                == Some("tests"))
 }
 
 fn cargo(args: &[&str]) -> Result<(), String> {
@@ -593,6 +598,7 @@ mod tests {
     fn ignores_build_and_fixture_directories() {
         assert!(ignored_dir(Path::new("target")));
         assert!(ignored_dir(Path::new(".worktree")));
+        assert!(ignored_dir(Path::new("vendor")));
         assert!(ignored_dir(Path::new("tests/cases")));
         assert!(!ignored_dir(Path::new("src/cases")));
     }

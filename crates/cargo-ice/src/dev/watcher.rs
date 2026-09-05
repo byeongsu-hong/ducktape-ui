@@ -1,5 +1,5 @@
 use super::inputs::{CargoInputGraph, build_input_files, normalize_watch_path};
-use crate::ignored_dir;
+use crate::{IGNORED_DIRS, ignored_dir};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
@@ -539,10 +539,7 @@ fn ignored_event_path(path: &Path, excluded_roots: &[PathBuf]) -> bool {
     excluded_roots
         .iter()
         .any(|excluded| path.starts_with(excluded))
-        || path.ancestors().any(|ancestor| {
-            ignored_dir(ancestor)
-                || ancestor.file_name().and_then(|name| name.to_str()) == Some("vendor")
-        })
+        || path.ancestors().any(ignored_dir)
 }
 
 fn sorted_paths(paths: &[PathBuf]) -> Vec<PathBuf> {
@@ -559,8 +556,9 @@ fn watch_excluded_roots(cargo_inputs: &CargoInputGraph) -> Vec<PathBuf> {
     let mut excluded = cargo_inputs.excluded_roots.clone();
     for root in &cargo_inputs.package_roots {
         excluded.extend(
-            [".git", ".worktree", "target", "vendor", "tests/cases"]
+            IGNORED_DIRS
                 .into_iter()
+                .chain(["tests/cases"])
                 .map(|path| root.join(path)),
         );
     }
