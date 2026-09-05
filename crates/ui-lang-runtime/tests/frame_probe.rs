@@ -6,6 +6,7 @@
 #![cfg(not(debug_assertions))]
 
 mod common;
+use common::GLOBAL;
 
 use common::{percentile, percentile_usize};
 
@@ -15,16 +16,12 @@ use iced::widget::{button, column, container, row, scrollable, text, text_input}
 use iced::{Element, Event, Font, Length, Pixels, Point, Size, Theme};
 use iced_test::runtime::UserInterface;
 use iced_test::runtime::user_interface;
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-use std::alloc::System;
+use stats_alloc::Region;
 use std::sync::Arc;
 use ui_lang_runtime::memo_lazy;
 use ui_lang_runtime::{
     VirtualListConfig, VirtualListEvent, VirtualListId, VirtualListState, virtual_list,
 };
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 const ROWS: usize = 150;
 const WINDOW: Size = Size::new(1280.0, 800.0);

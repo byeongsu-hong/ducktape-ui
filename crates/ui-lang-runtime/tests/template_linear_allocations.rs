@@ -1,12 +1,10 @@
-use std::alloc::System;
+use stats_alloc::Region;
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
+mod common;
+use common::GLOBAL;
 use ui_lang_runtime::template::{
     A11y, Axis, GroupSlot, Node, SlotCounts, Slots, SubtreeSlot, Template, render,
 };
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[test]
 fn linear_children_use_bounded_temporary_storage() {

@@ -1,17 +1,14 @@
 #![cfg(not(debug_assertions))]
 
 mod common;
+use common::GLOBAL;
 
 use common::{assert_wall_clock_budgets, percentile};
 
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-use std::alloc::System;
+use stats_alloc::Region;
 use ui_lang_runtime::{
     LogTimelineEvent, LogTimelineState, VirtualListConfig, VirtualListEvent, VirtualListId,
 };
-
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 #[test]
 #[ignore = "100k-row release performance contract run explicitly in CI"]

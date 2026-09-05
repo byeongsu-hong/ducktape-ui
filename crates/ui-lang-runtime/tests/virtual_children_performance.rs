@@ -2,46 +2,20 @@ use iced::advanced::renderer;
 use iced::advanced::widget::Tree;
 use iced::advanced::{Layout, Widget, layout, mouse};
 use iced::{Element, Font, Length, Pixels, Rectangle, Size, Theme};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
-use std::alloc::System;
+use stats_alloc::Region;
 use ui_lang_runtime::virtual_keyed_children;
 
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+mod common;
+use common::{GLOBAL, clean_window};
 
 const ROWS: usize = 1_000;
 
-/// How many allocator windows a batch may be measured in before the contract
-/// gives up on finding one that reads clean.
-///
-/// `StatsAlloc` is this binary's global allocator, so its counters cover every
-/// thread, and this binary holds a single test. While that test runs, libtest's
-/// main thread is doing its one-time setup — `Receiver::recv()` allocates the
-/// `mpmc` context and waker entry it needs, plus the harness's bookkeeping
-/// around it — and those blocks land in whichever window happens to be open.
-/// That is what failed `Rust and Ice` on main with `32 exact-key frames
-/// allocated 4 times (900 bytes)`, where a rerun of the same commit passed: 4
-/// is not a multiple of 32, so it was never one allocation per frame. A frame
-/// that allocated would dirty *every* window; a one-time foreign block dirties
-/// at most one. So each batch is measured in its own window and the contract
-/// asks for one clean window rather than a clean process.
-const WINDOWS: usize = 4;
-
-/// Runs `batch` in its own allocator window, up to [`WINDOWS`] times, and
+/// Runs `batch` in its own allocator window, up to [`common::WINDOWS`] times, and
 /// returns the first `(allocations, bytes)` that match `expected` — or the last
 /// window's, when none did.
-fn measure(expected: (usize, usize), mut batch: impl FnMut()) -> (usize, usize) {
-    let mut measured = (0, 0);
-    for _ in 0..WINDOWS {
-        let region = Region::new(GLOBAL);
-        batch();
-        let stats = region.change();
-        measured = (stats.allocations, stats.bytes_allocated);
-        if measured == expected {
-            break;
-        }
-    }
-    measured
+fn measure(expected: (usize, usize), batch: impl FnMut()) -> (usize, usize) {
+    let stats = clean_window(expected, batch);
+    (stats.allocations, stats.bytes_allocated)
 }
 
 struct FixedRow;

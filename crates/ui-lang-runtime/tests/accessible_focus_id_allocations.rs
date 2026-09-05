@@ -11,46 +11,20 @@
 //! process: a second `#[test]` in this binary would run on another thread
 //! inside this one's measured window.
 
-use std::alloc::System;
-
 use iced::advanced::renderer::Headless;
 use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Layout, layout};
 use iced::{Element, Font, Pixels, Size, Theme};
-use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 use ui_lang_runtime::{Role, StableId, accessible};
 
-#[global_allocator]
-static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+mod common;
+use common::clean_window_allocations;
 
 type Renderer = iced_test::renderer::Renderer;
 type TestElement = Element<'static, (), Theme, Renderer>;
 
 const NODES: usize = 1_000;
 const FRAMES: usize = 8;
-
-/// A measured window may carry one foreign one-off: libtest sets up its own
-/// main-thread channel while the first test is already running, and that lands
-/// inside whichever region is open. So each batch runs in its own window, up
-/// to [`WINDOWS`] times, and the contract asks for one clean window rather
-/// than a clean process.
-const WINDOWS: usize = 4;
-
-/// Runs `batch` in a fresh allocator window, up to [`WINDOWS`] times, and
-/// returns the first window reporting `expected` allocations — or the last
-/// window's stats, when none did.
-fn clean_window(expected: usize, mut batch: impl FnMut()) -> stats_alloc::Stats {
-    let mut stats = Region::new(GLOBAL).change();
-    for _ in 0..WINDOWS {
-        let region = Region::new(GLOBAL);
-        batch();
-        stats = region.change();
-        if stats.allocations == expected {
-            break;
-        }
-    }
-    stats
-}
 
 /// A walk that visits every node and reads nothing, so the allocations it
 /// measures are the tree's own rather than the operation's.
@@ -104,7 +78,7 @@ fn an_accessible_node_costs_one_focus_id_per_operate_and_none_per_diff() {
             .operate(tree, Layout::new(node), &renderer, &mut Walk);
     }
 
-    let rebuilt = clean_window(0, || {
+    let rebuilt = clean_window_allocations(0, || {
         for _ in 0..FRAMES {
             for (element, tree) in nodes.iter().zip(&mut trees) {
                 element.as_widget().diff(std::hint::black_box(tree));
@@ -113,7 +87,7 @@ fn an_accessible_node_costs_one_focus_id_per_operate_and_none_per_diff() {
     });
     assert_eq!(rebuilt.allocations, 0, "{rebuilt:?}");
 
-    let walked = clean_window(NODES * FRAMES, || {
+    let walked = clean_window_allocations(NODES * FRAMES, || {
         for _ in 0..FRAMES {
             for ((element, tree), node) in nodes.iter_mut().zip(&mut trees).zip(&layouts) {
                 element.as_widget_mut().operate(
