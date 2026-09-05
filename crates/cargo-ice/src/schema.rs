@@ -2647,6 +2647,9 @@ pub fn document() -> Value {
                     "W016": "extern component content rebuilt from state on every view pass outside lazy",
                     "W017": "plain lazy over a list-owning value inside a repetition clones and hashes it per item",
                     "W018": "str, bytes, list, editor, or list-owning record state cloned into a by-value pure/sync parameter on every view pass or subscription check",
+                    "W019": "repetition row builds heavy content on every view pass; key rows with a cheap-keyed lazy or virtualize",
+                    "W020": "lazy evaluates its dependency on every view pass to compute its memo key",
+                    "W021": "sync extern called from a timed loop blocks the loop for as long as its Rust body takes"
                 },
                 "generatedRustSourceMap": "ui-lang-build writes marked generated Rust below Cargo OUT_DIR; generated items suppress backend-only warnings; cargo ice check and clippy consume Cargo JSON and map nested generated error provenance regions to root or imported Ice syntax; the LSP ice.lint workspace command publishes mapped error-level Clippy and rustc diagnostics; test and compat run that check before the normal test runner",
             },
@@ -2985,6 +2988,53 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::BTreeSet;
+
+    /// The warning table is kept by hand, so every `W` code the checker can
+    /// emit — and `W010`, which only `cargo ice` emits — must have a row.
+    #[test]
+    fn warning_table_names_every_warning_the_checker_emits() {
+        fn codes_under(dir: &std::path::Path, codes: &mut std::collections::BTreeSet<String>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    codes_under(&path, codes);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let source = std::fs::read_to_string(&path).unwrap();
+                    for (index, _) in source.match_indices("\"W") {
+                        let code = &source[index + 1..index + 5];
+                        if code[1..].bytes().all(|byte| byte.is_ascii_digit()) {
+                            codes.insert(code.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        fn find_warnings(
+            value: &serde_json::Value,
+        ) -> Option<&serde_json::Map<String, serde_json::Value>> {
+            let object = value.as_object()?;
+            if let Some(warnings) = object
+                .get("warnings")
+                .and_then(serde_json::Value::as_object)
+                && warnings.keys().all(|key| key.starts_with('W'))
+            {
+                return Some(warnings);
+            }
+            object.values().find_map(find_warnings)
+        }
+
+        let core = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui-lang-core/src");
+        let mut emitted = std::collections::BTreeSet::new();
+        codes_under(&core, &mut emitted);
+        emitted.insert("W010".to_string());
+        let schema = document();
+        let table = find_warnings(&schema).expect("the schema carries a warning table");
+        let listed = table
+            .keys()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(listed, emitted, "warning table and checker disagree");
+    }
 
     #[test]
     fn schema_drives_completion_and_records_capability_gaps() {
