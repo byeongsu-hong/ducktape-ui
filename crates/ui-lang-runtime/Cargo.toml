@@ -39,6 +39,9 @@ test-runtime = [
 
 [dependencies]
 accesskit = "=0.24.1"
+# iced's slider bounds its value by `FromPrimitive`; the accessibility step
+# helper generated sliders call converts through the same trait.
+num-traits = "0.2"
 ouroboros = "0.18"
 rustc-hash = "2.0"
 iced = { version = "=0.14.0", default-features = false, features = ["advanced", "canvas", "qr_code"] }

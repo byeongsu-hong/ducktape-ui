@@ -783,6 +783,8 @@ fn resolve_accessibility_action(value: TestAccessibilityAction) -> ResolvedTestA
     match value {
         TestAccessibilityAction::Activate => ResolvedTestAccessibilityAction::Activate,
         TestAccessibilityAction::Focus => ResolvedTestAccessibilityAction::Focus,
+        TestAccessibilityAction::Increment => ResolvedTestAccessibilityAction::Increment,
+        TestAccessibilityAction::Decrement => ResolvedTestAccessibilityAction::Decrement,
     }
 }
 

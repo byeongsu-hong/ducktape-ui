@@ -6328,6 +6328,7 @@ dependencies = [
  "iced",
  "iced_test",
  "iced_tiny_skia",
+ "num-traits",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",

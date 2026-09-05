@@ -304,9 +304,12 @@ test semantic_actions
   capture semantic_controls
   a11y activate field
   a11y focus field
+  a11y increment field
+  a11y decrement field
   expect a11y field role "text_input"
   expect a11y field disabled false
   expect a11y field action click
+  expect a11y field action increment false
   expect root.surface_count >= 0
   expect root.text_baseline >= 0.0
   expect root.pixel_aligned

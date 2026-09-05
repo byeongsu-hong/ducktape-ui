@@ -529,8 +529,8 @@ produce a deterministic AccessKit tree:
 | `checkbox` | `CheckBox` | label, optional description, toggled/disabled/focus state, click action |
 | `toggler` | `Switch` | label, optional description, toggled/disabled/focus state, click action |
 | `radio` | `RadioButton` | label, optional description, selected/checked state, disabled/focus state, click action |
-| `slider` | `Slider` | default `Slider` label, current value, focus state |
-| `progress` | `ProgressIndicator` | default `Progress` label and current value |
+| `slider` | `Slider` | default `Slider` label, current value, numeric value/min/max/step, focus state, increment/decrement actions — each runs the change route with the value one step away, clamped to the range, and is absent at that end of the range |
+| `progress` | `ProgressIndicator` | default `Progress` label, current value, numeric value/min/max |
 | `pick` / `combo` | `ComboBox` | placeholder or search label, selected value, focus state |
 | `editor` | `MultilineTextInput` | placeholder or default label, current value, disabled/focus state |
 | labeled `image` | `Image` | label and optional description |

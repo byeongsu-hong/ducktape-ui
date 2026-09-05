@@ -263,10 +263,27 @@ struct SemanticSnapshot {
     /// A live region: assistive technology announces this node's value when
     /// it changes, without the user moving to it.
     live: Option<accesskit::Live>,
+    /// A slider's or progress bar's number, exported beside its text value so
+    /// a screen reader can read the position within the range and step it.
+    /// Boxed: every accessible node carries this state, and only range
+    /// controls fill it.
+    numeric: Option<Box<NumericRange>>,
     disabled: bool,
     focus: FocusBehavior,
     focused: bool,
     supports_activate: bool,
+    supports_increment: bool,
+    supports_decrement: bool,
+}
+
+/// The numeric contract of a range control: where it is, where it can go, and
+/// how far one step moves it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NumericRange {
+    pub value: f64,
+    pub min: f64,
+    pub max: f64,
+    pub step: Option<f64>,
 }
 
 #[derive(Clone)]
@@ -279,6 +296,53 @@ struct Semantics<Message> {
     /// another for every `diff` that clones the node.
     focus_id: Option<widget::Id>,
     activate: Option<Message>,
+    /// The messages one accessibility step up or down produces — the change
+    /// route called with the next value, already clamped to the range. Boxed
+    /// for the same reason as `numeric`: two `Message`s on every node would
+    /// grow every widget tree for the few sliders in it.
+    steps: Option<Box<StepMessages<Message>>>,
+}
+
+/// One accessibility step in each direction; `None` at that end of the range.
+#[derive(Clone)]
+struct StepMessages<Message> {
+    increment: Option<Message>,
+    decrement: Option<Message>,
+}
+
+impl<Message> Default for StepMessages<Message> {
+    fn default() -> Self {
+        Self {
+            increment: None,
+            decrement: None,
+        }
+    }
+}
+
+impl<Message> Semantics<Message> {
+    fn increment(&self) -> Option<&Message> {
+        self.steps
+            .as_ref()
+            .and_then(|steps| steps.increment.as_ref())
+    }
+
+    fn decrement(&self) -> Option<&Message> {
+        self.steps
+            .as_ref()
+            .and_then(|steps| steps.decrement.as_ref())
+    }
+
+    fn set_step(&mut self, up: bool, message: Option<Message>) {
+        let steps = self.steps.get_or_insert_with(Box::default);
+        if up {
+            steps.increment = message;
+        } else {
+            steps.decrement = message;
+        }
+        if steps.increment.is_none() && steps.decrement.is_none() {
+            self.steps = None;
+        }
+    }
 }
 
 impl<Message> std::ops::Deref for Semantics<Message> {
@@ -332,13 +396,17 @@ impl<Message> Semantics<Message> {
                 size_of_set: None,
                 active_descendant: None,
                 live: None,
+                numeric: None,
                 disabled: false,
                 focus,
                 focused: false,
                 supports_activate: false,
+                supports_increment: false,
+                supports_decrement: false,
             },
             focus_id: None,
             activate: None,
+            steps: None,
         }
     }
 }
@@ -657,6 +725,33 @@ where
         self
     }
 
+    /// Exports a range control's number beside its text value: the current
+    /// value, the range, and the size of one step when it has one.
+    pub fn numeric(mut self, value: f64, min: f64, max: f64, step: Option<f64>) -> Self {
+        self.semantics.numeric = Some(Box::new(NumericRange {
+            value,
+            min,
+            max,
+            step,
+        }));
+        self
+    }
+
+    /// The message one accessibility step up produces; `None` at the top of
+    /// the range, which leaves the action unexported.
+    pub fn on_increment_maybe(mut self, message: Option<Message>) -> Self {
+        self.semantics.supports_increment = message.is_some();
+        self.semantics.set_step(true, message);
+        self
+    }
+
+    /// The message one accessibility step down produces; `None` at the bottom.
+    pub fn on_decrement_maybe(mut self, message: Option<Message>) -> Self {
+        self.semantics.supports_decrement = message.is_some();
+        self.semantics.set_step(false, message);
+        self
+    }
+
     /// Styles the keyboard focus ring this wrapper draws when focus is
     /// visible. The default ring uses the ambient text color with a
     /// three-pixel radius; a styled ring keeps the two-pixel stroke and takes
@@ -733,6 +828,10 @@ where
             state.semantics.focus_id = self.semantics.focus_id.clone();
         }
         state.semantics.activate = self.semantics.activate.clone();
+        // Almost every node has no steps: `None == None` skips the clone.
+        if state.semantics.steps.is_some() || self.semantics.steps.is_some() {
+            state.semantics.steps = self.semantics.steps.clone();
+        }
         state.semantics.focused = focused;
         if state.semantics.disabled {
             state.semantics.focused = false;
@@ -1492,6 +1591,8 @@ struct ActionTarget<Message> {
     focus: Option<SemanticFocus>,
     /// The text input whose caret a `SetTextSelection` request moves.
     caret: Option<widget::Id>,
+    increment: Option<Message>,
+    decrement: Option<Message>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1574,6 +1675,8 @@ impl<Message: Clone + Send + 'static> Snapshot<Message> {
                 }
                 _ => Task::none(),
             },
+            Action::Increment => target.increment.clone().map_or_else(Task::none, Task::done),
+            Action::Decrement => target.decrement.clone().map_or_else(Task::none, Task::done),
             _ => Task::none(),
         }
     }
@@ -1898,12 +2001,20 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
                 if state.semantics.activate.is_some() {
                     node.add_action(Action::Click);
                 }
+                if state.semantics.increment().is_some() {
+                    node.add_action(Action::Increment);
+                }
+                if state.semantics.decrement().is_some() {
+                    node.add_action(Action::Decrement);
+                }
                 self.actions.insert(
                     id,
                     ActionTarget {
                         activate: state.semantics.activate.clone(),
                         focus: (state.semantics.focus != FocusBehavior::None).then_some(focus),
                         caret: None,
+                        increment: state.semantics.increment().cloned(),
+                        decrement: state.semantics.decrement().cloned(),
                     },
                 );
             }
@@ -1994,6 +2105,14 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if let Some(live) = semantics.live {
             node.set_live(live);
+        }
+        if let Some(numeric) = &semantics.numeric {
+            node.set_numeric_value(numeric.value);
+            node.set_min_numeric_value(numeric.min);
+            node.set_max_numeric_value(numeric.max);
+            if let Some(step) = numeric.step {
+                node.set_numeric_value_step(step);
+            }
         }
         if semantics.disabled {
             node.set_disabled();
@@ -2925,6 +3044,25 @@ pub fn viewer_scale_bounds(min: f64, max: f64) -> (f32, f32) {
 }
 
 /// Converts progress inputs to a finite, ordered range and bounded value.
+/// The value one accessibility step from `value` lands on, or `None` when the
+/// control is already at that end of its range — which leaves the action
+/// unexported, so a screen reader hears the edge instead of a no-op.
+///
+/// Generated sliders feed the result to their change route: Increment and
+/// Decrement then run the same handler a drag does, with the same typed value.
+pub fn step_value<T>(value: T, min: T, max: T, step: T, up: bool) -> Option<T>
+where
+    T: Copy + Into<f64> + num_traits::FromPrimitive,
+{
+    let (min, max): (f64, f64) = (min.into(), max.into());
+    let current: f64 = value.into();
+    let step: f64 = step.into();
+    let next = if up { current + step } else { current - step }.clamp(min, max);
+    (next != current && next.is_finite())
+        .then(|| T::from_f64(next))
+        .flatten()
+}
+
 pub fn progress_range(min: f64, max: f64, value: f64) -> (std::ops::RangeInclusive<f32>, f32) {
     let finite = |value: f64| {
         let value = value as f32;
@@ -3532,6 +3670,58 @@ mod tests {
             .expect("status node");
         assert_eq!(node.live(), Some(accesskit::Live::Polite));
         assert_eq!(node.value(), Some("Saved"));
+    }
+
+    #[test]
+    fn a_numeric_control_exports_its_range_and_steps_through_actions() {
+        let native: TestElement<'static> =
+            iced::widget::slider(0.0..=10.0, 4.0, |_| Message::First).into();
+        let root: TestElement<'static> = accessible(native, StableId::new("volume"), Role::Slider)
+            .label("Volume")
+            .numeric(4.0, 0.0, 10.0, Some(1.0))
+            .on_increment_maybe(Some(Message::Next))
+            .on_decrement_maybe(Some(Message::Previous))
+            .into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(400.0, 240.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let snapshot = snapshot(&mut ui, &renderer);
+        let id = StableId::new("volume").node_id();
+        let (_, node) = snapshot
+            .update
+            .nodes
+            .iter()
+            .find(|(candidate, _)| *candidate == id)
+            .expect("slider node");
+        assert_eq!(node.numeric_value(), Some(4.0));
+        assert_eq!(node.min_numeric_value(), Some(0.0));
+        assert_eq!(node.max_numeric_value(), Some(10.0));
+        assert_eq!(node.numeric_value_step(), Some(1.0));
+        assert!(node.supports_action(Action::Increment));
+        assert!(node.supports_action(Action::Decrement));
+
+        let request = |action| ActionRequest {
+            action,
+            target_tree: TreeId::ROOT,
+            target_node: id,
+            data: None,
+        };
+        let output = |task| {
+            let mut stream = iced_test::runtime::task::into_stream(task).expect("step task");
+            iced_test::futures::futures::executor::block_on(stream.next()).expect("step output")
+        };
+        assert!(matches!(
+            output(snapshot.dispatch(request(Action::Increment))),
+            iced_test::runtime::Action::Output(Message::Next)
+        ));
+        assert!(matches!(
+            output(snapshot.dispatch(request(Action::Decrement))),
+            iced_test::runtime::Action::Output(Message::Previous)
+        ));
     }
 
     #[test]
@@ -5128,6 +5318,8 @@ mod tests {
                     activate: Some(Message::First),
                     focus: None,
                     caret: None,
+                    increment: None,
+                    decrement: None,
                 },
             )]),
         };

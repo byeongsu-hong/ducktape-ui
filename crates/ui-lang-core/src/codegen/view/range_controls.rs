@@ -26,7 +26,7 @@ pub(in crate::codegen) fn render_slider(
         ResolvedRangeAxis::Vertical => "vertical_slider",
     };
     let mut widget = format!(
-        "::iced::widget::{helper}(({min})..=({max}), __slider_value, {callback}).step({step})"
+        "::iced::widget::{helper}(__slider_min..=__slider_max, __slider_value, __slider_change).step(__slider_step)"
     );
     if let Some(default) = slider.default {
         write!(
@@ -68,8 +68,12 @@ pub(in crate::codegen) fn render_slider(
     }
     let accessibility_key =
         resolved_accessibility_key_code(identity, "slider", slider.origin, scope, env, document)?;
+    // The step messages are computed before the change closure moves into the
+    // widget: `&F` is itself `Fn`, so `Option::map` borrows it and the slider
+    // still takes it by value. A step past either end is `None`, which leaves
+    // that action unexported.
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __slider_value = {value}; let __slider = {widget}; ::ui_lang_runtime::accessible(__slider, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Slider).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label(\"Slider\").value(format!(\"{{}}\", __slider_value)).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __slider_value = {value}; let __slider_min = {min}; let __slider_max = {max}; let __slider_step = {step}; let __slider_change = {callback}; let __slider_up = ::ui_lang_runtime::step_value(__slider_value, __slider_min, __slider_max, __slider_step, true).map(&__slider_change); let __slider_down = ::ui_lang_runtime::step_value(__slider_value, __slider_min, __slider_max, __slider_step, false).map(&__slider_change); let __slider = {widget}; ::ui_lang_runtime::accessible(__slider, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::Slider).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label(\"Slider\").value(format!(\"{{}}\", __slider_value)).numeric(__slider_value.into(), __slider_min.into(), __slider_max.into(), ::std::option::Option::Some(__slider_step.into())).on_increment_maybe(__slider_up).on_decrement_maybe(__slider_down).into() }}"
     ))
 }
 
@@ -111,7 +115,7 @@ pub(in crate::codegen) fn render_progress(
         document,
     )?;
     Ok(format!(
-        "{{ let __a11y_key = {accessibility_key}; let __progress_input = {value}; let __progress = {{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range({min}, {max}, __progress_input); {widget} }}; ::ui_lang_runtime::accessible(__progress, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ProgressIndicator).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label(\"Progress\").value(format!(\"{{}}\", __progress_input)).into() }}"
+        "{{ let __a11y_key = {accessibility_key}; let __progress_input = {value}; let __progress_min = {min}; let __progress_max = {max}; let __progress = {{ let (__progress_range, __progress_value) = ::ui_lang_runtime::progress_range(__progress_min, __progress_max, __progress_input); {widget} }}; ::ui_lang_runtime::accessible(__progress, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::ProgressIndicator).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label(\"Progress\").value(format!(\"{{}}\", __progress_input)).numeric(__progress_input, __progress_min, __progress_max, ::std::option::Option::None).into() }}"
     ))
 }
 

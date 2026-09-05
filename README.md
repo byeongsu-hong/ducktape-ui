@@ -191,8 +191,8 @@ Ice lowers its checked control surface into a deterministic AccessKit tree:
 | `button` | `Button` | name, description, optional checked/expanded state, disabled state, focus/click actions |
 | `checkbox` | `CheckBox` | name, description, checked/disabled state, focus/click actions |
 | `toggler` | `Switch` | name, description, checked/disabled state, focus/click actions |
-| `slider` | `Slider` | default name, current value, focus action |
-| `progress` | `ProgressIndicator` | default name and current value |
+| `slider` | `Slider` | default name, current value, numeric value/range/step, focus action, increment/decrement actions that run the change route with the next value |
+| `progress` | `ProgressIndicator` | default name, current value, numeric value/range |
 | `pick`, `combo` | `ComboBox` | placeholder name, selected value, focus action |
 | `editor` | `MultilineTextInput` | placeholder/default name, current value, disabled state, focus action |
 | labeled `image` | `Image` | name and description |

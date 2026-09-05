@@ -609,6 +609,8 @@ fn generate_test(
                 let action = match action {
                     ResolvedTestAccessibilityAction::Activate => "Click",
                     ResolvedTestAccessibilityAction::Focus => "Focus",
+                    ResolvedTestAccessibilityAction::Increment => "Increment",
+                    ResolvedTestAccessibilityAction::Decrement => "Decrement",
                 };
                 writeln!(
                     out,
@@ -947,6 +949,8 @@ fn accessibility_action_variant(name: &str) -> &'static str {
     match name {
         "click" => "Click",
         "focus" => "Focus",
+        "increment" => "Increment",
+        "decrement" => "Decrement",
         _ => unreachable!("parser validates accessibility actions"),
     }
 }
