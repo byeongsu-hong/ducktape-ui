@@ -191,7 +191,7 @@ fn render_resolved_regular_layout(
             )
             .unwrap();
         }
-        if let Some(padding) = resolved_layout_padding_code(&linear.padding, program, env)? {
+        if let Some(padding) = resolved_container_padding_code(&linear.padding, program, env)? {
             write!(body, ".padding({padding})").unwrap();
         }
         append_resolved_layout_dimensions(
@@ -504,7 +504,7 @@ fn render_resolved_flexbox(
     if let Some(padding) = style.padding_code() {
         write!(body, ".padding({padding})").unwrap();
     }
-    if let Some(padding) = resolved_layout_padding_code(&flex.padding, program, env)? {
+    if let Some(padding) = resolved_container_padding_code(&flex.padding, program, env)? {
         write!(body, ".padding({padding})").unwrap();
     }
     append_size(&mut body, style);
@@ -1095,38 +1095,6 @@ fn resolved_flex_content_alignment_name(align: ResolvedFlexContentAlignment) -> 
     }
 }
 
-fn resolved_layout_padding_code(
-    padding: &ResolvedContainerPadding,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<Option<String>, Error> {
-    if padding.all.is_none()
-        && padding.x.is_none()
-        && padding.y.is_none()
-        && padding.top.is_none()
-        && padding.right.is_none()
-        && padding.bottom.is_none()
-        && padding.left.is_none()
-    {
-        return Ok(None);
-    }
-    let value = |expression: Option<ResolvedExpressionId>| {
-        expression
-            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
-            .transpose()
-    };
-    let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
-    let x = value(padding.x)?.unwrap_or_else(|| all.clone());
-    let y = value(padding.y)?.unwrap_or_else(|| all.clone());
-    let top = value(padding.top)?.unwrap_or_else(|| y.clone());
-    let right = value(padding.right)?.unwrap_or_else(|| x.clone());
-    let bottom = value(padding.bottom)?.unwrap_or(y);
-    let left = value(padding.left)?.unwrap_or(x);
-    Ok(Some(format!(
-        "::ui_lang_runtime::bounded_padding({top}, {right}, {bottom}, {left})"
-    )))
-}
-
 fn append_resolved_layout_dimensions(
     code: &mut String,
     dimensions: [&Option<ResolvedContainerLength>; 2],
@@ -1330,7 +1298,7 @@ fn append_resolved_scroll_status_style(
         write!(
             code,
             " __style.gap = ::std::option::Option::Some({});",
-            resolved_layout_background_code(gap, program, env)?
+            resolved_container_background_code(gap, program, env)?
         )
         .unwrap();
     }
@@ -1368,7 +1336,7 @@ fn append_resolved_scroll_surface(
         write!(
             code,
             " {target}.background = {};",
-            resolved_layout_background_code(background, program, env)?
+            resolved_container_background_code(background, program, env)?
         )
         .unwrap();
     }
@@ -1377,7 +1345,7 @@ fn append_resolved_scroll_surface(
         write!(
             code,
             " __style.background = ::std::option::Option::Some({});",
-            resolved_layout_background_code(background, program, env)?
+            resolved_container_background_code(background, program, env)?
         )
         .unwrap();
     }
@@ -1397,7 +1365,7 @@ fn append_resolved_scroll_surface(
         )
         .unwrap();
     }
-    if let Some(radius) = resolved_layout_radius_code(&surface.radius, program, env)? {
+    if let Some(radius) = resolved_container_radius_code(&surface.radius, program, env)? {
         write!(code, " __style.border.radius = {radius};").unwrap();
     }
     if let Some(color) = &surface.shadow_color {
@@ -1440,65 +1408,4 @@ fn append_resolved_scroll_surface(
     }
     code.push_str(" }");
     Ok(())
-}
-
-fn resolved_layout_background_code(
-    background: &ResolvedContainerBackground,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match background {
-        ResolvedContainerBackground::Color(color) => {
-            format!("::iced::Background::Color({})", resolved_theme_color(color))
-        }
-        ResolvedContainerBackground::Linear { angle, stops } => {
-            let mut code = format!(
-                "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
-            );
-            for stop in stops {
-                write!(
-                    code,
-                    ".add_stop({} as f32, {})",
-                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
-                    resolved_theme_color(&stop.color)
-                )
-                .unwrap();
-            }
-            code.push(')');
-            code
-        }
-    })
-}
-
-fn resolved_layout_radius_code(
-    radius: &ResolvedContainerRadius,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<Option<String>, Error> {
-    if radius.all.is_none()
-        && radius.top_left.is_none()
-        && radius.top_right.is_none()
-        && radius.bottom_right.is_none()
-        && radius.bottom_left.is_none()
-    {
-        return Ok(None);
-    }
-    let base = radius
-        .all
-        .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
-        .transpose()?
-        .unwrap_or_else(|| "0.0".into());
-    let corner = |value: Option<ResolvedExpressionId>| {
-        value
-            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
-            .transpose()
-    };
-    let top_left = corner(radius.top_left)?.unwrap_or_else(|| base.clone());
-    let top_right = corner(radius.top_right)?.unwrap_or_else(|| base.clone());
-    let bottom_right = corner(radius.bottom_right)?.unwrap_or_else(|| base.clone());
-    let bottom_left = corner(radius.bottom_left)?.unwrap_or(base);
-    Ok(Some(format!(
-        "::iced::border::Radius {{ top_left: {top_left}, top_right: {top_right}, bottom_right: {bottom_right}, bottom_left: {bottom_left} }}"
-    )))
 }

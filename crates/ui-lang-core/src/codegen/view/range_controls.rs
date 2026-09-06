@@ -200,7 +200,7 @@ fn append_resolved_slider_status(
             write!(
                 code,
                 " {field} = {};",
-                resolved_text_background_code(background, program, env)?
+                resolved_container_background_code(background, program, env)?
             )
             .unwrap();
         }
@@ -227,7 +227,7 @@ fn append_resolved_slider_status(
             .unwrap();
         }
     }
-    if let Some(radius) = resolved_text_radius_code(&style.rail_radius, program, env)? {
+    if let Some(radius) = resolved_container_radius_code(&style.rail_radius, program, env)? {
         write!(code, " __style.rail.border.radius = {radius};").unwrap();
     }
     if let Some(shape) = &style.handle_shape {
@@ -237,7 +237,7 @@ fn append_resolved_slider_status(
                 resolved_expr_use_code(program, *radius, env, ValueMode::Owned)?
             ),
             ResolvedSliderHandleShape::Rectangle { width, radius } => {
-                let radius = resolved_text_radius_code(radius, program, env)?
+                let radius = resolved_container_radius_code(radius, program, env)?
                     .unwrap_or_else(|| "::iced::border::Radius::default()".into());
                 format!(
                     "::iced::widget::slider::HandleShape::Rectangle {{ width: {width}, border_radius: {radius} }}"
@@ -254,7 +254,7 @@ fn resolved_progress_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let radius = resolved_text_radius_code(&progress.radius, program, env)?;
+    let radius = resolved_container_radius_code(&progress.radius, program, env)?;
     let has_style = progress.style.is_some()
         || progress.custom_style.is_some()
         || progress.background.is_some()
@@ -282,7 +282,7 @@ fn resolved_progress_style_code(
         write!(
             code,
             " __style.background = {};",
-            resolved_text_background_code(background, program, env)?
+            resolved_container_background_code(background, program, env)?
         )
         .unwrap();
     }
@@ -290,7 +290,7 @@ fn resolved_progress_style_code(
         write!(
             code,
             " __style.bar = {};",
-            resolved_text_background_code(bar, program, env)?
+            resolved_container_background_code(bar, program, env)?
         )
         .unwrap();
     }

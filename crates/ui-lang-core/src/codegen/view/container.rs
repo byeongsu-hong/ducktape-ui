@@ -162,7 +162,7 @@ fn resolved_container_border_dash_code(
     ))
 }
 
-fn resolved_container_padding_code(
+pub(in crate::codegen) fn resolved_container_padding_code(
     padding: &ResolvedContainerPadding,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
@@ -228,7 +228,7 @@ fn resolved_container_custom_style_code(
     ))
 }
 
-fn resolved_container_background_code(
+pub(in crate::codegen) fn resolved_container_background_code(
     background: &ResolvedContainerBackground,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
@@ -257,7 +257,7 @@ fn resolved_container_background_code(
     })
 }
 
-fn resolved_container_radius_code(
+pub(in crate::codegen) fn resolved_container_radius_code(
     radius: &ResolvedContainerRadius,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
