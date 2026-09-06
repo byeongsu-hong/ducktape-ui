@@ -341,7 +341,7 @@ impl Guest {
         // fuel or memory limit is consulted, so a module declaring a hundred
         // ten-million-element tables would be gigabytes at Install. A
         // component is several core instances — the app, the stub adapters
-        // `componentize.sh` gave it, the bindings' shims — all of them the
+        // `cargo ice bundle` gave it, the bindings' shims — all of them the
         // guest's own and none with a memory but the app's.
         let limits = StoreLimitsBuilder::new()
             .memory_size(MEMORY_LIMIT)

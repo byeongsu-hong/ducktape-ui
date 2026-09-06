@@ -13,6 +13,7 @@
 mod icon;
 mod linux;
 mod macos;
+mod wasm;
 mod windows;
 
 use serde_json::Value;
@@ -22,7 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const USAGE: &str = "cargo ice bundle -p <package> [--target <triple>]...";
+const USAGE: &str = "cargo ice bundle -p <package>... [--target <triple>]... [--manifest-path <Cargo.toml>] [--out <dir>]";
 const DEFAULT_MINIMUM_SYSTEM_VERSION: &str = "11.0";
 
 /// macOS kills an app the moment it reaches a protected resource whose reason
@@ -39,13 +40,28 @@ const USAGE_ALIASES: [(&str, &str); 2] = [
 
 pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     let request = Request::parse(args)?;
+    if request.targets == [wasm::TARGET] {
+        return wasm::run(root, &request);
+    }
     let platform = Platform::host()?;
     if platform != Platform::MacOs && request.targets.len() > 1 {
         return Err(
             "only macOS joins several --target builds into one artifact; name at most one".into(),
         );
     }
-    let package = Package::resolve(&crate::dev::metadata(root)?, &request.package, platform)?;
+    let [package] = request.packages.as_slice() else {
+        return Err(format!(
+            "an installable bundle wraps one package; several -p build components together only with --target {}",
+            wasm::TARGET
+        ));
+    };
+    if request.out.is_some() {
+        return Err(
+            "only a wasm bundle takes --out; installers land under target/ice-bundle".into(),
+        );
+    }
+    let metadata = crate::dev::metadata_for(root, &request.manifest_arguments())?;
+    let package = Package::resolve(&metadata, package, platform)?;
     let meta = BundleMeta::resolve(&package, platform)?;
 
     let build = build_arguments(&request);
@@ -97,14 +113,18 @@ impl Platform {
 
 #[derive(Debug, PartialEq, Eq)]
 struct Request {
-    package: String,
+    packages: Vec<String>,
     targets: Vec<String>,
+    manifest_path: Option<String>,
+    out: Option<PathBuf>,
 }
 
 impl Request {
     fn parse(args: &[String]) -> Result<Self, String> {
-        let mut package = None;
+        let mut packages = Vec::new();
         let mut targets = Vec::new();
+        let mut manifest_path = None;
+        let mut out = None;
         let mut remaining = args.iter();
         while let Some(argument) = remaining.next() {
             let mut value = || {
@@ -114,12 +134,16 @@ impl Request {
                     .ok_or_else(|| format!("`{argument}` needs a value; {USAGE}"))
             };
             match argument.as_str() {
-                "-p" | "--package" => package = Some(value()?),
+                "-p" | "--package" => packages.push(value()?),
                 "--target" => targets.push(value()?),
+                "--manifest-path" => manifest_path = Some(value()?),
+                "--out" => out = Some(PathBuf::from(value()?)),
                 _ => return Err(format!("unexpected argument `{argument}`; {USAGE}")),
             }
         }
-        let package = package.ok_or_else(|| USAGE.to_owned())?;
+        if packages.is_empty() {
+            return Err(USAGE.to_owned());
+        }
         if targets
             .iter()
             .collect::<std::collections::BTreeSet<_>>()
@@ -128,7 +152,19 @@ impl Request {
         {
             return Err("cargo ice bundle was given the same --target twice".into());
         }
-        Ok(Self { package, targets })
+        Ok(Self {
+            packages,
+            targets,
+            manifest_path,
+            out,
+        })
+    }
+
+    fn manifest_arguments(&self) -> Vec<String> {
+        self.manifest_path
+            .iter()
+            .flat_map(|manifest| ["--manifest-path".to_owned(), manifest.clone()])
+            .collect()
     }
 
     /// Names the slice of hardware the artifact runs on, so two architectures
@@ -151,9 +187,12 @@ fn build_arguments(request: &Request) -> Vec<String> {
         "build".to_owned(),
         "--release".to_owned(),
         "--locked".to_owned(),
-        "-p".to_owned(),
-        request.package.clone(),
     ];
+    arguments.extend(request.manifest_arguments());
+    for package in &request.packages {
+        arguments.push("-p".to_owned());
+        arguments.push(package.clone());
+    }
     for target in &request.targets {
         arguments.push("--target".to_owned());
         arguments.push(target.clone());
@@ -735,7 +774,7 @@ mod tests {
     #[test]
     fn the_showcase_app_resolves_into_a_signable_bundle() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let metadata = crate::dev::metadata(&workspace).expect("read cargo metadata");
+        let metadata = crate::dev::metadata_for(&workspace, &[]).expect("read cargo metadata");
         let package =
             Package::resolve(&metadata, "showcase", Platform::MacOs).expect("resolve showcase");
         assert_eq!(package.executable, "showcase");
@@ -771,7 +810,7 @@ mod tests {
     #[test]
     fn the_showcase_app_resolves_for_every_platform() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let metadata = crate::dev::metadata(&workspace).expect("read cargo metadata");
+        let metadata = crate::dev::metadata_for(&workspace, &[]).expect("read cargo metadata");
         for (platform, executable) in [
             (Platform::Linux, "showcase"),
             (Platform::Windows, "showcase.exe"),
@@ -831,8 +870,10 @@ mod tests {
             binary_paths(
                 &package,
                 &Request {
-                    package: "showcase".into(),
-                    targets: Vec::new()
+                    packages: vec!["showcase".into()],
+                    targets: Vec::new(),
+                    manifest_path: None,
+                    out: None,
                 }
             ),
             [Path::new("/workspace/target/release/showcase")]
@@ -841,8 +882,10 @@ mod tests {
             binary_paths(
                 &package,
                 &Request {
-                    package: "showcase".into(),
+                    packages: vec!["showcase".into()],
                     targets: vec!["aarch64-apple-darwin".into(), "x86_64-apple-darwin".into()],
+                    manifest_path: None,
+                    out: None,
                 }
             ),
             [
@@ -983,9 +1026,42 @@ mod tests {
         assert_eq!(
             parse(&["-p", "showcase"]).expect("a package request"),
             Request {
-                package: "showcase".into(),
+                packages: vec!["showcase".into()],
                 targets: Vec::new(),
+                manifest_path: None,
+                out: None,
             }
+        );
+        let wasm = parse(&[
+            "--manifest-path",
+            "examples/app-store/Cargo.toml",
+            "-p",
+            "app-store-todo",
+            "-p",
+            "app-store-clock",
+            "--target",
+            "wasm32-unknown-unknown",
+            "--out",
+            "catalog",
+        ])
+        .expect("a catalog request");
+        assert_eq!(wasm.packages, ["app-store-todo", "app-store-clock"]);
+        assert_eq!(wasm.out.as_deref(), Some(Path::new("catalog")));
+        assert_eq!(
+            build_arguments(&wasm),
+            [
+                "build",
+                "--release",
+                "--locked",
+                "--manifest-path",
+                "examples/app-store/Cargo.toml",
+                "-p",
+                "app-store-todo",
+                "-p",
+                "app-store-clock",
+                "--target",
+                "wasm32-unknown-unknown",
+            ]
         );
         assert_eq!(
             parse(&[
@@ -1027,8 +1103,10 @@ mod tests {
     fn the_build_is_locked_and_release() {
         assert_eq!(
             build_arguments(&Request {
-                package: "showcase".into(),
+                packages: vec!["showcase".into()],
                 targets: vec!["aarch64-apple-darwin".into()],
+                manifest_path: None,
+                out: None,
             }),
             [
                 "build",

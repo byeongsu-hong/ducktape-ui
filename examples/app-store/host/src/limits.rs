@@ -27,7 +27,7 @@ pub(crate) const MAX_REST: Duration = Duration::from_millis(250);
 pub(crate) const MEMORY_LIMIT: usize = 64 << 20;
 
 /// The largest `.wasm` file the catalog will read or the store will compile.
-/// The five demo components built by `componentize.sh` land between 610 KB
+/// The five demo components `cargo ice bundle` builds land between 610 KB
 /// and 626 KB; this is generous past that, not tight against it. Past this a
 /// file is left out of the catalog the same way a bad manifest is, because
 /// nothing here is sandboxed yet: `scan_catalog` reads it whole to look for

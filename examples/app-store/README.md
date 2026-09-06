@@ -35,31 +35,31 @@ apps/chaos/     spins, eats memory, panics, floods the host, asks for an
 host/           the store: catalog, library, windows, capabilities (clock,
                 storage, bus, theme), the fuel/memory sandbox, the component
                 cache, and the widget that shows a guest
-componentize.sh turns the built app modules into components in the catalog
 ```
 
 ## Run it
 
 ```
-cd examples/app-store
-cargo build -p app-store-todo -p app-store-counter -p app-store-clock \
-            -p app-store-activity -p app-store-chaos \
-            --release --target wasm32-unknown-unknown
-./componentize.sh
-cargo run -p app-store-host --release
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+    -p app-store-todo -p app-store-counter -p app-store-clock \
+    -p app-store-activity -p app-store-chaos \
+    --target wasm32-unknown-unknown
+cd examples/app-store && cargo run -p app-store-host --release
 ```
 
-`componentize.sh` needs `wasm-tools` (`cargo install wasm-tools`). An app
-builds as a core module whose `ice:view` exports are already in place;
-the script wraps it as a component and satisfies the imports iced's wasm
-target leaves behind (wasm-bindgen's placeholders, from `web-time` and
-`web-sys`) with stub adapters that trap if called — nothing on a guest's
-frame path calls them. The catalog lists components only: a module that
-was built but not componentized is skipped.
+The bundle needs `wasm-tools` (`cargo install wasm-tools`) and uses
+`wasm-opt` when it is on `PATH`. An app builds as a core module whose
+`ice:view` exports are already in place; the command wraps it as a
+component and satisfies the imports iced's wasm target leaves behind
+(wasm-bindgen's placeholders, from `web-time` and `web-sys`) with stub
+adapters that trap if called — nothing on a guest's frame path calls them.
+Components land in `target/app-store-catalog` under this workspace, or
+wherever `--out` says. The catalog lists components only: a module that was
+built but not bundled is skipped.
 
 | variable | default | what it names |
 |---|---|---|
-| `APP_STORE_CATALOG` | `target/app-store-catalog` | the directory `componentize.sh` writes and the store scans |
+| `APP_STORE_CATALOG` | `target/app-store-catalog` | the directory `cargo ice bundle` writes and the store scans |
 | `APP_STORE_DATA` | `target/app-store-data` | app storage (`<app>/<key>`), the store's `installed`, `running` and `windows` lists, and wasmtime's artifact `cache` |
 
 The windowing backends the host asks iced for (`x11`, `wayland`) are
@@ -122,7 +122,7 @@ and switches its own palette on each answer, so the windows change together.
 
 ```rust
 ui_lang::include_app!("src/ui/app.ice");
-ui_lang_guest::export_app!(Clock, __ClockMessage, "Clock", "Host uptime.", ["clock"]);
+ui_lang_guest::export_app!(Clock, "Clock", "Host uptime.", ["clock"]);
 ```
 
 That is the whole crate, plus a `build.rs` that compiles the Ice sources
@@ -439,17 +439,14 @@ An honest inventory, grouped by where the work would land. Items marked
 
 ### SDK and developer experience
 
-- `export_app!` needs the generated message enum's name (`__XMessage`), a
-  coupling to codegen internals.
 - Capability payloads are ad-hoc bytes (`key\nvalue`, little-endian
   integers) with no schema, no generated bindings, no versioning and no
   `host.capabilities` introspection; every app declares its own
   `HostError`.
-- Building is the manual `cargo build --target wasm32-unknown-unknown`
-  plus `componentize.sh`; no `cargo ice bundle` / `dev` integration, no
-  `wasm-opt`. Every component still links iced's widget set and winit's
-  web backend as dead code (about 600 KB after the wasm-bindgen metadata
-  is stripped); a guest needs only iced's types.
+- `cargo ice bundle` builds the catalog, but there is no `cargo ice dev`
+  loop for a guest. Every component still links iced's widget set and
+  winit's web backend as dead code (about 600 KB after the wasm-bindgen
+  metadata is stripped); a guest needs only iced's types.
 - Native tests drive the app through the wire — `press`, `type_into`,
   `submit` by key or label, `answer` / `item` / `refuse` for the host —
   and read the tree back with `texts` and `find`; the Ice test harness

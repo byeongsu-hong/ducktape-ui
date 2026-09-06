@@ -55,7 +55,7 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
     );
     // The element type is the wire's node for every generic argument.
     assert!(generated.contains(
-        "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_guest::wire::Erase>::Node;"
+        "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_guest::wire::Erase>::Node;\npub(crate) type __IceMessage = __DemoMessage;"
     ));
     for expected in [
         "::ui_lang_guest::wire::Node::Container {",

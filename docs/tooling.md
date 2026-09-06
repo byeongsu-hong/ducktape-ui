@@ -95,6 +95,13 @@ build, then builds `--release --locked` and packages the result. On macOS,
 repeating `--target TRIPLE` builds several architectures and joins them with
 `lipo`; the disk image is then named `universal` rather than one architecture.
 
+`--target wasm32-unknown-unknown` bundles for an app store instead: every `-p`
+package is built as a core module, wrapped as an `ice:view` component with
+`wasm-tools` (the imports iced's wasm target leaves behind are satisfied by
+trapping stub adapters), optimized with `wasm-opt` when the host has it, and
+written to `target/app-store-catalog` or `--out DIR`. `--manifest-path` reaches
+a workspace other than the current one, as `examples/app-store` is.
+
 ### Identity
 
 Nothing is restated to get a package. The Ice app declaration names the

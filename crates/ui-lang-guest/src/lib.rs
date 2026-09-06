@@ -257,8 +257,9 @@ pub const fn manifest_bytes<const N: usize>(text: &str) -> [u8; N] {
 
 /// Exports a generated Ice application as an `ice:view` component.
 ///
-/// `$app` and `$message` are the names `include_app!` generated; `$name`
-/// and `$description` are what the host lists; the capabilities are the
+/// `$app` is the struct `include_app!` generated (its message enum is
+/// reached through the `__IceMessage` alias the `tree` target emits);
+/// `$name` and `$description` are what the host lists; the capabilities are the
 /// request kinds the app will make (`host.echo`, `clock.sleep`...), which
 /// the host checks every request against. They land in the `ice.manifest`
 /// custom section, readable without instantiating the module.
@@ -266,11 +267,11 @@ pub const fn manifest_bytes<const N: usize>(text: &str) -> [u8; N] {
 /// `boot_native` and `tick_native` drive the same app in an ordinary test.
 #[macro_export]
 macro_rules! export_app {
-    ($app:ident, $message:ident, $name:expr, $description:expr, [$($capability:literal),* $(,)?]) => {
+    ($app:ident, $name:expr, $description:expr, [$($capability:literal),* $(,)?]) => {
         struct __IceApp($app);
 
         impl $crate::App for __IceApp {
-            type Message = $message;
+            type Message = __IceMessage;
 
             fn boot() -> (Self, ::iced::Task<Self::Message>) {
                 let (app, boot) = <$app>::__boot();
