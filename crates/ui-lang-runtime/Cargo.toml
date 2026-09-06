@@ -57,6 +57,13 @@ zeroize = { version = "1", features = ["alloc"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 accesskit_unix = "=0.22.1"
+# Already in the graph through `accesskit_unix`; asks the desktop portal for
+# the accessibility preferences (`accessibility_settings`). The blocking API
+# is a default feature `accesskit_unix` leaves off.
+zbus = { version = "5.5", default-features = false, features = [
+    "async-io",
+    "blocking-api",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # 0.26.3 is the newest release built against `accesskit` 0.24.1 — the exact

@@ -2482,9 +2482,13 @@ pub struct AccessibilitySettings {
     pub screen_reader: bool,
 }
 
-/// Reads the settings as they are now. macOS answers from `NSWorkspace`; the
-/// other platforms report no motion or contrast preference and learn about a
-/// screen reader only once it activates the tree.
+/// Reads the settings as they are now. macOS answers from `NSWorkspace`.
+/// Linux asks the desktop portal's `Settings` interface over the session bus
+/// and keeps the answer for a second, so a view may ask every frame without
+/// paying a bus round trip each time; without a session bus or a portal it
+/// reports no preference. Windows reports no motion or contrast preference.
+/// Every platform counts an assistive technology that activated the tree as
+/// a screen reader.
 pub fn accessibility_settings() -> AccessibilitySettings {
     #[cfg(target_os = "macos")]
     {
@@ -2495,10 +2499,137 @@ pub fn accessibility_settings() -> AccessibilitySettings {
             screen_reader: workspace.isVoiceOverEnabled() || accessibility_active(),
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        portal::settings(portal::read(), accessibility_active())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     AccessibilitySettings {
         screen_reader: accessibility_active(),
         ..AccessibilitySettings::default()
+    }
+}
+
+/// The desktop portal's `org.freedesktop.portal.Settings`: the one place a
+/// sandboxed or unsandboxed Linux program may read the desktop's
+/// accessibility preferences without linking the desktop's own libraries.
+#[cfg(target_os = "linux")]
+mod portal {
+    use super::AccessibilitySettings;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    /// What the portal reported; `None` for a key it, or the desktop behind
+    /// it, does not know.
+    #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub(super) struct PortalSettings {
+        /// `org.gnome.desktop.interface` `enable-animations`.
+        pub animations: Option<bool>,
+        /// `org.freedesktop.appearance` `contrast`: 0 is no preference, 1 is
+        /// high contrast.
+        pub contrast: Option<u32>,
+        /// `org.gnome.desktop.a11y.applications` `screen-reader-enabled`.
+        pub screen_reader: Option<bool>,
+    }
+
+    pub(super) fn settings(portal: PortalSettings, tree_active: bool) -> AccessibilitySettings {
+        AccessibilitySettings {
+            reduce_motion: portal.animations == Some(false),
+            increase_contrast: portal.contrast.is_some_and(|contrast| contrast > 0),
+            screen_reader: portal.screen_reader == Some(true) || tree_active,
+        }
+    }
+
+    /// How long one answer stands in for the bus.
+    const KEEP: Duration = Duration::from_secs(1);
+
+    pub(super) fn read() -> PortalSettings {
+        static CACHE: Mutex<Option<(Instant, PortalSettings)>> = Mutex::new(None);
+        let mut cache = CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((read_at, settings)) = *cache
+            && read_at.elapsed() < KEEP
+        {
+            return settings;
+        }
+        let settings = read_bus().unwrap_or_default();
+        *cache = Some((Instant::now(), settings));
+        settings
+    }
+
+    const PORTAL: &str = "org.freedesktop.portal.Desktop";
+
+    fn read_bus() -> zbus::Result<PortalSettings> {
+        let connection = zbus::blocking::Connection::session()?;
+        // A missing portal is asked for nothing: naming it would start it
+        // through bus activation and wait for it.
+        let bus = zbus::blocking::fdo::DBusProxy::new(&connection)?;
+        if !bus.name_has_owner(zbus::names::BusName::try_from(PORTAL)?)? {
+            return Ok(PortalSettings::default());
+        }
+        let proxy = zbus::blocking::Proxy::new(
+            &connection,
+            PORTAL,
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Settings",
+        )?;
+        let read = |namespace: &str, key: &str| -> Option<zbus::zvariant::OwnedValue> {
+            // `ReadOne` came with version 2 of the interface; `Read` wraps
+            // the same value in one more variant.
+            match proxy.call("ReadOne", &(namespace, key)) {
+                Ok(value) => Some(value),
+                Err(_) => {
+                    let nested: zbus::zvariant::OwnedValue =
+                        proxy.call("Read", &(namespace, key)).ok()?;
+                    match zbus::zvariant::Value::from(nested) {
+                        zbus::zvariant::Value::Value(inner) => (*inner).try_into().ok(),
+                        other => other.try_into().ok(),
+                    }
+                }
+            }
+        };
+        Ok(PortalSettings {
+            animations: read("org.gnome.desktop.interface", "enable-animations")
+                .and_then(|value| bool::try_from(value).ok()),
+            contrast: read("org.freedesktop.appearance", "contrast")
+                .and_then(|value| u32::try_from(value).ok()),
+            screen_reader: read(
+                "org.gnome.desktop.a11y.applications",
+                "screen-reader-enabled",
+            )
+            .and_then(|value| bool::try_from(value).ok()),
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::{PortalSettings, settings};
+
+        #[test]
+        fn portal_preferences_map_onto_the_settings() {
+            let none = settings(PortalSettings::default(), false);
+            assert!(!none.reduce_motion && !none.increase_contrast && !none.screen_reader);
+            let all = settings(
+                PortalSettings {
+                    animations: Some(false),
+                    contrast: Some(1),
+                    screen_reader: Some(true),
+                },
+                false,
+            );
+            assert!(all.reduce_motion && all.increase_contrast && all.screen_reader);
+            let unset = settings(
+                PortalSettings {
+                    animations: Some(true),
+                    contrast: Some(0),
+                    screen_reader: Some(false),
+                },
+                true,
+            );
+            assert!(!unset.reduce_motion && !unset.increase_contrast);
+            assert!(unset.screen_reader, "an activated tree is a screen reader");
+        }
     }
 }
 

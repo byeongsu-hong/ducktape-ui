@@ -213,8 +213,9 @@ its adapter with it when it closes. Daemon export on Linux and Windows, exact
 desktop bounds, rich text, and unlisted widgets are outside this Core
 contract. `ui_lang_runtime::accessibility_settings()` reads the system
 preferences no screen reader relays — Reduce Motion, Increase Contrast, and
-whether a screen reader is running — from `NSWorkspace` on macOS; elsewhere it
-reports a screen reader only once one activates the tree.
+whether a screen reader is running — from `NSWorkspace` on macOS and the
+desktop portal on Linux; Windows reports a screen reader only once one
+activates the tree.
 
 ## Installing a build
 

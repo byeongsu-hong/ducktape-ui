@@ -6344,6 +6344,7 @@ dependencies = [
  "ui-lang-template",
  "ui-lang-wire",
  "unicode-segmentation",
+ "zbus",
  "zeroize",
 ]
 

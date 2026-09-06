@@ -568,10 +568,13 @@ contract.
 The preferences a user sets in the operating system that no assistive
 technology relays — Reduce Motion, Increase Contrast, and whether a screen
 reader is running — are read through `ui_lang_runtime::accessibility_settings()`.
-macOS answers from `NSWorkspace`; the other platforms report no motion or
-contrast preference and a screen reader only once one activates the tree. Ice
-has no startup hook that seeds state from it: a program reads it through an
-`extern`.
+macOS answers from `NSWorkspace`. Linux asks the desktop portal's `Settings`
+interface (`enable-animations`, the `contrast` preference, and GNOME's
+screen-reader flag) and keeps the answer for a second, so a view may ask every
+frame; with no session bus or portal it reports no preference. Windows reports
+no motion or contrast preference. Every platform counts an assistive technology
+that activated the tree as a screen reader. Ice has no startup hook that seeds
+state from it: a program reads it through an `extern`.
 
 ### Theme and style
 
