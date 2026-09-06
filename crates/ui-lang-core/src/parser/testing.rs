@@ -1101,14 +1101,17 @@ fn parse_accessibility_expectation(
 }
 
 fn validate_accessibility_action_name(source: &str, line: &Line) -> Result<(), Error> {
-    if matches!(source, "click" | "focus" | "increment" | "decrement") {
+    if matches!(
+        source,
+        "click" | "focus" | "increment" | "decrement" | "scroll-into-view"
+    ) {
         Ok(())
     } else {
         Err(error(
             TEST_ERROR,
             line,
             format!(
-                "unsupported accessibility action `{source}`; tests support click, focus, increment, and decrement"
+                "unsupported accessibility action `{source}`; tests support click, focus, increment, decrement, and scroll-into-view"
             ),
         ))
     }

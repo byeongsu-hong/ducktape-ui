@@ -2954,12 +2954,7 @@ where
             AccessibilityAction::Focus => target.accessibility_supports_focus(),
             AccessibilityAction::Increment => target.accessibility_supports_increment(),
             AccessibilityAction::Decrement => target.accessibility_supports_decrement(),
-            AccessibilityAction::ScrollIntoView => self.invalid_action(
-                "expect a11y action",
-                "click, focus, increment, or decrement",
-                "scroll-into-view".to_owned(),
-                source,
-            ),
+            AccessibilityAction::ScrollIntoView => self.inside_scroll(id, source),
         };
         if actual != expected {
             self.accessibility_expectation_failed(
@@ -3910,12 +3905,24 @@ where
         if !scrolled {
             self.invalid_action(
                 "accessibility scroll-into-view",
-                "a target inside an identified scroll",
-                format!("{id} has no identified scroll around it"),
+                "a target inside a scroll",
+                format!("{id} has no scroll around it"),
                 source,
             );
         }
         self.settle(Some(source));
+    }
+
+    /// Whether a scroll encloses the target: what `ScrollIntoView` needs, and
+    /// what the snapshot advertises it on. Read by the same walk the request
+    /// makes, without moving anything.
+    fn inside_scroll(&mut self, id: &str, source: Location) -> bool {
+        let target = self.require_semantic_action_target(id, source);
+        self.with_interface(|interface, renderer, _| {
+            let mut operation = crate::ScrollIntoViewOperation::<P::Message>::new(target.node);
+            interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
+            operation.found_scroll()
+        })
     }
 
     fn require_semantic_action_target(

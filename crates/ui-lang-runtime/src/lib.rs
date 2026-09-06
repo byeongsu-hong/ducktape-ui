@@ -1796,21 +1796,27 @@ fn focus_semantic<Message: Send + 'static>(target: SemanticFocus) -> Task<Messag
     .discard()
 }
 
-/// Scrolls the nearest identified scroll enclosing `target` until the node is
-/// in view. Only the nearest one moves, and only as far as it must: a node
-/// already in view moves nothing, a node above or left of the viewport lands on
-/// its leading edge, one below or right lands on its trailing edge.
+/// Scrolls every scroll enclosing `target` until the node is in view, and
+/// each only as far as it must: a node already in view moves nothing, one
+/// above or left of the viewport lands on its leading edge, one below or right
+/// on its trailing edge. The innermost scroll reveals the node; each scroll
+/// outside it reveals the scroll it contains. Identified or not makes no
+/// difference — the second walk moves each scroll's own state directly.
 fn scroll_into_view<Message: Send + 'static>(target: SemanticFocus) -> Task<Message> {
     iced::advanced::widget::operate(ScrollIntoViewOperation::<Message>::new(target)).discard()
 }
 
 /// A scroll the walk is inside of, in its own untranslated coordinates.
 struct ScrollFrame {
-    id: widget::Id,
+    /// Which scroll this is, counting every scroll the walk passes in order;
+    /// the second walk counts the same way to find it again.
+    ordinal: usize,
     viewport: Rectangle,
     content: Rectangle,
     translation: Vector,
 }
+
+type ScrollOffset = operation::scrollable::AbsoluteOffset<Option<f32>>;
 
 struct ScrollIntoViewOperation<Message> {
     target: SemanticFocus,
@@ -1821,10 +1827,9 @@ struct ScrollIntoViewOperation<Message> {
     frames: Vec<bool>,
     scrolls: Vec<ScrollFrame>,
     pending_scroll: Option<ScrollFrame>,
-    found: Option<(
-        widget::Id,
-        operation::scrollable::AbsoluteOffset<Option<f32>>,
-    )>,
+    seen: usize,
+    found: bool,
+    moves: Vec<(usize, ScrollOffset)>,
     marker: std::marker::PhantomData<Message>,
 }
 
@@ -1837,14 +1842,16 @@ impl<Message> ScrollIntoViewOperation<Message> {
             frames: Vec::new(),
             scrolls: Vec::new(),
             pending_scroll: None,
-            found: None,
+            seen: 0,
+            found: false,
+            moves: Vec::new(),
             marker: std::marker::PhantomData,
         }
     }
 
-    /// Whether the walk found the target inside an identified scroll.
+    /// Whether the walk found the target inside a scroll.
     pub(crate) fn found_scroll(&self) -> bool {
-        self.found.is_some()
+        self.found
     }
 }
 
@@ -1873,18 +1880,19 @@ impl<Message: Send + 'static> Operation<()> for ScrollIntoViewOperation<Message>
 
     fn scrollable(
         &mut self,
-        id: Option<&widget::Id>,
+        _id: Option<&widget::Id>,
         bounds: Rectangle,
         content_bounds: Rectangle,
         translation: Vector,
         _state: &mut dyn Scrollable,
     ) {
-        self.pending_scroll = id.map(|id| ScrollFrame {
-            id: id.clone(),
+        self.pending_scroll = Some(ScrollFrame {
+            ordinal: self.seen,
             viewport: bounds,
             content: content_bounds,
             translation,
         });
+        self.seen += 1;
     }
 
     fn custom(&mut self, _id: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Any) {
@@ -1902,41 +1910,77 @@ impl<Message: Send + 'static> Operation<()> for ScrollIntoViewOperation<Message>
         let (_, current) =
             disambiguate_semantic_id(semantics.id, &mut self.occurrences, &mut self.used_ids);
         self.frames.push(atomic_role(semantics.role));
-        if current != self.target {
+        if current != self.target || self.scrolls.is_empty() {
             return;
         }
-        let Some(scroll) = self.scrolls.last() else {
-            return;
-        };
-        let x = bounds.x - scroll.content.x;
-        let y = bounds.y - scroll.content.y;
-        self.found = Some((
-            scroll.id.clone(),
-            operation::scrollable::AbsoluteOffset {
+        self.found = true;
+        // The node's bounds are in the innermost scroll's space; each scroll's
+        // own bounds are in the space of the scroll around it.
+        let mut rect = bounds;
+        for scroll in self.scrolls.iter().rev() {
+            let x = rect.x - scroll.content.x;
+            let y = rect.y - scroll.content.y;
+            let offset = ScrollOffset {
                 x: reveal(
                     x,
-                    x + bounds.width,
+                    x + rect.width,
                     scroll.translation.x,
                     scroll.viewport.width,
                 ),
                 y: reveal(
                     y,
-                    y + bounds.height,
+                    y + rect.height,
                     scroll.translation.y,
                     scroll.viewport.height,
                 ),
-            },
-        ));
+            };
+            if offset.x.is_some() || offset.y.is_some() {
+                self.moves.push((scroll.ordinal, offset));
+            }
+            rect = scroll.viewport;
+        }
     }
 
     fn finish(&self) -> Outcome<()> {
-        match &self.found {
-            Some((id, offset)) => Outcome::Chain(Box::new(operation::scrollable::scroll_to::<()>(
-                id.clone(),
-                *offset,
-            ))),
-            None => Outcome::None,
+        if self.moves.is_empty() {
+            return Outcome::None;
         }
+        Outcome::Chain(Box::new(ApplyScrolls {
+            moves: self.moves.clone(),
+            seen: 0,
+        }))
+    }
+}
+
+/// The second walk: moves the scrolls the first one chose, found again by
+/// counting scrolls in the same order.
+struct ApplyScrolls {
+    moves: Vec<(usize, ScrollOffset)>,
+    seen: usize,
+}
+
+impl Operation<()> for ApplyScrolls {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<()>)) {
+        operate(self);
+    }
+
+    fn scrollable(
+        &mut self,
+        _id: Option<&widget::Id>,
+        _bounds: Rectangle,
+        _content_bounds: Rectangle,
+        _translation: Vector,
+        state: &mut dyn Scrollable,
+    ) {
+        let ordinal = self.seen;
+        self.seen += 1;
+        if let Some((_, offset)) = self.moves.iter().find(|(seen, _)| *seen == ordinal) {
+            state.scroll_to(*offset);
+        }
+    }
+
+    fn finish(&self) -> Outcome<()> {
+        Outcome::None
     }
 }
 
@@ -1951,9 +1995,9 @@ struct SnapshotOperation<Message> {
     root_label: String,
     translation: Vector,
     pending_translation: Option<Vector>,
-    /// How many identified scrolls enclose the subtree being walked. A node
-    /// inside one supports `ScrollIntoView`; the request finds the scroll
-    /// again when it arrives, so nothing about it is stored per node.
+    /// How many scrolls enclose the subtree being walked. A node inside one
+    /// supports `ScrollIntoView`; the request finds the scrolls again when it
+    /// arrives, so nothing about them is stored per node.
     scroll_depth: usize,
     pending_scroll: bool,
     pending_set: Option<SetPosition>,
@@ -2099,7 +2143,7 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
 
     fn scrollable(
         &mut self,
-        id: Option<&widget::Id>,
+        _id: Option<&widget::Id>,
         _bounds: Rectangle,
         _content_bounds: Rectangle,
         translation: Vector,
@@ -2109,7 +2153,7 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
             return;
         }
         self.pending_translation = Some(translation);
-        self.pending_scroll = id.is_some();
+        self.pending_scroll = true;
     }
 
     fn custom(&mut self, _id: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Any) {
@@ -3783,19 +3827,22 @@ mod tests {
     }
 
     #[test]
-    fn a_node_inside_an_identified_scroll_scrolls_into_view_on_request() {
+    fn a_node_inside_nested_unidentified_scrolls_scrolls_into_view_on_request() {
         let far = StableId::new("far");
         let button: TestElement<'static> =
             iced::widget::button("Far").on_press(Message::First).into();
-        let content: TestElement<'static> = iced::widget::column![
+        let inner: TestElement<'static> = iced::widget::scrollable(iced::widget::column![
             iced::widget::Space::new().height(500),
             accessible(button, far, Role::Button).label("Far"),
-        ]
+        ])
+        .height(50)
         .into();
-        let root: TestElement<'static> = iced::widget::scrollable(content)
-            .id(widget::Id::new("list"))
-            .height(100)
-            .into();
+        let root: TestElement<'static> = iced::widget::scrollable(iced::widget::column![
+            iced::widget::Space::new().height(300),
+            inner,
+        ])
+        .height(100)
+        .into();
         let mut renderer = renderer();
         let mut ui = UserInterface::build(
             root,
@@ -3816,6 +3863,7 @@ mod tests {
         let before = snapshot(&mut ui, &renderer);
         assert!(node(&before).supports_action(Action::ScrollIntoView));
         assert!(node(&before).bounds().expect("bounds").y0 >= 100.0);
+        assert!(!snapshot_outside_scroll().supports_action(Action::ScrollIntoView));
 
         let task = before.dispatch(ActionRequest {
             action: Action::ScrollIntoView,
@@ -3843,6 +3891,29 @@ mod tests {
             bounds.y0 >= 0.0 && bounds.y1 <= 100.0,
             "the far button is still offscreen: {bounds:?}"
         );
+    }
+
+    /// The same button with no scroll around it: nothing could move, so the
+    /// action is not advertised.
+    fn snapshot_outside_scroll() -> Node {
+        let far = StableId::new("far");
+        let button: TestElement<'static> =
+            iced::widget::button("Far").on_press(Message::First).into();
+        let root: TestElement<'static> = accessible(button, far, Role::Button).label("Far").into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(400.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        snapshot(&mut ui, &renderer)
+            .update
+            .nodes
+            .into_iter()
+            .find(|(id, _)| *id == far.node_id())
+            .map(|(_, node)| node)
+            .expect("far node")
     }
 
     fn renderer() -> TestRenderer {
