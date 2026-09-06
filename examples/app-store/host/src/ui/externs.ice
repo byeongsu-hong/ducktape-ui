@@ -1,31 +1,35 @@
 extern crate::store
   Capability(name:str)
-  CatalogEntry(id:str, name:str, description:str, capabilities:[Capability], path:str, mark:str)
+  CatalogEntry(id:str, name:str, description:str, capabilities:[Capability], path:str, mark:str, hash:str)
+  Installed(id:str, hash:str)
   Surface()
-  Loaded(id:str, name:str, surface:Surface)
+  Loaded(id:str, name:str, hash:str, surface:Surface)
   Running(id:str, name:str, surface:Surface, window:window-id)
   StoreError(message:str)
-  Gauge(live:bool, fault:str, fuel:str, tick:str, rate:str, frame:str, idle:str, load:str, dropped:str, level:i64)
-  CardModel(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
-  ShelfModel(id:str, found:bool, entry:CatalogEntry, running:bool, gauge:Gauge)
+  Gauge(live:bool, fault:str, fuel:str, tick:str, rate:str, frame:str, idle:str, load:str, dropped:str, sustained:str, level:i64)
+  CardModel(entry:CatalogEntry, installed:bool, changed:bool, running:bool, gauge:Gauge)
+  ShelfModel(id:str, found:bool, entry:CatalogEntry, changed:bool, running:bool, gauge:Gauge)
   Rows(cards:[CardModel], shelf:[ShelfModel])
   Placement(id:str, x:f64, y:f64, w:f64, h:f64, placed:bool)
   pure scan_catalog() -> [CatalogEntry]
   sync catalog_dir() -> str
   pure find_entry(catalog:&[CatalogEntry], id:&str) -> CatalogEntry?
   pure capability_hint(name:str) -> str
+  pure short_hash(hash:str) -> str
   install_app(entry:CatalogEntry) -> Loaded ! StoreError
-  stream restore_running(catalog:[CatalogEntry]) -> Loaded ! StoreError
+  stream restore_running(catalog:[CatalogEntry], library:[Installed]) -> Loaded ! StoreError
   restart_guest(surface:Surface) -> Surface ! StoreError
   pure gauge(surface:&Surface, generation:i64) -> Gauge
   pure gauge_of(running:&[Running], id:str, generation:i64) -> Gauge
   pure empty_rows() -> Rows
-  pure build_rows(catalog:&[CatalogEntry], query:&str, library:&[str], running:&[Running], generation:i64) -> Rows
+  pure build_rows(catalog:&[CatalogEntry], query:&str, library:&[Installed], running:&[Running], generation:i64) -> Rows
   pure meter(level:i64) -> f64
-  sync remembered_library() -> [str]
-  pure add_to_library(library:[str], id:str) -> [str]
-  pure remove_from_library(library:[str], id:str) -> [str]
-  pure in_library(library:&[str], id:str) -> bool
+  sync remembered_library() -> [Installed]
+  pure add_to_library(library:[Installed], id:str, hash:str) -> [Installed]
+  pure remove_from_library(library:[Installed], id:str) -> [Installed]
+  pure in_library(library:&[Installed], id:str) -> bool
+  pure pinned(library:&[Installed], entry:&CatalogEntry) -> bool
+  pure changed(library:&[Installed], entry:&CatalogEntry) -> bool
   pure enqueue(opening:[Loaded], app:Loaded) -> [Loaded]
   pure attach_window(running:[Running], opening:&[Loaded], window:window-id) -> [Running]
   pure drop_first(opening:[Loaded]) -> [Loaded]
@@ -39,8 +43,8 @@ extern crate::store
   pure running_label(running:&[Running], generation:i64) -> str
   pure window_title(running:&[Running], window:window-id) -> str
   pure installing_label(entry:CatalogEntry) -> str
-  pure opening_label(entry:CatalogEntry) -> str
-  pure library_hint(library:&[str]) -> str
+  pure opening_label(library:&[Installed], entry:CatalogEntry) -> str
+  pure library_hint(library:&[Installed]) -> str
   sync remembered_placements() -> [Placement]
   sync save_placements(placements:&[Placement]) -> bool
   pure no_placement() -> Placement

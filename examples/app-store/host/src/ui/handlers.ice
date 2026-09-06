@@ -5,7 +5,7 @@ on mount
   parallel
     task window open store -> store_opened _
     task system theme -> system_theme _
-    stream every restore_running(catalog) -> instantiated _ | install_failed _
+    stream every restore_running(catalog, library) -> instantiated _ | install_failed _
 
 on store_opened(id)
   store_window = some(id)
@@ -27,10 +27,12 @@ on choose_theme(choice)
 on navigate(next)
   page = next
   removing = ""
+  consenting = ""
 
 on show_details(id)
   selected = id
   page = "detail"
+  consenting = ""
 
 // A module dropped into the catalog directory while the store runs is only a
 // file read away, so the list is not fixed at start; the directory itself is
@@ -47,19 +49,35 @@ on searched(text)
   query = text
   rows = build_rows(catalog, query, library, running, generation)
 
+// Get asks first: the detail page shows what the manifest declares and the
+// hash it is about to pin, and Install there is the one path that installs.
+on ask_consent(id)
+  consenting = id
+  selected = id
+  removing = ""
+  page = "detail"
+
+on decline
+  consenting = ""
+
 // Get and Open are one path: load the module, then give it a window. Get
-// also adds the app to the library, which Open finds it already in.
+// also pins the app in the library, which Open finds it already in.
 on install(entry)
+  consenting = ""
+  return if is_running(running, entry.id)
   status = installing_label(entry)
   run every install_app(entry) -> instantiated _ | install_failed _
 
+// Open runs only the module that was consented to: a rebuilt one is named
+// in the status line and gets nothing until it is reviewed and got again.
 on launch(entry)
   return if is_running(running, entry.id)
-  status = opening_label(entry)
+  status = opening_label(library, entry)
+  return if !pinned(library, entry)
   run every install_app(entry) -> instantiated _ | install_failed _
 
 on instantiated(app)
-  library = add_to_library(library, app.id)
+  library = add_to_library(library, app.id, app.hash)
   opening = enqueue(opening, app)
   status = ""
   rows = build_rows(catalog, query, library, running, generation)
@@ -100,6 +118,7 @@ on quit(id)
 // with the question on it, the second removes it. Keep withdraws the question.
 on ask_uninstall(id)
   removing = id
+  consenting = ""
   selected = id
   page = "detail"
 
@@ -153,6 +172,7 @@ on escape(id)
   return if page != "detail" && empty(query)
   page = escape_page(page, query)
   removing = ""
+  consenting = ""
   query = ""
   rows = build_rows(catalog, query, library, running, generation)
 

@@ -10,7 +10,7 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use iced::time::Instant;
 use ui_lang_runtime::view_tree::{Inputs, Output};
@@ -55,24 +55,27 @@ impl ViewImports for HostState {
     }
 }
 
+use crate::catalog::sha256_hex;
 pub use crate::catalog::{
     Capability, CatalogEntry, StoreError, capability_hint, catalog_dir, find_entry, scan_catalog,
+    short_hash,
 };
 pub use crate::guest_view::wasm_view;
 pub use crate::library::{
-    CardModel, Gauge, Loaded, Placement, Rows, Running, ShelfModel, add_to_library, attach_window,
-    build_rows, drop_first, drop_window, empty_rows, enqueue, escape_page, escape_press, gauge,
-    gauge_of, in_library, installing_label, is_guest, is_running, is_window, library_hint, meter,
-    moved, no_placement, opening_label, placement_at, remembered_library, remembered_placements,
-    remove_from_library, resized, restore_running, running_count, running_label, save_placements,
-    search_hint, search_press, surface_at, window_of, window_title,
+    CardModel, Gauge, Installed, Loaded, Placement, Rows, Running, ShelfModel, add_to_library,
+    attach_window, build_rows, changed, drop_first, drop_window, empty_rows, enqueue, escape_page,
+    escape_press, gauge, gauge_of, in_library, installing_label, is_guest, is_running, is_window,
+    library_hint, meter, moved, no_placement, opening_label, pinned, placement_at,
+    remembered_library, remembered_placements, remove_from_library, resized, restore_running,
+    running_count, running_label, save_placements, search_hint, search_press, surface_at,
+    window_of, window_title,
 };
 
 use crate::capabilities::{Inbox, bus, clock, host, storage};
 use crate::library::{FAULTED, LIVE_INSTANCES};
 use crate::limits::{
-    BUS_WAKE_INTERVAL, EPOCH_TICK, FUEL_PER_TICK, MAX_BUS_BYTES, MAX_CANCELS, MAX_DUE,
-    MAX_FAULT_BYTES, MAX_FRAME_BYTES, MAX_MODULE_BYTES, MAX_PAYLOAD_BYTES,
+    BUS_WAKE_INTERVAL, EPOCH_TICK, FUEL_PER_SECOND, FUEL_PER_TICK, FUEL_WINDOW, MAX_BUS_BYTES,
+    MAX_CANCELS, MAX_DUE, MAX_FAULT_BYTES, MAX_FRAME_BYTES, MAX_MODULE_BYTES, MAX_PAYLOAD_BYTES,
     MAX_REPLY_BYTES_PER_TICK, MAX_REQUESTS_PER_TICK, MAX_REST, MAX_SUBSCRIPTIONS,
     MAX_THEME_SUBSCRIPTIONS, MAX_TICKERS, MAX_TOPIC_BYTES, MEMORY_LIMIT, TICK_BUDGET,
     TICK_DEADLINE,
@@ -140,6 +143,7 @@ pub async fn install_app(entry: CatalogEntry) -> Result<Loaded, StoreError> {
     Ok(Loaded {
         id: entry.id,
         name: entry.name,
+        hash: entry.hash,
         surface: Surface(Arc::new(Mutex::new(guest))),
     })
 }
@@ -231,8 +235,9 @@ pub struct Guest {
     pub(crate) skipped: u64,
     pub(crate) unchanged: u64,
     pub(crate) frame_bytes: usize,
-    /// When the recent ticks ran, for a ticks-per-second figure.
-    recent: VecDeque<Instant>,
+    /// When the recent ticks ran and what each burned, for the ticks-per-
+    /// second figure and the sustained fuel the throttle watches.
+    recent: VecDeque<(Instant, u64)>,
 }
 
 impl std::fmt::Debug for Guest {
@@ -297,37 +302,41 @@ fn deadline_epochs() -> u64 {
     (deadline.div_ceil(epoch)) as u64
 }
 
-/// The components loaded this run, by path and modification time. Reopening,
-/// restarting or reinstalling an app that was loaded once is then an
-/// instantiation — under a millisecond — and a component rebuilt meanwhile
-/// is noticed by its timestamp and loaded again.
-fn component(path: &str) -> Result<(Component, bool), String> {
-    static COMPONENTS: OnceLock<Mutex<HashMap<String, (SystemTime, Component)>>> = OnceLock::new();
-    let metadata = std::fs::metadata(path).map_err(|error| format!("{path}: {error}"))?;
-    let stamp = metadata
-        .modified()
-        .map_err(|error| format!("{path}: {error}"))?;
+/// The components loaded this run, by content hash. Reopening, restarting
+/// or reinstalling an app that was loaded once is then an instantiation —
+/// under a millisecond — and a component rebuilt meanwhile hashes
+/// differently, which is refused before it gets here.
+fn component(entry: &CatalogEntry) -> Result<(Component, bool), String> {
+    static COMPONENTS: OnceLock<Mutex<HashMap<String, Component>>> = OnceLock::new();
+    let path = &entry.path;
     let components = COMPONENTS.get_or_init(Mutex::default);
-    if let Some((known, component)) = components.lock().expect("component cache").get(path)
-        && *known == stamp
-    {
+    if let Some(component) = components.lock().expect("component cache").get(&entry.hash) {
         return Ok((component.clone(), true));
     }
     // The catalog already left an oversized file out, but the path a guest
     // is loaded from is not necessarily one the catalog just scanned — an
     // app reopened after its file grew past the scan that found it, say —
     // so cranelift never sees it either.
+    let metadata = std::fs::metadata(path).map_err(|error| format!("{path}: {error}"))?;
     if metadata.len() > MAX_MODULE_BYTES {
         return Err(format!(
             "{path}: past the {MAX_MODULE_BYTES} byte module limit"
         ));
     }
-    let component =
-        Component::from_file(engine(), path).map_err(|error| format!("{path}: {error}"))?;
+    // Read once, hash what was read, compile what was hashed: the file the
+    // catalog scanned and the file cranelift sees are the same bytes, or
+    // nothing runs. A rebuilt module between scan and Open lands here.
+    let bytes = std::fs::read(path).map_err(|error| format!("{path}: {error}"))?;
+    if sha256_hex(&bytes) != entry.hash {
+        return Err(format!(
+            "{path}: changed on disk since the catalog was scanned; Rescan, then Get it again"
+        ));
+    }
+    let component = Component::new(engine(), &bytes).map_err(|error| format!("{path}: {error}"))?;
     components
         .lock()
         .expect("component cache")
-        .insert(path.to_string(), (stamp, component.clone()));
+        .insert(entry.hash.clone(), component.clone());
     Ok((component, false))
 }
 
@@ -336,7 +345,7 @@ impl Guest {
         let path = &entry.path;
         let engine = engine();
         let started = Instant::now();
-        let (component, cached) = component(path)?;
+        let (component, cached) = component(entry)?;
         // Tables are allocated eagerly at their declared minimum, before any
         // fuel or memory limit is consulted, so a module declaring a hundred
         // ten-million-element tables would be gigabytes at Install. A
@@ -467,11 +476,11 @@ impl Guest {
         self.deliver_due(now);
         self.tick();
         self.ticks += 1;
-        self.recent.push_back(now);
+        self.recent.push_back((now, self.fuel_used));
         while self
             .recent
             .front()
-            .is_some_and(|at| now.saturating_duration_since(*at) > RATE_WINDOW)
+            .is_some_and(|(at, _)| now.saturating_duration_since(*at) > FUEL_WINDOW)
         {
             self.recent.pop_front();
         }
@@ -500,8 +509,29 @@ impl Guest {
         // What the whole redraw cost the window thread, not only the call
         // into the module: answering a tick's requests is the host's work,
         // and the guest chose how much of it there would be.
-        self.resting_until = rest_after(started.elapsed()).map(|rest| now + rest);
+        // Two governors, the longer wait wins: what this redraw overran, and
+        // what the last [`FUEL_WINDOW`] of them burned in all — the second is
+        // what slows a guest that is merely busy every tick, forever.
+        let rest = rest_after(started.elapsed()).max(throttle_after(self.spent()));
+        self.resting_until = rest.map(|rest| now + rest);
         self.wake(now)
+    }
+
+    /// Fuel burned over the last [`FUEL_WINDOW`], as kept by `redraw`.
+    fn spent(&self) -> u64 {
+        self.recent.iter().map(|(_, fuel)| *fuel).sum()
+    }
+
+    /// Fuel per second over the window that the throttle watches; the
+    /// Monitor's figure.
+    pub(crate) fn sustained(&self, now: Instant) -> u64 {
+        let spent: u64 = self
+            .recent
+            .iter()
+            .filter(|(at, _)| now.saturating_duration_since(*at) <= FUEL_WINDOW)
+            .map(|(_, fuel)| *fuel)
+            .sum();
+        spent / FUEL_WINDOW.as_secs()
     }
 
     /// When this guest may run again, if it is still paying for its last
@@ -566,7 +596,7 @@ impl Guest {
     pub(crate) fn rate(&self, now: Instant) -> usize {
         self.recent
             .iter()
-            .filter(|at| now.saturating_duration_since(**at) <= RATE_WINDOW)
+            .filter(|(at, _)| now.saturating_duration_since(*at) <= RATE_WINDOW)
             .count()
     }
 
@@ -824,6 +854,18 @@ fn rest_after(spent: Duration) -> Option<Duration> {
     (!overran.is_zero()).then(|| overran.min(MAX_REST))
 }
 
+/// How long a guest waits for what its last [`FUEL_WINDOW`] burned in all.
+/// Inside [`FUEL_PER_SECOND`] over the window, nothing; past it, a share of
+/// [`MAX_REST`] that grows with the overspend and is all of it at double the
+/// budget. A guest at the cap runs at a few ticks a second until the window
+/// it is measured over has drained — the budget is a rate, so the rest is
+/// what brings the rate back under it.
+fn throttle_after(spent: u64) -> Option<Duration> {
+    let budget = FUEL_PER_SECOND * FUEL_WINDOW.as_secs();
+    let over = spent.saturating_sub(budget);
+    (over > 0).then(|| MAX_REST.mul_f64((over as f64 / budget as f64).min(1.0)))
+}
+
 /// What the host is willing to take from one tick's bytes. Everything in
 /// here is the guest's to choose, so nothing in here is trusted: the length,
 /// the counts, the tree.
@@ -992,6 +1034,44 @@ mod tests {
         let kept = state.panic.as_deref().map(str::len).expect("a message");
         assert!(kept <= MAX_FAULT_BYTES + 1, "kept {kept} bytes");
         assert!(each > Duration::from_micros(100), "one call took {each:?}");
+    }
+
+    /// The integrity check on the way in: the bytes the loader reads must
+    /// hash to what the catalog scanned, or nothing is compiled.
+    #[test]
+    fn a_module_whose_bytes_are_not_the_hash_the_catalog_scanned_is_refused_before_cranelift() {
+        let path = std::env::temp_dir().join("app-store-store-test-rehashed.wasm");
+        std::fs::write(&path, b"not the module that was scanned").expect("write");
+        let entry = CatalogEntry {
+            id: "rehashed".into(),
+            name: "Rehashed".into(),
+            description: String::new(),
+            capabilities: Vec::new(),
+            path: path.to_string_lossy().into_owned(),
+            mark: "R".into(),
+            hash: sha256_hex(b"the module that was scanned"),
+        };
+        let refused = match component(&entry) {
+            Ok(_) => panic!("a rehashed module was compiled"),
+            Err(refused) => refused,
+        };
+        let _ = std::fs::remove_file(&path);
+        assert!(refused.contains("changed on disk"), "{refused}");
+    }
+
+    #[test]
+    fn a_window_inside_the_sustained_budget_is_never_throttled() {
+        let budget = FUEL_PER_SECOND * FUEL_WINDOW.as_secs();
+        assert_eq!(throttle_after(0), None);
+        assert_eq!(throttle_after(budget), None);
+    }
+
+    #[test]
+    fn a_window_past_the_sustained_budget_waits_in_proportion_up_to_the_cap() {
+        let budget = FUEL_PER_SECOND * FUEL_WINDOW.as_secs();
+        assert_eq!(throttle_after(budget + budget / 2), Some(MAX_REST / 2));
+        assert_eq!(throttle_after(budget * 2), Some(MAX_REST));
+        assert_eq!(throttle_after(budget * 50), Some(MAX_REST));
     }
 
     #[test]

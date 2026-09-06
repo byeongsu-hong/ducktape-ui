@@ -23,6 +23,19 @@ pub(crate) const TICK_BUDGET: Duration = Duration::from_millis(8);
 /// thread, short enough that it still answers a click.
 pub(crate) const MAX_REST: Duration = Duration::from_millis(250);
 
+/// What a guest may burn on average, summed over the last [`FUEL_WINDOW`]:
+/// six full ticks a second, about a tenth of a core. Fuel bounds one tick
+/// and the rest governor bounds the rate of expensive ones; neither notices
+/// a guest that is merely busy every tick, forever, which is what this does.
+/// Twenty times the busiest honest app here, and a tenth of what a guest
+/// spending its whole budget every frame would take.
+pub(crate) const FUEL_PER_SECOND: u64 = 6 * FUEL_PER_TICK;
+
+/// How far back the sustained figure looks. Long enough that a burst — a
+/// list rebuilt, a page opened — is averaged away; short enough that a
+/// guest that stops spending is unthrottled within seconds.
+pub(crate) const FUEL_WINDOW: Duration = Duration::from_secs(10);
+
 /// The most linear memory an app may grow to.
 pub(crate) const MEMORY_LIMIT: usize = 64 << 20;
 

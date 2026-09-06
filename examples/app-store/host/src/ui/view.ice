@@ -196,11 +196,12 @@ view
                         with
                           entry=shown.entry
                           installed=shown.installed
+                          changed=shown.changed
                           running=shown.running
                           gauge=shown.gauge
                         events
                           details -> show_details _
-                          install -> install _
+                          install -> ask_consent _
                           launch -> launch _
                           quit -> quit _
           if page == "library" && empty(query)
@@ -212,12 +213,13 @@ view
                   gap=12.0
                 text library_hint(library) size=12.5 @text-muted
                 for item in rows.shelf
-                  lazy item by item.id, item.found, item.running, generation as shelved
+                  lazy item by item.id, item.found, item.changed, item.running, generation as shelved
                     col #entry(shelved.id) w=fill
                       if shelved.found
                         LibraryRow #row(shelved.id)
                           with
                             entry=shelved.entry
+                            changed=shelved.changed
                             running=shelved.running
                             gauge=shelved.gauge
                           events
@@ -250,7 +252,7 @@ view
                     size=15.0
                     @text-fg
                     @font-bold
-                text "A guest is ticked only when the store has something to deliver or its widgets asked for a frame. A frame that changed nothing crosses as a flag, and a module loaded once is kept."
+                text "A guest is ticked only when the store has something to deliver or its widgets asked for a frame. A frame that changed nothing crosses as a flag, and a module loaded once is kept. Fuel / s is the last ten seconds averaged; past 600M/s a guest is throttled until it is back under."
                   with
                     size=12.5
                     @text-muted
@@ -279,6 +281,12 @@ view
                       text "Fuel / tick"
                         with
                           w=100.0
+                          size=11.0
+                          @text-muted
+                          @font-bold
+                      text "Fuel / s"
+                        with
+                          w=150.0
                           size=11.0
                           @text-muted
                           @font-bold
@@ -360,8 +368,8 @@ view
                               @font-bold
                           text entry.description size=14.0 @text-muted
                       row gap=8.0
-                        if !in_library(library, entry.id)
-                          button "Get" #get -> install entry
+                        if !pinned(library, entry) && consenting != entry.id
+                          button "Get" #get -> ask_consent entry.id
                             with
                               @px-16px
                               @py-8px
@@ -371,7 +379,7 @@ view
                               @text-13px
                               @font-bold
                               @hover:bg-primary/90
-                        if in_library(library, entry.id) && !is_running(running, entry.id)
+                        if pinned(library, entry) && !is_running(running, entry.id)
                           button "Open" #open -> launch entry
                             with
                               @px-16px
@@ -414,6 +422,87 @@ view
                               @text-13px
                               @font-bold
                               @hover:bg-danger/10
+                      if changed(library, entry)
+                        box #changed
+                          with
+                            w=fill
+                            bg=fuel/10
+                            border=fuel
+                            border-w=1.0
+                            r=10.0
+                            px=16.0
+                            py=12.0
+                          col gap=2.0
+                            text "This is not the module you installed."
+                              with
+                                size=13.5
+                                @text-fg
+                                @font-bold
+                            text "Its hash changed since you consented to it, so Open is refused. Review what it declares below, then Get it again to pin the new one."
+                              with
+                                size=12.5
+                                @text-muted
+                      if consenting == entry.id
+                        box #consent
+                          with
+                            w=fill
+                            bg=primary/10
+                            border=primary
+                            border-w=1.0
+                            r=10.0
+                            px=16.0
+                            py=12.0
+                          col w=fill gap=10.0
+                            text "Install it with what its manifest declares?"
+                              with
+                                size=13.5
+                                @text-fg
+                                @font-bold
+                            for capability in entry.capabilities
+                              lazy capability as asked
+                                row gap=12.0 align=center
+                                  Chip capability=asked
+                                  text capability_hint(asked.name) size=13.0 @text-fg
+                            if empty(entry.capabilities)
+                              text "Nothing beyond drawing its window. It can still write to the store's log and ask for random bytes."
+                                with
+                                  size=13.0
+                                  @text-fg
+                            text "The manifest is the module's own word, unsigned. The store pins this exact file by its hash: a rebuilt one has to be reviewed again."
+                              with
+                                size=12.5
+                                @text-muted
+                            row
+                              with
+                                w=fill
+                                gap=12.0
+                                align=center
+                              text short_hash(entry.hash)
+                                with
+                                  size=11.5
+                                  font=figures
+                                  @text-muted
+                              space w=fill
+                              button "Cancel" #cancel -> decline
+                                with
+                                  @px-14px
+                                  @py-7px
+                                  @bg-raised
+                                  @text-fg
+                                  @rounded-8px
+                                  @text-13px
+                                  @font-bold
+                                  @hover:bg-border
+                              button "Install" #install -> install entry
+                                with
+                                  @px-14px
+                                  @py-7px
+                                  @bg-primary
+                                  @text-primary_fg
+                                  @rounded-8px
+                                  @text-13px
+                                  @font-bold
+                                  @hover:bg-primary/90
                       if removing == entry.id
                         box #confirm
                           with
@@ -494,6 +583,11 @@ view
                             size=12.5
                             @text-muted
                       text entry.path
+                        with
+                          size=11.5
+                          font=figures
+                          @text-muted
+                      text entry.hash
                         with
                           size=11.5
                           font=figures

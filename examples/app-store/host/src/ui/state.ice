@@ -1,8 +1,9 @@
 state
   catalog:[CatalogEntry] = scan_catalog()
   catalog_path:str = catalog_dir()
-  // What the user has installed: ids, persisted by the library helpers.
-  library:[str] = remembered_library()
+  // What the user has installed: ids pinned to the hash of the module that
+  // was consented to, persisted by the library helpers.
+  library:[Installed] = remembered_library()
   // Every instance with a window, and the ones loaded but still waiting for
   // the window the store asked iced to open — a queue, because windows open
   // in the order they were asked for.
@@ -18,6 +19,8 @@ state
   selected = ""
   // The app whose Uninstall is waiting for a second word, on its detail page.
   removing = ""
+  // The app whose Get is waiting for consent to what its manifest declares.
+  consenting = ""
   query = ""
   // `auto` follows the system; the other two are the user's word.
   theme_choice = "auto"
