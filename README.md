@@ -334,6 +334,7 @@ cargo ice compat          # lockfile/manifest baseline + app tests
 cargo ice expand FILE     # print the generated Rust for a root
 cargo ice dev -p PACKAGE  # discover its Ice root, watch, reload, restart as needed; F12 debug metrics
 cargo ice bundle -p PKG   # installable app for this host: .dmg, .deb, or .msi
+cargo ice bundle -p PKG --target wasm32-unknown-unknown  # ice:view component for an app store
 cargo ice inspect FILE    # headless render -> PNG + JSON manifest
 cargo ice inspect FILE --frames 60 [--release]  # per-phase frame cost + memo hits in the manifest
 cargo ice inspect FILE --test FLOW --trace  # release interaction timings -> trace.json

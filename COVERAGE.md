@@ -223,7 +223,8 @@ byte equality plus a zero JSON diff before a tag can publish. This is tooling
 evidence over the existing Core contract, not a new syntax or LSP capability.
 
 `cargo ice bundle` turns a checked app into an installable artifact in the
-format its host platform knows: a signed, notarized `.app` and `.dmg` on macOS,
+format its host platform knows (and, with `--target wasm32-unknown-unknown`,
+into the `ice:view` component an app-store host loads): a signed, notarized `.app` and `.dmg` on macOS,
 a `.deb` carrying a desktop entry and hicolor icon theme on Linux, and a
 per-user `.msi` with a Start menu shortcut on Windows. Identity is not restated
 to get one: the `app` name becomes the product name, its `id` becomes the

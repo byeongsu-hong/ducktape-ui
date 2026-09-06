@@ -719,9 +719,11 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         // Every generic parameter is spent on a projection that normalizes
         // to the wire's `Node`, so the view code that names
         // `__IceElement<'_, Message>` builds trees without knowing it.
+        // `__IceMessage` is the one name a guest crate's `export_app!` needs
+        // from here, so the message enum's own name stays an internal.
         (Target::Tree, _) => writeln!(
             out,
-            "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_guest::wire::Erase>::Node;"
+            "type __IceElement<'a, Message, Theme = ()> = <(&'a (), Message, Theme) as ::ui_lang_guest::wire::Erase>::Node;\npub(crate) type __IceMessage = {message};"
         )
         .unwrap(),
         (Target::Native, ResolvedRendererSelection::Default) => writeln!(

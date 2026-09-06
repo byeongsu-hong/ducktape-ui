@@ -7,7 +7,6 @@ ui_lang::include_app!("src/ui/app.ice");
 
 ui_lang_guest::export_app!(
     Todo,
-    __TodoMessage,
     "Todo",
     "A list that remembers what needs doing — across reinstalls.",
     ["storage", "bus"]

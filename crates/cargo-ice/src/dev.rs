@@ -27,8 +27,13 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-pub(crate) fn metadata(root: &Path) -> Result<serde_json::Value, String> {
-    self::inputs::cargo_metadata(root, &[])
+/// Cargo metadata as `cargo_args` select it: `--manifest-path` reaches another
+/// workspace, `--target` filters the platform.
+pub(crate) fn metadata_for(
+    root: &Path,
+    cargo_args: &[String],
+) -> Result<serde_json::Value, String> {
+    self::inputs::cargo_metadata(root, cargo_args)
 }
 
 pub(super) fn package_ice_source(

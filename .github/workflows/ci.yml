@@ -507,8 +507,8 @@ jobs:
           echo "SCCACHE_GHA_ENABLED=false" >> "$GITHUB_ENV"
       - run: rustup target add wasm32-unknown-unknown
       - name: Install wasm-tools
-        # componentize.sh shells out to `wasm-tools print`/`parse`/`component
-        # new`/`strip`. A pinned release binary is faster than `cargo install`
+        # `cargo ice bundle` shells out to `wasm-tools print`/`parse`/
+        # `component new`/`strip`. A pinned release binary is faster than `cargo install`
         # (a from-source build of this crate is minutes on its own) and, like
         # every other tool version in this file, moves only when re-pinned.
         env:
@@ -519,15 +519,12 @@ jobs:
             | tar xz -C /tmp
           install -m 0755 "/tmp/wasm-tools-${WASM_TOOLS_VERSION}-x86_64-linux/wasm-tools" /usr/local/bin/wasm-tools
           wasm-tools --version
-      - name: Build guest apps for wasm32
-        working-directory: examples/app-store
+      - name: Bundle the guest apps into the catalog
         run: |
-          cargo build --locked -p app-store-todo -p app-store-counter -p app-store-clock \
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-todo -p app-store-counter -p app-store-clock \
             -p app-store-activity -p app-store-chaos \
-            --release --target wasm32-unknown-unknown
-      - name: Componentize the catalog
-        working-directory: examples/app-store
-        run: ./componentize.sh
+            --target wasm32-unknown-unknown
       - name: Prove the catalog is real
         working-directory: examples/app-store
         run: |

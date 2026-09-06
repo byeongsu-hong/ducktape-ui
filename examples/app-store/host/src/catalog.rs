@@ -3,8 +3,8 @@
 
 use crate::limits::MAX_MODULE_BYTES;
 
-/// Where the catalog looks for components: what `componentize.sh` writes
-/// after `cargo build --release --target wasm32-unknown-unknown` of the apps.
+/// Where the catalog looks for components: what `cargo ice bundle --target
+/// wasm32-unknown-unknown` writes for this workspace.
 const DEFAULT_CATALOG_DIR: &str = "target/app-store-catalog";
 
 /// The custom section `export_app!` writes: `name\ndescription\ncap,cap,`.
@@ -214,8 +214,8 @@ mod tests {
         }
     }
 
-    /// One real built component, copied in from the catalog `componentize.sh`
-    /// writes — `None` when the workspace hasn't built the demo apps, so the
+    /// One real built component, copied in from the catalog `cargo ice
+    /// bundle` writes — `None` when the workspace hasn't built the demo apps, so the
     /// half of the test that needs a real manifest is skipped rather than
     /// failed.
     fn a_built_component() -> Option<std::path::PathBuf> {

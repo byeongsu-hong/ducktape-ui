@@ -107,7 +107,7 @@ fn run() -> Result<(), String> {
         "bundle" => return bundle::run(&root_for_command()?, trailing),
         "help" | "--help" | "-h" => {
             println!(
-                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...] | bundle -p <package> [--target <triple>]... | inspect <file.ice> [--trace|--fuzz interactions|--replay trace.json] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [--trace] | schema | lsp>"
+                "cargo ice <fmt [--check] | check | test [cargo-test args...] | clippy | compat | expand <file.ice> | dev <-p package | file.ice [-- cargo-build-args...]> [-- app-args...] | bundle -p <package>... [--target <triple>]... [--manifest-path <Cargo.toml>] [--out <dir>] | inspect <file.ice> [--trace|--fuzz interactions|--replay trace.json] | diff <baseline.json> <current.json> [options] | api <root.ice> | api diff <baseline.json> <current.json> [--format human|json] | review <file.ice> [--trace] | schema | lsp>"
             );
             return Ok(());
         }
