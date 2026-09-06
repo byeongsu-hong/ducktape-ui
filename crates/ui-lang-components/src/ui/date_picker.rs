@@ -14,12 +14,13 @@ use super::calendar::{
 use super::direction::Direction;
 use super::popover::{
     Alignment as PopoverAlignment, DismissReason, Placement, PopoverEvent, PopoverIds, popover,
+    trigger_style,
 };
 use super::theme::{Theme, alpha};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::text::LineHeight;
 use iced::widget::{Row, container, text};
-use iced::{Alignment, Background, Border, Element, Length, Padding, Pixels, Task};
+use iced::{Alignment, Element, Length, Padding, Pixels, Task};
 
 pub const DATE_PICKER_HEIGHT: f32 = 36.0;
 pub const DATE_PICKER_WIDTH: f32 = 240.0;
@@ -604,35 +605,6 @@ fn preferred_focus(
                 .map(|day| Date::new(month.year(), month.number(), day).unwrap())
                 .find(|date| enabled(*date))
         })
-}
-
-pub fn trigger_style(
-    theme: &Theme,
-    invalid: bool,
-    disabled: bool,
-) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        text_color: Some(if disabled {
-            alpha(theme.palette.foreground, 0.5)
-        } else {
-            theme.palette.foreground
-        }),
-        background: Some(Background::Color(if disabled {
-            alpha(theme.palette.background, 0.7)
-        } else {
-            theme.palette.background
-        })),
-        border: Border {
-            color: if invalid {
-                theme.palette.destructive
-            } else {
-                theme.palette.input
-            },
-            width: 1.0,
-            radius: theme.radius.button.into(),
-        },
-        ..Default::default()
-    }
 }
 
 #[cfg(test)]

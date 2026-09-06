@@ -10,14 +10,14 @@ use super::menu::{
     MENU_PANEL_PADDING, MenuEntry, MenuEvent, MenuGroup, MenuItem, MenuState, focus_menu_state,
     menu,
 };
-use super::popover::{Alignment, DismissReason, Placement, PopoverEvent, PopoverIds, popover};
+use super::popover::{
+    Alignment, DismissReason, Placement, PopoverEvent, PopoverIds, popover, trigger_style,
+};
 use super::theme::{Theme, alpha};
 use iced::alignment::{Horizontal, Vertical};
 use iced::widget::text::LineHeight;
 use iced::widget::{Row, container, text};
-use iced::{
-    Alignment as IcedAlignment, Background, Border, Element, Length, Padding, Pixels, Task,
-};
+use iced::{Alignment as IcedAlignment, Element, Length, Padding, Pixels, Task};
 
 pub const SELECT_HEIGHT: f32 = 36.0;
 
@@ -291,11 +291,7 @@ where
                 .height(SELECT_HEIGHT)
                 .padding([0.0, 12.0])
                 .align_y(Vertical::Center)
-                .class(select_trigger_style(
-                    &self.theme,
-                    self.invalid,
-                    self.disabled,
-                ))
+                .class(trigger_style(&self.theme, self.invalid, self.disabled))
                 .into()
         };
 
@@ -384,35 +380,6 @@ pub fn select_entries<Value: Eq>(
         .collect()
 }
 
-pub fn select_trigger_style(
-    theme: &Theme,
-    invalid: bool,
-    disabled: bool,
-) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        text_color: Some(if disabled {
-            alpha(theme.palette.foreground, 0.5)
-        } else {
-            theme.palette.foreground
-        }),
-        background: Some(Background::Color(if disabled {
-            alpha(theme.palette.background, 0.7)
-        } else {
-            theme.palette.background
-        })),
-        border: Border {
-            color: if invalid {
-                theme.palette.destructive
-            } else {
-                theme.palette.input
-            },
-            width: 1.0,
-            radius: theme.radius.button.into(),
-        },
-        ..Default::default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::theme::{DARK, LIGHT};
@@ -468,8 +435,8 @@ mod tests {
     fn exact_trigger_geometry_and_invalid_disabled_styles_hold() {
         assert_eq!(SELECT_HEIGHT, 36.0);
         for theme in [LIGHT, DARK] {
-            let invalid = select_trigger_style(&theme, true, false);
-            let disabled = select_trigger_style(&theme, false, true);
+            let invalid = trigger_style(&theme, true, false);
+            let disabled = trigger_style(&theme, false, true);
             assert_eq!(invalid.border.color, theme.palette.destructive);
             assert!(disabled.text_color.expect("disabled text").a < 1.0);
             assert_eq!(invalid.border.width, 1.0);
