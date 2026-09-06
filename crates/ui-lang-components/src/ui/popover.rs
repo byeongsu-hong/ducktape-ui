@@ -5,7 +5,7 @@
 //! Iced does not expose popover accessibility roles; this component therefore
 //! implements the interaction and focus contract without claiming fake roles.
 
-use super::theme::Theme as UiTheme;
+use super::theme::{Theme as UiTheme, alpha};
 use iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, overlay, renderer, widget,
 };
@@ -1199,6 +1199,38 @@ fn content_layout(layout: Layout<'_>) -> Layout<'_> {
         .children()
         .next()
         .expect("floating overlay always has one panel child")
+}
+
+/// The closed field a `select` or `date_picker` opens its popover from:
+/// foreground and background dimmed when disabled, the border destructive
+/// when invalid.
+pub fn trigger_style(
+    theme: &UiTheme,
+    invalid: bool,
+    disabled: bool,
+) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        text_color: Some(if disabled {
+            alpha(theme.palette.foreground, 0.5)
+        } else {
+            theme.palette.foreground
+        }),
+        background: Some(Background::Color(if disabled {
+            alpha(theme.palette.background, 0.7)
+        } else {
+            theme.palette.background
+        })),
+        border: Border {
+            color: if invalid {
+                theme.palette.destructive
+            } else {
+                theme.palette.input
+            },
+            width: 1.0,
+            radius: theme.radius.button.into(),
+        },
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
