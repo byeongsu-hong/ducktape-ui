@@ -762,7 +762,7 @@ Linux and Windows still exports nothing.
 
 | Core surface | Delivered contract |
 | --- | --- |
-| `text` | AccessKit `Label` with the visible text as its value, or `Heading` with its level when `heading=1..6` is set — what a screen reader's heading navigation (VoiceOver's rotor) lands on; `live=polite\|assertive` sets the node's live region, which every native adapter turns into a screen-reader announcement when the value changes |
+| `text` | AccessKit `Label` with the visible text as its value, or `Heading` with its level when `heading=1..6` is set — what a screen reader's heading navigation is built from — on macOS not yet: accesskit_macos 0.26 answers the role string `Heading` rather than `AXHeading` and no level, so VoiceOver's rotor does not see it (pinned by `macos_native_smoke`); `live=polite\|assertive` sets the node's live region, which every native adapter turns into a screen-reader announcement when the value changes |
 | `input` | `TextInput` with value, or `PasswordInput` with no exported value — permanently so for a `secret` binding; leading text is the default name and checked `label=`/`description=` may override/extend it. A `TextInput` also exports one `TextRun` child holding its value with a UTF-8 length per grapheme, and the caret (or selection) as a text selection into that run, read straight from iced's `text_input` state; a `SetTextSelection` request moves the caret to the requested focus index. This is what VoiceOver's character-by-character reading and "number of characters"/"selected text range" attributes are built from. Not covered: a request for a non-degenerate selection moves only the caret, because iced's text input has no operation that sets one |
 | `button` | `Button` with focus/click actions and optional checked/toggled or expanded state; compact text is the default name, child content requires `label=`, and `description=` is optional |
 | `checkbox` | `CheckBox` with toggled state and focus/click actions; visible text is the default name and checked `label=`/`description=` may override/extend it |
@@ -824,10 +824,21 @@ NSAccessibility bridge tests, including the per-window ones, and runs
 `macos_native_smoke`, the macOS counterpart of the Linux smoke: a harness-free
 test binary that builds a real `NSWindow` on the main thread, attaches the
 bridge's subclass to its view, publishes a tree, and asks the view what
-VoiceOver asks — children, role, label, frame, press — asserting the frame
+VoiceOver asks — children, role, title (AppKit's name for a button's label;
+`accessibilityLabel` stays nil), frame, press — asserting the frame
 round-trips its layout-unit size through the backing scale and the press
-reaches the bridge's channel as a `Click` on the button. It stays in process,
-so it needs no Accessibility permission; the release `macOS gate` job runs it.
+reaches the bridge's channel as a `Click` on the button. A second tree then
+asks for the rest: a description reads back as `accessibilityHelp`, a slider's
+number as its value and `accessibilityPerformIncrement` arrives as
+`Increment`, a text field answers five characters for five graphemes and the
+caret as `{3, 0}`, and `setAccessibilitySelectedTextRange:` arrives as a
+`SetTextSelection` at grapheme 1. A heading is pinned to the role string
+`"Heading"`, which is what accesskit_macos 0.26 answers instead of
+`AXHeading`, with no level — so VoiceOver's heading rotor does not see Ice
+headings until the adapter moves. It stays in process, so it needs no
+Accessibility permission. The release `macOS gate` job runs it only for a tag
+or a manual dispatch, which is how a test that did not compile on macOS sat on
+`main` until a Mac mini (macOS 26.5) ran it; that run is the evidence here.
 `examples/two-windows` is the daemon that holds the per-window claim: two
 windows over one shared state, which is the desktop shape a Ducktape app has. Headless tests cover
 dispatch to the app message. On Windows, Iced's automatically created initial
