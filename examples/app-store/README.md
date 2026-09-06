@@ -338,11 +338,16 @@ An honest inventory, grouped by where the work would land. Items marked
 ### Wire and rendering
 
 - The wire carries `box`, `col`/`row`, `scroll`, `text`, `input`,
-  `button`, `space` and `rule`, with `if`/`for`/`match` around them. Every
-  other Ice construct — checkbox, toggle, pick list, slider, images, SVG,
-  canvas, grids, stacks, overlays, mounted components, gradients, utility
-  styles — fails the app's build at its `.ice` line with E190. Each is a
-  node kind to add to the wire, an emitter arm and a renderer arm.
+  `button`, `space`, `rule`, `checkbox`, `toggler`, `radio`, `slider`,
+  `pick` and `progress`, with `if`/`for`/`match` around them. Every other
+  Ice construct — combo box, images, SVG, canvas, grids, stacks, overlays,
+  mounted components, gradients, utility styles — fails the app's build at
+  its `.ice` line with E190. Each is a node kind to add to the wire, an
+  emitter arm and a renderer arm.
+- The form controls cross unstyled: the host paints a checkbox, toggler,
+  radio, slider, pick list or progress bar in its own theme, and a status
+  style on one (`active checked bg=…`) is refused with E190 like a widget
+  the wire does not carry. A slider carries `f64` values only.
 - A changed tree re-encodes and re-sends every node; there is no delta,
   only the whole-frame "unchanged" short-circuit.
 - No scale factor or locale reaches the guest. The colour mode does, as a
@@ -352,7 +357,9 @@ An honest inventory, grouped by where the work would land. Items marked
 
 ### Events and input
 
-- Only a button's press, an input's edit and an input's submit cross.
+- Only a button's press, an input's edit and submit, a checkbox's or
+  toggler's flip, a radio's or pick list's selection, and a slider's drag
+  and release cross.
   Keys, pointer position, hover, scroll position, drag and drop, window
   focus and close requests are the host's widgets' and never reach the
   guest.

@@ -49,7 +49,6 @@ pub(crate) struct ResolvedSliderStyleSet {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedSlider {
     pub(crate) id: ViewId,
-    #[cfg(test)]
     pub(crate) value_type: Type,
     pub(crate) value: CheckedExprUseId,
     pub(crate) min: CheckedExprUseId,
@@ -317,7 +316,6 @@ impl Lowerer {
         }
         let resolved = ResolvedSlider {
             id,
-            #[cfg(test)]
             value_type: slider.value_type,
             value,
             min,

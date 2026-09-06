@@ -36,11 +36,15 @@ pub trait App: Sized + 'static {
 
 /// The per-frame tables a view fills as it builds: a button's `on_press`
 /// is the index its message took here, an input's `on_input` the index of
-/// its `String -> Message` constructor. The host echoes an index back; the
-/// driver looks the message up in the table of the frame it echoed.
+/// its `String -> Message` constructor, a checkbox's `on_toggle` that of a
+/// `bool -> Message` one, a slider's `f32`, a pick list's `u32`. The host
+/// echoes an index back with the value; the driver looks the handler up in
+/// the table of the frame it echoed and runs it.
 ///
 /// The tables are untyped so the generated code can push through this
-/// crate without naming the app's message type; the driver downcasts.
+/// crate without naming the app's message type; the driver downcasts, by
+/// argument and message type both, so an index the host sends with the
+/// wrong kind of value finds nothing.
 pub mod slots {
     use super::*;
 
@@ -56,7 +60,9 @@ pub mod slots {
         })
     }
 
-    pub fn handler<M: 'static>(handler: Box<dyn Fn(String) -> M>) -> u32 {
+    /// A handler returns `None` for a value it has no message for — a
+    /// pick list index past its options — and the event is dropped.
+    pub fn handler<A: 'static, M: 'static>(handler: Box<dyn Fn(A) -> Option<M>>) -> u32 {
         HANDLERS.with_borrow_mut(|table| {
             table.push(Box::new(handler));
             (table.len() - 1) as u32
@@ -77,12 +83,12 @@ pub mod slots {
         })
     }
 
-    pub(crate) fn run_handler<M: 'static>(index: u32, text: String) -> Option<M> {
+    pub(crate) fn run_handler<A: 'static, M: 'static>(index: u32, value: A) -> Option<M> {
         HANDLERS.with_borrow(|table| {
             table
                 .get(index as usize)
-                .and_then(|entry| entry.downcast_ref::<Box<dyn Fn(String) -> M>>())
-                .map(|handler| handler(text))
+                .and_then(|entry| entry.downcast_ref::<Box<dyn Fn(A) -> Option<M>>>())
+                .and_then(|handler| handler(value))
         })
     }
 }
@@ -135,7 +141,16 @@ impl<A: App> Driver<A> {
             let message = match event {
                 wire::Event::Message(index) => slots::take_message::<A::Message>(index),
                 wire::Event::Input { handler, text } => {
-                    slots::run_handler::<A::Message>(handler, text)
+                    slots::run_handler::<String, A::Message>(handler, text)
+                }
+                wire::Event::Toggle { handler, on } => {
+                    slots::run_handler::<bool, A::Message>(handler, on)
+                }
+                wire::Event::Slide { handler, value } => {
+                    slots::run_handler::<f32, A::Message>(handler, value)
+                }
+                wire::Event::Select { handler, index } => {
+                    slots::run_handler::<u32, A::Message>(handler, index)
                 }
                 wire::Event::Response { id, result, done } => {
                     host::fulfill(id, result, done);

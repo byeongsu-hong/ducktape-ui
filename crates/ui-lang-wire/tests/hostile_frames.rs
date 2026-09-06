@@ -267,10 +267,78 @@ fn gen_text(rng: &mut Rng) -> Node {
     }
 }
 
+fn gen_toggle(rng: &mut Rng) -> Node {
+    Node::Toggle {
+        key: gen_key(rng),
+        kind: *rng.choose(&[ToggleKind::Checkbox, ToggleKind::Switch]),
+        label: gen_string(rng),
+        checked: rng.next_bool(),
+        on_toggle: rng.next_bool().then(|| rng.next_u64() as u32),
+        width: gen_opt_length(rng),
+    }
+}
+
+fn gen_radio(rng: &mut Rng) -> Node {
+    Node::Radio {
+        key: gen_key(rng),
+        label: gen_string(rng),
+        selected: rng.next_bool(),
+        on_select: rng.next_u64() as u32,
+        width: gen_opt_length(rng),
+    }
+}
+
+fn gen_slider(rng: &mut Rng) -> Node {
+    Node::Slider {
+        key: gen_key(rng),
+        value: gen_f32(rng),
+        min: gen_f32(rng),
+        max: gen_f32(rng),
+        step: gen_f32(rng),
+        on_change: rng.next_u64() as u32,
+        on_release: rng.next_bool().then(|| rng.next_u64() as u32),
+        axis: gen_axis(rng),
+        width: gen_opt_length(rng),
+        height: gen_opt_length(rng),
+    }
+}
+
+/// A pick list whose option count crosses `MAX_OPTIONS` about one time in
+/// eight, and whose selection points anywhere, including past the list.
+fn gen_pick_list(rng: &mut Rng) -> Node {
+    let count = match rng.next_range(8) {
+        0 => MAX_OPTIONS + 1 + rng.next_range(64),
+        _ => rng.skewed(16, 2),
+    };
+    Node::PickList {
+        key: gen_key(rng),
+        options: (0..count).map(|_| gen_string(rng)).collect(),
+        selected: rng
+            .next_bool()
+            .then(|| rng.next_range(2 * MAX_OPTIONS) as u32),
+        placeholder: rng.next_bool().then(|| gen_string(rng)),
+        on_select: rng.next_u64() as u32,
+        width: gen_opt_length(rng),
+    }
+}
+
+fn gen_progress(rng: &mut Rng) -> Node {
+    Node::Progress {
+        key: gen_key(rng),
+        value: gen_f32(rng),
+        min: gen_f32(rng),
+        max: gen_f32(rng),
+        axis: gen_axis(rng),
+        length: gen_opt_length(rng),
+        girth: gen_opt_length(rng),
+    }
+}
+
 /// A leaf with no children, for filling out a wide `Linear`: every leaf
-/// variant except `Space` carries a string or a colour worth truncating.
+/// variant except `Space` carries a string, a colour or a number worth
+/// pulling into range.
 fn gen_leaf(rng: &mut Rng) -> Node {
-    match rng.next_range(5) {
+    match rng.next_range(10) {
         0 => gen_text(rng),
         1 => Node::Space {
             width: gen_opt_length(rng),
@@ -278,6 +346,11 @@ fn gen_leaf(rng: &mut Rng) -> Node {
         },
         2 => gen_input(rng),
         3 => gen_rule(rng),
+        4 => gen_toggle(rng),
+        5 => gen_radio(rng),
+        6 => gen_slider(rng),
+        7 => gen_pick_list(rng),
+        8 => gen_progress(rng),
         _ => gen_button_label(rng),
     }
 }
@@ -526,6 +599,11 @@ fn check_border(border: &Option<Border>, ctx: &str) {
     }
 }
 
+/// A slider or progress number: finite, and nothing more is promised.
+fn check_finite(value: f32, ctx: &str, field: &str) {
+    assert!(value.is_finite(), "{ctx}: {field} {value} is not finite");
+}
+
 fn check_string(text: &str, ctx: &str, field: &str) {
     assert!(
         text.len() <= MAX_STRING_BYTES,
@@ -690,6 +768,66 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
                 "{ctx}: rule thickness {thickness} outside 0..={PIXEL_BOUND}"
             );
             check_color(color, ctx);
+        }
+        Node::Toggle { label, width, .. } | Node::Radio { label, width, .. } => {
+            check_string(label, ctx, "control label");
+            check_length(width, ctx);
+        }
+        Node::Slider {
+            value,
+            min,
+            max,
+            step,
+            width,
+            height,
+            ..
+        } => {
+            for (number, field) in [(value, "value"), (min, "min"), (max, "max"), (step, "step")] {
+                check_finite(*number, ctx, field);
+            }
+            check_length(width, ctx);
+            check_length(height, ctx);
+        }
+        Node::PickList {
+            options,
+            selected,
+            placeholder,
+            width,
+            ..
+        } => {
+            assert!(
+                options.len() <= MAX_OPTIONS,
+                "{ctx}: {} options, over MAX_OPTIONS",
+                options.len()
+            );
+            for option in options {
+                check_string(option, ctx, "option");
+            }
+            if let Some(index) = selected {
+                assert!(
+                    (*index as usize) < options.len(),
+                    "{ctx}: selected option {index} past {} options",
+                    options.len()
+                );
+            }
+            if let Some(placeholder) = placeholder {
+                check_string(placeholder, ctx, "placeholder");
+            }
+            check_length(width, ctx);
+        }
+        Node::Progress {
+            value,
+            min,
+            max,
+            length,
+            girth,
+            ..
+        } => {
+            for (number, field) in [(value, "value"), (min, "min"), (max, "max")] {
+                check_finite(*number, ctx, field);
+            }
+            check_length(length, ctx);
+            check_length(girth, ctx);
         }
     }
 }

@@ -33,7 +33,17 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
             ButtonContent::Label(label) => out.push(label.clone()),
             ButtonContent::Child(child) => collect_texts(child, out),
         },
-        Node::Space { .. } | Node::Rule { .. } => {}
+        Node::Toggle { label, .. } | Node::Radio { label, .. } => out.push(label.clone()),
+        Node::PickList {
+            options,
+            selected,
+            placeholder,
+            ..
+        } => out.push(match selected {
+            Some(index) => options[*index as usize].clone(),
+            None => placeholder.clone().unwrap_or_default(),
+        }),
+        Node::Space { .. } | Node::Rule { .. } | Node::Slider { .. } | Node::Progress { .. } => {}
     }
 }
 
@@ -63,7 +73,12 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         | Node::Text { .. }
         | Node::Input { .. }
         | Node::Space { .. }
-        | Node::Rule { .. } => None,
+        | Node::Rule { .. }
+        | Node::Toggle { .. }
+        | Node::Radio { .. }
+        | Node::Slider { .. }
+        | Node::PickList { .. }
+        | Node::Progress { .. } => None,
     }
 }
 
@@ -132,6 +147,72 @@ pub fn submit(frame: &Frame, name: &str) -> Vec<Event> {
     vec![Event::Message(*message)]
 }
 
+/// The node whose key is `name`, or whose label is for a labelled control.
+fn control<'a>(frame: &'a Frame, name: &str) -> Option<&'a Node> {
+    let root = frame.root.as_ref()?;
+    find_by(root, &|node| match node {
+        Node::Toggle { key, label, .. } | Node::Radio { key, label, .. } => {
+            key == name || label == name
+        }
+        Node::Slider { key, .. } | Node::PickList { key, .. } => key == name,
+        _ => false,
+    })
+}
+
+/// The events the host sends when the user flips the checkbox or toggler
+/// with key or label `name` to `on`.
+pub fn toggle(frame: &Frame, name: &str, on: bool) -> Vec<Event> {
+    let Some(Node::Toggle { on_toggle, .. }) = control(frame, name) else {
+        panic!("no checkbox or toggler {name:?} in {:?}", texts(frame));
+    };
+    let Some(handler) = on_toggle else {
+        panic!("control {name:?} is disabled");
+    };
+    vec![Event::Toggle {
+        handler: *handler,
+        on,
+    }]
+}
+
+/// The events the host sends when the user selects the radio with key or
+/// label `name`.
+pub fn select_radio(frame: &Frame, name: &str) -> Vec<Event> {
+    let Some(Node::Radio { on_select, .. }) = control(frame, name) else {
+        panic!("no radio {name:?} in {:?}", texts(frame));
+    };
+    vec![Event::Message(*on_select)]
+}
+
+/// The events the host sends when the user drags the slider with key
+/// `name` to `value`.
+pub fn slide(frame: &Frame, name: &str, value: f32) -> Vec<Event> {
+    let Some(Node::Slider { on_change, .. }) = control(frame, name) else {
+        panic!("no slider {name:?} in {:?}", keys(frame));
+    };
+    vec![Event::Slide {
+        handler: *on_change,
+        value,
+    }]
+}
+
+/// The events the host sends when the user picks the option reading
+/// `option` from the pick list with key `name`.
+pub fn pick(frame: &Frame, name: &str, option: &str) -> Vec<Event> {
+    let Some(Node::PickList {
+        options, on_select, ..
+    }) = control(frame, name)
+    else {
+        panic!("no pick list {name:?} in {:?}", keys(frame));
+    };
+    let Some(index) = options.iter().position(|candidate| candidate == option) else {
+        panic!("no option {option:?} in {options:?}");
+    };
+    vec![Event::Select {
+        handler: *on_select,
+        index: index as u32,
+    }]
+}
+
 /// Every node key in the tree, depth first.
 pub fn keys(frame: &Frame) -> Vec<String> {
     let mut out = Vec::new();
@@ -158,7 +239,12 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         | Node::Text { .. }
         | Node::Input { .. }
         | Node::Space { .. }
-        | Node::Rule { .. } => {}
+        | Node::Rule { .. }
+        | Node::Toggle { .. }
+        | Node::Radio { .. }
+        | Node::Slider { .. }
+        | Node::PickList { .. }
+        | Node::Progress { .. } => {}
     }
 }
 
