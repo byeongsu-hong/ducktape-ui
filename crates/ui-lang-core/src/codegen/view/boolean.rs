@@ -116,7 +116,7 @@ pub(in crate::codegen) fn render_boolean_control(
         control.kind,
         ResolvedBooleanKind::Toggler | ResolvedBooleanKind::Radio
     ) {
-        identify_resolved_boolean(rendered, identity, message)
+        identify_rendered(rendered, identity, message)
     } else {
         Ok(rendered)
     }
@@ -136,19 +136,6 @@ fn resolved_boolean_identity_code(
     Ok(format!(
         "format!(\"{{}}/@{kind}:{}\", {scope})",
         control.source_line
-    ))
-}
-
-fn identify_resolved_boolean(
-    rendered: String,
-    identity: Option<&ResolvedViewIdentity>,
-    message: &str,
-) -> Result<String, Error> {
-    if identity.is_none() {
-        return Ok(rendered);
-    }
-    Ok(format!(
-        "{{ let __identified: __IceElement<'_, {message}> = {rendered}; #[cfg(test)] ::ui_lang_runtime::testing::register_render_source(&{NODE_SCOPE}); ::iced::widget::container(__identified).id(::iced::widget::Id::from({NODE_SCOPE_CLONE})).into() }}"
     ))
 }
 
