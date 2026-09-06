@@ -161,3 +161,13 @@ pub(in crate::codegen) fn editor_variant(binding: &str) -> String {
         format!("__0E{}", rust_identifier_hex(binding))
     }
 }
+
+/// The message that moves an app editor's caret to a line and byte column,
+/// sent by the accessibility layer for `SetTextSelection`.
+pub(in crate::codegen) fn editor_caret_variant(binding: &str) -> String {
+    if canonical_snake(binding) {
+        format!("__Caret{}", pascal(binding))
+    } else {
+        format!("__0K{}", rust_identifier_hex(binding))
+    }
+}

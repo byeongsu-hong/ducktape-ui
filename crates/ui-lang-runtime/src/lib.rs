@@ -268,6 +268,9 @@ struct SemanticSnapshot {
     /// Boxed: every accessible node carries this state, and only range
     /// controls fill it.
     numeric: Option<Box<NumericRange>>,
+    /// A text editor's caret, read off the app-owned `Content` the view
+    /// borrowed: iced counts its column in bytes. Boxed like `numeric`.
+    editor: Option<Box<iced::widget::text_editor::Cursor>>,
     disabled: bool,
     focus: FocusBehavior,
     focused: bool,
@@ -301,7 +304,13 @@ struct Semantics<Message> {
     /// for the same reason as `numeric`: two `Message`s on every node would
     /// grow every widget tree for the few sliders in it.
     steps: Option<Box<StepMessages<Message>>>,
+    /// Builds the message that moves a text editor's caret to a line and a
+    /// byte column, for `SetTextSelection`; the app-owned `Content` is only
+    /// reachable through the program's update.
+    move_to: Option<MoveCaret<Message>>,
 }
+
+type MoveCaret<Message> = std::sync::Arc<dyn Fn(usize, usize) -> Message + Send + Sync>;
 
 /// One accessibility step in each direction; `None` at that end of the range.
 #[derive(Clone)]
@@ -397,6 +406,7 @@ impl<Message> Semantics<Message> {
                 active_descendant: None,
                 live: None,
                 numeric: None,
+                editor: None,
                 disabled: false,
                 focus,
                 focused: false,
@@ -407,6 +417,7 @@ impl<Message> Semantics<Message> {
             focus_id: None,
             activate: None,
             steps: None,
+            move_to: None,
         }
     }
 }
@@ -702,6 +713,23 @@ where
         self
     }
 
+    /// Exports a text editor's caret: one `TextRun` child per line of the
+    /// value and a text selection pointing into them.
+    pub fn editor_caret(mut self, cursor: iced::widget::text_editor::Cursor) -> Self {
+        self.semantics.editor = Some(Box::new(cursor));
+        self
+    }
+
+    /// Lets `SetTextSelection` move the caret `editor_caret` exported: the
+    /// message moves the app-owned `Content` to a line and byte column.
+    pub fn on_move_to(
+        mut self,
+        move_to: impl Fn(usize, usize) -> Message + Send + Sync + 'static,
+    ) -> Self {
+        self.semantics.move_to = Some(std::sync::Arc::new(move_to));
+        self
+    }
+
     pub fn focus_id(mut self, id: impl Into<widget::Id>) -> Self {
         self.semantics.focus_id = Some(id.into());
         self
@@ -831,6 +859,9 @@ where
         // Almost every node has no steps: `None == None` skips the clone.
         if state.semantics.steps.is_some() || self.semantics.steps.is_some() {
             state.semantics.steps = self.semantics.steps.clone();
+        }
+        if state.semantics.move_to.is_some() || self.semantics.move_to.is_some() {
+            state.semantics.move_to = self.semantics.move_to.clone();
         }
         state.semantics.focused = focused;
         if state.semantics.disabled {
@@ -1590,10 +1621,24 @@ struct ActionTarget<Message> {
     activate: Option<Message>,
     node: SemanticFocus,
     focusable: bool,
-    /// The text input whose caret a `SetTextSelection` request moves.
-    caret: Option<widget::Id>,
+    /// The caret a `SetTextSelection` request moves. Boxed: two of the
+    /// three shapes carry a string or a vector.
+    caret: Option<Box<CaretTarget<Message>>>,
     increment: Option<Message>,
     decrement: Option<Message>,
+}
+
+#[derive(Clone)]
+enum CaretTarget<Message> {
+    /// A `text_input`: iced moves its caret through a widget operation.
+    Input(widget::Id),
+    /// A `text_editor`: its `Content` belongs to the program, so the caret
+    /// moves through a message. Each run is one line, kept with its text to
+    /// turn a grapheme index back into the byte column iced counts in.
+    Editor {
+        runs: Vec<(NodeId, Box<str>)>,
+        move_to: MoveCaret<Message>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1666,14 +1711,33 @@ impl<Message: Clone + Send + 'static> Snapshot<Message> {
             Action::ScrollIntoView => scroll_into_view(target.node),
             // iced moves a caret, not an arbitrary selection: the focus end
             // is where the reader asked the insertion point to land.
-            Action::SetTextSelection => match (&target.caret, &request.data) {
-                (Some(input), Some(accesskit::ActionData::SetTextSelection(selection))) => {
-                    iced::advanced::widget::operate(
-                        iced::advanced::widget::operation::text_input::move_cursor_to::<Message>(
-                            input.clone(),
-                            selection.focus.character_index,
-                        ),
-                    )
+            Action::SetTextSelection => match (target.caret.as_deref(), &request.data) {
+                (
+                    Some(CaretTarget::Input(input)),
+                    Some(accesskit::ActionData::SetTextSelection(selection)),
+                ) => iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::text_input::move_cursor_to::<Message>(
+                        input.clone(),
+                        selection.focus.character_index,
+                    ),
+                ),
+                (
+                    Some(CaretTarget::Editor { runs, move_to }),
+                    Some(accesskit::ActionData::SetTextSelection(selection)),
+                ) => {
+                    let Some((line, (_, text))) = runs
+                        .iter()
+                        .enumerate()
+                        .find(|(_, (run, _))| *run == selection.focus.node)
+                    else {
+                        return Task::none();
+                    };
+                    let column =
+                        unicode_segmentation::UnicodeSegmentation::graphemes(&**text, true)
+                            .take(selection.focus.character_index)
+                            .map(str::len)
+                            .sum();
+                    Task::done(move_to(line, column))
                 }
                 _ => Task::none(),
             },
@@ -2060,7 +2124,71 @@ impl<Message> SnapshotOperation<Message> {
         frame.children.push(run_id);
         self.nodes.push((run_id, run));
         if let Some(target) = self.actions.get_mut(&input_id) {
-            target.caret = Some(caret.target.clone());
+            target.caret = Some(Box::new(CaretTarget::Input(caret.target.clone())));
+        }
+    }
+
+    /// Gives a text editor one `TextRun` child per line of its value, points
+    /// its text selection at the caret, and remembers how to move it.
+    fn editor_runs(
+        &mut self,
+        index: usize,
+        cursor: &iced::widget::text_editor::Cursor,
+        move_to: Option<&MoveCaret<Message>>,
+    ) {
+        let Some(frame) = self.frames.last_mut() else {
+            return;
+        };
+        let editor_id = self.nodes[index].0;
+        let Some(value) = self.nodes[index].1.value().map(str::to_owned) else {
+            return;
+        };
+        let bounds = self.nodes[index].1.bounds();
+        let mut runs: Vec<(NodeId, Box<str>)> = Vec::new();
+        for (line, text) in value.split('\n').enumerate() {
+            let text = text.strip_suffix('\r').unwrap_or(text);
+            let mut run_id = duplicate_node_id(editor_id, u64::MAX - line as u64);
+            while !self.used_ids.insert(run_id) {
+                run_id = duplicate_node_id(run_id, u64::MAX);
+            }
+            let mut run = Node::new(Role::TextRun);
+            if let Some(bounds) = bounds {
+                run.set_bounds(bounds);
+            }
+            run.set_value(text.to_owned());
+            run.set_character_lengths(
+                unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
+                    .map(|grapheme| u8::try_from(grapheme.len()).unwrap_or(u8::MAX))
+                    .collect::<Box<[u8]>>(),
+            );
+            frame.children.push(run_id);
+            self.nodes.push((run_id, run));
+            runs.push((run_id, text.into()));
+        }
+        // iced's column is a byte offset into the line; AccessKit's is a
+        // grapheme index into the run.
+        let position = |position: iced::widget::text_editor::Position| {
+            let line = position.line.min(runs.len().saturating_sub(1));
+            let (node, text) = &runs[line];
+            let character_index =
+                unicode_segmentation::UnicodeSegmentation::grapheme_indices(&**text, true)
+                    .take_while(|(start, _)| *start < position.column)
+                    .count();
+            accesskit::TextPosition {
+                node: *node,
+                character_index,
+            }
+        };
+        let focus = position(cursor.position);
+        let anchor = cursor.selection.map_or(focus, position);
+        self.nodes[index]
+            .1
+            .set_text_selection(accesskit::TextSelection { anchor, focus });
+        if let (Some(move_to), Some(target)) = (move_to, self.actions.get_mut(&editor_id)) {
+            target.caret = Some(Box::new(CaretTarget::Editor {
+                runs,
+                move_to: move_to.clone(),
+            }));
         }
     }
 
@@ -2181,6 +2309,11 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
                         decrement: state.semantics.decrement().cloned().filter(|_| enabled),
                     },
                 );
+            }
+            if let Some(cursor) = &state.semantics.snapshot.editor {
+                let cursor = **cursor;
+                let move_to = state.semantics.move_to.clone();
+                self.editor_runs(index, &cursor, move_to.as_ref());
             }
             return;
         }
@@ -3553,6 +3686,7 @@ mod tests {
         Last,
         Next,
         Previous,
+        Move(usize, usize),
     }
 
     #[test]
@@ -4540,6 +4674,82 @@ mod tests {
         assert_eq!(counts.text_input, 1);
         assert_eq!(counts.focusable, 0);
         assert_eq!(snapshot(&mut ui, &renderer).update.focus, ROOT_ID);
+    }
+
+    #[test]
+    fn a_text_editor_exports_one_text_run_per_line_and_moves_its_caret_on_request() {
+        let id = StableId::new("caret-editor");
+        let mut content = iced::widget::text_editor::Content::with_text("h\u{e9}llo\nw\u{f6}rld");
+        content.move_to(iced::widget::text_editor::Cursor {
+            position: iced::widget::text_editor::Position { line: 1, column: 3 },
+            selection: None,
+        });
+        let native: TestElement<'_> = iced::widget::text_editor(&content).into();
+        let root: TestElement<'_> = accessible(native, id, Role::MultilineTextInput)
+            .label("Notes")
+            .value(content.text())
+            .editor_caret(content.cursor())
+            .on_move_to(Message::Move)
+            .into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(400.0, 80.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let snapshot = snapshot(&mut ui, &renderer);
+        let node = |wanted: NodeId| {
+            snapshot
+                .update
+                .nodes
+                .iter()
+                .find(|(candidate, _)| *candidate == wanted)
+                .map(|(_, node)| node.clone())
+                .expect("node")
+        };
+        let editor = node(id.node_id());
+        let [first, second] = editor.children() else {
+            panic!("one run per line, got {:?}", editor.children());
+        };
+        assert_eq!(node(*first).value(), Some("h\u{e9}llo"));
+        assert_eq!(node(*second).value(), Some("w\u{f6}rld"));
+        assert_eq!(node(*second).character_lengths(), &[1, 2, 1, 1, 1]);
+        let selection = editor.text_selection().expect("a caret");
+        assert_eq!(selection.focus.node, *second);
+        assert_eq!(
+            selection.focus.character_index, 2,
+            "byte column 3 of w\u{f6}rld is after the second grapheme"
+        );
+        assert_eq!(selection.anchor, selection.focus);
+
+        let request = snapshot.dispatch(ActionRequest {
+            action: Action::SetTextSelection,
+            target_tree: TreeId::ROOT,
+            target_node: id.node_id(),
+            data: Some(accesskit::ActionData::SetTextSelection(
+                accesskit::TextSelection {
+                    anchor: accesskit::TextPosition {
+                        node: *first,
+                        character_index: 3,
+                    },
+                    focus: accesskit::TextPosition {
+                        node: *first,
+                        character_index: 3,
+                    },
+                },
+            )),
+        });
+        let mut stream = iced_test::runtime::task::into_stream(request).expect("move task");
+        let output =
+            iced_test::futures::futures::executor::block_on(stream.next()).expect("move output");
+        assert!(
+            matches!(
+                output,
+                iced_test::runtime::Action::Output(Message::Move(0, 4))
+            ),
+            "grapheme 3 of h\u{e9}llo starts at byte 4"
+        );
     }
 
     #[test]

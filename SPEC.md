@@ -532,7 +532,7 @@ produce a deterministic AccessKit tree:
 | `slider` | `Slider` | default `Slider` label, current value, numeric value/min/max/step, focus state, increment/decrement actions — each runs the change route with the value one step away, clamped to the range, and is absent at that end of the range |
 | `progress` | `ProgressIndicator` | default `Progress` label, current value, numeric value/min/max |
 | `pick` / `combo` | `ComboBox` | placeholder or search label, selected value, focus state |
-| `editor` | `MultilineTextInput` | placeholder or default label, current value, disabled/focus state |
+| `editor` | `MultilineTextInput` | placeholder or default label, current value, disabled/focus state; one `TextRun` child per line carrying it grapheme by grapheme, and the caret or selection as a text selection into them; `SetTextSelection` moves the caret through the program's own editor state |
 | labeled `image` | `Image` | label and optional description |
 | any node inside an identified `scroll` | its own role | `ScrollIntoView`: the nearest identified scroll moves just far enough to show the node |
 

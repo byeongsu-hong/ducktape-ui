@@ -12,6 +12,10 @@ use super::*;
 /// nothing until `ICE_PERF` names a budget, which is why this is not gated on
 /// `debug_assertions`: the app that stutters in front of a user is the
 /// release one.
+/// The cursor a caret message names: `__line` and `__column` are the arm's
+/// bindings, and the column is the byte offset iced counts in.
+const EDITOR_CURSOR_CODE: &str = "::iced::widget::text_editor::Cursor { position: ::iced::widget::text_editor::Position { line: __line, column: __column }, selection: None }";
+
 fn turn_timer_code(program: &LoweredProgram, handler: &ResolvedHandler) -> String {
     format!(
         "let __ice_turn = ::ui_lang_runtime::dev::Span::handler({:?}, {});",
@@ -1015,6 +1019,21 @@ pub(in crate::codegen) fn generate_update(
                 "{message}::{variant}(__scope, __action) => {{ {entry} {perform} ::iced::Task::none() }},"
             )
             .unwrap();
+            let caret_variant = component_editor_caret_variant(&component.name, &state.name);
+            let move_to = state_write_code(
+                program,
+                "__local",
+                ResolvedValueRef::ComponentState(state.id),
+                StateWrite::Mutate(format!(
+                    "__local.{}.move_to({EDITOR_CURSOR_CODE})",
+                    state.name
+                )),
+            );
+            writeln!(
+                out,
+                "{message}::{caret_variant}(__scope, __line, __column) => {{ {entry} {move_to} ::iced::Task::none() }},"
+            )
+            .unwrap();
         }
     }
     for (pane, test_only) in document_pane_grids(program) {
@@ -1092,6 +1111,21 @@ pub(in crate::codegen) fn generate_update(
         writeln!(
             out,
             "{message}::{variant}(action) => {{ {write} ::iced::Task::none() }}"
+        )
+        .unwrap();
+        let caret_variant = editor_caret_variant(&binding.name);
+        let move_to = state_write_code(
+            program,
+            "self",
+            ResolvedValueRef::AppState(binding.state),
+            StateWrite::Mutate(format!(
+                "self.{}.move_to({EDITOR_CURSOR_CODE})",
+                binding.name
+            )),
+        );
+        writeln!(
+            out,
+            "{message}::{caret_variant}(__line, __column) => {{ {move_to} ::iced::Task::none() }}"
         )
         .unwrap();
     }

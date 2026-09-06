@@ -265,7 +265,7 @@ fn simple_component(value: &str) -> bool {
 
 fn canonical_component_variant(value: &str) -> bool {
     canonical_component(value)
-        && !["Bind", "Edit", "Pane"]
+        && !["Bind", "Caret", "Edit", "Pane"]
             .iter()
             .any(|prefix| value.starts_with(prefix))
 }
@@ -331,6 +331,20 @@ pub(in crate::codegen) fn component_editor_variant(component: &str, state: &str)
     } else {
         format!(
             "__0C{}E{}",
+            rust_identifier_hex(component),
+            rust_identifier_hex(state)
+        )
+    }
+}
+
+/// The message that moves a component editor's caret; see
+/// `editor_caret_variant`.
+pub(in crate::codegen) fn component_editor_caret_variant(component: &str, state: &str) -> String {
+    if canonical_component_variant(component) && canonical_snake(state) {
+        format!("__{component}Caret{}", pascal(state))
+    } else {
+        format!(
+            "__0C{}K{}",
             rust_identifier_hex(component),
             rust_identifier_hex(state)
         )

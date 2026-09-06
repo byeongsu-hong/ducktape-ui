@@ -1211,6 +1211,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
                 component_editor_variant(&component.name, &state.name)
             )
             .unwrap();
+            writeln!(
+                out,
+                "{}(::std::string::String, usize, usize),",
+                component_editor_caret_variant(&component.name, &state.name)
+            )
+            .unwrap();
         }
     }
     if !program.secrets().is_empty() {
@@ -1233,6 +1239,12 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             out,
             "{}(::iced::widget::text_editor::Action),",
             editor_variant(&binding.name)
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "{}(usize, usize),",
+            editor_caret_variant(&binding.name)
         )
         .unwrap();
     }
