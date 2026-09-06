@@ -14,8 +14,13 @@
 //!
 //! Interaction: a button's message goes into the guest's per-frame table
 //! (`ui_lang_guest::slots::message`) and the node carries the index; an
-//! input's `String -> Message` constructor likewise (`slots::handler`).
+//! input's `String -> Message` constructor likewise (`slots::handler`), as
+//! do a checkbox's `bool`, a slider's `f32` and a pick list's option index.
 //! Colours are resolved through the app's palette here and cross as RGBA.
+//!
+//! The form controls cross unstyled: the host paints them in its own theme,
+//! and a status style on one is refused like any other construct the wire
+//! has no room for.
 
 use super::*;
 
@@ -60,6 +65,12 @@ pub(in crate::codegen) fn render_tree_node(
         )?,
         ResolvedViewKind::Space => space(node, document, env)?,
         ResolvedViewKind::Rule => rule(node, identity, document, env, scope)?,
+        ResolvedViewKind::Checkbox | ResolvedViewKind::Toggler | ResolvedViewKind::Radio => {
+            boolean(node, identity, document, message, env, scope)?
+        }
+        ResolvedViewKind::Slider => slider(node, identity, document, message, env, scope)?,
+        ResolvedViewKind::PickList => pick_list(node, identity, document, message, env, scope)?,
+        ResolvedViewKind::Progress => progress(node, identity, document, env, scope)?,
         // Rendered by the shared emitters: their code is target-neutral.
         ResolvedViewKind::Component { .. }
         | ResolvedViewKind::Slot { .. }
@@ -243,18 +254,21 @@ fn edges_code(
     ))))
 }
 
+fn radius_explicit(radius: &ResolvedContainerRadius) -> bool {
+    radius.all.is_some()
+        || radius.top_left.is_some()
+        || radius.top_right.is_some()
+        || radius.bottom_right.is_some()
+        || radius.bottom_left.is_some()
+}
+
 fn radius_code(
     radius: &ResolvedContainerRadius,
     utility: u16,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<Option<String>, Error> {
-    let explicit = radius.all.is_some()
-        || radius.top_left.is_some()
-        || radius.top_right.is_some()
-        || radius.bottom_right.is_some()
-        || radius.bottom_left.is_some();
-    if !explicit {
+    if !radius_explicit(radius) {
         return Ok((utility != 0).then(|| format!("[{utility}.0; 4]")));
     }
     let corner = |value: Option<ResolvedExpressionId>| {
@@ -881,9 +895,15 @@ fn input(
     let active = input_face_code(input.styles.active.as_ref(), program, env, origin)?
         .unwrap_or_else(|| format!("{WIRE}::InputFace::default()"));
     Ok(format!(
-        "{WIRE}::Node::Input {{ key: {key}, placeholder: ::std::string::String::from({}), value: ({}).to_string(), on_input: {SLOTS}::handler(::std::boxed::Box::new({constructor})), on_submit: {}, width: {}, secure: ({secure}), style: {WIRE}::InputStyle {{ active: {active}, hovered: {}, focused: {}, disabled: {} }} }}",
+        "{WIRE}::Node::Input {{ key: {key}, placeholder: ::std::string::String::from({}), value: ({}).to_string(), on_input: {}, on_submit: {}, width: {}, secure: ({secure}), style: {WIRE}::InputStyle {{ active: {active}, hovered: {}, focused: {}, disabled: {} }} }}",
         rust_string(&input.label),
         state.code,
+        handler_code(
+            "::std::string::String",
+            message,
+            &constructor,
+            "move |__sent: ::std::string::String| ::std::option::Option::Some(__route(__sent))"
+        ),
         option_code(on_submit),
         dimension_code(input.width.as_ref(), false, program, env, origin)?,
         option_code(input_face_code(
@@ -1066,12 +1086,12 @@ fn rule(
         "a rule style preset",
     )?;
     refuse_when(program, origin, rule.snap.is_some(), "`snap` on a rule")?;
-    let rounded = rule.radius.all.is_some()
-        || rule.radius.top_left.is_some()
-        || rule.radius.top_right.is_some()
-        || rule.radius.bottom_right.is_some()
-        || rule.radius.bottom_left.is_some();
-    refuse_when(program, origin, rounded, "a rule radius")?;
+    refuse_when(
+        program,
+        origin,
+        radius_explicit(&rule.radius),
+        "a rule radius",
+    )?;
     let axis = match rule.axis {
         ResolvedRuleAxis::Horizontal => "Row",
         ResolvedRuleAxis::Vertical => "Column",
@@ -1081,5 +1101,334 @@ fn rule(
         key_code(identity, "rule", origin, scope, env, program)?,
         resolved_expr_use_code(program, rule.thickness, env, ValueMode::Owned)?,
         option_code(rule.color.as_ref().map(rgba_code)),
+    ))
+}
+
+/// A value-carrying handler in the guest's per-frame table, under the
+/// argument type the host sends. `body` maps `__sent` to an
+/// `Option<Message>` and may use `__route`, the route's callback.
+///
+/// The table outlives the view that filled it — the host answers a frame
+/// later — so an entry must own everything it holds, where the callback the
+/// native emitter builds may borrow a `for` binding or the state. A button
+/// sidesteps this by building its message while the view runs; a control
+/// with a finite set of answers precomputes one message per answer the
+/// same way, and only a slider, whose answer is a number, hands the
+/// callback itself over.
+fn handler_code(argument: &str, message: &str, callback: &str, body: &str) -> String {
+    format!(
+        "{SLOTS}::handler::<{argument}, {message}>(::std::boxed::Box::new({{ let __route = {callback}; {body} }}))"
+    )
+}
+
+fn boolean(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let control = program.resolved_boolean_control(id)?;
+    let origin = control.origin;
+    let (name, styled) = match &control.style {
+        ResolvedBooleanStyle::Checkbox(style) => (
+            "checkbox",
+            style.preset != Some(ResolvedCheckboxPreset::Primary)
+                || style.custom.is_some()
+                || style.active_checked.is_some()
+                || style.active_unchecked.is_some()
+                || style.hovered_checked.is_some()
+                || style.hovered_unchecked.is_some()
+                || style.disabled_checked.is_some()
+                || style.disabled_unchecked.is_some(),
+        ),
+        ResolvedBooleanStyle::Toggler(style) => (
+            "toggler",
+            style.custom.is_some()
+                || style.active_checked.is_some()
+                || style.active_unchecked.is_some()
+                || style.hovered_checked.is_some()
+                || style.hovered_unchecked.is_some()
+                || style.disabled_checked.is_some()
+                || style.disabled_unchecked.is_some(),
+        ),
+        ResolvedBooleanStyle::Radio(style) => (
+            "radio",
+            style.custom.is_some()
+                || style.active_selected.is_some()
+                || style.active_unselected.is_some()
+                || style.hovered_selected.is_some()
+                || style.hovered_unselected.is_some(),
+        ),
+    };
+    refuse_when(program, origin, styled, &format!("a {name} style"))?;
+    let options = &control.options;
+    refuse_when(
+        program,
+        origin,
+        options.accessibility_label.is_some() || options.accessibility_description.is_some(),
+        &format!("an accessibility label on a {name}"),
+    )?;
+    refuse_when(
+        program,
+        origin,
+        options.size.is_some()
+            || options.spacing.is_some()
+            || options.text_size.is_some()
+            || options.line_height.is_some()
+            || options.shaping.is_some()
+            || options.wrapping.is_some()
+            || options.font.is_some()
+            || options.alignment.is_some()
+            || options.icon.is_some(),
+        &format!("this {name} option"),
+    )?;
+    let key = key_code(identity, name, origin, scope, env, program)?;
+    let label = format!(
+        "({}).to_string()",
+        resolved_expr_use_code(program, control.label, env, ValueMode::Owned)?
+    );
+    let checked = resolved_expr_use_code(program, control.checked, env, ValueMode::Owned)?;
+    let width = dimension_code(options.width.as_ref(), false, program, env, origin)?;
+    if control.kind == ResolvedBooleanKind::Radio {
+        let value = control.value.ok_or_else(|| {
+            program.invariant_at_origin(origin, "normalized radio value disappeared")
+        })?;
+        let value = resolved_expr_use_code(program, value, env, ValueMode::Owned)?;
+        let activate =
+            resolved_interaction_route_code(&control.route, &[&value], env, program, message)?;
+        return Ok(format!(
+            "{WIRE}::Node::Radio {{ key: {key}, label: {label}, selected: ({checked}), on_select: {SLOTS}::message({activate}), width: {width} }}"
+        ));
+    }
+    let kind = match control.kind {
+        ResolvedBooleanKind::Checkbox => "Checkbox",
+        ResolvedBooleanKind::Toggler => "Switch",
+        ResolvedBooleanKind::Radio => unreachable!("returned above"),
+    };
+    let callback = resolved_interaction_route_callback_code(
+        &control.route,
+        "__value",
+        &["__value"],
+        env,
+        program,
+        message,
+    )?;
+    let handler = handler_code(
+        "bool",
+        message,
+        &callback,
+        "let __on = __route(true); let __off = __route(false); move |__sent: bool| ::std::option::Option::Some(if __sent { __on.clone() } else { __off.clone() })",
+    );
+    let on_toggle = match control.disabled {
+        Some(disabled) => format!(
+            "if ({}) {{ ::std::option::Option::None }} else {{ ::std::option::Option::Some({handler}) }}",
+            resolved_expr_use_code(program, disabled, env, ValueMode::Owned)?
+        ),
+        None => format!("::std::option::Option::Some({handler})"),
+    };
+    Ok(format!(
+        "{WIRE}::Node::Toggle {{ key: {key}, kind: {WIRE}::ToggleKind::{kind}, label: {label}, checked: ({checked}), on_toggle: {on_toggle}, width: {width} }}"
+    ))
+}
+
+fn slider(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let slider = program.resolved_slider(id)?;
+    let origin = slider.origin;
+    refuse_when(
+        program,
+        origin,
+        slider.value_type != Type::F64,
+        "a slider over a named number type",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        slider.default.is_some() || slider.shift_step.is_some(),
+        "a slider default or shift step",
+    )?;
+    // The change handler crosses as the callback itself (see `handler_code`),
+    // so it may hold nothing borrowed: a route argument would be evaluated
+    // in the view, and a `for` binding or the state does not outlive it.
+    refuse_when(
+        program,
+        origin,
+        slider
+            .change
+            .args
+            .iter()
+            .any(|arg| matches!(arg, ResolvedInteractionRouteArg::Expression(_))),
+        "an argument on a slider route",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        slider.custom_style.is_some()
+            || slider.styles.active.is_some()
+            || slider.styles.hovered.is_some()
+            || slider.styles.dragged.is_some(),
+        "a slider style",
+    )?;
+    let number = |expression: CheckedExprUseId| {
+        resolved_expr_use_code(program, expression, env, ValueMode::Owned)
+            .map(|code| format!("({code}) as f32"))
+    };
+    let callback = resolved_interaction_route_callback_code(
+        &slider.change,
+        "__value",
+        &["__value"],
+        env,
+        program,
+        message,
+    )?;
+    let on_release = slider
+        .release
+        .as_ref()
+        .map(|route| resolved_interaction_route_code(route, &[], env, program, message))
+        .transpose()?
+        .map(|activate| format!("{SLOTS}::message({activate})"));
+    let axis = match slider.axis {
+        ResolvedRangeAxis::Horizontal => "Row",
+        ResolvedRangeAxis::Vertical => "Column",
+    };
+    Ok(format!(
+        "{WIRE}::Node::Slider {{ key: {}, value: {}, min: {}, max: {}, step: {}, on_change: {}, on_release: {}, axis: {WIRE}::Axis::{axis}, width: {}, height: {} }}",
+        key_code(identity, "slider", origin, scope, env, program)?,
+        number(slider.value)?,
+        number(slider.min)?,
+        number(slider.max)?,
+        number(slider.step)?,
+        handler_code(
+            "f32",
+            message,
+            &callback,
+            "move |__sent: f32| ::std::option::Option::Some(__route(f64::from(__sent)))"
+        ),
+        option_code(on_release),
+        dimension_code(slider.width.as_ref(), false, program, env, origin)?,
+        dimension_code(slider.height.as_ref(), false, program, env, origin)?,
+    ))
+}
+
+fn pick_list(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let pick = program.resolved_pick_list(id)?;
+    let origin = pick.origin;
+    refuse_when(
+        program,
+        origin,
+        pick.menu_height.is_some()
+            || pick.padding.is_some()
+            || pick.text_size.is_some()
+            || pick.line_height.is_some()
+            || pick.shaping.is_some()
+            || pick.font.is_some()
+            || pick.handle.is_some(),
+        "this pick list option",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        pick.open.is_some() || pick.close.is_some(),
+        "a pick list open or close route",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        pick.custom_style.is_some()
+            || pick.styles.active.is_some()
+            || pick.styles.hovered.is_some()
+            || pick.styles.opened.is_some()
+            || pick.styles.opened_hovered.is_some()
+            || pick.menu.custom.is_some()
+            || pick.menu.surface.is_some()
+            || pick.menu.selected_text_color.is_some()
+            || pick.menu.selected_background.is_some(),
+        "a pick list style",
+    )?;
+    let options = resolved_expr_use_code(program, pick.options, env, ValueMode::Owned)?;
+    let selected = resolved_expr_use_code(program, pick.selected, env, ValueMode::Owned)?;
+    let placeholder = pick
+        .placeholder
+        .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
+        .transpose()?
+        .map(|code| format!("({code}).to_string()"));
+    let callback = resolved_interaction_route_callback_code(
+        &pick.selection,
+        "__value",
+        &["__value"],
+        env,
+        program,
+        message,
+    )?;
+    // One message per option, built while the view runs; an index past the
+    // list (the host raced a rebuild) is no message.
+    let handler = handler_code(
+        "u32",
+        message,
+        &callback,
+        &format!(
+            "let __table: ::std::vec::Vec<{message}> = __options.iter().cloned().map(__route).collect(); move |__sent: u32| __table.get(__sent as usize).cloned()"
+        ),
+    );
+    Ok(format!(
+        "{{ let __options = {options}; let __selected = {selected}; {WIRE}::Node::PickList {{ key: {}, options: __options.iter().map(|__option| __option.to_string()).collect(), selected: __selected.as_ref().and_then(|__chosen| __options.iter().position(|__option| __option == __chosen)).map(|__index| __index as u32), placeholder: {}, on_select: {handler}, width: {} }} }}",
+        key_code(identity, "pick-list", origin, scope, env, program)?,
+        option_code(placeholder),
+        dimension_code(pick.width.as_ref(), false, program, env, origin)?,
+    ))
+}
+
+fn progress(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let progress = program.resolved_progress(id)?;
+    let origin = progress.origin;
+    refuse_when(
+        program,
+        origin,
+        progress.style.is_some()
+            || progress.custom_style.is_some()
+            || progress.background.is_some()
+            || progress.bar.is_some()
+            || progress.border_color.is_some()
+            || progress.border_width.is_some()
+            || radius_explicit(&progress.radius),
+        "a progress style",
+    )?;
+    let number = |expression: CheckedExprUseId| {
+        resolved_expr_use_code(program, expression, env, ValueMode::Owned)
+            .map(|code| format!("({code}) as f32"))
+    };
+    let axis = match progress.axis {
+        ResolvedRangeAxis::Horizontal => "Row",
+        ResolvedRangeAxis::Vertical => "Column",
+    };
+    Ok(format!(
+        "{WIRE}::Node::Progress {{ key: {}, value: {}, min: {}, max: {}, axis: {WIRE}::Axis::{axis}, length: {}, girth: {} }}",
+        key_code(identity, "progress", origin, scope, env, program)?,
+        number(progress.value)?,
+        number(progress.min)?,
+        number(progress.max)?,
+        dimension_code(progress.length.as_ref(), false, program, env, origin)?,
+        dimension_code(progress.girth.as_ref(), false, program, env, origin)?,
     ))
 }

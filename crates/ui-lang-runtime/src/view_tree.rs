@@ -35,6 +35,12 @@ pub enum Output {
         handler: u32,
         text: String,
     },
+    /// A checkbox or toggler was flipped to `on`.
+    Toggle { handler: u32, on: bool },
+    /// A slider moved to `value`.
+    Slide { handler: u32, value: f32 },
+    /// A pick list chose its option at `index`.
+    Select { handler: u32, index: u32 },
 }
 
 #[derive(Debug)]
@@ -114,6 +120,9 @@ impl Inputs {
                 }
                 wire::Event::Input { handler, text }
             }
+            Output::Toggle { handler, on } => wire::Event::Toggle { handler, on },
+            Output::Slide { handler, value } => wire::Event::Slide { handler, value },
+            Output::Select { handler, index } => wire::Event::Select { handler, index },
         }
     }
 }
@@ -138,7 +147,12 @@ fn collect_inputs(node: &wire::Node, into: &mut HashMap<String, String>) {
         wire::Node::Button { .. }
         | wire::Node::Text { .. }
         | wire::Node::Space { .. }
-        | wire::Node::Rule { .. } => {}
+        | wire::Node::Rule { .. }
+        | wire::Node::Toggle { .. }
+        | wire::Node::Radio { .. }
+        | wire::Node::Slider { .. }
+        | wire::Node::PickList { .. }
+        | wire::Node::Progress { .. } => {}
     }
 }
 
@@ -290,6 +304,17 @@ fn input_style(
         apply_input_face(face, &mut resolved);
     }
     resolved
+}
+
+/// One pick list option: its index is what crosses back, its text is what
+/// iced shows and compares.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Choice(u32, String);
+
+impl std::fmt::Display for Choice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.1)
+    }
 }
 
 /// Renders a tree. Strings are cloned out of it, so the element outlives the
@@ -586,6 +611,201 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
         }
+        wire::Node::Toggle {
+            key,
+            kind,
+            label,
+            checked,
+            on_toggle,
+            width,
+        } => {
+            let checked = *checked;
+            let flip = on_toggle.map(|handler| move |on| Output::Toggle { handler, on });
+            let activate = on_toggle.map(|handler| Output::Toggle {
+                handler,
+                on: !checked,
+            });
+            let (control, role): (IceElement<'static, Output>, Role) = match kind {
+                wire::ToggleKind::Checkbox => {
+                    let mut checkbox = widget::checkbox(checked)
+                        .label(label.clone())
+                        .on_toggle_maybe(flip);
+                    if let Some(width) = width {
+                        checkbox = checkbox.width(length(*width));
+                    }
+                    (checkbox.into(), Role::CheckBox)
+                }
+                wire::ToggleKind::Switch => {
+                    let mut toggler = widget::toggler(checked)
+                        .label(label.clone())
+                        .on_toggle_maybe(flip);
+                    if let Some(width) = width {
+                        toggler = toggler.width(length(*width));
+                    }
+                    (toggler.into(), Role::Switch)
+                }
+            };
+            accessible(control, StableId::new(key), role)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .focus_id(widget::Id::from(key.clone()))
+                .label(label.clone())
+                .checked(checked)
+                .disabled(on_toggle.is_none())
+                .on_activate_maybe(activate)
+                .into()
+        }
+        wire::Node::Radio {
+            key,
+            label,
+            selected,
+            on_select,
+            width,
+        } => {
+            let activate = Output::Activate(*on_select);
+            let choose = activate.clone();
+            let mut radio =
+                widget::radio(label.clone(), true, selected.then_some(true), move |_| {
+                    choose.clone()
+                });
+            if let Some(width) = width {
+                radio = radio.width(length(*width));
+            }
+            accessible(radio, StableId::new(key), Role::RadioButton)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .focus_id(widget::Id::from(key.clone()))
+                .label(label.clone())
+                .checked(*selected)
+                .selected(*selected)
+                .on_activate_maybe(Some(activate))
+                .into()
+        }
+        wire::Node::Slider {
+            key,
+            value,
+            min,
+            max,
+            step,
+            on_change,
+            on_release,
+            axis,
+            width,
+            height,
+        } => {
+            // iced divides by the step and by the range: a step of zero or
+            // an empty range would put the handle at NaN.
+            let (min, max) = match *max > *min {
+                true => (*min, *max),
+                false => (*min, *min + 1.0),
+            };
+            let value = value.clamp(min, max);
+            let step = match *step > 0.0 {
+                true => *step,
+                false => 1.0,
+            };
+            let handler = *on_change;
+            let change = move |value| Output::Slide { handler, value };
+            let release = on_release.map(Output::Activate);
+            let up = (value + step <= max).then(|| change(value + step));
+            let down = (value - step >= min).then(|| change(value - step));
+            let slider: IceElement<'static, Output> = match axis {
+                wire::Axis::Row => {
+                    let mut slider = widget::slider(min..=max, value, change).step(step);
+                    if let Some(release) = release.clone() {
+                        slider = slider.on_release(release);
+                    }
+                    if let Some(width) = width {
+                        slider = slider.width(length(*width));
+                    }
+                    if let Some(Length::Fixed(pixels)) = height.map(length) {
+                        slider = slider.height(pixels);
+                    }
+                    slider.into()
+                }
+                wire::Axis::Column => {
+                    let mut slider = widget::vertical_slider(min..=max, value, change).step(step);
+                    if let Some(release) = release {
+                        slider = slider.on_release(release);
+                    }
+                    if let Some(height) = height {
+                        slider = slider.height(length(*height));
+                    }
+                    if let Some(Length::Fixed(pixels)) = width.map(length) {
+                        slider = slider.width(pixels);
+                    }
+                    slider.into()
+                }
+            };
+            accessible(slider, StableId::new(key), Role::Slider)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .label("Slider")
+                .value(format!("{value}"))
+                .numeric(value.into(), min.into(), max.into(), Some(step.into()))
+                .on_increment_maybe(up)
+                .on_decrement_maybe(down)
+                .into()
+        }
+        wire::Node::PickList {
+            key,
+            options,
+            selected,
+            placeholder,
+            on_select,
+            width,
+        } => {
+            let choices: Vec<Choice> = options
+                .iter()
+                .enumerate()
+                .map(|(index, option)| Choice(index as u32, option.clone()))
+                .collect();
+            let chosen = selected.and_then(|index| choices.get(index as usize).cloned());
+            let handler = *on_select;
+            let mut pick = widget::pick_list(choices, chosen.clone(), move |choice: Choice| {
+                Output::Select {
+                    handler,
+                    index: choice.0,
+                }
+            });
+            if let Some(placeholder) = placeholder {
+                pick = pick.placeholder(placeholder.clone());
+            }
+            if let Some(width) = width {
+                pick = pick.width(length(*width));
+            }
+            accessible(pick, StableId::new(key), Role::ComboBox)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .label(placeholder.clone().unwrap_or_default())
+                .value(chosen.map(|choice| choice.1).unwrap_or_default())
+                .into()
+        }
+        wire::Node::Progress {
+            key,
+            value,
+            min,
+            max,
+            axis,
+            length: along,
+            girth,
+        } => {
+            let (range, value) =
+                crate::progress_range((*min).into(), (*max).into(), (*value).into());
+            let (min, max) = (*range.start(), *range.end());
+            let mut bar = widget::progress_bar(range, value);
+            if let Some(along) = along {
+                bar = bar.length(length(*along));
+            }
+            if let Some(girth) = girth {
+                bar = bar.girth(length(*girth));
+            }
+            if matches!(axis, wire::Axis::Column) {
+                bar = bar.vertical();
+            }
+            accessible(bar, StableId::new(key), Role::ProgressIndicator)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .label("Progress")
+                .value(format!("{value}"))
+                .numeric(value.into(), min.into(), max.into(), None)
+                .into()
+        }
     }
 }
 
@@ -737,6 +957,59 @@ mod tests {
                             width: None,
                             height: Some(wire::Length::Fixed(10.0)),
                         }),
+                    },
+                    wire::Node::Toggle {
+                        key: "App/content/hide".into(),
+                        kind: wire::ToggleKind::Switch,
+                        label: "Hide done".into(),
+                        checked: false,
+                        on_toggle: Some(3),
+                        width: None,
+                    },
+                    wire::Node::Toggle {
+                        key: "App/content/agree".into(),
+                        kind: wire::ToggleKind::Checkbox,
+                        label: "Agree".into(),
+                        checked: true,
+                        on_toggle: None,
+                        width: Some(wire::Length::Fill),
+                    },
+                    wire::Node::Radio {
+                        key: "App/content/first".into(),
+                        label: "First".into(),
+                        selected: true,
+                        on_select: 4,
+                        width: None,
+                    },
+                    // A hostile slider: empty range, zero step, value outside.
+                    wire::Node::Slider {
+                        key: "App/content/volume".into(),
+                        value: 7.0,
+                        min: 1.0,
+                        max: 1.0,
+                        step: 0.0,
+                        on_change: 5,
+                        on_release: Some(6),
+                        axis: wire::Axis::Column,
+                        width: Some(wire::Length::Fixed(20.0)),
+                        height: Some(wire::Length::Fill),
+                    },
+                    wire::Node::PickList {
+                        key: "App/content/mode".into(),
+                        options: vec!["Light".into(), "Dark".into()],
+                        selected: Some(9),
+                        placeholder: Some("Mode".into()),
+                        on_select: 7,
+                        width: None,
+                    },
+                    wire::Node::Progress {
+                        key: "App/content/done".into(),
+                        value: 0.5,
+                        min: 1.0,
+                        max: 0.0,
+                        axis: wire::Axis::Row,
+                        length: Some(wire::Length::Fill),
+                        girth: Some(wire::Length::Fixed(6.0)),
                     },
                 ],
             }),

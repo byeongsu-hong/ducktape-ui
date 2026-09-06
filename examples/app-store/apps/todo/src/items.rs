@@ -51,13 +51,17 @@ pub fn remove_item(mut items: Vec<Item>, id: i64) -> Vec<Item> {
     items
 }
 
-pub fn item_mark(done: bool) -> String {
-    if done { "✓".into() } else { "○".into() }
-}
-
 pub fn remaining(items: &[Item]) -> String {
     let left = items.iter().filter(|item| !item.done).count();
     format!("{left} left")
+}
+
+/// The share of items done, `0.0..=1.0`; an empty list is nothing done.
+pub fn done_share(items: &[Item]) -> f64 {
+    match items.len() {
+        0 => 0.0,
+        total => items.iter().filter(|item| item.done).count() as f64 / total as f64,
+    }
 }
 
 pub fn next_after(items: Vec<Item>) -> i64 {

@@ -10,7 +10,10 @@
 //! the message the guest queued for it this frame ([`Node::Button`]'s
 //! `on_press`); the host sends [`Event::Message`] with that index and the
 //! guest runs its own handler. A text field carries a handler index; the host
-//! owns the text and sends [`Event::Input`] with what it now reads.
+//! owns the text and sends [`Event::Input`] with what it now reads. A
+//! checkbox, slider or pick list likewise carries a handler index and the
+//! host sends the new value ([`Event::Toggle`], [`Event::Slide`],
+//! [`Event::Select`]).
 //!
 //! The types here are the one definition of the format: the guest serializes
 //! them and the host deserializes the same code, so a field neither side can
@@ -31,6 +34,13 @@ pub enum Event {
     /// per-frame input-handler table; `text` is the whole value the host now
     /// holds.
     Input { handler: u32, text: String },
+    /// A checkbox or toggler flipped. `handler` indexes the guest's
+    /// per-frame handler table; `on` is the state it now shows.
+    Toggle { handler: u32, on: bool },
+    /// A slider moved to `value`.
+    Slide { handler: u32, value: f32 },
+    /// A pick list chose the option at `index` in the node's `options`.
+    Select { handler: u32, index: u32 },
     /// One answer to a [`Request`]. A one-shot request gets exactly one with
     /// `done`; a subscription gets many, the last one `done`.
     Response {
@@ -188,6 +198,12 @@ pub struct InputStyle {
     pub disabled: Option<InputFace>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ToggleKind {
+    Checkbox,
+    Switch,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ButtonContent {
     Label(String),
@@ -278,6 +294,56 @@ pub enum Node {
         thickness: f32,
         color: Option<Rgba>,
     },
+    /// A checkbox or a toggler: a labelled bool.
+    Toggle {
+        key: String,
+        kind: ToggleKind,
+        label: String,
+        checked: bool,
+        /// `None` is a disabled control.
+        on_toggle: Option<u32>,
+        width: Option<Length>,
+    },
+    /// One radio button. Its value is the guest's business: selecting it
+    /// sends the message the guest queued for it.
+    Radio {
+        key: String,
+        label: String,
+        selected: bool,
+        on_select: u32,
+        width: Option<Length>,
+    },
+    Slider {
+        key: String,
+        value: f32,
+        min: f32,
+        max: f32,
+        step: f32,
+        on_change: u32,
+        on_release: Option<u32>,
+        axis: Axis,
+        width: Option<Length>,
+        height: Option<Length>,
+    },
+    PickList {
+        key: String,
+        /// Every option as the guest shows it; the host answers with an
+        /// index into this list.
+        options: Vec<String>,
+        selected: Option<u32>,
+        placeholder: Option<String>,
+        on_select: u32,
+        width: Option<Length>,
+    },
+    Progress {
+        key: String,
+        value: f32,
+        min: f32,
+        max: f32,
+        axis: Axis,
+        length: Option<Length>,
+        girth: Option<Length>,
+    },
 }
 
 /// Spends generic parameters on nothing: `<(&'a (), M, T) as Erase>::Node`
@@ -310,7 +376,12 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Input { key, .. }
             | Self::Button { key, .. }
-            | Self::Rule { key, .. } => Some(key),
+            | Self::Rule { key, .. }
+            | Self::Toggle { key, .. }
+            | Self::Radio { key, .. }
+            | Self::Slider { key, .. }
+            | Self::PickList { key, .. }
+            | Self::Progress { key, .. } => Some(key),
             Self::Space { .. } => None,
         }
     }
@@ -327,7 +398,12 @@ impl Node {
             | Self::Text { .. }
             | Self::Input { .. }
             | Self::Space { .. }
-            | Self::Rule { .. } => Vec::new(),
+            | Self::Rule { .. }
+            | Self::Toggle { .. }
+            | Self::Radio { .. }
+            | Self::Slider { .. }
+            | Self::PickList { .. }
+            | Self::Progress { .. } => Vec::new(),
         }
     }
 
@@ -344,7 +420,12 @@ impl Node {
             | Self::Text { .. }
             | Self::Input { .. }
             | Self::Space { .. }
-            | Self::Rule { .. } => 0,
+            | Self::Rule { .. }
+            | Self::Toggle { .. }
+            | Self::Radio { .. }
+            | Self::Slider { .. }
+            | Self::PickList { .. }
+            | Self::Progress { .. } => 0,
         }
     }
 }
@@ -374,6 +455,9 @@ pub const MAX_STRING_BYTES: usize = 64 << 10;
 /// milliseconds to lay out however short their text, and a byte of Hangul,
 /// Han or emoji costs some twenty times a byte of ASCII to shape.
 pub const MAX_TEXT_BYTES_PER_FRAME: usize = MAX_STRING_BYTES;
+/// The most options one [`Node::PickList`] may offer: a menu, not a table.
+/// Each option is shaped text and spends the frame's text budget too.
+pub const MAX_OPTIONS: usize = 256;
 /// Text and spacing sizes are pixels; nothing on a screen needs more.
 const MAX_PIXELS: f32 = 8192.0;
 /// A text size, which is not a length: every glyph at it is rasterized and
@@ -558,6 +642,54 @@ fn sanitize_node(
             *thickness = bounded(*thickness);
             bound_color(color);
         }
+        Node::Toggle { key, label, .. } | Node::Radio { key, label, .. } => {
+            claim(key, taken);
+            spend_text(label, text_budget);
+        }
+        Node::Slider {
+            key,
+            value,
+            min,
+            max,
+            step,
+            ..
+        } => {
+            claim(key, taken);
+            for number in [value, min, max, step] {
+                *number = finite(*number);
+            }
+        }
+        Node::PickList {
+            key,
+            options,
+            selected,
+            placeholder,
+            ..
+        } => {
+            claim(key, taken);
+            options.truncate(MAX_OPTIONS);
+            for option in options.iter_mut() {
+                spend_text(option, text_budget);
+            }
+            if let Some(placeholder) = placeholder {
+                spend_text(placeholder, text_budget);
+            }
+            if selected.is_some_and(|index| index as usize >= options.len()) {
+                *selected = None;
+            }
+        }
+        Node::Progress {
+            key,
+            value,
+            min,
+            max,
+            ..
+        } => {
+            claim(key, taken);
+            for number in [value, min, max] {
+                *number = finite(*number);
+            }
+        }
     }
     for length in lengths_mut(node) {
         if let Length::Fixed(value) = length {
@@ -594,8 +726,14 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Linear { width, height, .. }
         | Node::Scroll { width, height, .. }
         | Node::Button { width, height, .. }
+        | Node::Slider { width, height, .. }
         | Node::Space { width, height } => vec![width, height],
-        Node::Text { width, .. } | Node::Input { width, .. } => vec![width],
+        Node::Progress { length, girth, .. } => vec![length, girth],
+        Node::Text { width, .. }
+        | Node::Input { width, .. }
+        | Node::Toggle { width, .. }
+        | Node::Radio { width, .. }
+        | Node::PickList { width, .. } => vec![width],
         Node::Rule { .. } => Vec::new(),
     };
     slots.into_iter().flatten().collect()
@@ -624,6 +762,16 @@ fn bounded(value: f32) -> f32 {
     match value.is_nan() {
         true => 0.0,
         false => value.clamp(0.0, MAX_PIXELS),
+    }
+}
+
+/// A number that is not a size: a slider or progress value is the app's,
+/// so it is made finite and nothing more. The host clamps it into the range
+/// it lays out.
+fn finite(value: f32) -> f32 {
+    match value.is_nan() {
+        true => 0.0,
+        false => value.clamp(f32::MIN, f32::MAX),
     }
 }
 
@@ -840,6 +988,18 @@ mod tests {
             Event::Input {
                 handler: 0,
                 text: "xy".into(),
+            },
+            Event::Toggle {
+                handler: 1,
+                on: true,
+            },
+            Event::Slide {
+                handler: 2,
+                value: 0.5,
+            },
+            Event::Select {
+                handler: 3,
+                index: 1,
             },
             Event::Response {
                 id: 1,
@@ -1181,6 +1341,83 @@ mod tests {
         if cfg!(not(debug_assertions)) {
             assert!(took < std::time::Duration::from_millis(200), "{took:?}");
         }
+    }
+
+    /// The form controls: a menu is cut to `MAX_OPTIONS` with a selection
+    /// past the cut dropped, and a slider's numbers are made finite but not
+    /// clamped like a size — a value of a million is the app's to send.
+    #[test]
+    fn form_controls_are_pulled_into_range() {
+        let mut frame = Frame {
+            root: Some(column(vec![
+                Node::PickList {
+                    key: "App/pick".into(),
+                    options: (0..MAX_OPTIONS + 3).map(|i| i.to_string()).collect(),
+                    selected: Some((MAX_OPTIONS + 1) as u32),
+                    placeholder: Some("é".repeat(MAX_STRING_BYTES)),
+                    on_select: 0,
+                    width: Some(Length::Fixed(f32::INFINITY)),
+                },
+                Node::Slider {
+                    key: "App/slide".into(),
+                    value: f32::NAN,
+                    min: f32::NEG_INFINITY,
+                    max: 1_000_000.0,
+                    step: f32::INFINITY,
+                    on_change: 1,
+                    on_release: None,
+                    axis: Axis::Row,
+                    width: None,
+                    height: None,
+                },
+                Node::Toggle {
+                    key: "App/pick".into(),
+                    kind: ToggleKind::Switch,
+                    label: "x".repeat(MAX_STRING_BYTES + 1),
+                    checked: true,
+                    on_toggle: None,
+                    width: None,
+                },
+            ])),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        let Node::PickList {
+            options,
+            selected,
+            placeholder,
+            width,
+            ..
+        } = &children[0]
+        else {
+            panic!("{:?}", children[0])
+        };
+        assert_eq!(options.len(), MAX_OPTIONS);
+        assert_eq!(*selected, None);
+        assert!(placeholder.as_ref().unwrap().len() <= MAX_STRING_BYTES);
+        assert_eq!(*width, Some(Length::Fixed(MAX_PIXELS)));
+        let Node::Slider {
+            value,
+            min,
+            max,
+            step,
+            ..
+        } = &children[1]
+        else {
+            panic!("{:?}", children[1])
+        };
+        assert_eq!(
+            (*value, *min, *max, *step),
+            (0.0, f32::MIN, 1_000_000.0, f32::MAX)
+        );
+        let Node::Toggle { key, label, .. } = &children[2] else {
+            panic!("{:?}", children[2])
+        };
+        assert_eq!(key, "App/pick#2");
+        assert!(label.len() <= MAX_STRING_BYTES);
     }
 
     #[test]

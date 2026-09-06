@@ -18,8 +18,14 @@ palette app for AppTheme
 "#;
 
 fn tree(view: &str) -> String {
+    tree_with("", view)
+}
+
+/// A handler with a parameter is typed by the widget that routes to it, so
+/// a view that uses one brings it along.
+fn tree_with(handlers: &str, view: &str) -> String {
     let source = format!(
-        "app Demo\n{PALETTE}state\n  draft = \"\"\n  items = [\"a\", \"b\"]\n  busy = false\non add\n  draft = \"\"\non remove(index)\n  busy = true\nview\n{view}"
+        "app Demo\n{PALETTE}state\n  draft = \"\"\n  items = [\"a\", \"b\"]\n  busy = false\n  amount = 0.0\n  choice:str? = none\non add\n  draft = \"\"\non remove(index)\n  busy = true\n{handlers}view\n{view}"
     );
     compile_for(&source, "demo.ice", Target::Tree).unwrap_or_else(|error| {
         panic!("{}", error.render("demo.ice"));
@@ -71,7 +77,7 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
         "padding: ::std::option::Option::Some(::ui_lang_guest::wire::Edges { top: (24.0) as f32",
         // Messages and input handlers go through the guest's per-frame tables.
         "on_press: ::std::option::Option::Some(::ui_lang_guest::slots::message(",
-        "on_input: ::ui_lang_guest::slots::handler(::std::boxed::Box::new(",
+        "on_input: ::ui_lang_guest::slots::handler::<::std::string::String, __DemoMessage>(",
         // Colours are the palette's, resolved in the guest.
         "::ui_lang_guest::wire::Rgba([__color.r, __color.g, __color.b, __color.a])",
         // Control flow is the shared emitter's loop over the child list.
@@ -105,18 +111,60 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
 }
 
 #[test]
+fn form_controls_compile_to_wire_nodes_with_handler_slots() {
+    let generated = tree_with(
+        "on flip(value)\n  busy = value\non slide(value)\n  amount = value\non choose(value)\n  choice = some(value)\n",
+        r#"  col
+    checkbox "Busy" #busy checked=busy -> flip _
+    toggler "Busy" checked=busy disabled=busy -> flip _
+    radio "One" value=1.0 selected=(amount == 1.0) -> slide _
+    slider amount min=0.0 max=100.0 -> slide _
+    pick ["One", "Two"] choice hint="Pick" -> choose _
+    progress amount
+    button "×" -> remove 0
+"#,
+    );
+    for expected in [
+        "::ui_lang_guest::wire::Node::Toggle { key:",
+        "kind: ::ui_lang_guest::wire::ToggleKind::Checkbox",
+        "kind: ::ui_lang_guest::wire::ToggleKind::Switch",
+        "::ui_lang_guest::wire::Node::Radio { key:",
+        "::ui_lang_guest::wire::Node::Slider { key:",
+        "::ui_lang_guest::wire::Node::PickList { key:",
+        "::ui_lang_guest::wire::Node::Progress { key:",
+        // The value-carrying handlers, one table each argument type.
+        "::ui_lang_guest::slots::handler::<bool, __DemoMessage>(",
+        "::ui_lang_guest::slots::handler::<f32, __DemoMessage>(",
+        "::ui_lang_guest::slots::handler::<u32, __DemoMessage>(",
+        // A radio's value is decided in the guest: it is a plain message.
+        "on_select: ::ui_lang_guest::slots::message(",
+        // A disabled toggler has no handler.
+        "on_toggle: if (",
+        // A toggle's two answers and a pick list's options are messages built
+        // while the view runs: the table outlives the view's borrows.
+        "let __on = __route(true); let __off = __route(false);",
+        "__table.get(__sent as usize).cloned()",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected:?} in:\n{generated}"
+        );
+    }
+}
+
+#[test]
 fn a_construct_the_wire_does_not_carry_fails_at_its_line() {
     let source = format!(
-        "app Demo\n{PALETTE}state\n  on = false\non flip(value)\n  on = value\nview\n  col\n    text \"before\" @text-fg\n    checkbox \"Enabled\" checked=on -> flip _\n"
+        "app Demo\n{PALETTE}state\n  draft = \"\"\nview\n  col\n    text \"before\" @text-fg\n    qr draft\n"
     );
     let error = compile_for(&source, "demo.ice", Target::Tree).unwrap_err();
     let rendered = error.render("demo.ice");
     assert!(rendered.contains("E190"), "{rendered}");
     assert!(
-        rendered.contains("`checkbox` is not available in a view module"),
+        rendered.contains("`qr code` is not available in a view module"),
         "{rendered}"
     );
-    assert!(rendered.contains("demo.ice:19"), "{rendered}");
+    assert!(rendered.contains("demo.ice:17"), "{rendered}");
     // The same view is fine natively.
     compile(&source, "demo.ice").unwrap();
 }
@@ -247,7 +295,7 @@ const SLIDE: &str = "on slide(value)\n  amount = value\n";
 /// The tree target's coverage contract.
 ///
 /// Every view construct the native target compiles is listed here with what
-/// the tree target does to it: emitted when the wire's eight nodes carry it,
+/// the tree target does to it: emitted when the wire's nodes carry it,
 /// refused — with the phrase the `E190` build error names — when they do
 /// not. Nothing is silently dropped: a construct the wire cannot carry fails
 /// the build at its `.ice` line, so a view module never renders as something
@@ -262,7 +310,7 @@ const SLIDE: &str = "on slide(value)\n  amount = value\n";
 /// `ResolvedViewKind` variant, that match must name it, and this table must
 /// then classify the name.
 const COVERAGE: &[Coverage] = &[
-    // The wire's eight nodes.
+    // The wire's nodes.
     emitted(
         "layout: col",
         "",
@@ -280,6 +328,28 @@ const COVERAGE: &[Coverage] = &[
     emitted("button", "", "  button \"go\" -> add\n"),
     emitted("space", "", "  space w=24.0 h=8.0\n"),
     emitted("rule", "", "  rule horizontal\n"),
+    emitted(
+        "checkbox",
+        FLIP,
+        "  checkbox \"e\" checked=busy -> flip _\n",
+    ),
+    emitted("toggler", FLIP, "  toggler \"e\" checked=busy -> flip _\n"),
+    emitted(
+        "slider",
+        SLIDE,
+        "  slider amount min=0.0 max=100.0 -> slide _\n",
+    ),
+    emitted("progress", "", "  progress amount\n"),
+    emitted(
+        "radio",
+        SLIDE,
+        "  radio \"a\" value=1.0 selected=(amount == 1.0) -> slide _\n",
+    ),
+    emitted(
+        "pick list",
+        CHOOSE,
+        "  pick [\"One\", \"Two\"] choice -> choose _\n",
+    ),
     // Control flow, components and slots: the shared emitters, which push
     // whatever `render_node` returns into the parent's child list.
     emitted("if", "", "  col\n    if busy\n      text \"a\" @text-fg\n"),
@@ -338,37 +408,6 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  rich-text\n    span \"a\"\n",
         "`rich text`",
-    ),
-    refused(
-        "checkbox",
-        FLIP,
-        "  checkbox \"e\" checked=busy -> flip _\n",
-        "`checkbox`",
-    ),
-    refused(
-        "toggler",
-        FLIP,
-        "  toggler \"e\" checked=busy -> flip _\n",
-        "`toggler`",
-    ),
-    refused(
-        "slider",
-        SLIDE,
-        "  slider amount min=0.0 max=100.0 -> slide _\n",
-        "`slider`",
-    ),
-    refused("progress", "", "  progress amount\n", "`progress`"),
-    refused(
-        "radio",
-        SLIDE,
-        "  radio \"a\" value=1.0 selected=(amount == 1.0) -> slide _\n",
-        "`radio`",
-    ),
-    refused(
-        "pick list",
-        CHOOSE,
-        "  pick [\"One\", \"Two\"] choice -> choose _\n",
-        "`pick list`",
     ),
     refused(
         "combo box",
@@ -516,6 +555,49 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  rule horizontal r=2.0\n",
         "a rule radius",
+    ),
+    // The form controls cross unstyled: the host paints them in its theme.
+    refused(
+        "checkbox: style",
+        FLIP,
+        "  checkbox \"e\" checked=busy -> flip _\n    active checked bg=primary\n",
+        "a checkbox style",
+    ),
+    refused(
+        "toggler: style",
+        FLIP,
+        "  toggler \"e\" checked=busy -> flip _\n    active checked bg=primary\n",
+        "a toggler style",
+    ),
+    refused(
+        "radio: style",
+        SLIDE,
+        "  radio \"a\" value=1.0 selected=(amount == 1.0) -> slide _\n    active selected dot=primary\n",
+        "a radio style",
+    ),
+    refused(
+        "slider: style",
+        SLIDE,
+        "  slider amount min=0.0 max=100.0 -> slide _\n    active rail-start=primary\n",
+        "a slider style",
+    ),
+    refused(
+        "progress: style",
+        "",
+        "  progress amount style=success\n",
+        "a progress style",
+    ),
+    refused(
+        "slider: route argument",
+        "on slide_to(index, value)\n  amount = value\n",
+        "  slider amount min=0.0 max=100.0 -> slide_to 1 _\n",
+        "an argument on a slider route",
+    ),
+    refused(
+        "pick list: style",
+        CHOOSE,
+        "  pick [\"One\", \"Two\"] choice -> choose _\n    active bg=primary\n",
+        "a pick list style",
     ),
 ];
 

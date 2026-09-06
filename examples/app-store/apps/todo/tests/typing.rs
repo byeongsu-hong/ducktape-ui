@@ -3,7 +3,7 @@
 
 use app_store_todo::items::{Item, decode, encode};
 use app_store_todo::{boot_native, tick_native};
-use ui_lang_guest::testing::{answer, has_text, item, press, texts, type_into};
+use ui_lang_guest::testing::{answer, find, has_text, item, press, texts, toggle, type_into};
 use ui_lang_guest::wire::{Frame, Node, Request, Rgba};
 
 fn boot_with(stored: &[Item]) -> Frame {
@@ -83,6 +83,71 @@ fn typing_into_the_input_and_adding_appends_a_row_and_saves_it() {
     assert_eq!(publish.payload, b"todo\n2 items, 1 left");
     let frame = tick_native(vec![answer(publish.id, &[])]);
     assert!(has_text(&frame, "saved 2 items"), "{:?}", texts(&frame));
+}
+
+/// A row's checkbox and the footer's toggler are the form controls the wire
+/// carries: the checkbox's bool comes back as the item's toggle, the
+/// toggler's bool hides the done rows, and the progress bar follows.
+#[test]
+fn checking_an_item_marks_it_done_and_hiding_done_removes_its_row() {
+    let stored = vec![
+        Item {
+            id: 1,
+            text: "Already here".into(),
+            done: false,
+        },
+        Item {
+            id: 2,
+            text: "Long gone".into(),
+            done: true,
+        },
+    ];
+    let frame = boot_with(&stored);
+    assert!(has_text(&frame, "1 left"), "{:?}", texts(&frame));
+    assert_eq!(progress(&frame), 0.5);
+
+    let frame = tick_native(toggle(&frame, "Already here", true));
+    assert!(has_text(&frame, "0 left"), "{:?}", texts(&frame));
+    assert_eq!(progress(&frame), 1.0);
+    let Some(Node::Toggle { checked: true, .. }) = row_checkbox(&frame, "Already here") else {
+        panic!("the row's checkbox follows the item: {:?}", texts(&frame));
+    };
+    // The change is saved like any other.
+    assert_eq!(frame.requests.len(), 1, "{:?}", frame.requests);
+    assert_eq!(frame.requests[0].kind, "storage.set");
+
+    let frame = tick_native(toggle(&frame, "Hide done", true));
+    assert!(
+        !has_text(&frame, "Already here") && !has_text(&frame, "Long gone"),
+        "done rows are hidden: {:?}",
+        texts(&frame)
+    );
+    let Some(Node::Toggle { checked: true, .. }) = find(&frame, "Todo/app/content/hide") else {
+        panic!("the toggler shows its state: {:?}", texts(&frame));
+    };
+    let frame = tick_native(toggle(&frame, "Hide done", false));
+    assert!(has_text(&frame, "Long gone"), "{:?}", texts(&frame));
+}
+
+fn progress(frame: &Frame) -> f32 {
+    let Some(Node::Progress { value, .. }) = find(frame, "Todo/app/content/done") else {
+        panic!("no progress bar in {:?}", texts(frame));
+    };
+    *value
+}
+
+fn row_checkbox<'a>(frame: &'a Frame, label: &str) -> Option<&'a Node> {
+    // Rows are unidentified: the checkbox is found by its label.
+    let mut stack = vec![frame.root.as_ref()?];
+    while let Some(node) = stack.pop() {
+        match node {
+            Node::Toggle { label: text, .. } if text == label => return Some(node),
+            Node::Container { content, .. } | Node::Scroll { content, .. } => stack.push(content),
+            Node::Linear { children, .. } => stack.extend(children.iter()),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The app's own backdrop: the root container's background.
