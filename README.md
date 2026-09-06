@@ -197,6 +197,7 @@ Ice lowers its checked control surface into a deterministic AccessKit tree:
 | `editor` | `MultilineTextInput` | placeholder/default name, current value, caret/selection position per line, a caret a screen reader can move, disabled state, focus action |
 | labeled `image` | `Image` | name and description |
 | any node inside a `scroll` | its own role | `ScrollIntoView` scrolls it into view through every scroll around it |
+| the node under a `tooltip` | its own role | the tip's text as its description |
 
 Visible labels are the default accessible names; explicit `label=` (and
 `description=`) override them with checked `str` expressions. A button with

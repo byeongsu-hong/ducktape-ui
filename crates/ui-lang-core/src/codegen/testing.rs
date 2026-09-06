@@ -802,10 +802,12 @@ fn generate_expectation(
             match property {
                 ResolvedTestAccessibilityProperty::Role(value)
                 | ResolvedTestAccessibilityProperty::Name(value)
+                | ResolvedTestAccessibilityProperty::Description(value)
                 | ResolvedTestAccessibilityProperty::Value(value) => {
                     let property = match property {
                         ResolvedTestAccessibilityProperty::Role(_) => "Role",
                         ResolvedTestAccessibilityProperty::Name(_) => "Name",
+                        ResolvedTestAccessibilityProperty::Description(_) => "Description",
                         ResolvedTestAccessibilityProperty::Value(_) => "Value",
                         _ => unreachable!(),
                     };

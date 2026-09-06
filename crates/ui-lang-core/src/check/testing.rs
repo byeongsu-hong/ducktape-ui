@@ -286,6 +286,7 @@ fn accessibility_property_expr(property: &TestAccessibilityProperty) -> Option<&
     match property {
         TestAccessibilityProperty::Role(value)
         | TestAccessibilityProperty::Name(value)
+        | TestAccessibilityProperty::Description(value)
         | TestAccessibilityProperty::Value(value)
         | TestAccessibilityProperty::Checked(value)
         | TestAccessibilityProperty::Expanded(value)
@@ -698,6 +699,7 @@ fn check_test_step(
                 let (value, ty) = match property {
                     TestAccessibilityProperty::Role(value)
                     | TestAccessibilityProperty::Name(value)
+                    | TestAccessibilityProperty::Description(value)
                     | TestAccessibilityProperty::Value(value) => (value, Type::Str),
                     TestAccessibilityProperty::Checked(value)
                     | TestAccessibilityProperty::Expanded(value)

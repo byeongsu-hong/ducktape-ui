@@ -690,6 +690,11 @@ impl Lowerer {
                     TestAccessibilityProperty::Name(_) => ResolvedTestAccessibilityProperty::Name(
                         values.take_type(&Type::Str, "accessibility name")?,
                     ),
+                    TestAccessibilityProperty::Description(_) => {
+                        ResolvedTestAccessibilityProperty::Description(
+                            values.take_type(&Type::Str, "accessibility description")?,
+                        )
+                    }
                     TestAccessibilityProperty::Value(_) => {
                         ResolvedTestAccessibilityProperty::Value(
                             values.take_type(&Type::Str, "accessibility value")?,

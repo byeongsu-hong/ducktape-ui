@@ -691,6 +691,7 @@ fn tray_hidden_rows_containing(tray: &crate::tray::TraySnapshot, value: &str) ->
 pub enum AccessibilityProperty {
     Role,
     Name,
+    Description,
     Value,
     Checked,
     Expanded,
@@ -1623,6 +1624,9 @@ struct IdSelector<Message> {
     next_semantic_group: usize,
     source_frames: Vec<Location>,
     identified_bounds: Vec<Option<Rectangle>>,
+    /// A `described` wrapper's text, waiting for the first semantic node
+    /// inside it — taken there whether or not that node is the target.
+    pending_description: Option<String>,
     marker: PhantomData<fn() -> Message>,
 }
 
@@ -1694,6 +1698,7 @@ impl<Message> IdSelector<Message> {
             next_semantic_group: 0,
             source_frames: Vec::new(),
             identified_bounds: Vec::new(),
+            pending_description: None,
             marker: PhantomData,
         }
     }
@@ -1708,7 +1713,18 @@ impl<Message: 'static> Selector for IdSelector<Message> {
 
     fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
         let mut semantic_group = self.semantic_frames.last().copied().flatten();
+        let mut inherited_description = None;
         if let Candidate::Custom { state, .. } = &candidate {
+            if let Some(crate::PendingDescription(text)) =
+                state.downcast_ref::<crate::PendingDescription>()
+            {
+                self.pending_description = Some(text.clone());
+                return None;
+            }
+            if state.downcast_ref::<crate::DescriptionEnd>().is_some() {
+                self.pending_description = None;
+                return None;
+            }
             if state.downcast_ref::<RenderSourceEnd>().is_some() {
                 self.source_frames.pop();
                 self.identified_bounds.pop();
@@ -1724,6 +1740,11 @@ impl<Message: 'static> Selector for IdSelector<Message> {
                 return None;
             }
             if let Some(state) = state.downcast_ref::<SemanticSnapshot>() {
+                if state.description.is_none() {
+                    inherited_description = self.pending_description.take();
+                } else {
+                    self.pending_description = None;
+                }
                 // An identified extern call is a generated container around a
                 // native element. Its root semantics may use an adapter-owned
                 // logical id, so pair equal bounds inside the same source frame.
@@ -1849,7 +1870,7 @@ impl<Message: 'static> Selector for IdSelector<Message> {
                         Some(AccessibilityData {
                             role: state.role,
                             name: state.label.clone(),
-                            description: state.description.clone(),
+                            description: state.description.clone().or(inherited_description),
                             value: state.value.clone(),
                             checked: state.checked,
                             expanded: state.expanded,
@@ -2881,10 +2902,11 @@ where
         let actual = match property {
             AccessibilityProperty::Role => target.accessibility_role_name(),
             AccessibilityProperty::Name => target.accessibility_name(),
+            AccessibilityProperty::Description => target.accessibility_description(),
             AccessibilityProperty::Value => target.accessibility_value(),
             _ => self.invalid_action(
                 "accessibility string expectation",
-                "role, name, or value",
+                "role, name, description, or value",
                 format!("{property:?}"),
                 source,
             ),

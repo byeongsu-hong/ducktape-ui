@@ -535,6 +535,7 @@ produce a deterministic AccessKit tree:
 | `editor` | `MultilineTextInput` | placeholder or default label, current value, disabled/focus state; one `TextRun` child per line carrying it grapheme by grapheme, and the caret or selection as a text selection into them; `SetTextSelection` moves the caret through the program's own editor state |
 | labeled `image` | `Image` | label and optional description |
 | any node inside a `scroll` | its own role | `ScrollIntoView`: every scroll around the node, identified or not, moves just far enough to show it |
+| the node under a `tooltip` | its own role | the tip's text is its description, unless it declares one |
 
 A positional input label, compact button string, and visible checkbox or toggler
 label are default accessible names; `label=` overrides them. A button whose

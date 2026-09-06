@@ -577,9 +577,11 @@ test shared_component_font_contracts
   target attachment_menu = #attachment/root/menu
   target breadcrumb_separator = #breadcrumb/root/separator
   target breadcrumb_current = #breadcrumb/root/current
+  target tooltip_trigger = #tooltip/root/tooltip-trigger
   expect attachment_menu.font.family == family.named("Geist")
   expect breadcrumb_separator.font.family == family.named("Geist")
   expect breadcrumb_current.font.family == family.named("Geist")
+  expect a11y tooltip_trigger description "Open the command palette"
 
 test dropdown_categories_open_from_pointer
   preset test

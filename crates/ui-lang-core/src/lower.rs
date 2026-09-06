@@ -243,6 +243,7 @@ pub(crate) enum ResolvedTestComposition {
 pub(crate) enum ResolvedTestAccessibilityProperty {
     Role(ResolvedExpressionId),
     Name(ResolvedExpressionId),
+    Description(ResolvedExpressionId),
     Value(ResolvedExpressionId),
     Checked(ResolvedExpressionId),
     Expanded(ResolvedExpressionId),
