@@ -92,7 +92,7 @@ fn resolved_rule_style_code(
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    let radius = resolved_text_radius_code(&rule.radius, program, env)?;
+    let radius = resolved_container_radius_code(&rule.radius, program, env)?;
     if rule.preset == ResolvedRulePreset::Default
         && rule.fill.is_none()
         && rule.color.is_none()

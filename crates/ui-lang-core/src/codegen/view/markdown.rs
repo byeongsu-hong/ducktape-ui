@@ -138,7 +138,7 @@ fn append_resolved_markdown_style(
         write!(
             code,
             " __markdown_settings.style.inline_code_highlight.background = {};",
-            resolved_text_background_code(background, program, env)?
+            resolved_container_background_code(background, program, env)?
         )
         .unwrap();
     }
@@ -174,7 +174,9 @@ fn append_resolved_markdown_style(
         )
         .unwrap();
     }
-    if let Some(padding) = resolved_markdown_padding(&style.inline_code_padding, program, env)? {
+    if let Some(padding) =
+        resolved_container_padding_code(&style.inline_code_padding, program, env)?
+    {
         write!(
             code,
             " __markdown_settings.style.inline_code_padding = {padding};"
@@ -197,7 +199,7 @@ fn append_resolved_markdown_style(
         )
         .unwrap();
     }
-    if let Some(radius) = resolved_text_radius_code(&style.inline_code_radius, program, env)? {
+    if let Some(radius) = resolved_container_radius_code(&style.inline_code_radius, program, env)? {
         write!(
             code,
             " __markdown_settings.style.inline_code_highlight.border.radius = {radius};"
@@ -205,36 +207,4 @@ fn append_resolved_markdown_style(
         .unwrap();
     }
     Ok(())
-}
-
-fn resolved_markdown_padding(
-    padding: &ResolvedContainerPadding,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<Option<String>, Error> {
-    if padding.all.is_none()
-        && padding.x.is_none()
-        && padding.y.is_none()
-        && padding.top.is_none()
-        && padding.right.is_none()
-        && padding.bottom.is_none()
-        && padding.left.is_none()
-    {
-        return Ok(None);
-    }
-    let value = |expression: Option<ResolvedExpressionId>| {
-        expression
-            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
-            .transpose()
-    };
-    let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
-    let x = value(padding.x)?.unwrap_or_else(|| all.clone());
-    let y = value(padding.y)?.unwrap_or_else(|| all.clone());
-    let top = value(padding.top)?.unwrap_or_else(|| y.clone());
-    let right = value(padding.right)?.unwrap_or_else(|| x.clone());
-    let bottom = value(padding.bottom)?.unwrap_or(y);
-    let left = value(padding.left)?.unwrap_or(x);
-    Ok(Some(format!(
-        "::ui_lang_runtime::bounded_padding({top}, {right}, {bottom}, {left})"
-    )))
 }

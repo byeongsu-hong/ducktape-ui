@@ -576,7 +576,7 @@ fn resolved_menu_style_code(
         write!(
             code,
             " __style.selected_background = {};",
-            resolved_text_background_code(background, program, env)?
+            resolved_container_background_code(background, program, env)?
         )
         .unwrap();
     }
@@ -595,7 +595,7 @@ fn append_resolved_selection_surface(
         write!(
             code,
             " __style.background = {};",
-            resolved_text_background_code(background, program, env)?
+            resolved_container_background_code(background, program, env)?
         )
         .unwrap();
     }
@@ -623,7 +623,7 @@ fn append_resolved_selection_surface(
         )
         .unwrap();
     }
-    if let Some(radius) = resolved_text_radius_code(&surface.radius, program, env)? {
+    if let Some(radius) = resolved_container_radius_code(&surface.radius, program, env)? {
         write!(code, " __style.border.radius = {radius};").unwrap();
     }
     if shadow {

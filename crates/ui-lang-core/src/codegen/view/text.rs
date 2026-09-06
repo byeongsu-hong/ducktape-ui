@@ -342,7 +342,7 @@ fn render_resolved_rich_span(
         write!(
             code,
             ".background({})",
-            resolved_text_background_code(background, program, env)?
+            resolved_container_background_code(background, program, env)?
         )
         .unwrap();
     }
@@ -363,7 +363,7 @@ fn render_resolved_rich_span(
             || Ok("0.0".to_owned()),
             |width| resolved_expr_use_code(program, width, env, ValueMode::Owned),
         )?;
-        let radius = resolved_text_radius_code(&rich_span.radius, program, env)?
+        let radius = resolved_container_radius_code(&rich_span.radius, program, env)?
             .unwrap_or_else(|| "::iced::border::Radius::default()".into());
         write!(
             code,
@@ -371,7 +371,7 @@ fn render_resolved_rich_span(
         )
         .unwrap();
     }
-    if let Some(padding) = resolved_text_padding_code(&rich_span.padding, program, env)? {
+    if let Some(padding) = resolved_container_padding_code(&rich_span.padding, program, env)? {
         write!(code, ".padding({padding})").unwrap();
     }
     if let Some(underline) = rich_span.underline {
@@ -535,99 +535,6 @@ fn resolved_text_line_height_code(
             clamped_f32_code(*expression, "f32::EPSILON", "f32::MAX", program, env)?
         )),
     }
-}
-
-pub(super) fn resolved_text_background_code(
-    background: &ResolvedContainerBackground,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<String, Error> {
-    Ok(match background {
-        ResolvedContainerBackground::Color(color) => {
-            format!("::iced::Background::Color({})", resolved_theme_color(color))
-        }
-        ResolvedContainerBackground::Linear { angle, stops } => {
-            let mut code = format!(
-                "::iced::Background::from(::iced::gradient::Linear::new({} as f32)",
-                resolved_expr_use_code(program, *angle, env, ValueMode::Owned)?
-            );
-            for stop in stops {
-                write!(
-                    code,
-                    ".add_stop({} as f32, {})",
-                    resolved_expr_use_code(program, stop.offset, env, ValueMode::Owned)?,
-                    resolved_theme_color(&stop.color)
-                )
-                .unwrap();
-            }
-            code.push(')');
-            code
-        }
-    })
-}
-
-fn resolved_text_padding_code(
-    padding: &ResolvedContainerPadding,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<Option<String>, Error> {
-    if padding.all.is_none()
-        && padding.x.is_none()
-        && padding.y.is_none()
-        && padding.top.is_none()
-        && padding.right.is_none()
-        && padding.bottom.is_none()
-        && padding.left.is_none()
-    {
-        return Ok(None);
-    }
-    let value = |expression: Option<ResolvedExpressionId>| {
-        expression
-            .map(|expression| resolved_expr_use_code(program, expression, env, ValueMode::Owned))
-            .transpose()
-    };
-    let all = value(padding.all)?.unwrap_or_else(|| "0.0".into());
-    let x = value(padding.x)?.unwrap_or_else(|| all.clone());
-    let y = value(padding.y)?.unwrap_or_else(|| all.clone());
-    let top = value(padding.top)?.unwrap_or_else(|| y.clone());
-    let right = value(padding.right)?.unwrap_or_else(|| x.clone());
-    let bottom = value(padding.bottom)?.unwrap_or(y);
-    let left = value(padding.left)?.unwrap_or(x);
-    Ok(Some(format!(
-        "::ui_lang_runtime::bounded_padding({top}, {right}, {bottom}, {left})"
-    )))
-}
-
-pub(super) fn resolved_text_radius_code(
-    radius: &ResolvedContainerRadius,
-    program: &LoweredProgram,
-    env: &dyn BindingEnvironment,
-) -> Result<Option<String>, Error> {
-    if radius.all.is_none()
-        && radius.top_left.is_none()
-        && radius.top_right.is_none()
-        && radius.bottom_right.is_none()
-        && radius.bottom_left.is_none()
-    {
-        return Ok(None);
-    }
-    let base = radius
-        .all
-        .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
-        .transpose()?
-        .unwrap_or_else(|| "0.0".into());
-    let corner = |value: Option<ResolvedExpressionId>| {
-        value
-            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
-            .transpose()
-    };
-    let top_left = corner(radius.top_left)?.unwrap_or_else(|| base.clone());
-    let top_right = corner(radius.top_right)?.unwrap_or_else(|| base.clone());
-    let bottom_right = corner(radius.bottom_right)?.unwrap_or_else(|| base.clone());
-    let bottom_left = corner(radius.bottom_left)?.unwrap_or(base);
-    Ok(Some(format!(
-        "::iced::border::Radius {{ top_left: {top_left}, top_right: {top_right}, bottom_right: {bottom_right}, bottom_left: {bottom_left} }}"
-    )))
 }
 
 fn resolved_text_alignment_code(alignment: ResolvedTextAlignment) -> &'static str {
