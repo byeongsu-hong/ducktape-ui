@@ -377,6 +377,7 @@ fn gen_frame_with(rng: &mut Rng, depth: usize, width: usize) -> Frame {
         requests,
         cancels,
         unchanged: rng.next_bool(),
+        busy: rng.next_bool(),
     }
 }
 

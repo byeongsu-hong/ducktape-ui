@@ -1,5 +1,6 @@
-//! A counter that runs inside wasm — and asks the host for a timer, an
-//! answer and a bus, which is what makes it more than three buttons.
+//! A counter that runs inside wasm — and asks the host for an answer and a
+//! bus, and ticks its Auto off an Ice `subscribe every`, which is what makes
+//! it more than three buttons.
 
 pub mod host;
 

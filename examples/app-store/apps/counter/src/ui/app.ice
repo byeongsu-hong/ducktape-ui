@@ -11,7 +11,6 @@ use "theme.ice"
 extern crate::host
   HostError(message:str)
   ask_host(question:str) -> str ! HostError
-  wait(ms:i64) -> bool ! HostError
   publish_count(count:i64) -> bool ! HostError
   stream theme_changes() -> str ! HostError
   pure question(count:i64) -> str
@@ -51,18 +50,18 @@ on reset
   count = 0
   run every publish_count(count) -> published _ | host_failed _
 
-// A timer is a host request too: wait a second, then wait another.
+// Auto is an ordinary Ice subscription. While `auto` holds, `every` ticks;
+// the module has no clock, so the guest runtime asks the host's ticker for
+// the period — and switching off drops the subscription, ticker and all.
+subscribe
+  every 1s when auto -> elapsed
+
 on toggle_auto
   auto = !auto
-  return if !auto
-  run every wait(1000) -> elapsed _ | host_failed _
 
-on elapsed(_done)
-  return if !auto
+on elapsed
   count = count + 1
-  parallel
-    run every wait(1000) -> elapsed _ | host_failed _
-    run every publish_count(count) -> published _ | host_failed _
+  run every publish_count(count) -> published _ | host_failed _
 
 on published(ok)
   published = ok

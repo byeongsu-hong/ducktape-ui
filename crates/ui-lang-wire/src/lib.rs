@@ -67,6 +67,10 @@ pub struct Frame {
     /// the host keeps what it has instead of decoding it again. Requests and
     /// cancels still cross.
     pub unchanged: bool,
+    /// The guest ran out of tick budget with work still ready — a task that
+    /// yields more than one tick runs, a handler chain longer than one
+    /// round — and wants the next tick now, not at the next event or answer.
+    pub busy: bool,
 }
 
 /// Red, green, blue, alpha in `0.0..=1.0`. The guest resolves its own
@@ -828,6 +832,7 @@ mod tests {
             }],
             cancels: vec![2],
             unchanged: false,
+            busy: false,
         };
         assert_eq!(decode::<Frame>(&encode(&frame)).unwrap(), frame);
         let events = vec![
@@ -1111,6 +1116,7 @@ mod tests {
             }],
             cancels: vec![1, 2],
             unchanged: false,
+            busy: false,
         });
         for cut in 0..sound.len() {
             let _ = decode::<Frame>(&sound[..cut]);

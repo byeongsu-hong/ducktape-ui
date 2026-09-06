@@ -121,6 +121,44 @@ fn a_construct_the_wire_does_not_carry_fails_at_its_line() {
     compile(&source, "demo.ice").unwrap();
 }
 
+/// A module has no clock: `every` and `repeat` are the guest crate's, which
+/// route them to the host's ticker, and an `every` that would carry the
+/// instant is refused where a payload is asked for.
+#[test]
+fn every_and_repeat_are_the_hosts_ticker_in_a_view_module() {
+    let source = format!(
+        "app Demo\n{PALETTE}extern crate::host\n  poll() -> i64\nstate\n  auto = false\n  count = 0\non tick\n  count = count + 1\non polled(value)\n  count = value\nsubscribe\n  every 1s when auto -> tick\n  repeat poll() every 250ms -> polled _\nview\n  text \"ready\" @text-fg\n"
+    );
+    let tree = compile_for(&source, "demo.ice", Target::Tree).unwrap();
+    assert!(
+        tree.contains("::ui_lang_guest::every(::std::time::Duration::from_millis(1000))"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains(
+            "::ui_lang_guest::repeat(crate::host::poll, ::std::time::Duration::from_millis(250))"
+        ),
+        "{tree}"
+    );
+    assert!(!tree.contains("::iced::time::every"), "{tree}");
+    let native = compile(&source, "demo.ice").unwrap();
+    assert!(native.contains("::iced::time::every"), "{native}");
+    assert!(!native.contains("::ui_lang_guest::every"), "{native}");
+}
+
+#[test]
+fn an_every_that_binds_the_instant_is_refused_in_a_view_module() {
+    let source = format!(
+        "app Demo\n{PALETTE}state\n  count = 0\non tick(at)\n  count = count + 1\nsubscribe\n  every 1s -> tick _\nview\n  text \"ready\" @text-fg\n"
+    );
+    let error = compile_for(&source, "demo.ice", Target::Tree).unwrap_err();
+    let rendered = error.render("demo.ice");
+    assert!(rendered.contains("E190"), "{rendered}");
+    assert!(rendered.contains("carries no instant"), "{rendered}");
+    assert!(rendered.contains("demo.ice:17"), "{rendered}");
+    compile(&source, "demo.ice").unwrap();
+}
+
 #[test]
 fn the_native_target_is_untouched_by_the_tree_emitter() {
     let source = format!("app Demo\n{PALETTE}view\n  text \"ready\" @text-fg\n");

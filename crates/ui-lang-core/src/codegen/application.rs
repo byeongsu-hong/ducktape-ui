@@ -456,7 +456,10 @@ pub(in crate::codegen) fn generate_boot(
         .find(|handler| handler.name == "mount")
         .map_or(&[][..], |handler| handler.statements.as_slice());
     generate_initial_task_method(out, program, message, "__boot_task", mount)?;
-    if program.settings().kind == ProgramKind::Daemon {
+    // A view module boots like a daemon: no accessibility bridge to attach,
+    // no window to find — the host owns both, and a task asking for either
+    // would only be dropped by the guest driver.
+    if program.settings().kind == ProgramKind::Daemon || program.target() == Target::Tree {
         writeln!(
             out,
             "pub(crate) fn __boot() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}let task = state.__boot_task();\n{tray_sync}(state, task)\n}}"

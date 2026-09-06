@@ -32,7 +32,10 @@ pub(in crate::codegen) fn generate_subscription(
     )
     .unwrap();
     writeln!(out, "::iced::Subscription::batch([").unwrap();
-    if settings.kind == ProgramKind::Application {
+    // A view module has none of the application's own sources: the
+    // accessibility bridge, the window events and the template watcher are
+    // all the host's side of the wire.
+    if settings.kind == ProgramKind::Application && program.target() != Target::Tree {
         writeln!(
             out,
             "self.__ice_accessibility.subscription().map({message}::__AccessibilityAction),"
@@ -160,6 +163,27 @@ pub(in crate::codegen) fn generate_subscription(
             write!(out, "if {condition} {{ ::iced::Subscription::batch([").unwrap();
         }
         match &subscription.source {
+            // A view module has no clock: `every` and `repeat` are the
+            // host's ticker, and the instant `every` would carry cannot be
+            // made where there is no `now`.
+            ResolvedSubscriptionSource::Every { milliseconds }
+                if program.target() == Target::Tree =>
+            {
+                if !subscription.route.args.is_empty() {
+                    return Err(Error::new(
+                        "E190",
+                        &subscription.span,
+                        "`every` carries no instant in a view module: a module has no clock, so route it without a payload",
+                    ));
+                }
+                writeln!(out, "::ui_lang_guest::every(::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),").unwrap();
+            }
+            ResolvedSubscriptionSource::Repeat {
+                function,
+                milliseconds,
+            } if program.target() == Target::Tree => {
+                writeln!(out, "::ui_lang_guest::repeat({}, ::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),", function.rust_path).unwrap();
+            }
             ResolvedSubscriptionSource::Every { milliseconds } => {
                 // A test build ticks `every` off the test driver's logical
                 // clock: on a loaded machine a wall-clock interval fires
