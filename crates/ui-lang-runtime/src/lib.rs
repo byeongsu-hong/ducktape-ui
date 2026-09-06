@@ -558,6 +558,156 @@ struct FocusRing {
     radius: f32,
 }
 
+/// What a tooltip says, handed to the control it hovers over: the first
+/// accessible node inside `content` that has no description of its own takes
+/// `description`. Assistive technology reads it as the control's help text,
+/// which is what a sighted user gets from the tooltip.
+pub fn described<'a, Message, Theme, Renderer>(
+    content: impl Into<Element<'a, Message, Theme, Renderer>>,
+    description: impl Into<String>,
+) -> Described<'a, Message, Theme, Renderer> {
+    Described {
+        content: content.into(),
+        description: description.into(),
+    }
+}
+
+pub struct Described<'a, Message, Theme, Renderer> {
+    content: Element<'a, Message, Theme, Renderer>,
+    description: String,
+}
+
+/// The description the next accessible node without one takes; cleared by
+/// `DescriptionEnd` so it never reaches a node outside the wrapper.
+struct PendingDescription(String);
+struct DescriptionEnd;
+
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for Described<'_, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::Renderer,
+{
+    fn tag(&self) -> tree::Tag {
+        self.content.as_widget().tag()
+    }
+
+    fn state(&self) -> tree::State {
+        self.content.as_widget().state()
+    }
+
+    fn children(&self) -> Vec<widget::Tree> {
+        self.content.as_widget().children()
+    }
+
+    fn diff(&self, tree: &mut widget::Tree) {
+        self.content.as_widget().diff(tree);
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut widget::Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content.as_widget_mut().layout(tree, renderer, limits)
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        operation.custom(
+            None,
+            layout.bounds(),
+            &mut PendingDescription(self.description.clone()),
+        );
+        self.content
+            .as_widget_mut()
+            .operate(tree, layout, renderer, operation);
+        operation.custom(None, layout.bounds(), &mut DescriptionEnd);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut widget::Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget_mut().update(
+            tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+        );
+    }
+
+    fn draw(
+        &self,
+        tree: &widget::Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content
+            .as_widget()
+            .draw(tree, renderer, theme, style, layout, cursor, viewport);
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &widget::Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.content
+            .as_widget()
+            .mouse_interaction(tree, layout, cursor, viewport, renderer)
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut widget::Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        self.content
+            .as_widget_mut()
+            .overlay(tree, layout, renderer, viewport, translation)
+    }
+}
+
+impl<'a, Message, Theme, Renderer> From<Described<'a, Message, Theme, Renderer>>
+    for Element<'a, Message, Theme, Renderer>
+where
+    Message: 'a,
+    Theme: 'a,
+    Renderer: iced::advanced::Renderer + 'a,
+{
+    fn from(described: Described<'a, Message, Theme, Renderer>) -> Self {
+        Element::new(described)
+    }
+}
+
 /// Creates an accessible wrapper around an Iced widget.
 pub fn accessible<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
@@ -2065,6 +2215,8 @@ struct SnapshotOperation<Message> {
     scroll_depth: usize,
     pending_scroll: bool,
     pending_set: Option<SetPosition>,
+    /// A `described` wrapper's text, waiting for the first node inside it.
+    pending_description: Option<String>,
     /// The one window this snapshot describes, or `None` for the whole tree.
     /// A daemon runs every widget operation through every window's tree in
     /// turn, so an unscoped snapshot of a multi-window program is one tree
@@ -2117,6 +2269,7 @@ impl<Message> Default for SnapshotOperation<Message> {
             pending_translation: None,
             scroll_depth: 0,
             pending_scroll: false,
+            pending_description: None,
             pending_set: None,
             scope: None,
             inside: true,
@@ -2294,6 +2447,14 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         if !self.inside {
             return;
         }
+        if let Some(PendingDescription(text)) = state.downcast_mut::<PendingDescription>() {
+            self.pending_description = Some(std::mem::take(text));
+            return;
+        }
+        if state.downcast_ref::<DescriptionEnd>().is_some() {
+            self.pending_description = None;
+            return;
+        }
         if let Some(set) = state.downcast_mut::<SetPosition>() {
             self.pending_set = Some(SetPosition {
                 position: set.position,
@@ -2398,6 +2559,8 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
         }
         if let Some(description) = &semantics.description {
             node.set_description(description.clone());
+        } else if let Some(description) = self.pending_description.take() {
+            node.set_description(description);
         }
         if let Some(value) = &semantics.value {
             node.set_value(value.clone());
@@ -4952,6 +5115,47 @@ mod tests {
             ),
             "grapheme 3 of h\u{e9}llo starts at byte 4"
         );
+    }
+
+    #[test]
+    fn a_described_wrapper_gives_its_text_to_the_first_node_inside_and_no_other() {
+        let inside = StableId::new("inside");
+        let after = StableId::new("after");
+        let button: TestElement<'static> =
+            iced::widget::button("Save").on_press(Message::First).into();
+        let described: TestElement<'static> = described(
+            iced::widget::column![accessible(button, inside, Role::Button).label("Save")],
+            "Saves the document",
+        )
+        .into();
+        let sibling: TestElement<'static> =
+            iced::widget::button("Close").on_press(Message::Last).into();
+        let root: TestElement<'static> = iced::widget::column![
+            described,
+            accessible(sibling, after, Role::Button).label("Close"),
+        ]
+        .into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(400.0, 200.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let snapshot = snapshot(&mut ui, &renderer);
+        let description = |wanted: NodeId| {
+            snapshot
+                .update
+                .nodes
+                .iter()
+                .find(|(candidate, _)| *candidate == wanted)
+                .and_then(|(_, node)| node.description().map(str::to_owned))
+        };
+        assert_eq!(
+            description(inside.node_id()).as_deref(),
+            Some("Saves the document")
+        );
+        assert_eq!(description(after.node_id()), None);
     }
 
     #[test]

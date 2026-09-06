@@ -1002,7 +1002,7 @@ fn construct_schema(item: &Completion) -> Value {
             Vec::new(),
         ),
         "expect a11y" => test_statement(
-            "expect a11y <target> role|name|value <str-expression> | checked|expanded|disabled|focused <bool-expression> | action <click|focus> [<bool-expression>]",
+            "expect a11y <target> role|name|description|value <str-expression> | checked|expanded|disabled|focused <bool-expression> | action <click|focus> [<bool-expression>]",
         ),
         "expect component" => test_statement(
             "expect component <component-scope-target>.<state-field> ==|!= <expression>",
@@ -2467,7 +2467,7 @@ fn test_contract() -> Value {
             "text": ["expect text <str-expression> [within <target>]", "expect no text <str-expression> [within <target>]"],
             "componentState": ["expect component <component-scope-target>.<state-field> == <expression>", "expect component <component-scope-target>.<state-field> != <expression>"],
             "accessibility": {
-                "text": "expect a11y <target> role|name|value <str-expression>",
+                "text": "expect a11y <target> role|name|description|value <str-expression>",
                 "boolean": "expect a11y <target> checked|expanded|disabled|focused <bool-expression>",
                 "action": "expect a11y <target> action <click|focus> [<bool-expression>]"
             },

@@ -197,6 +197,9 @@ view
     assert!(generated.contains(
         "::iced::widget::image(::iced::widget::image::Handle::from_bytes(include_bytes!(\"photo.ppm\").as_slice()))"
     ));
+    // The tip's text rides on the trigger as its accessible description.
+    assert!(generated.contains("::ui_lang_runtime::described("));
+    assert!(generated.contains("(\"Tip\").to_string()).into()"));
     assert!(
         generated.contains(".rotation(::iced::Rotation::Solid(::iced::Radians((0.5) as f32)))")
     );

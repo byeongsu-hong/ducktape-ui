@@ -308,6 +308,7 @@ impl TrayField {
 pub enum TestAccessibilityProperty {
     Role(Expr),
     Name(Expr),
+    Description(Expr),
     Value(Expr),
     Checked(Expr),
     Expanded(Expr),
@@ -410,6 +411,7 @@ pub(crate) fn test_step_expression_roots(step: &TestStep) -> Vec<&Expr> {
                 expressions.push(match property {
                     TestAccessibilityProperty::Role(value)
                     | TestAccessibilityProperty::Name(value)
+                    | TestAccessibilityProperty::Description(value)
                     | TestAccessibilityProperty::Value(value)
                     | TestAccessibilityProperty::Checked(value)
                     | TestAccessibilityProperty::Expanded(value)
@@ -538,6 +540,7 @@ fn test_expectation_semantic_key(expectation: &TestExpectation) -> String {
             match property {
                 TestAccessibilityProperty::Role(_) => "role",
                 TestAccessibilityProperty::Name(_) => "name",
+                TestAccessibilityProperty::Description(_) => "description",
                 TestAccessibilityProperty::Value(_) => "value",
                 TestAccessibilityProperty::Checked(_) => "checked",
                 TestAccessibilityProperty::Expanded(_) => "expanded",
@@ -969,6 +972,9 @@ fn accessibility_property_source(property: &TestAccessibilityProperty) -> String
     match property {
         TestAccessibilityProperty::Role(value) => format!("role {}", expr_source(value)),
         TestAccessibilityProperty::Name(value) => format!("name {}", expr_source(value)),
+        TestAccessibilityProperty::Description(value) => {
+            format!("description {}", expr_source(value))
+        }
         TestAccessibilityProperty::Value(value) => format!("value {}", expr_source(value)),
         TestAccessibilityProperty::Checked(value) => {
             format!("checked {}", expr_source(value))

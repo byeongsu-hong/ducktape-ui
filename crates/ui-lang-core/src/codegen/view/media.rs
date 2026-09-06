@@ -18,9 +18,10 @@ pub(in crate::codegen) fn render_media(
         }
         ResolvedViewKind::Tooltip { content, tip } => {
             let content = render_node(*content, document, message, env, &child_scope, slot)?;
+            let description = tip_description_code(document, *tip, env)?;
             let tip = render_node(*tip, document, message, env, &child_scope, slot)?;
             let resolved = document.resolved_tooltip(node)?;
-            render_resolved_tooltip(resolved, document, message, env, content, tip)
+            render_resolved_tooltip(resolved, document, message, env, content, tip, description)
         }
         ResolvedViewKind::MouseArea { content } => {
             let content = render_node(*content, document, message, env, &child_scope, slot)?;
@@ -221,6 +222,49 @@ fn render_resolved_resize_handle(
     Ok(format!("{code}.into() }}"))
 }
 
+/// The plain text a tip shows, as the code of one `String`, for the accessible
+/// node under the tooltip to carry as its description: what a sighted user
+/// gets by hovering, a screen reader gets as help text. `None` for a tip with
+/// no text in it, such as an icon.
+fn tip_description_code(
+    program: &LoweredProgram,
+    tip: ViewId,
+    env: &dyn BindingEnvironment,
+) -> Result<Option<String>, Error> {
+    let mut values = Vec::new();
+    collect_tip_text(program, tip, &mut values)?;
+    let mut codes = Vec::with_capacity(values.len());
+    for value in values {
+        codes.push(format!(
+            "({}).to_string()",
+            resolved_expr_use_code(program, value, env, ValueMode::Borrowed)?
+        ));
+    }
+    Ok(match codes.as_slice() {
+        [] => None,
+        [one] => Some(one.clone()),
+        many => Some(format!("[{}].join(\" \")", many.join(", "))),
+    })
+}
+
+fn collect_tip_text(
+    program: &LoweredProgram,
+    id: ViewId,
+    values: &mut Vec<CheckedExprUseId>,
+) -> Result<(), Error> {
+    let view = program.resolved_view(id)?;
+    if matches!(view.kind, ResolvedViewKind::Text) {
+        if let ResolvedTextContent::Plain { value } = &program.resolved_text(id)?.content {
+            values.push(*value);
+        }
+        return Ok(());
+    }
+    for child in program.resolved_view_children(view)? {
+        collect_tip_text(program, child, values)?;
+    }
+    Ok(())
+}
+
 fn render_resolved_tooltip(
     tooltip: &ResolvedTooltip,
     program: &LoweredProgram,
@@ -228,7 +272,16 @@ fn render_resolved_tooltip(
     env: &dyn BindingEnvironment,
     content: String,
     tip: String,
+    description: Option<String>,
 ) -> Result<String, Error> {
+    // The tip is an overlay iced never walks for operations, so the text it
+    // shows travels with the content instead.
+    let content = match description {
+        Some(description) => {
+            format!("::ui_lang_runtime::described({content}, {description}).into()")
+        }
+        None => content,
+    };
     let position = match tooltip.position {
         ResolvedTooltipPosition::Top => "Top",
         ResolvedTooltipPosition::Bottom => "Bottom",
