@@ -27,16 +27,18 @@
 // the module split that moves the shapes out of `hyperliquid.rs`.
 #![allow(dead_code)]
 
+use serde_json::Value;
 use std::fmt;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use smol::channel::Receiver;
 
 use crate::hyperliquid::{
-    Account, Fill, HL_CANONICAL, HlError, MarketTick, Order, Position, SymbolRow, Tape, Ticket,
-    amount, fmt_margin, fmt_px, fmt_size, hl_account, hl_candles, hl_fill_feed, hl_history,
+    Account, Candle, Fill, HL_CANONICAL, HlError, MarketTick, Order, Position, SymbolRow, Tape,
+    Ticket, amount, fmt_margin, fmt_px, fmt_size, hl_account, hl_candles, hl_fill_feed, hl_history,
     hl_market_feed, hl_orders, hl_symbols, order_label, price_ticket,
 };
 use crate::lighter::{
@@ -2161,6 +2163,81 @@ pub fn lighter_size(sign: i64, size: f64) -> f64 {
 pub fn previous_close(price: f64, change_pct: f64) -> f64 {
     let factor = 1.0 + change_pct / 100.0;
     if factor > 0.0 { price / factor } else { 0.0 }
+}
+
+// What both venues read the same way. Each of these was once a private copy
+// in `hyperliquid` and `lighter`; the two must agree exactly, or the same
+// risk renders two lengths and the same bar lands on two axes.
+
+/// Prices, sizes, and PnL all arrive as strings. A missing or unparsable
+/// field reads as zero rather than failing the whole response.
+pub(crate) fn num(value: &Value, key: &str) -> f64 {
+    match value.get(key) {
+        Some(Value::String(text)) => text.parse().unwrap_or(0.0),
+        Some(Value::Number(number)) => number.as_f64().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+pub(crate) fn text(value: &Value, key: &str) -> String {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
+pub(crate) fn value_i64(value: &Value, key: &str) -> i64 {
+    value.get(key).and_then(Value::as_i64).unwrap_or_default()
+}
+
+pub(crate) fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+/// The share of the account's equity the maintenance requirement has already
+/// claimed: 0 with nothing at risk, 1 where the margin engine steps in. Cross
+/// positions do not die one at a time — the whole account goes when its equity
+/// falls under `crossMaintenanceMarginUsed` — so this is that one distance,
+/// read the same way the per-position rail reads entry to liquidation.
+///
+/// Equity at or below zero is already past the cliff, and an account with no
+/// maintenance requirement has no cliff to be near.
+pub(crate) fn margin_load(equity: f64, maintenance: f64) -> f64 {
+    if maintenance <= 0.0 {
+        return 0.0;
+    }
+    if equity <= 0.0 {
+        return 1.0;
+    }
+    (maintenance / equity).clamp(0.0, 1.0)
+}
+
+/// The share of the entry-to-liquidation distance the mark has already
+/// covered: 0 at the entry price, 1 at the cliff. Works for either side
+/// because both endpoints flip together, and reads 0 when the position has
+/// no liquidation price at all.
+pub(crate) fn liquidation_travel(entry: f64, mark: f64, liquidation: f64) -> f64 {
+    let span = liquidation - entry;
+    if !(span.is_finite() && span.abs() > f64::EPSILON) || liquidation <= 0.0 {
+        return 0.0;
+    }
+    ((mark - entry) / span).clamp(0.0, 1.0)
+}
+
+pub(crate) fn parse_candle(value: &Value) -> Candle {
+    Candle {
+        // Hyperliquid timestamps are milliseconds; the chart wants seconds.
+        ts: value_i64(value, "t") / 1_000,
+        open: num(value, "o"),
+        high: num(value, "h"),
+        low: num(value, "l"),
+        close: num(value, "c"),
+        volume: num(value, "v"),
+    }
 }
 
 #[cfg(test)]
