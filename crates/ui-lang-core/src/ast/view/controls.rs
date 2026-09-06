@@ -70,38 +70,6 @@ pub enum ProgressStyle {
     Danger,
 }
 
-fn range_background_semantic_key(background: &Option<BackgroundValue>) -> String {
-    match background {
-        None => "none".into(),
-        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
-        Some(BackgroundValue::Linear { stops, .. }) => format!(
-            "linear:{}",
-            stops
-                .iter()
-                .map(|stop| stop.color.as_str())
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-    }
-}
-
-fn range_route_semantic_key(route: Option<&Route>) -> String {
-    route.map_or_else(
-        || "none".into(),
-        |route| {
-            let arguments = route
-                .args
-                .iter()
-                .map(|argument| match argument {
-                    RouteArg::Expr(_) => 'e',
-                    RouteArg::Payload => 'p',
-                })
-                .collect::<String>();
-            format!("{}:{arguments}", route.handler)
-        },
-    )
-}
-
 fn push_range_length_root<'a>(
     roots: &mut Vec<(&'a Expr, &'a Span)>,
     length: &'a Option<LengthValue>,
@@ -131,8 +99,8 @@ fn slider_status_semantic_key(style: &SliderStyle) -> String {
     };
     format!(
         "rail={}:{}|colors={:?}|fields={:?}|handle={handle}",
-        range_background_semantic_key(&style.rail_start),
-        range_background_semantic_key(&style.rail_end),
+        background_semantic_key(style.rail_start.as_ref()),
+        background_semantic_key(style.rail_end.as_ref()),
         [
             style.rail_border_color.as_deref(),
             style.handle_border_color.as_deref(),
@@ -154,7 +122,7 @@ fn slider_status_semantic_key(style: &SliderStyle) -> String {
         ],
     ) + &format!(
         "|handle-color={}",
-        range_background_semantic_key(&style.handle_color)
+        background_semantic_key(style.handle_color.as_ref())
     )
 }
 
@@ -248,8 +216,8 @@ pub(crate) fn slider_semantic_key(
         options.shift_step.is_some(),
         length_semantic_key(&options.width),
         length_semantic_key(&options.height),
-        range_route_semantic_key(Some(route)),
-        range_route_semantic_key(release.as_ref()),
+        route_semantic_key(Some(route)),
+        route_semantic_key(release.as_ref()),
     )
 }
 
@@ -298,8 +266,8 @@ pub(crate) fn progress_semantic_key(
         length_semantic_key(&options.length),
         length_semantic_key(&options.girth),
         options.style,
-        range_background_semantic_key(&options.background),
-        range_background_semantic_key(&options.bar),
+        background_semantic_key(options.background.as_ref()),
+        background_semantic_key(options.bar.as_ref()),
         options.border_color,
         [
             options.border_width.is_some(),
@@ -701,42 +669,10 @@ fn selection_length_key(length: &Option<LengthValue>) -> &'static str {
     }
 }
 
-fn selection_route_key(route: Option<&Route>) -> String {
-    route.map_or_else(
-        || "none".into(),
-        |route| {
-            let arguments = route
-                .args
-                .iter()
-                .map(|argument| match argument {
-                    RouteArg::Expr(_) => 'e',
-                    RouteArg::Payload => 'p',
-                })
-                .collect::<String>();
-            format!("{}:{arguments}", route.handler)
-        },
-    )
-}
-
-fn selection_background_key(background: &Option<BackgroundValue>) -> String {
-    match background {
-        None => "none".into(),
-        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
-        Some(BackgroundValue::Linear { stops, .. }) => format!(
-            "linear:{}",
-            stops
-                .iter()
-                .map(|stop| stop.color.as_str())
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-    }
-}
-
 fn selection_surface_key(surface: &ContainerStyleOptions) -> String {
     format!(
         "bg={}|colors={:?}|fields={:?}",
-        selection_background_key(&surface.background),
+        background_semantic_key(surface.background.as_ref()),
         [
             surface.text_color.as_deref(),
             surface.border_color.as_deref(),
@@ -765,7 +701,7 @@ fn menu_semantic_key(menu: &Option<Box<MenuStyleOptions>>) -> String {
                 "{}|selected={:?}:{}",
                 selection_surface_key(&menu.options),
                 menu.selected_text_color,
-                selection_background_key(&menu.selected_background),
+                background_semantic_key(menu.selected_background.as_ref()),
             )
         },
     )
@@ -838,9 +774,9 @@ pub(crate) fn pick_list_semantic_key(config: &PickListOptions, route: &Route) ->
         config.font,
         pick_handle_semantic_key(&config.handle),
         [
-            selection_route_key(Some(route)),
-            selection_route_key(config.open.as_ref()),
-            selection_route_key(config.close.as_ref()),
+            route_semantic_key(Some(route)),
+            route_semantic_key(config.open.as_ref()),
+            route_semantic_key(config.close.as_ref()),
         ],
         custom(config.custom_style.as_ref()),
         custom(config.custom_menu_style.as_ref()),
@@ -911,11 +847,11 @@ pub(crate) fn combo_box_semantic_key(
         options.shaping,
         options.font,
         [
-            selection_route_key(Some(route)),
-            selection_route_key(options.input.as_ref()),
-            selection_route_key(options.hover.as_ref()),
-            selection_route_key(options.open.as_ref()),
-            selection_route_key(options.close.as_ref()),
+            route_semantic_key(Some(route)),
+            route_semantic_key(options.input.as_ref()),
+            route_semantic_key(options.hover.as_ref()),
+            route_semantic_key(options.open.as_ref()),
+            route_semantic_key(options.close.as_ref()),
         ],
         custom(options.custom_style.as_ref()),
         custom(options.custom_menu_style.as_ref()),

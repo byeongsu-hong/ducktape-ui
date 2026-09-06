@@ -526,6 +526,25 @@ pub enum RouteArg {
     Payload,
 }
 
+/// The part of a route a semantic key compares: the handler and the shape of
+/// its arguments (`e` an expression, `p` the payload), `none` for no route.
+pub(crate) fn route_semantic_key(route: Option<&Route>) -> String {
+    route.map_or_else(
+        || "none".into(),
+        |route| {
+            let arguments = route
+                .args
+                .iter()
+                .map(|argument| match argument {
+                    RouteArg::Expr(_) => 'e',
+                    RouteArg::Payload => 'p',
+                })
+                .collect::<String>();
+            format!("{}:{arguments}", route.handler)
+        },
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct Id {
     pub name: String,

@@ -756,6 +756,23 @@ pub enum BackgroundValue {
     },
 }
 
+/// The part of a background a semantic key compares: the colour, or the
+/// gradient's stop colours in order; `none` for no background.
+pub(crate) fn background_semantic_key(background: Option<&BackgroundValue>) -> String {
+    match background {
+        None => "none".into(),
+        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
+        Some(BackgroundValue::Linear { stops, .. }) => format!(
+            "linear:{}",
+            stops
+                .iter()
+                .map(|stop| stop.color.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct GradientStop {
     pub color: String,

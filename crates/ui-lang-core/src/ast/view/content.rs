@@ -350,23 +350,6 @@ pub(crate) fn text_editor_semantic_key(
         )
     }
 
-    fn route_key(route: &Option<Route>) -> String {
-        route.as_ref().map_or_else(
-            || "none".into(),
-            |route| {
-                let arguments = route
-                    .args
-                    .iter()
-                    .map(|argument| match argument {
-                        RouteArg::Expr(_) => 'e',
-                        RouteArg::Payload => 'p',
-                    })
-                    .collect::<String>();
-                format!("{}:{arguments}", route.handler)
-            },
-        )
-    }
-
     let line_height = match &options.line_height {
         None => "none",
         Some(TextLineHeight::Relative(_)) => "relative",
@@ -406,7 +389,7 @@ pub(crate) fn text_editor_semantic_key(
         options.highlight_theme,
         call_key(&options.highlighter),
         call_key(&options.key_binding),
-        route_key(&options.key_binding_route),
+        route_semantic_key(options.key_binding_route.as_ref()),
         call_key(&options.action),
         call_key(&options.custom_style),
     )
