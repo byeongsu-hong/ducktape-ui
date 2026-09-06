@@ -341,7 +341,7 @@ fn rejects_native_event_shapes_the_semantic_driver_cannot_represent() {
         ),
         (
             "expect a11y field action expand",
-            "support click, focus, increment, and decrement",
+            "support click, focus, increment, decrement, and scroll-into-view",
         ),
         (
             "a11y expand field",

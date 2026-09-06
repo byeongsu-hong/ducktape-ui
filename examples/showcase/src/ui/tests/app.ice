@@ -617,8 +617,11 @@ test accessibility_scroll_into_view_reaches_an_offscreen_control
   target scroller = app/catalog-scroll
   target page = scroller/page
   target open_dialog = page/open-dialog
+  target tab = app/view-switcher-components/show-components-selected
   expect scroller.scroll_y == 0.0
   expect !open_dialog.visible
+  expect a11y open_dialog action scroll-into-view
+  expect a11y tab action scroll-into-view false
   a11y scroll-into-view open_dialog
   expect open_dialog.visible
   expect scroller.scroll_y > 0.0

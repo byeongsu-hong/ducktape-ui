@@ -952,6 +952,7 @@ fn accessibility_action_variant(name: &str) -> &'static str {
         "focus" => "Focus",
         "increment" => "Increment",
         "decrement" => "Decrement",
+        "scroll-into-view" => "ScrollIntoView",
         _ => unreachable!("parser validates accessibility actions"),
     }
 }
