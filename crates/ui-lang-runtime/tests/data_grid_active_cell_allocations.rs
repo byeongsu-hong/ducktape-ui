@@ -15,8 +15,10 @@ fn active_cell_moves_into_the_rendered_grid() {
     const ALLOCATIONS: usize = 14_336;
     // 1_269_760 before the accessible node grew two boxed `Option`s — a range
     // control's numeric contract and its step messages, `None` everywhere
-    // else — 16 bytes in the node's element box and again in its tree state.
-    const ALLOCATED_BYTES: usize = 1_290_240;
+    // else — 16 bytes in the node's element box and again in its tree state;
+    // 1_290_240 before it grew two more for a text editor's caret and the
+    // message that moves it, the same 16 bytes twice.
+    const ALLOCATED_BYTES: usize = 1_320_960;
 
     let config = DataGridConfig::new(20.0, 20.0).unwrap();
     let rows = [String::from("row-key-owned")];
