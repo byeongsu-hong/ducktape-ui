@@ -18,14 +18,15 @@ crates/ui-lang-wire/   (workspace crate) the wire: a Frame carrying the app's
                 widget tree out, meaning-level events (message 3, input 0 now
                 reads "abc") in, plus Request / Response for everything else
 crates/ui-lang-guest/  (workspace crate) what an app needs to run in wasm: a
-                Driver (task executor, per-frame message tables),
-                `host::request` / `host::subscribe` / `host::theme`, and
+                Driver (task executor, subscription tracker, per-frame message
+                tables), `host::request` / `host::subscribe` / `host::theme`, and
                 `export_app!`, which adds the `ice:view` component exports and
                 the manifest
 crates/ui-lang-runtime/view_tree   (workspace crate) the host's half: the tree
                 rendered with iced's widgets, every input's text kept host-side
-apps/counter/   three buttons; Auto is a chain of host timers, every change goes
-                on the bus and into the store's log
+apps/counter/   three buttons; Auto is an Ice `subscribe every`, which the guest
+                runtime routes to the host's ticker; every change goes on the
+                bus and into the store's log
 apps/todo/      a list kept in the host's storage — it survives uninstall/reinstall
 apps/clock/     host uptime from a subscription, UTC from one `clock.now` plus
                 arithmetic; the module has no clock
@@ -138,7 +139,12 @@ catalog lists the app — and shows what it will touch — by reading the
 file: no compilation, no instantiation.
 
 An app talks to the host from ordinary Ice tasks. A one-shot ask is
-`host::request`; something that keeps coming is `host::subscribe`:
+`host::request`; something that keeps coming is `host::subscribe`. An Ice
+`subscribe` block runs as it does natively — the driver diffs its recipes
+every tick, so a subscription that stays the same keeps its stream and one
+that goes away cancels what it asked the host for — with one difference: a
+module has no clock, so `every` and `repeat` are the host's `clock.ticks`
+under the hood (declare `clock`), and `every` routes without an instant.
 
 ```ice
 extern crate::host
@@ -191,8 +197,9 @@ through the same table and answer from its own subscriptions.
 
 1. The guest driver delivers the host's events — a message index the user
    activated, an input's whole new text, a response — runs the handlers
-   they name, polls the app's tasks (re-polling one that wakes itself,
-   which every `Task::stream` does once), and builds the view.
+   they name, brings the `subscribe` block's streams in line with the
+   state, polls every task that was woken (by an answer, by its own yield,
+   by another task), and builds the view.
 2. The view is a `ui_lang_wire::Node` tree with every value inlined: text,
    colours resolved from the app's own palette, sizes, paddings, button and
    input faces per state. A button carries the index of the message the
@@ -218,7 +225,9 @@ through the same table and answer from its own subscriptions.
 5. Not every redraw of a window is a tick of its guest. A guest with no
    event pending, no answer due and nothing in its inbox is left alone:
    the tree the host holds is the tree it would send. It still says when
-   it next wants to run, and the widget schedules that wake-up.
+   it next wants to run, and the widget schedules that wake-up. A frame
+   that says `busy` — the tick's budget ran out with work still ready — is
+   the one exception: that guest is ticked again at the next redraw.
 
 There is no executor thread and no clock inside a module. `clock.now`
 answers the wall clock together with the host's uptime it was read at, and
@@ -362,17 +371,18 @@ An honest inventory, grouped by where the work would land. Items marked
 ### Tasks and runtime
 
 - Only `Action::Output` of a task is honoured. Widget operations (focus,
-  scroll-to), clipboard, window, font and exit actions are dropped.
-- Ice `subscribe` blocks never run: the driver never calls
-  `__subscription`, and iced's timers (`every`) have no executor in wasm.
-  Host streams (`clock.ticks`, `bus.subscribe`) are the only long-lived
-  sources.
-- Task fairness is fixed: 8 rounds of messages per tick, 64 self-wakes per
-  stream. A task that produces more waits for the next tick — and nothing
-  schedules one for it: the frame cannot say it was cut short, so the rest
-  arrives whenever the next event or answer ticks the guest. A future that
-  becomes ready on its own, with no host answer behind it, waits the same
-  way.
+  scroll-to), clipboard, window, font, image, reload and exit actions are
+  dropped — each one with a `host::log` line naming what was dropped, so
+  the store's stderr says so, but nothing runs them.
+- `every` carries no instant in a module and refuses a route that binds
+  one (E190): there is no `now` to make it from. Every other subscription
+  source that is a toolkit's — keyboard, mouse, window events, `system
+  theme` — is not the wire's either.
+- Task fairness is fixed: 8 rounds of messages per tick, 64 poll passes
+  per round. A task that produces more is cut short, and the frame says so
+  (`busy`) so the host ticks the guest again at once; what it does not do
+  is share the budget fairly between tasks, so one always-ready stream
+  starves nothing but delays everything.
 - No cooperative long computation: work heavier than one fuel budget
   cannot be spread over ticks except by chaining host sleeps. No
   preemption short of the trap that ends the app.

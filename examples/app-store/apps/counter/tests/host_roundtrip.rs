@@ -2,7 +2,7 @@
 //! frame, the matching response completes the task, and the view shows it.
 
 use app_store_counter::{boot_native, tick_native};
-use ui_lang_guest::testing::{answer, has_text, press, texts};
+use ui_lang_guest::testing::{answer, has_text, item, press, texts};
 use ui_lang_guest::wire::{Frame, Request};
 
 fn boot() -> Frame {
@@ -55,52 +55,61 @@ fn a_change_is_published_on_the_bus_and_logged() {
     assert_eq!(publish.payload, b"counter\n1");
 }
 
+/// Auto is an Ice `subscribe every ... when auto`: switching it on starts one
+/// host ticker, every state change in between keeps it — the recipe hashes
+/// the same, so the stream lives on — and switching it off cancels it.
 #[test]
-fn auto_mode_is_a_chain_of_timer_requests_that_stops_when_switched_off() {
+fn auto_is_a_subscription_that_keeps_its_ticker_until_switched_off() {
     let frame = boot();
 
     let frame = tick_native(press(&frame, "Auto: off"));
-    let [sleep] = frame.requests.as_slice() else {
-        panic!("one timer request after Auto, got {:?}", frame.requests);
+    let [ticks] = frame.requests.as_slice() else {
+        panic!("one ticker after Auto, got {:?}", frame.requests);
     };
-    assert_eq!(sleep.kind, "clock.sleep");
-    assert_eq!(sleep.payload, 1000_i64.to_le_bytes());
+    assert_eq!(ticks.kind, "clock.ticks");
+    assert_eq!(ticks.payload, 1000_i64.to_le_bytes());
+    assert!(frame.cancels.is_empty(), "{:?}", frame.cancels);
 
-    // The timer fires: the count moves, the next timer and a publish go out.
-    let frame = tick_native(vec![answer(sleep.id, &[])]);
+    // The ticker fires: the count moves and a publish goes out — and no new
+    // timer, because one subscription serves for as long as `auto` holds.
+    let frame = tick_native(vec![item(ticks.id, &1_000_u64.to_le_bytes())]);
     assert!(has_text(&frame, "1"), "{:?}", texts(&frame));
     let mut expected = kinds(&frame.requests);
     expected.sort();
     assert_eq!(
         expected,
-        ["bus.publish", "clock.sleep", "host.log"],
+        ["bus.publish", "host.log"],
         "{:?}",
         frame.requests
     );
-    let next = frame
-        .requests
-        .iter()
-        .find(|request| request.kind == "clock.sleep")
-        .expect("the chain continues");
 
-    // Switched off before the timer fires: the fire is ignored, no new timer.
-    let frame = tick_native(press(&frame, "Auto: on"));
+    // Other state moves, the subscription does not: same recipe, same stream.
+    let frame = tick_native(press(&frame, "+"));
+    assert!(has_text(&frame, "2"), "{:?}", texts(&frame));
     assert!(
-        frame.requests.is_empty(),
-        "switching off asks for nothing: {:?}",
+        !frame
+            .requests
+            .iter()
+            .any(|request| request.kind == "clock.ticks"),
+        "a subscription that stays the same keeps its ticker: {:?}",
         frame.requests
     );
-    let frame = tick_native(vec![answer(next.id, &[])]);
+    assert!(frame.cancels.is_empty(), "{:?}", frame.cancels);
+    let frame = tick_native(vec![item(ticks.id, &2_000_u64.to_le_bytes())]);
+    assert!(has_text(&frame, "3"), "{:?}", texts(&frame));
+
+    // Off: the recipe is gone, so the stream is dropped and the host is told
+    // to stop the ticker. A tick that was already on its way changes nothing.
+    let frame = tick_native(press(&frame, "Auto: on"));
+    assert_eq!(frame.cancels, vec![ticks.id], "{:?}", frame.cancels);
+    assert!(frame.requests.is_empty(), "{:?}", frame.requests);
+    let frame = tick_native(vec![item(ticks.id, &3_000_u64.to_le_bytes())]);
     assert!(
-        has_text(&frame, "1"),
+        has_text(&frame, "3"),
         "count unchanged: {:?}",
         texts(&frame)
     );
-    assert!(
-        frame.requests.is_empty(),
-        "chain ended: {:?}",
-        frame.requests
-    );
+    assert!(frame.requests.is_empty(), "{:?}", frame.requests);
 }
 
 /// A tick that changes nothing says so, and the tree still reads the same.

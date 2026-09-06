@@ -1,5 +1,7 @@
 //! What the counter asks the host for. Each is an ordinary Ice `task`: an
-//! async function whose future waits on a host answer.
+//! async function whose future waits on a host answer. Auto's timer is not
+//! here: it is an Ice `subscribe every`, which the guest runtime routes to
+//! the host's clock itself.
 
 use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
@@ -20,11 +22,6 @@ pub async fn ask_host(question: String) -> Result<String, HostError> {
     String::from_utf8(answer).map_err(|error| HostError {
         message: error.to_string(),
     })
-}
-
-pub async fn wait(ms: i64) -> Result<bool, HostError> {
-    host::request("clock.sleep", &ms.to_le_bytes()).await?;
-    Ok(true)
 }
 
 /// Tells every app listening on the bus what the count is now, and leaves a

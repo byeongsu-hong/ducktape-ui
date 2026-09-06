@@ -519,7 +519,7 @@ impl Guest {
     fn wake(&mut self, now: Instant) -> Wake {
         if !self.wake_pending {
             return Wake {
-                at: self.next_wake(),
+                at: self.next_wake(now),
                 published: false,
             };
         }
@@ -528,7 +528,7 @@ impl Guest {
         {
             let due = last + BUS_WAKE_INTERVAL;
             return Wake {
-                at: Some(self.next_wake().map_or(due, |next| next.min(due))),
+                at: Some(self.next_wake(now).map_or(due, |next| next.min(due))),
                 published: false,
             };
         }
@@ -545,17 +545,20 @@ impl Guest {
     /// keep, so its first redraw is never quiet.
     fn quiet(&self, now: Instant) -> bool {
         self.ticks > 0
+            && !self.frame.busy
             && self.pending.is_empty()
             && self.inbox.lock().expect("inbox").is_empty()
             && !self.due.iter().any(|(at, _)| *at <= now)
             && !self.tickers.iter().any(|ticker| ticker.next <= now)
     }
 
-    fn next_wake(&self) -> Option<Instant> {
+    /// A guest whose last frame said it was cut short is due now.
+    fn next_wake(&self, now: Instant) -> Option<Instant> {
         self.due
             .iter()
             .map(|(at, _)| *at)
             .chain(self.tickers.iter().map(|ticker| ticker.next))
+            .chain(self.frame.busy.then_some(now))
             .min()
     }
 
@@ -919,6 +922,7 @@ mod tests {
             requests: vec![kind(wire::MAX_STRING_BYTES * 2)],
             cancels: Vec::new(),
             unchanged: true,
+            busy: false,
         }))
         .expect("shaped");
         assert!(frame.root.is_none());

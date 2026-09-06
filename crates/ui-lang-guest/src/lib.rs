@@ -13,14 +13,19 @@
 
 use std::any::Any;
 use std::cell::RefCell;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
+use std::time::Duration;
 
 pub use ui_lang_wire as wire;
 pub use wit_bindgen;
 
 use iced_runtime::futures::BoxStream;
+use iced_runtime::futures::futures::StreamExt;
+use iced_runtime::futures::futures::channel::mpsc;
+use iced_runtime::futures::subscription::{self, Tracker};
 use iced_runtime::{Action, task};
 
 pub mod host;
@@ -32,6 +37,7 @@ pub trait App: Sized + 'static {
     fn boot() -> (Self, iced::Task<Self::Message>);
     fn view(&self) -> wire::Node;
     fn update(&mut self, message: Self::Message) -> iced::Task<Self::Message>;
+    fn subscription(&self) -> iced::Subscription<Self::Message>;
 }
 
 /// The per-frame tables a view fills as it builds: a button's `on_press`
@@ -87,14 +93,35 @@ pub mod slots {
     }
 }
 
-type Tasks<M> = Vec<BoxStream<Action<M>>>;
+/// One running task: its stream, and the flag its waker sets. A task is
+/// polled only when the flag is up — set at spawn, by a host answer
+/// through [`host::fulfill`], by its own yield, or by another task in the
+/// same pass — so a task waiting on the host costs a tick nothing.
+struct Task<M> {
+    woken: Arc<Woken>,
+    stream: BoxStream<Action<M>>,
+}
 
-/// One running app: its state, its in-flight tasks, and the last tree it
-/// sent so an identical one crosses as `unchanged`.
+/// One running app: its state, its in-flight tasks, the streams its
+/// `subscribe` block keeps alive, and the last tree it sent so an identical
+/// one crosses as `unchanged`.
 pub struct Driver<A: App> {
     app: A,
-    tasks: Tasks<A::Message>,
+    tasks: Vec<Task<A::Message>>,
+    /// Diffs the recipes `subscription` returns against the ones running,
+    /// exactly as iced's own runtime does: a recipe that hashes the same
+    /// keeps its stream, a new one is started, a missing one is dropped —
+    /// and a dropped stream cancels whatever it asked the host for.
+    tracker: Tracker,
+    /// Where a subscription's stream puts what it produced; drained into
+    /// `update` after every poll pass.
+    subscribed: mpsc::Sender<A::Message>,
+    produced: mpsc::Receiver<A::Message>,
     last_root: Option<wire::Node>,
+    /// The last tick ran out of budget with work still ready: the frame
+    /// asks the host for the next tick at once instead of waiting for an
+    /// event or an answer that may never come.
+    busy: bool,
 }
 
 impl<A: App> Default for Driver<A> {
@@ -103,16 +130,32 @@ impl<A: App> Default for Driver<A> {
     }
 }
 
+/// How many `update` rounds one tick runs before it hands the rest to the
+/// next: a handler that re-emits synchronously forever cannot pin the frame.
+const MAX_ROUNDS: usize = 8;
+
+/// How many times one poll pass revisits the tasks still woken.
+const MAX_POLLS: usize = 64;
+
+/// How many messages a subscription's streams may queue between two poll
+/// passes before they wait for the drain.
+const SUBSCRIPTION_QUEUE: usize = 100;
+
 impl<A: App> Driver<A> {
     pub fn new() -> Self {
         let (app, boot) = A::boot();
-        let mut tasks = Vec::new();
-        spawn(&mut tasks, boot);
-        Self {
+        let (subscribed, produced) = mpsc::channel(SUBSCRIPTION_QUEUE);
+        let mut driver = Self {
             app,
-            tasks,
+            tasks: Vec::new(),
+            tracker: Tracker::new(),
+            subscribed,
+            produced,
             last_root: None,
-        }
+            busy: false,
+        };
+        spawn(&mut driver.tasks, boot);
+        driver
     }
 
     /// Delivers the host's events and returns the frame they produced.
@@ -125,12 +168,7 @@ impl<A: App> Driver<A> {
     /// read it; the component export drops an unchanged tree before it
     /// crosses to the host.
     pub fn tick(&mut self, events: Vec<wire::Event>) -> wire::Frame {
-        let Self {
-            app,
-            tasks,
-            last_root,
-        } = self;
-        run_tasks(app, tasks);
+        self.settle();
         for event in events {
             let message = match event {
                 wire::Event::Message(index) => slots::take_message::<A::Message>(index),
@@ -143,46 +181,76 @@ impl<A: App> Driver<A> {
                 }
             };
             if let Some(message) = message {
-                spawn(tasks, app.update(message));
-                run_tasks(app, tasks);
+                spawn(&mut self.tasks, self.app.update(message));
+                self.settle();
             }
         }
         // A response woke a task without a message of its own to run: poll
         // once more so what it produced reaches `update` before the view.
-        run_tasks(app, tasks);
+        self.settle();
         slots::reset();
-        let root = app.view();
-        let unchanged = last_root.as_ref() == Some(&root);
+        let root = self.app.view();
+        let unchanged = self.last_root.as_ref() == Some(&root);
         if !unchanged {
-            *last_root = Some(root.clone());
+            self.last_root = Some(root.clone());
         }
         wire::Frame {
             root: Some(root),
             requests: host::drain_outbox(),
             cancels: host::drain_cancels(),
             unchanged,
+            busy: self.busy,
+        }
+    }
+
+    /// Brings the subscription in line with the state, polls every woken
+    /// task, and runs what they produced through `update` — whose own tasks
+    /// join the pool and whose state changes move the subscription — until
+    /// a round produces nothing or the round budget is spent. Spent with
+    /// work still ready is what `busy` means.
+    fn settle(&mut self) {
+        for _ in 0..MAX_ROUNDS {
+            self.subscribe();
+            let (messages, cut_short) = poll_tasks(&mut self.tasks, &mut self.produced);
+            self.busy = cut_short;
+            if messages.is_empty() {
+                return;
+            }
+            for message in messages {
+                spawn(&mut self.tasks, self.app.update(message));
+            }
+        }
+        self.busy = true;
+    }
+
+    fn subscribe(&mut self) {
+        let recipes = subscription::into_recipes(self.app.subscription());
+        for future in self
+            .tracker
+            .update(recipes.into_iter(), self.subscribed.clone())
+        {
+            // A subscription's stream feeds the channel, so as a task it
+            // produces nothing itself: it is in the pool to be polled.
+            self.tasks.push(Task {
+                woken: Arc::new(Woken(AtomicBool::new(true))),
+                stream: iced_runtime::futures::boxed_stream(
+                    iced_runtime::futures::futures::stream::once(future)
+                        .filter_map(|()| std::future::ready(None)),
+                ),
+            });
         }
     }
 }
 
-fn spawn<M: iced_runtime::futures::MaybeSend + 'static>(tasks: &mut Tasks<M>, task: iced::Task<M>) {
+fn spawn<M: iced_runtime::futures::MaybeSend + 'static>(
+    tasks: &mut Vec<Task<M>>,
+    task: iced::Task<M>,
+) {
     if let Some(stream) = task::into_stream(task) {
-        tasks.push(stream);
-    }
-}
-
-/// Polls every task; a message it produced goes through `update`, whose own
-/// task joins the pool, until a pass produces nothing. Bounded so a handler
-/// that re-emits synchronously forever cannot pin the frame.
-fn run_tasks<A: App>(app: &mut A, tasks: &mut Tasks<A::Message>) {
-    for _ in 0..8 {
-        let messages = poll_tasks(tasks);
-        if messages.is_empty() {
-            return;
-        }
-        for message in messages {
-            spawn(tasks, app.update(message));
-        }
+        tasks.push(Task {
+            woken: Arc::new(Woken(AtomicBool::new(true))),
+            stream,
+        });
     }
 }
 
@@ -194,29 +262,110 @@ impl Wake for Woken {
     }
 }
 
-fn poll_tasks<M>(tasks: &mut Tasks<M>) -> Vec<M> {
-    let woken = Arc::new(Woken(AtomicBool::new(false)));
-    let waker = Waker::from(woken.clone());
-    let mut context = Context::from_waker(&waker);
+/// Polls every woken task once per pass, and passes again while something
+/// was woken — by its own yield (every `Task::stream` starts with one), or
+/// by a task polled earlier in the pass — until nothing is or the pass
+/// budget is spent. Returns the messages the tasks output and whether the
+/// budget ran out with a task still woken.
+fn poll_tasks<M>(tasks: &mut Vec<Task<M>>, produced: &mut mpsc::Receiver<M>) -> (Vec<M>, bool) {
     let mut messages = Vec::new();
-    tasks.retain_mut(|stream| {
-        // A task that yields (every `Task::stream` starts with one) wakes
-        // itself; poll it again until it is waiting on something real.
-        for _ in 0..64 {
-            woken.0.store(false, Ordering::SeqCst);
-            match stream.as_mut().poll_next(&mut context) {
-                Poll::Ready(Some(Action::Output(message))) => messages.push(message),
-                // Widget operations, clipboard, window and system actions
-                // belong to the host's toolkit; a guest has none.
-                Poll::Ready(Some(_)) => {}
-                Poll::Ready(None) => return false,
-                Poll::Pending if woken.0.load(Ordering::SeqCst) => {}
-                Poll::Pending => return true,
+    for _ in 0..MAX_POLLS {
+        let mut polled = false;
+        tasks.retain_mut(|task| {
+            if !task.woken.0.swap(false, Ordering::SeqCst) {
+                return true;
             }
+            polled = true;
+            let waker = Waker::from(task.woken.clone());
+            let mut context = Context::from_waker(&waker);
+            match task.stream.as_mut().poll_next(&mut context) {
+                Poll::Ready(Some(action)) => {
+                    match action {
+                        Action::Output(message) => messages.push(message),
+                        other => host::log(format!(
+                            "dropped a {}: a guest has no toolkit to run it",
+                            describe(&other)
+                        )),
+                    }
+                    // Ready is not done: it is polled again next pass, and
+                    // the pass budget is what bounds a stream that is
+                    // always ready.
+                    task.woken.0.store(true, Ordering::SeqCst);
+                    true
+                }
+                Poll::Ready(None) => false,
+                Poll::Pending => true,
+            }
+        });
+        // What the subscriptions' streams put in the channel during the pass.
+        while let Ok(message) = produced.try_recv() {
+            messages.push(message);
         }
-        true
-    });
-    messages
+        if !polled {
+            return (messages, false);
+        }
+    }
+    (
+        messages,
+        tasks.iter().any(|task| task.woken.0.load(Ordering::SeqCst)),
+    )
+}
+
+/// What a task asked for that only a toolkit can do. Named for the log,
+/// since the app's message type carries no `Debug`.
+fn describe<M>(action: &Action<M>) -> &'static str {
+    match action {
+        Action::Output(_) => "message",
+        Action::LoadFont { .. } => "font load",
+        Action::Widget(_) => "widget operation",
+        Action::Clipboard(_) => "clipboard action",
+        Action::Window(_) => "window action",
+        Action::System(_) => "system action",
+        Action::Image(_) => "image action",
+        Action::Reload => "reload",
+        Action::Exit => "exit",
+    }
+}
+
+/// An Ice `every` in a guest: a module has no clock, so the period is the
+/// host's `clock.ticks` — which the app's manifest must declare `clock`
+/// for. The route carries no instant, because a guest cannot make one.
+/// A refusal is logged and ends the stream; the recipe hashes by period,
+/// so a `subscribe` that keeps the same `every` keeps the same ticker.
+pub fn every(period: Duration) -> iced::Subscription<()> {
+    iced::Subscription::run_with(period, |period| ticks(*period))
+}
+
+/// An Ice `repeat f() every d` in a guest: `f` at once, then once per host
+/// tick.
+pub fn repeat<F, T>(f: fn() -> F, period: Duration) -> iced::Subscription<T>
+where
+    F: Future<Output = T> + iced_runtime::futures::MaybeSend + 'static,
+    T: iced_runtime::futures::MaybeSend + 'static,
+{
+    iced::Subscription::run_with((f, period), |(f, period)| {
+        let f = *f;
+        iced_runtime::futures::boxed_stream(
+            iced_runtime::futures::futures::stream::once(std::future::ready(()))
+                .chain(ticks(*period))
+                .then(move |()| f()),
+        )
+    })
+}
+
+fn ticks(period: Duration) -> BoxStream<()> {
+    let millis = i64::try_from(period.as_millis()).unwrap_or(i64::MAX);
+    iced_runtime::futures::boxed_stream(
+        host::subscribe("clock.ticks", &millis.to_le_bytes()).filter_map(|answer| {
+            std::future::ready(match answer {
+                Ok(_) => Some(()),
+                Err(message) => {
+                    host::log(format!("`every` needs the host's clock: {message}"));
+                    None
+                }
+            })
+        }),
+    )
 }
 
 /// The `ice:view` world, as the exports are generated from it. The text is
@@ -284,6 +433,10 @@ macro_rules! export_app {
 
             fn update(&mut self, message: Self::Message) -> ::iced::Task<Self::Message> {
                 self.0.__update(message)
+            }
+
+            fn subscription(&self) -> ::iced::Subscription<Self::Message> {
+                self.0.__subscription()
             }
         }
 
@@ -364,6 +517,66 @@ world view {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// Boots with a task that outputs `count` messages at once and remembers
+    /// how many `update` saw.
+    struct Burst(u32);
+
+    thread_local! {
+        static BURST: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    impl App for Burst {
+        type Message = u32;
+
+        fn boot() -> (Self, iced::Task<u32>) {
+            let count = BURST.get();
+            (
+                Self(0),
+                iced::Task::stream(iced_runtime::futures::futures::stream::iter(0..count)),
+            )
+        }
+
+        fn view(&self) -> wire::Node {
+            wire::Node::empty()
+        }
+
+        fn update(&mut self, _: u32) -> iced::Task<u32> {
+            self.0 += 1;
+            iced::Task::none()
+        }
+
+        fn subscription(&self) -> iced::Subscription<u32> {
+            iced::Subscription::none()
+        }
+    }
+
+    #[test]
+    fn a_task_the_tick_budget_cuts_short_marks_the_frame_busy_until_it_is_done() {
+        BURST.set(10_000);
+        let mut driver = Driver::<Burst>::new();
+        let first = driver.tick(Vec::new());
+        assert!(first.busy, "work was still ready when the budget ran out");
+        assert!(driver.app.0 < 10_000, "{}", driver.app.0);
+        let mut ticks = 1;
+        while driver.tick(Vec::new()).busy {
+            ticks += 1;
+            assert!(ticks < 100, "the burst never drains");
+        }
+        assert_eq!(driver.app.0, 10_000);
+        assert!(ticks > 1, "the burst was not one tick's work");
+    }
+
+    #[test]
+    fn a_task_that_fits_the_budget_leaves_the_frame_quiet() {
+        BURST.set(3);
+        let mut driver = Driver::<Burst>::new();
+        let frame = driver.tick(Vec::new());
+        assert!(!frame.busy);
+        assert_eq!(driver.app.0, 3);
+    }
+
     #[test]
     fn the_macro_carries_the_wit_file_verbatim() {
         // The proc macro takes only a literal, so the world is spelled twice.
