@@ -390,21 +390,6 @@ pub(crate) fn shader_semantic_key(
     )
 }
 
-fn nested_theme_background_semantic_key(background: &Option<BackgroundValue>) -> String {
-    match background {
-        None => "none".into(),
-        Some(BackgroundValue::Color(color)) => format!("color:{color}"),
-        Some(BackgroundValue::Linear { stops, .. }) => format!(
-            "linear:{}",
-            stops
-                .iter()
-                .map(|stop| stop.color.as_str())
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
-    }
-}
-
 pub(crate) fn nested_theme_semantic_key(
     preset: &ThemePreset,
     text: &Option<String>,
@@ -425,7 +410,7 @@ pub(crate) fn nested_theme_semantic_key(
     format!(
         "nested-theme|preset={preset}|text={}|background={}",
         text,
-        nested_theme_background_semantic_key(background)
+        background_semantic_key(background.as_ref())
     )
 }
 

@@ -350,23 +350,6 @@ pub(crate) fn text_editor_semantic_key(
         )
     }
 
-    fn route_key(route: &Option<Route>) -> String {
-        route.as_ref().map_or_else(
-            || "none".into(),
-            |route| {
-                let arguments = route
-                    .args
-                    .iter()
-                    .map(|argument| match argument {
-                        RouteArg::Expr(_) => 'e',
-                        RouteArg::Payload => 'p',
-                    })
-                    .collect::<String>();
-                format!("{}:{arguments}", route.handler)
-            },
-        )
-    }
-
     let line_height = match &options.line_height {
         None => "none",
         Some(TextLineHeight::Relative(_)) => "relative",
@@ -406,7 +389,7 @@ pub(crate) fn text_editor_semantic_key(
         options.highlight_theme,
         call_key(&options.highlighter),
         call_key(&options.key_binding),
-        route_key(&options.key_binding_route),
+        route_semantic_key(options.key_binding_route.as_ref()),
         call_key(&options.action),
         call_key(&options.custom_style),
     )
@@ -777,16 +760,6 @@ fn push_text_line_height_root<'a>(
     }
 }
 
-fn push_text_background_roots<'a>(
-    roots: &mut Vec<&'a Expr>,
-    background: &'a Option<BackgroundValue>,
-) {
-    if let Some(BackgroundValue::Linear { angle, stops }) = background {
-        roots.push(angle);
-        roots.extend(stops.iter().map(|stop| &stop.offset));
-    }
-}
-
 fn push_text_option_roots<'a>(roots: &mut Vec<&'a Expr>, options: &'a TextOptions) {
     push_text_length_root(roots, &options.width);
     push_text_length_root(roots, &options.height);
@@ -816,7 +789,7 @@ pub(crate) fn push_rich_span_expression_roots<'a>(roots: &mut Vec<&'a Expr>, spa
     roots.extend(span.options.size.as_ref());
     push_text_line_height_root(roots, &span.options.line_height);
     roots.extend(span.options.link.as_ref());
-    push_text_background_roots(roots, &span.options.background);
+    push_background_roots(roots, &span.options.background);
     roots.extend(
         [
             &span.options.border_width,
@@ -1177,16 +1150,6 @@ pub struct BoolControlOptions {
     pub icon_shaping: Option<TextShaping>,
 }
 
-fn push_bool_control_background_roots<'a>(
-    roots: &mut Vec<&'a Expr>,
-    background: &'a Option<BackgroundValue>,
-) {
-    if let Some(BackgroundValue::Linear { angle, stops }) = background {
-        roots.push(angle);
-        roots.extend(stops.iter().map(|stop| &stop.offset));
-    }
-}
-
 fn push_bool_control_option_roots<'a>(
     roots: &mut Vec<&'a Expr>,
     options: &'a BoolControlOptions,
@@ -1293,7 +1256,7 @@ pub(crate) fn checkbox_expression_roots<'a>(
 
 pub(crate) fn checkbox_status_expression_roots(status: &CheckboxStatusStyle) -> Vec<&Expr> {
     let mut roots = Vec::new();
-    push_bool_control_background_roots(&mut roots, &status.background);
+    push_background_roots(&mut roots, &status.background);
     roots.extend(
         [
             &status.border_width,
@@ -1384,9 +1347,9 @@ pub(crate) fn toggler_expression_roots<'a>(
 
 pub(crate) fn toggler_status_expression_roots(status: &TogglerStatusStyle) -> Vec<&Expr> {
     let mut roots = Vec::new();
-    push_bool_control_background_roots(&mut roots, &status.background);
+    push_background_roots(&mut roots, &status.background);
     roots.extend(status.background_border_width.as_ref());
-    push_bool_control_background_roots(&mut roots, &status.foreground);
+    push_background_roots(&mut roots, &status.foreground);
     roots.extend(status.foreground_border_width.as_ref());
     roots.extend(
         [
@@ -1469,7 +1432,7 @@ pub(crate) fn radio_expression_roots<'a>(
 
 pub(crate) fn radio_status_expression_roots(status: &RadioStatusStyle) -> Vec<&Expr> {
     let mut roots = Vec::new();
-    push_bool_control_background_roots(&mut roots, &status.background);
+    push_background_roots(&mut roots, &status.background);
     roots.extend(status.border_width.as_ref());
     roots
 }
