@@ -60,7 +60,7 @@ built but not bundled is skipped.
 | variable | default | what it names |
 |---|---|---|
 | `APP_STORE_CATALOG` | `target/app-store-catalog` | the directory `cargo ice bundle` writes and the store scans |
-| `APP_STORE_DATA` | `target/app-store-data` | app storage (`<app>/<key>`), the store's `installed`, `running` and `windows` lists, and wasmtime's artifact `cache` |
+| `APP_STORE_DATA` | `target/app-store-data` | app storage (`<app>/<key>`), the store's `installed` (one `id\thash` per line), `running` and `windows` lists, and wasmtime's artifact `cache` |
 
 The windowing backends the host asks iced for (`x11`, `wayland`) are
 requested only on Linux, so a macOS or Windows build resolves without them —
@@ -86,17 +86,26 @@ its own, titled with the app's name, resizable and movable like any other.
 
 - **Discover** lists every module the catalog directory holds, from its
   manifest: name, description, and a chip per capability, coloured by what
-  it reaches. Get loads the module, adds it to the library and opens its
-  window. While an app runs its card carries a fuel bar — the last tick's
-  fuel against the 100M budget — and the figures under it. A strip at the
-  top shows what is running now; Show raises its window, Quit closes it.
-  Clicking a card opens the app's page: what each capability lets it do, the
-  box it runs in, and its live figures.
+  it reaches. Get opens the app's page with a consent prompt — every
+  capability the manifest declares and what it lets the app reach, and the
+  hash of the file about to be pinned — and Install there loads the module,
+  pins it in the library by that hash and opens its window. While an app
+  runs its card carries a fuel bar — the last tick's fuel against the 100M
+  budget — and the figures under it. A strip at the top shows what is
+  running now; Show raises its window, Quit closes it. Clicking a card opens
+  the app's page: what each capability lets it do, the box it runs in, its
+  live figures, and the file's path and hash.
 - **Library** is what is installed, running or not. Open gives an installed
-  app a window again; Uninstall removes it from the library and closes its
-  window. What the app wrote to storage stays.
+  app a window again — if the module in the catalog still hashes to what was
+  consented to. A rebuilt one is marked "changed since install" on its card
+  and its row, Open is refused with the reason in the status line, it is not
+  reopened at start, and its page carries the warning and a fresh Get; the
+  new hash is pinned only through the consent prompt again. Uninstall removes
+  it from the library and closes its window. What the app wrote to storage
+  stays.
 - **Monitor** is the dogfooding page: one row per running guest with fuel
-  per tick, tick time, ticks per second, frame bytes and how many of the
+  per tick, fuel per second over the last ten seconds (and whether that is
+  being throttled), tick time, ticks per second, frame bytes and how many of the
   last frames crossed as "unchanged", ticks run against redraws skipped, and
   whether the module came from the cache or through cranelift.
 
@@ -276,6 +285,7 @@ Fuel and memory bound what a module does to itself. What it can make the
 | `MAX_FRAME_BYTES` | 8 MiB | the instance ends, "frame too large" |
 | `TICK_DEADLINE` | 100 ms of wall clock per call into the guest, in 10 ms epochs | the instance ends, "tick exceeded 100 ms". Fuel counts wasm instructions, and time inside a host import is not fuel — this is what bounds a tick that spends its time on the host's side of an import |
 | `TICK_BUDGET` / `MAX_REST` | 8 ms per redraw, 250 ms of waiting | its next redraw waits as long as this one overran: an expensive guest runs at a few frames a second instead of at the window's rate, and the windows sharing that thread keep theirs |
+| `FUEL_PER_SECOND` / `FUEL_WINDOW` | 600M fuel a second, averaged over 10 s | its next redraw waits a share of `MAX_REST` that grows with the overspend — all of it at double the budget — until the window has drained back under. This is the one that notices a guest that is merely busy every tick, forever; the Monitor's Fuel / s column shows the figure and says "throttled" |
 | `MAX_REQUESTS_PER_TICK` | 256 | `Err "too many requests this tick"` for the rest |
 | `MAX_PAYLOAD_BYTES` | 1 MiB | `Err`, whatever the request was |
 | `MAX_TICKERS` | 16 per guest | `Err` from `clock.ticks` |
@@ -295,6 +305,7 @@ Fuel and memory bound what a module does to itself. What it can make the
 | `MAX_FAULT_BYTES` | 1024 | its window shows the first line of that |
 | `MAX_NAME_BYTES` · `MAX_DESCRIPTION_BYTES` · `MAX_CAPABILITIES` | 64 B · 256 B · 16 of 32 B | its module is left out of the catalog — the sidebar shapes every manifest field of every entry, before anything is installed |
 | `MAX_MODULE_BYTES` | 64 MiB | its `.wasm` file is left out of the catalog, unread — or, loaded by a path the catalog didn't just scan, `Err` naming the limit before cranelift ever sees it |
+| the catalog's SHA-256 | the file as scanned | a file whose bytes no longer hash to what the catalog scanned is refused before cranelift sees it — "changed on disk since the catalog was scanned" — on Get, Open, Restart and the restore at start alike; the in-memory component cache is keyed by that hash |
 
 The numbers *inside* a frame are the other half of the same boundary: the
 guest chooses every one, and the host lays out what it is given and
@@ -386,8 +397,18 @@ An honest inventory, grouped by where the work would land. Items marked
 ### Capabilities and security
 
 - The manifest is self-declared and unsigned: any module can claim
-  `storage`. No signature or hash check on modules, no consent prompt at
-  install, no per-operation prompt, no runtime revocation, no policy file.
+  `storage`, and the store has no way to tell who built it. What *is*
+  checked: the catalog records each component's SHA-256 at scan time; Get
+  shows what the manifest declares and asks once, and the library pins the
+  hash consented to; the loader hashes the bytes it is about to compile and
+  refuses any that differ from the catalog's; a module whose catalog hash
+  differs from the pinned one is shown as changed, refused by Open, left out
+  of the restore at start, and installed again only through the prompt. What
+  is not: no signatures or keys, so the check is against the store's own
+  scan and never against an author; no per-operation prompt, no runtime
+  revocation, no policy file; the consent prompt shows the manifest's word
+  for what the app does and the store's word for what a capability reaches,
+  nothing about the code itself.
 - Storage: a write is atomic (a sibling temp file, then a rename) but not
   fsync'd, so a power cut can still lose the last one. Keys are compared
   byte for byte, so on a case-insensitive filesystem (the default on macOS
@@ -402,15 +423,16 @@ An honest inventory, grouped by where the work would land. Items marked
   under its own name. No rate limit beyond the per-tick byte budget the
   fan-out is charged to, no replay for late subscribers, no request/reply
   between apps, no wildcard beyond `*`.
-- Beyond the sandbox table: no cumulative CPU budget across ticks.
-  `TICK_DEADLINE` ends one call that runs past 100 ms, and `TICK_BUDGET`
-  lowers an expensive guest's rate without refusing it; neither notices a
-  guest that is merely slow every tick, forever. The deadline is checked at
-  wasm loop back-edges and function entries, so a host import already
-  running finishes first: it bounds how many long imports one tick makes,
-  not how long one of them takes. A request answered this tick
-  wakes the window at once, so an app that asks in a loop still runs at
-  whatever rate the governor leaves it.
+- Beyond the sandbox table: the cumulative budget is fuel, not wall clock,
+  so a guest that spends its ticks on the host's side of an import is
+  bounded per call by `TICK_DEADLINE` and per redraw by `TICK_BUDGET` but
+  never summed over time; and it throttles, never ends — a guest at the cap
+  still gets a few ticks a second forever. The deadline is checked at wasm
+  loop back-edges and function entries, so a host import already running
+  finishes first: it bounds how many long imports one tick makes, not how
+  long one of them takes. A request answered this tick wakes the window at
+  once, so an app that asks in a loop still runs at whatever rate the
+  governors leave it.
 - `define_unknown_imports_as_traps` accepts every import a component
   declares and traps the first call; a component built against JS glue
   loads, and fails at the first frame that touches it instead of at

@@ -24,6 +24,9 @@ pub struct CatalogEntry {
     pub path: String,
     /// What the app's tile shows: the first letter of its name.
     pub mark: String,
+    /// SHA-256 of the file as scanned, in hex. The library pins it at
+    /// install and the loader checks it before anything runs.
+    pub hash: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -79,11 +82,24 @@ fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
                     .collect(),
                 path: path.to_string_lossy().into_owned(),
                 mark,
+                hash: sha256_hex(&bytes),
             })
         })
         .collect();
     catalog.sort_by(|a, b| a.name.cmp(&b.name));
     catalog
+}
+
+/// The content hash the catalog, the library and the loader all speak in.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Enough of a hash to tell two builds apart on a card.
+pub fn short_hash(hash: String) -> String {
+    hash.chars().take(16).collect()
 }
 
 pub fn find_entry(catalog: &[CatalogEntry], id: &str) -> Option<CatalogEntry> {

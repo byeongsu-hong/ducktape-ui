@@ -11,7 +11,7 @@ use iced::time::Instant;
 
 use crate::capabilities::storage;
 use crate::catalog::{CatalogEntry, StoreError, filter_catalog};
-use crate::limits::FUEL_PER_TICK;
+use crate::limits::{FUEL_PER_SECOND, FUEL_PER_TICK};
 use crate::store::{Surface, install_app};
 
 /// An instance the store has loaded and is about to give a window.
@@ -19,6 +19,9 @@ use crate::store::{Surface, install_app};
 pub struct Loaded {
     pub id: String,
     pub name: String,
+    /// The hash the module was verified against on the way in — what the
+    /// library pins when Get adds it.
+    pub hash: String,
     pub surface: Surface,
 }
 
@@ -46,6 +49,9 @@ pub struct Gauge {
     pub idle: String,
     pub load: String,
     pub dropped: String,
+    /// Fuel per second over the last [`crate::limits::FUEL_WINDOW`], and
+    /// whether that is past [`FUEL_PER_SECOND`] and being throttled for it.
+    pub sustained: String,
     /// The last tick's fuel as a share of the per-tick budget, in per mille,
     /// for the bar. An integer so the struct stays hashable.
     pub level: i64,
@@ -65,6 +71,11 @@ pub fn gauge(surface: &Surface, _generation: i64) -> Gauge {
         true => format!("cached · {}", millis(guest.load.took)),
         false => format!("compiled · {}", millis(guest.load.took)),
     };
+    let sustained = guest.sustained(now);
+    let sustained = match sustained > FUEL_PER_SECOND {
+        true => format!("{}/s · throttled", thousands(sustained)),
+        false => format!("{}/s", thousands(sustained)),
+    };
     Gauge {
         live: guest.fault.is_none(),
         fault: guest.fault.clone().unwrap_or_default(),
@@ -78,6 +89,7 @@ pub fn gauge(surface: &Surface, _generation: i64) -> Gauge {
             0 => String::new(),
             dropped => format!("{dropped} dropped"),
         },
+        sustained,
         level,
     }
 }
@@ -109,6 +121,7 @@ pub fn empty_gauge() -> Gauge {
         idle: String::new(),
         load: String::new(),
         dropped: String::new(),
+        sustained: String::new(),
         level: 0,
     }
 }
@@ -153,6 +166,9 @@ pub struct Rows {
 pub struct CardModel {
     pub entry: CatalogEntry,
     pub installed: bool,
+    /// Installed, but the module's hash is not the one that was consented
+    /// to: Open is refused until it is reviewed and got again.
+    pub changed: bool,
     pub running: bool,
     pub gauge: Gauge,
 }
@@ -164,6 +180,7 @@ pub struct ShelfModel {
     pub id: String,
     pub found: bool,
     pub entry: CatalogEntry,
+    pub changed: bool,
     pub running: bool,
     pub gauge: Gauge,
 }
@@ -178,14 +195,15 @@ pub fn empty_rows() -> Rows {
 pub fn build_rows(
     catalog: &[CatalogEntry],
     query: &str,
-    library: &[String],
+    library: &[Installed],
     running: &[Running],
     generation: i64,
 ) -> Rows {
     let cards = filter_catalog(catalog, query.to_string())
         .into_iter()
         .map(|entry| CardModel {
-            installed: library.contains(&entry.id),
+            installed: in_library(library, entry.id.clone()),
+            changed: changed(library, &entry),
             running: running.iter().any(|app| app.id == entry.id),
             gauge: gauge_of(running, entry.id.clone(), generation),
             entry,
@@ -193,11 +211,12 @@ pub fn build_rows(
         .collect();
     let shelf = library
         .iter()
-        .map(|id| {
+        .map(|Installed { id, .. }| {
             let entry = catalog.iter().find(|entry| entry.id == *id).cloned();
             ShelfModel {
                 id: id.clone(),
                 found: entry.is_some(),
+                changed: entry.as_ref().is_some_and(|entry| changed(library, entry)),
                 entry: entry.unwrap_or_else(|| CatalogEntry {
                     id: id.clone(),
                     name: String::new(),
@@ -205,6 +224,7 @@ pub fn build_rows(
                     capabilities: Vec::new(),
                     path: String::new(),
                     mark: String::new(),
+                    hash: String::new(),
                 }),
                 running: running.iter().any(|app| app.id == *id),
                 gauge: gauge_of(running, id.clone(), generation),
@@ -221,13 +241,16 @@ pub fn build_rows(
 /// first window for as long as the slowest. Each app comes out as its own
 /// item, so the store opens its window while the next one loads. An id the
 /// catalog no longer has is skipped — the module was deleted, which is not an
-/// error the user can do anything about.
+/// error the user can do anything about. So is one whose module is not the
+/// one the library consented to: the Library row says so, and Get asks again.
 pub fn restore_running(
     catalog: Vec<CatalogEntry>,
+    library: Vec<Installed>,
 ) -> impl Stream<Item = Result<Loaded, StoreError>> + Send + 'static {
     let entries: Vec<CatalogEntry> = remembered(RUNNING_FILE)
         .iter()
         .filter_map(|id| catalog.iter().find(|entry| entry.id == *id))
+        .filter(|entry| pinned(&library, entry))
         .cloned()
         .collect();
     iced::futures::stream::iter(entries).then(install_app)
@@ -515,34 +538,71 @@ fn place(
 
 // ---------- the library ----------
 
-/// The ids to bring back at boot, one per line.
+/// One installed app: its id and the hash of the module the user consented
+/// to. A module with the same id and another hash is a different program as
+/// far as the library is concerned — shown as changed, refused by Open, and
+/// installed again only through the consent prompt.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Installed {
+    pub id: String,
+    pub hash: String,
+}
+
+/// The library, one `id\thash` per line.
 const INSTALLED_FILE: &str = "installed";
 /// The ids that had a window when the store last exited.
 const RUNNING_FILE: &str = "running";
 
-pub fn remembered_library() -> Vec<String> {
+pub fn remembered_library() -> Vec<Installed> {
     remembered(INSTALLED_FILE)
+        .iter()
+        .filter_map(|line| parse_installed(line))
+        .collect()
 }
 
-pub fn add_to_library(mut library: Vec<String>, id: String) -> Vec<String> {
-    if !library.contains(&id) {
-        remember(INSTALLED_FILE, |ids| {
-            ids.retain(|known| *known != id);
-            ids.push(id.clone());
-        });
-        library.push(id);
-    }
+fn parse_installed(line: &str) -> Option<Installed> {
+    let (id, hash) = line.split_once('\t')?;
+    Some(Installed {
+        id: id.to_string(),
+        hash: hash.to_string(),
+    })
+}
+
+/// Pins `hash` for `id`, replacing whatever the id was pinned to before:
+/// consenting to a rebuilt module is what moves the pin.
+pub fn add_to_library(mut library: Vec<Installed>, id: String, hash: String) -> Vec<Installed> {
+    let line = format!("{id}\t{hash}");
+    remember(INSTALLED_FILE, |lines| {
+        lines.retain(|known| parse_installed(known).is_none_or(|known| known.id != id));
+        lines.push(line);
+    });
+    library.retain(|known| known.id != id);
+    library.push(Installed { id, hash });
     library
 }
 
-pub fn remove_from_library(mut library: Vec<String>, id: String) -> Vec<String> {
-    remember(INSTALLED_FILE, |ids| ids.retain(|known| *known != id));
-    library.retain(|known| *known != id);
+pub fn remove_from_library(mut library: Vec<Installed>, id: String) -> Vec<Installed> {
+    remember(INSTALLED_FILE, |lines| {
+        lines.retain(|known| parse_installed(known).is_none_or(|known| known.id != id));
+    });
+    library.retain(|known| known.id != id);
     library
 }
 
-pub fn in_library(library: &[String], id: String) -> bool {
-    library.contains(&id)
+pub fn in_library(library: &[Installed], id: String) -> bool {
+    library.iter().any(|known| known.id == id)
+}
+
+/// Installed, and the module in the catalog is the one consented to.
+pub fn pinned(library: &[Installed], entry: &CatalogEntry) -> bool {
+    library
+        .iter()
+        .any(|known| known.id == entry.id && known.hash == entry.hash)
+}
+
+/// Installed, but the module in the catalog is not the one consented to.
+pub fn changed(library: &[Installed], entry: &CatalogEntry) -> bool {
+    in_library(library, entry.id.clone()) && !pinned(library, entry)
 }
 
 /// Edits a list file in place, never rewriting it from state: the running
@@ -572,11 +632,19 @@ pub fn installing_label(entry: CatalogEntry) -> String {
     format!("Installing {}…", entry.name)
 }
 
-pub fn opening_label(entry: CatalogEntry) -> String {
-    format!("Opening {}…", entry.name)
+/// What Open says: that it is opening, or why it will not — the handler
+/// guards on [`pinned`] right after setting this.
+pub fn opening_label(library: &[Installed], entry: CatalogEntry) -> String {
+    match pinned(library, &entry) {
+        true => format!("Opening {}…", entry.name),
+        false => format!(
+            "{} changed since it was installed. Review what it declares and Get it again.",
+            entry.name
+        ),
+    }
 }
 
-pub fn library_hint(library: &[String]) -> String {
+pub fn library_hint(library: &[Installed]) -> String {
     match library.len() {
         0 => "Nothing installed yet. Get an app from Discover.".to_string(),
         1 => "1 app installed".to_string(),
@@ -600,5 +668,66 @@ pub fn running_label(_running: &[Running], _generation: i64) -> String {
         (1, 0) => "1 running".to_string(),
         (live, 0) => format!("{live} running"),
         (live, ended) => format!("{live} running · {ended} ended"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(id: &str, hash: &str) -> CatalogEntry {
+        CatalogEntry {
+            id: id.into(),
+            name: id.to_uppercase(),
+            description: String::new(),
+            capabilities: Vec::new(),
+            path: String::new(),
+            mark: String::new(),
+            hash: hash.into(),
+        }
+    }
+
+    #[test]
+    fn a_pin_is_the_id_and_the_hash_consented_to() {
+        let library = vec![Installed {
+            id: "todo".into(),
+            hash: "aa".into(),
+        }];
+        assert!(pinned(&library, &entry("todo", "aa")));
+        assert!(!changed(&library, &entry("todo", "aa")));
+        // Same id, rebuilt module: installed, not pinned, changed.
+        assert!(in_library(&library, "todo".into()));
+        assert!(!pinned(&library, &entry("todo", "bb")));
+        assert!(changed(&library, &entry("todo", "bb")));
+        // Never installed: neither.
+        assert!(!pinned(&library, &entry("clock", "aa")));
+        assert!(!changed(&library, &entry("clock", "aa")));
+    }
+
+    #[test]
+    fn open_names_a_rebuilt_module_instead_of_opening_it() {
+        let library = vec![Installed {
+            id: "todo".into(),
+            hash: "aa".into(),
+        }];
+        assert_eq!(
+            opening_label(&library, entry("todo", "aa")),
+            "Opening TODO…"
+        );
+        assert!(
+            opening_label(&library, entry("todo", "bb")).contains("changed since it was installed")
+        );
+    }
+
+    #[test]
+    fn a_library_line_without_a_hash_is_not_an_install() {
+        assert_eq!(parse_installed("todo"), None);
+        assert_eq!(
+            parse_installed("todo\tabc"),
+            Some(Installed {
+                id: "todo".into(),
+                hash: "abc".into()
+            })
+        );
     }
 }

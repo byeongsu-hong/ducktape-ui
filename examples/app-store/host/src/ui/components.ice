@@ -173,10 +173,10 @@ component Seg(label:str, active:bool)
 
 // One app in the catalog: what it is, what it touches, what it costs while
 // it runs, and the one thing to do with it next.
-component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
+component Card(entry:CatalogEntry, installed:bool, changed:bool, running:bool, gauge:Gauge)
   emits
     details(str)
-    install(CatalogEntry)
+    install(str)
     launch(CatalogEntry)
     quit(str)
   box #root
@@ -238,9 +238,11 @@ component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
           text "Running" size=12.0 @text-muted
         if running && !gauge.live
           text "Ended" size=12.0 @text-danger
+        if installed && changed && !running
+          text "Changed since install" size=12.0 @text-fuel
         space w=fill
         if !installed
-          button "Get" #get -> emit(install, entry)
+          button "Get" #get -> emit(install, entry.id)
             with
               @px-14px
               @py-7px
@@ -250,7 +252,18 @@ component Card(entry:CatalogEntry, installed:bool, running:bool, gauge:Gauge)
               @text-12.5px
               @font-bold
               @hover:bg-primary/90
-        if installed && !running
+        if installed && changed && !running
+          button "Review" #review -> emit(details, entry.id)
+            with
+              @px-14px
+              @py-7px
+              @bg-fuel
+              @text-primary_fg
+              @rounded-8px
+              @text-12.5px
+              @font-bold
+              @hover:bg-fuel/90
+        if installed && !changed && !running
           button "Open" #open -> emit(launch, entry)
             with
               @px-14px
@@ -323,7 +336,7 @@ component RunningChip(name:str, id:str, gauge:Gauge)
           @hover:bg-raised
 
 // One installed app in the Library.
-component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
+component LibraryRow(entry:CatalogEntry, changed:bool, running:bool, gauge:Gauge)
   emits
     details(str)
     launch(CatalogEntry)
@@ -384,9 +397,22 @@ component LibraryRow(entry:CatalogEntry, running:bool, gauge:Gauge)
             size=11.5
             font=figures
             @text-muted
-      if !running
+      if !running && changed
+        text "changed since install" size=12.0 @text-fuel
+      if !running && changed
+        button "Review" #review -> emit(details, entry.id)
+          with
+            @px-12px
+            @py-6px
+            @bg-fuel
+            @text-primary_fg
+            @rounded-8px
+            @text-12px
+            @font-bold
+            @hover:bg-fuel/90
+      if !running && !changed
         text "not running" size=12.0 @text-muted
-      if !running
+      if !running && !changed
         button "Open" #open -> emit(launch, entry)
           with
             @px-12px
@@ -443,6 +469,12 @@ component MonitorRow(name:str, gauge:Gauge)
       text gauge.fuel
         with
           w=100.0
+          size=12.0
+          font=figures
+          @text-fg
+      text gauge.sustained
+        with
+          w=150.0
           size=12.0
           font=figures
           @text-fg
@@ -530,6 +562,7 @@ component LiveCard(gauge:Gauge)
             @font-bold
       Meter gauge=gauge
       row w=fill gap=16.0 wrap
+        Figure label="Fuel / s" value=gauge.sustained
         Figure label="Frame · unchanged" value=gauge.frame
         Figure label="Ticks · skipped" value=gauge.idle
         Figure label="Load" value=gauge.load
