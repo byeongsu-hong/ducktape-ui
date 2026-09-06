@@ -18,7 +18,10 @@ fn performance_contract_string_key_render_moves_mounted_keys() {
     // 5_088 before the accessible node grew two boxed `Option`s — a range
     // control's numeric contract and its step messages, `None` everywhere
     // else — 16 bytes in the node's element box and again in its tree state.
-    const BYTES_PER_RENDER: usize = 5_184;
+    // 5_184 before the accessible node grew two boxed `Option`s for a text
+    // editor's caret and the message that moves it, `None` everywhere else — 16
+    // bytes in the element box and again in the tree state, per accessible node.
+    const BYTES_PER_RENDER: usize = 5_328;
 
     let items = (0..16)
         .map(|index| format!("row-key-{index:02}"))

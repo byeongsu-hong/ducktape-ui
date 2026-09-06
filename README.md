@@ -194,7 +194,7 @@ Ice lowers its checked control surface into a deterministic AccessKit tree:
 | `slider` | `Slider` | default name, current value, numeric value/range/step, focus action, increment/decrement actions that run the change route with the next value |
 | `progress` | `ProgressIndicator` | default name, current value, numeric value/range |
 | `pick`, `combo` | `ComboBox` | placeholder name, selected value, focus action |
-| `editor` | `MultilineTextInput` | placeholder/default name, current value, disabled state, focus action |
+| `editor` | `MultilineTextInput` | placeholder/default name, current value, caret/selection position per line, a caret a screen reader can move, disabled state, focus action |
 | labeled `image` | `Image` | name and description |
 | any node inside a `scroll` | its own role | `ScrollIntoView` scrolls it into view through every scroll around it |
 

@@ -1075,6 +1075,13 @@ view
     assert!(generated.contains("body: ::iced::widget::text_editor::Content::with_text"));
     assert!(generated.contains("__EditBody(::iced::widget::text_editor::Action)"));
     assert!(generated.contains("self.body.perform(action)"));
+    assert!(generated.contains("__CaretBody(usize, usize)"));
+    assert!(generated.contains(
+        "__NotesMessage::__CaretBody(__line, __column) => { self.body.move_to(::iced::widget::text_editor::Cursor { position: ::iced::widget::text_editor::Position { line: __line, column: __column }, selection: None })"
+    ));
+    assert!(generated.contains(
+        ".editor_caret(__ice_editor_content.cursor()).on_move_to(__NotesMessage::__CaretBody as fn(usize, usize) -> __NotesMessage)"
+    ));
     assert!(generated.contains("let __ice_editor_content = &self.body;"));
     assert!(generated.contains("::iced::widget::text_editor(__ice_editor_content)"));
     assert!(generated.contains(".width(((640.0) as f32).max(0.0).min(f32::MAX))"));
@@ -1096,7 +1103,7 @@ view
     assert!(generated.contains("let __disabled = self.locked"));
     assert!(generated.contains("if __disabled"));
     assert!(generated.contains(".on_action(__NotesMessage::__EditBody"));
-    assert!(generated.contains(".value(__editor_value).disabled(__disabled)"));
+    assert!(generated.contains(".on_move_to(__NotesMessage::__CaretBody as fn(usize, usize) -> __NotesMessage).disabled(__disabled)"));
 }
 
 #[test]

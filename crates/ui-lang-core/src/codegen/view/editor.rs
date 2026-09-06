@@ -10,14 +10,17 @@ pub(in crate::codegen) fn render_text_editor(
 ) -> Result<String, Error> {
     let program = document;
     let state = resolved_editor_state(editor, env, program)?;
-    let (action_constructor, controlled_action, content_ref) = match &state.state {
+    let (action_constructor, move_constructor, controlled_action, content_ref) = match &state.state
+    {
         Some(StateBinding::App(name)) => {
             let controlled = program.controlled_editor_binding(name)?;
             let variant = editor_variant(name);
+            let caret_variant = editor_caret_variant(name);
             (
                 format!(
                     "{message}::{variant} as fn(::iced::widget::text_editor::Action) -> {message}"
                 ),
+                format!("{message}::{caret_variant} as fn(usize, usize) -> {message}"),
                 controlled.action,
                 format!("&{}", state.code),
             )
@@ -29,12 +32,16 @@ pub(in crate::codegen) fn render_text_editor(
         }) => {
             let controlled = program.component_controlled_editor_binding(component, name)?;
             let variant = component_editor_variant(component, name);
+            let caret_variant = component_editor_caret_variant(component, name);
             let field = component_state_field(component);
             let initial = component_editor_initial_field(component, name);
             let scope_code = borrowed_scope(scope);
             (
                 format!(
                     "{{ let __ice_scope = ({scope_code}).clone(); move |__ice_action| {message}::{variant}(__ice_scope.clone(), __ice_action) }}"
+                ),
+                format!(
+                    "{{ let __ice_scope = ({scope_code}).clone(); move |__ice_line, __ice_column| {message}::{caret_variant}(__ice_scope.clone(), __ice_line, __ice_column) }}"
                 ),
                 controlled.action,
                 // The retained map hands the view a plain borrow; an
@@ -199,12 +206,12 @@ pub(in crate::codegen) fn render_text_editor(
             "if __disabled {{ {disabled_editor}.into() }} else {{ {enabled_editor}.into() }}"
         );
         Ok(format!(
-            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __disabled = {disabled}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label({accessibility_label}).value(__editor_value).disabled(__disabled).into() }}"
+            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __disabled = {disabled}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label({accessibility_label}).value(__editor_value).editor_caret(__ice_editor_content.cursor()).on_move_to({move_constructor}).disabled(__disabled).into() }}"
         ))
     } else {
         let editor_code = format!("{}.into()", finish(enabled)?);
         Ok(format!(
-            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label({accessibility_label}).value(__editor_value).into() }}"
+            "{{ let __a11y_key = {accessibility_key}; let __ice_editor_content = {content_ref}; let __editor_value = __ice_editor_content.text(); let __editor: __IceElement<'_, {message}> = {editor_code}; ::ui_lang_runtime::accessible(__editor, ::ui_lang_runtime::StableId::new(&__a11y_key), ::ui_lang_runtime::Role::MultilineTextInput).logical_id_maybe(::core::cfg!(test).then_some(__a11y_key)).label({accessibility_label}).value(__editor_value).editor_caret(__ice_editor_content.cursor()).on_move_to({move_constructor}).into() }}"
         ))
     }
 }
