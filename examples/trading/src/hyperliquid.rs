@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use iced::{Color, Element, Font, Length};
 use serde_json::{Value, json};
@@ -30,6 +30,7 @@ pub use crate::indicators::{
 };
 use crate::signing::{self, Action, Chain, Wallet};
 use crate::venue::venue_name;
+use crate::venue::{liquidation_travel, margin_load, now_ms, num, parse_candle, text, value_i64};
 use crate::{ChartIndicator, Venue};
 
 pub use ui_lang_components::ui::candle_chart::{Candle, CandleHit};
@@ -214,24 +215,6 @@ pub(crate) fn info_blocking(chain: Chain, body: &Value) -> Result<Value, HlError
         .map_err(|error| HlError::new(format!("Hyperliquid sent bad JSON: {error}")))
 }
 
-/// Prices, sizes, and PnL all arrive as strings. A missing or unparsable
-/// field reads as zero rather than failing the whole response.
-fn num(value: &Value, key: &str) -> f64 {
-    match value.get(key) {
-        Some(Value::String(text)) => text.parse().unwrap_or(0.0),
-        Some(Value::Number(number)) => number.as_f64().unwrap_or(0.0),
-        _ => 0.0,
-    }
-}
-
-fn text(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
-}
-
 fn list<'a>(value: &'a Value, key: &str) -> &'a [Value] {
     value
         .get(key)
@@ -241,13 +224,6 @@ fn list<'a>(value: &'a Value, key: &str) -> &'a [Value] {
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
 }
 
 /// Candle width in seconds for the intervals this app offers.
@@ -590,18 +566,6 @@ pub fn tape_focus(tape: Tape, coin: String, interval: String) -> Tape {
     tape
 }
 
-fn parse_candle(value: &Value) -> Candle {
-    Candle {
-        // Hyperliquid timestamps are milliseconds; the chart wants seconds.
-        ts: value_i64(value, "t") / 1_000,
-        open: num(value, "o"),
-        high: num(value, "h"),
-        low: num(value, "l"),
-        close: num(value, "c"),
-        volume: num(value, "v"),
-    }
-}
-
 fn parse_candles(value: &Value) -> Vec<Candle> {
     value
         .as_array()
@@ -610,10 +574,6 @@ fn parse_candles(value: &Value) -> Vec<Candle> {
         .iter()
         .map(parse_candle)
         .collect()
-}
-
-fn value_i64(value: &Value, key: &str) -> i64 {
-    value.get(key).and_then(Value::as_i64).unwrap_or_default()
 }
 
 /// Folds a fresh snapshot into the tape: the live candle is replaced in
@@ -1703,18 +1663,6 @@ pub fn impact_short(book: &Option<Book>, size: String, buy: bool) -> bool {
     book_impact(book, size, buy).short
 }
 
-/// The share of the entry-to-liquidation distance the mark has already
-/// covered: 0 at the entry price, 1 at the cliff. Works for either side
-/// because both endpoints flip together, and reads 0 when the position has
-/// no liquidation price at all.
-fn liquidation_travel(entry: f64, mark: f64, liquidation: f64) -> f64 {
-    let span = liquidation - entry;
-    if !(span.is_finite() && span.abs() > f64::EPSILON) || liquidation <= 0.0 {
-        return 0.0;
-    }
-    ((mark - entry) / span).clamp(0.0, 1.0)
-}
-
 fn parse_account(value: &Value) -> Account {
     let summary = value.get("marginSummary").cloned().unwrap_or(Value::Null);
     let positions: Vec<Position> = list(value, "assetPositions")
@@ -1775,24 +1723,6 @@ fn parse_account(value: &Value) -> Account {
         margin_pct: margin_load(cross_value, maintenance) * 100.0,
         positions,
     }
-}
-
-/// The share of the account's equity the maintenance requirement has already
-/// claimed: 0 with nothing at risk, 1 where the margin engine steps in. Cross
-/// positions do not die one at a time — the whole account goes when its equity
-/// falls under `crossMaintenanceMarginUsed` — so this is that one distance,
-/// read the same way the per-position rail reads entry to liquidation.
-///
-/// Equity at or below zero is already past the cliff, and an account with no
-/// maintenance requirement has no cliff to be near.
-fn margin_load(equity: f64, maintenance: f64) -> f64 {
-    if maintenance <= 0.0 {
-        return 0.0;
-    }
-    if equity <= 0.0 {
-        return 1.0;
-    }
-    (maintenance / equity).clamp(0.0, 1.0)
 }
 
 /// A load as the width of the rail that draws it. Never under a pixel while

@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use smol::channel::{Receiver, Sender};
@@ -29,6 +29,7 @@ use crate::lighter_sign::{self, PrivateKey, Resting, Transaction};
 #[cfg(test)]
 use crate::signing::Wallet;
 use crate::venue::lighter_buy;
+use crate::venue::{liquidation_travel, margin_load, now_ms, num, parse_candle, text, value_i64};
 
 /// Which Lighter deployment a read is addressed to.
 ///
@@ -247,34 +248,11 @@ fn refused(path: &str, code: i64, body: &Value) -> HlError {
     ))
 }
 
-/// Lighter sends prices and sizes as strings and volumes and changes as
-/// numbers, and which is which varies by endpoint. Same tolerance as the other
-/// venue: unreadable is zero rather than a failed response.
-fn num(value: &Value, key: &str) -> f64 {
-    match value.get(key) {
-        Some(Value::String(text)) => text.parse().unwrap_or(0.0),
-        Some(Value::Number(number)) => number.as_f64().unwrap_or(0.0),
-        _ => 0.0,
-    }
-}
-
-fn text(value: &Value, key: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned()
-}
-
 fn list<'a>(value: &'a Value, key: &str) -> &'a [Value] {
     value
         .get(key)
         .and_then(Value::as_array)
         .map_or(&[], Vec::as_slice)
-}
-
-fn value_i64(value: &Value, key: &str) -> i64 {
-    value.get(key).and_then(Value::as_i64).unwrap_or_default()
 }
 
 /// Yesterday's close, backed out of the move the venue publishes.
@@ -568,27 +546,6 @@ pub async fn lighter_book(zone: Zone, coin: String) -> Result<Book, HlError> {
         )
         .await?,
     ))
-}
-
-/// Copies of `hyperliquid`'s private rail arithmetic. Both are the reading the
-/// view draws rather than anything a venue reports, so they have to agree
-/// exactly or the same risk renders two lengths.
-fn liquidation_travel(entry: f64, mark: f64, liquidation: f64) -> f64 {
-    let span = liquidation - entry;
-    if !(span.is_finite() && span.abs() > f64::EPSILON) || liquidation <= 0.0 {
-        return 0.0;
-    }
-    ((mark - entry) / span).clamp(0.0, 1.0)
-}
-
-fn margin_load(equity: f64, maintenance: f64) -> f64 {
-    if maintenance <= 0.0 {
-        return 0.0;
-    }
-    if equity <= 0.0 {
-        return 1.0;
-    }
-    (maintenance / equity).clamp(0.0, 1.0)
 }
 
 /// A position's `initial_margin_fraction` is a percentage, and it is a
@@ -1074,33 +1031,6 @@ const CANDLE_PAGE: i64 = 500;
 /// What a loaded tape asks for on a refresh — the bar still forming and enough
 /// either side of it that a beat missed while the app was busy is not a hole.
 const CANDLE_REFRESH: i64 = 3;
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
-}
-
-/// The venue omits a zero field rather than sending it, which the tolerant
-/// readers already do the right thing with: a bar that traded nothing arrives
-/// without its `v` and reads zero volume.
-fn parse_candle(value: &Value) -> Candle {
-    Candle {
-        // Milliseconds on the wire, seconds on the chart — the same conversion
-        // `hyperliquid::parse_candle` makes.
-        ts: value_i64(value, "t") / 1_000,
-        open: num(value, "o"),
-        high: num(value, "h"),
-        low: num(value, "l"),
-        close: num(value, "c"),
-        // The base leg. `V` sits beside it and is the quote leg — 451.955 of
-        // bitcoin against 29,366,566 of quote on one live hourly bar — and
-        // `hyperliquid`'s `v` is the base one, so the two venues put the same
-        // quantity on the same axis.
-        volume: num(value, "v"),
-    }
-}
 
 /// The request for `bars` candles of one market ending at `end_ms`.
 ///
@@ -2348,6 +2278,7 @@ mod tests {
     use crate::hyperliquid::{FEED_BUFFER_CAPACITY, apply_feed, symbol_row, tape_focus, tape_new};
 
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn lighter_market_feed_has_a_finite_handoff() {
