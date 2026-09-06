@@ -756,6 +756,18 @@ pub enum BackgroundValue {
     },
 }
 
+/// The expressions a background reads, for a walk over a node's expression
+/// roots: a gradient's angle and every stop offset; a colour reads nothing.
+pub(crate) fn push_background_roots<'a>(
+    roots: &mut Vec<&'a Expr>,
+    background: &'a Option<BackgroundValue>,
+) {
+    if let Some(BackgroundValue::Linear { angle, stops }) = background {
+        roots.push(angle);
+        roots.extend(stops.iter().map(|stop| &stop.offset));
+    }
+}
+
 /// The part of a background a semantic key compares: the colour, or the
 /// gradient's stop colours in order; `none` for no background.
 pub(crate) fn background_semantic_key(background: Option<&BackgroundValue>) -> String {

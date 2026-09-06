@@ -507,18 +507,8 @@ fn push_selection_length_root<'a>(roots: &mut Vec<&'a Expr>, length: &'a Option<
     }
 }
 
-fn push_selection_background_roots<'a>(
-    roots: &mut Vec<&'a Expr>,
-    background: &'a Option<BackgroundValue>,
-) {
-    if let Some(BackgroundValue::Linear { angle, stops }) = background {
-        roots.push(angle);
-        roots.extend(stops.iter().map(|stop| &stop.offset));
-    }
-}
-
 fn push_selection_surface_roots<'a>(roots: &mut Vec<&'a Expr>, surface: &'a ContainerStyleOptions) {
-    push_selection_background_roots(roots, &surface.background);
+    push_background_roots(roots, &surface.background);
     roots.extend(
         [
             &surface.border_width,
@@ -540,7 +530,7 @@ fn push_selection_surface_roots<'a>(roots: &mut Vec<&'a Expr>, surface: &'a Cont
 fn push_menu_roots<'a>(roots: &mut Vec<&'a Expr>, menu: &'a Option<Box<MenuStyleOptions>>) {
     let Some(menu) = menu else { return };
     push_selection_surface_roots(roots, &menu.options);
-    push_selection_background_roots(roots, &menu.selected_background);
+    push_background_roots(roots, &menu.selected_background);
 }
 
 fn push_pick_icon_roots<'a>(roots: &mut Vec<&'a Expr>, icon: &'a PickListIcon) {
