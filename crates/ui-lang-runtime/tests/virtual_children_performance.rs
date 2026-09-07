@@ -2,11 +2,10 @@ use iced::advanced::renderer;
 use iced::advanced::widget::Tree;
 use iced::advanced::{Layout, Widget, layout, mouse};
 use iced::{Element, Font, Length, Pixels, Rectangle, Size, Theme};
-use stats_alloc::Region;
 use ui_lang_runtime::virtual_keyed_children;
 
 mod common;
-use common::{GLOBAL, clean_window};
+use common::clean_window;
 
 const ROWS: usize = 1_000;
 
@@ -119,24 +118,15 @@ fn repeated_diff_and_layout_skip_temporary_buffers() {
     reordered.diff(std::hint::black_box(&mut tree));
     unchanged.diff(std::hint::black_box(&mut tree));
 
-    let region = Region::new(GLOBAL);
-    for _ in 0..REORDER_FRAMES {
-        reordered.diff(std::hint::black_box(&mut tree));
-        unchanged.diff(std::hint::black_box(&mut tree));
-    }
-    let stats = region.change();
-
+    let reordered_stats = measure((0, 0), || {
+        for _ in 0..REORDER_FRAMES {
+            reordered.diff(std::hint::black_box(&mut tree));
+            unchanged.diff(std::hint::black_box(&mut tree));
+        }
+    });
     assert_eq!(
-        stats.allocations,
-        REORDER_FRAMES * 22,
-        "{REORDER_FRAMES} reordered-key frame pairs allocated {} times ({} bytes)",
-        stats.allocations,
-        stats.bytes_allocated
-    );
-    assert_eq!(
-        stats.bytes_allocated,
-        REORDER_FRAMES * 155_448,
-        "{REORDER_FRAMES} reordered-key frame pairs allocated {} bytes",
-        stats.bytes_allocated
+        reordered_stats,
+        (0, 0),
+        "{REORDER_FRAMES} reordered-key frame pairs must reuse reconciliation buffers"
     );
 }

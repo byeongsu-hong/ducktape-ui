@@ -1530,3 +1530,18 @@ selection replacement could preserve X; the test now sends Y and verifies the
 guest disabled state first. Removing the focus-border pass fails the native
 style precedence assertion (red instead of green). CI runs the widget fixture
 through the `bundled_widget_` filter, including these assertions.
+
+### Tree keyed and virtual row evidence
+
+The keyed codegen table and native configured-keyed tests cover the wire/native
+lowerings. VirtualChildren rotation tests inspect moved widget state, measured
+heights and focus, including duplicate occurrences and clear/refill. The ordinary
+column wrapper tests rotations, duplicates and numeric zero/NaN semantics. Existing
+virtual layout tests count viewport-bounded layout work. Actual bundled wasm
+`store::keyed_tests` covers typed input and focus through reorder/prepend/remove
+on both paths, plus 200 guest rows with at most 32 mounted input widgets before
+and after scrolling to the tail. These operation counts prove mounted reachability,
+not a layout count. Reverting ordinary reconciliation fails the row-focus assertion;
+bypassing virtual rendering fails the 200-versus-32 mounting bound. CI bundles
+the fixture and runs all three tests. Lazy dependency caching is not covered or
+claimed by this change.

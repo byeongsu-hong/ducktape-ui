@@ -730,11 +730,10 @@ const COVERAGE: &[Coverage] = &[
         "`combo box`",
     ),
     refused("qr code", "", "  qr draft\n", "`qr code`"),
-    refused(
+    emitted(
         "keyed column",
         "",
         "  keyed item in [1, 2] by=item\n    text item @text-fg\n",
-        "`keyed column`",
     ),
     refused(
         "lazy",
@@ -1348,5 +1347,25 @@ fn tree_wrapping_layout_copies_both_axes() {
             "  {axis} wrap wrap-gap=3.0 wrap-align=end gap=8.0\n    button \"Go\" -> remove 0\n"
         ));
         assert!(generated.contains("Wrap { spacing: ::std::option::Option::Some((3.0) as f32), align: ::std::option::Option::Some(::ui_lang_guest::wire::AlignX::Right)"));
+    }
+}
+
+#[test]
+fn keyed_and_virtual_columns_emit_copied_rows_without_native_elements() {
+    for view in [
+        "  keyed item in [1, 2] by=item virtual-row=24.0 w=fill gap=3.0\n    text item\n",
+        "  col virtual-row=24.0 w=fill max-w=320.0\n    for item in [1, 2]\n      text item\n",
+    ] {
+        let source = format!("app Demo\n{PALETTE}view\n{view}");
+        let generated = compile_for(&source, "lists.ice", Target::Tree)
+            .unwrap_or_else(|error| panic!("{}", error.render("lists.ice")));
+        assert!(generated.contains("::ui_lang_guest::wire::Node::KeyedColumn"));
+        assert!(
+            generated.contains("virtual_row: Some(")
+                || generated.contains("virtual_row: ::std::option::Option::Some(")
+        );
+        assert!(!generated.contains("::iced::widget::keyed_column("));
+        assert!(!generated.contains("::ui_lang_runtime::virtual_keyed_children("));
+        assert!(!generated.contains("::ui_lang_runtime::bounded_fill_element(__child"));
     }
 }

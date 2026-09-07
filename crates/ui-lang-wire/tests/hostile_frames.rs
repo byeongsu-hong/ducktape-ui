@@ -587,6 +587,27 @@ fn gen_leaf(rng: &mut Rng) -> Node {
 /// ever got a chance to refuse anything.
 /// Either of the two nodes holding a child list, around `children`.
 fn gen_list(rng: &mut Rng, children: Vec<Node>) -> Node {
+    if rng.next_range(3) == 0 {
+        let count = children.len();
+        return Node::KeyedColumn {
+            background: gen_opt_color(rng),
+            border: gen_opt_border(rng),
+            key: gen_key(rng),
+            keys: Some(
+                (0..count)
+                    .map(|i| ui_lang_wire::ListKey::Integer(i as i64))
+                    .collect(),
+            ),
+            spacing: gen_opt_f32(rng),
+            padding: gen_opt_edges(rng),
+            width: gen_opt_length(rng),
+            height: gen_opt_length(rng),
+            max_width: gen_opt_f32(rng),
+            align: gen_opt_align_x(rng),
+            virtual_row: gen_opt_f32(rng),
+            children,
+        };
+    }
     match rng.next_range(5) {
         0 => {
             return Node::Hover {
@@ -734,6 +755,7 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
             },
             1 => gen_list(rng, vec![node]),
             2 => Node::Scroll {
+                virtual_rows: rng.next_bool(),
                 key: gen_key(rng),
                 direction: *rng.choose(&[
                     ScrollDirection::Vertical,
@@ -852,6 +874,7 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
             node,
             Node::Linear { .. }
                 | Node::Grid { .. }
+                | Node::KeyedColumn { .. }
                 | Node::Stack { .. }
                 | Node::Hover { .. }
                 | Node::Overlay { .. }
@@ -883,12 +906,14 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
                     Some(
                         Node::Linear { .. }
                         | Node::Grid { .. }
+                        | Node::KeyedColumn { .. }
                         | Node::Stack { .. }
                         | Node::Hover { .. }
                         | Node::Overlay { .. },
                     ),
                     Node::Linear { .. }
                     | Node::Grid { .. }
+                    | Node::KeyedColumn { .. }
                     | Node::Stack { .. }
                     | Node::Hover { .. }
                     | Node::Overlay { .. },
@@ -898,6 +923,7 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
                         at,
                         Node::Linear { .. }
                             | Node::Grid { .. }
+                            | Node::KeyedColumn { .. }
                             | Node::Stack { .. }
                             | Node::Hover { .. }
                             | Node::Overlay { .. }
@@ -905,6 +931,7 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
                         fresh,
                         Node::Linear { .. }
                             | Node::Grid { .. }
+                            | Node::KeyedColumn { .. }
                             | Node::Stack { .. }
                             | Node::Hover { .. }
                             | Node::Overlay { .. }
@@ -1043,6 +1070,7 @@ fn tree_depth(node: &Node) -> usize {
         | Node::Scroll { content, .. } => 1 + tree_depth(content),
         Node::Linear { children, .. }
         | Node::Grid { children, .. }
+        | Node::KeyedColumn { children, .. }
         | Node::Stack { children, .. }
         | Node::Hover { children, .. }
         | Node::Tooltip { children, .. }
@@ -1248,6 +1276,33 @@ fn check_bounds(
             check_length(height, ctx);
             check_color(background, ctx);
             check_border(border, ctx);
+            for child in children {
+                check_bounds(child, depth + 1, keys, svg_bytes, ctx);
+            }
+        }
+        Node::KeyedColumn {
+            keys: row_keys,
+            spacing,
+            padding,
+            width,
+            height,
+            max_width,
+            virtual_row,
+            children,
+            ..
+        } => {
+            if let Some(row_keys) = row_keys {
+                assert_eq!(row_keys.len(), children.len(), "{ctx}: keyed cardinality");
+            }
+            check_pixels(spacing, ctx, "spacing");
+            check_pixels(max_width, ctx, "max width");
+            check_pixels(virtual_row, ctx, "virtual row");
+            if let Some(estimate) = virtual_row {
+                assert!(*estimate >= 1.0);
+            }
+            check_edges(padding, ctx);
+            check_length(width, ctx);
+            check_length(height, ctx);
             for child in children {
                 check_bounds(child, depth + 1, keys, svg_bytes, ctx);
             }

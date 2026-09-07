@@ -1573,3 +1573,7 @@ mod layers_tests;
 #[cfg(test)]
 #[path = "text_tests.rs"]
 mod text_tests;
+
+#[cfg(test)]
+#[path = "keyed_tests.rs"]
+mod keyed_tests;

@@ -26,6 +26,8 @@ use iced::widget::text_editor;
 use iced::{Background, Color, Element, Length, widget};
 use ui_lang_wire as wire;
 
+mod lists;
+
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
 mod text;
@@ -367,6 +369,7 @@ fn collect_inputs(
         | wire::Node::Hover { children, .. }
         | wire::Node::Tooltip { children, .. }
         | wire::Node::Overlay { children, .. }
+        | wire::Node::KeyedColumn { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
                 collect_inputs(child, into, editors);
@@ -444,6 +447,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         | wire::Node::Hover { children, .. }
         | wire::Node::Tooltip { children, .. }
         | wire::Node::Overlay { children, .. }
+        | wire::Node::KeyedColumn { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
                 collect_pictures(child, into);
@@ -965,6 +969,7 @@ struct Kept<'a> {
 fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output> {
     let inputs = kept.inputs;
     match node {
+        wire::Node::KeyedColumn { .. } => lists::render(node, kept),
         wire::Node::Responsive {
             key,
             width,
@@ -1347,6 +1352,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             sensor.into()
         }
         wire::Node::Scroll {
+            virtual_rows,
             key,
             direction,
             width,
@@ -1403,11 +1409,16 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             if let Some(height) = height {
                 scroll = scroll.height(length(*height));
             }
+            let scroll: IceElement<'static, Output> = if *virtual_rows {
+                crate::virtual_scroll(scroll).into()
+            } else {
+                scroll.into()
+            };
             // `Keep` wraps the scrollable alone, as natively, so the
             // wrapper's operation walk reaches it first.
             let scroll: IceElement<'static, Output> = match anchor_y {
                 wire::ScrollAnchor::Keep => crate::scroll_anchor(scroll).into(),
-                _ => scroll.into(),
+                _ => scroll,
             };
             let scroll: IceElement<'static, Output> = match (background, edge) {
                 (None, None) => scroll,
@@ -2989,6 +3000,7 @@ mod tests {
                         anticipate: Some(48.0),
                         delay: Some(16.0),
                         child: Box::new(wire::Node::Scroll {
+                            virtual_rows: false,
                             key: "App/content/list".into(),
                             direction: wire::ScrollDirection::Vertical,
                             width: None,

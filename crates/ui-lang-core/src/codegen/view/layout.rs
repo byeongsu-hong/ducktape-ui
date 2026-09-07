@@ -144,7 +144,9 @@ fn render_resolved_regular_layout(
                         ".spacing(({}) as f32)",
                         resolved_expr_use_code(program, spacing, env, ValueMode::Owned)?
                     ),
-                    None => String::new(),
+                    None => style
+                        .gap
+                        .map_or_else(String::new, |gap| format!(".spacing({gap})")),
                 };
                 write!(
                     body,
@@ -699,7 +701,7 @@ fn render_resolved_scroll(
 /// sits in, exactly as `render_node` receives it: a slot is written at the call
 /// site and rendered inline here, so a component whose body is `scroll { slot }`
 /// only learns about virtual rows by following it.
-fn contains_virtual_rows(
+pub(super) fn contains_virtual_rows(
     node: ViewId,
     document: &LoweredProgram,
     slots: Option<&SlotContext>,

@@ -167,8 +167,12 @@ pub(in crate::codegen) fn render_keyed_column(
     let child_scope = format!("format!(\"{{}}/key({{}})\", {scope}, __key)");
     let child = render_node(child, document, message, &child_env, &child_scope, slot)?;
     let mut code = format!(
-        "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}{iterate} {{ let __key = {key}; let __ice_key_recon = format!(\"{{}}/key({{}})\", {recon_base}, __key); let _ = &__ice_key_recon; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }} let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>();"
+        "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}{iterate} {{ let __key = {key}; let __ice_key_recon = format!(\"{{}}/key({{}})\", {recon_base}, __key); let _ = &__ice_key_recon; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }}"
     );
+    if program.target() == Target::Tree {
+        return tree::keyed_column(keyed, program, env, scope, code);
+    }
+    code.push_str(" let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>();");
     let spacing = keyed
         .spacing
         .map(|spacing| resolved_expr_use_code(program, spacing, env, ValueMode::Owned))
@@ -190,7 +194,7 @@ pub(in crate::codegen) fn render_keyed_column(
         )
         .unwrap();
     } else {
-        code.push_str(" let __layout = ::iced::widget::keyed_column(__children)");
+        code.push_str(" let __layout = ::ui_lang_runtime::keyed_column(__children)");
         if let Some(spacing) = &spacing {
             write!(
                 code,
