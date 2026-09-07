@@ -144,16 +144,22 @@ impl Renderer {
                             continue;
                         };
 
-                        clip_mask.want(group_bounds);
-
+                        let transformation = Transformation::scale(scale_factor)
+                            * group.transformation();
                         for primitive in group.as_slice() {
+                            let Some(bounds) = (primitive.clip_bounds() * transformation)
+                                .intersection(&group_bounds)
+                            else {
+                                continue;
+                            };
+                            // A clipped child frame must not narrow its siblings.
+                            clip_mask.want(bounds);
                             self.engine.draw_primitive(
                                 primitive,
-                                Transformation::scale(scale_factor)
-                                    * group.transformation(),
+                                transformation,
                                 pixels,
                                 clip_mask,
-                                group_bounds,
+                                bounds,
                             );
                         }
 

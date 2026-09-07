@@ -23,6 +23,11 @@
 
 use serde::{Deserialize, Serialize};
 
+mod canvas;
+pub use canvas::{
+    CanvasCommand, CanvasLineCap, CanvasLineJoin, CanvasSegment, CanvasShape, CanvasStroke,
+    MAX_CANVAS_PARTS,
+};
 mod markdown;
 pub use markdown::MarkdownDocument;
 mod widget;
@@ -701,6 +706,14 @@ pub enum Node {
         bar: Option<Rgba>,
         border: Option<Border>,
     },
+    /// Bounded geometry painted by the host, in widget-local coordinates.
+    Canvas {
+        key: String,
+        width: Option<Length>,
+        height: Option<Length>,
+        #[serde(deserialize_with = "canvas::decode_parts")]
+        commands: Vec<CanvasCommand>,
+    },
     /// A region the host paints itself: `name` picks a surface the
     /// embedding host registered, `args` are the typed values the guest
     /// hands it; `on_event` routes a returned value to its handler. The guest
@@ -757,6 +770,7 @@ impl Node {
             | Self::Slider { key, .. }
             | Self::PickList { key, .. }
             | Self::Progress { key, .. }
+            | Self::Canvas { key, .. }
             | Self::Surface { key, .. } => Some(key),
             Self::Space { .. } => None,
         }
@@ -789,6 +803,7 @@ impl Node {
             | Self::Slider { .. }
             | Self::PickList { .. }
             | Self::Progress { .. }
+            | Self::Canvas { .. }
             | Self::Surface { .. } => &[],
         }
     }
@@ -824,6 +839,7 @@ impl Node {
             | Self::PickList { .. }
             | Self::Progress { .. }
             | Self::Svg { .. }
+            | Self::Canvas { .. }
             | Self::Surface { .. } => &mut [],
         }
     }
@@ -850,6 +866,7 @@ impl Node {
             | Self::PickList { .. }
             | Self::Progress { .. }
             | Self::Svg { .. }
+            | Self::Canvas { .. }
             | Self::Surface { .. } => None,
         }
     }
@@ -964,6 +981,7 @@ fn sanitize_tree(root: &mut Node) {
         text: MAX_TEXT_BYTES_PER_FRAME,
         svg: MAX_SVG_BYTES_PER_FRAME,
         surface_values: MAX_SURFACE_VALUES,
+        canvas_parts: MAX_CANVAS_PARTS,
     };
     let mut taken = Taken::new();
     sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
@@ -1221,6 +1239,7 @@ fn claim(key: &mut String, taken: &mut Taken) {
 
 /// What is left of a frame's per-frame byte budgets while its tree is walked.
 struct Budgets {
+    canvas_parts: usize,
     surface_values: usize,
     text: usize,
     svg: usize,
@@ -1315,6 +1334,10 @@ fn sanitize_node(
             }
         }
         Node::MouseArea { key, .. } => claim(key, taken),
+        Node::Canvas { key, commands, .. } => {
+            claim(key, taken);
+            canvas::sanitize(commands, &mut budgets.canvas_parts);
+        }
         Node::Scroll {
             key,
             bar_width,
@@ -1639,6 +1662,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Button { width, height, .. }
         | Node::Svg { width, height, .. }
         | Node::Slider { width, height, .. }
+        | Node::Canvas { width, height, .. }
         | Node::Space { width, height } => vec![width, height],
         Node::Progress { length, girth, .. } => vec![length, girth],
         Node::Editor { height, .. } => vec![height],
@@ -1843,6 +1867,7 @@ pub fn encoded_size<T: Serialize>(value: &T) -> u64 {
 pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, String> {
     budget::reset();
     surface::reset_decode_budget();
+    canvas::reset_decode_budget();
     bincode::deserialize(bytes).map_err(|error| error.to_string())
 }
 

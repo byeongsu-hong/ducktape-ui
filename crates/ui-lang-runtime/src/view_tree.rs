@@ -28,6 +28,7 @@ use ui_lang_wire as wire;
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
+mod canvas;
 mod editor;
 mod operations;
 pub use operations::execute_widget_command;
@@ -370,6 +371,7 @@ fn collect_inputs(
         | wire::Node::Slider { .. }
         | wire::Node::PickList { .. }
         | wire::Node::Progress { .. }
+        | wire::Node::Canvas { .. }
         | wire::Node::Surface { .. } => {}
     }
 }
@@ -441,6 +443,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         | wire::Node::Slider { .. }
         | wire::Node::PickList { .. }
         | wire::Node::Progress { .. }
+        | wire::Node::Canvas { .. }
         | wire::Node::Surface { .. } => {}
     }
 }
@@ -912,6 +915,7 @@ pub fn render(
             inputs,
             pictures,
             surfaces,
+            canvas_budget: std::cell::Cell::new(canvas::MAX_EXPANDED_PARTS),
         },
     )
 }
@@ -921,6 +925,7 @@ struct Kept<'a> {
     inputs: &'a Inputs,
     pictures: &'a Pictures,
     surfaces: &'a Surfaces,
+    canvas_budget: std::cell::Cell<usize>,
 }
 
 fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output> {
@@ -1804,6 +1809,25 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .label("Progress")
                 .value(format!("{value}"))
                 .numeric(value.into(), min.into(), max.into(), None)
+                .into()
+        }
+        wire::Node::Canvas {
+            key,
+            width,
+            height,
+            commands,
+        } => {
+            let mut canvas =
+                widget::canvas(canvas::Geometry::new(commands.clone(), &kept.canvas_budget));
+            if let Some(width) = width {
+                canvas = canvas.width(length(*width));
+            }
+            if let Some(height) = height {
+                canvas = canvas.height(length(*height));
+            }
+            accessible(canvas, StableId::new(key), Role::Group)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .label("Canvas")
                 .into()
         }
         wire::Node::Surface {

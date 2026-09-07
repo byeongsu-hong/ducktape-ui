@@ -417,14 +417,14 @@ For module packaging requirements and the connected implementation phases, see
 ### Wire and rendering
 
 - The wire carries `box`, `mouse`, `col`/`row`, `grid`, `scroll`, `sensor`,
-  `text`, `svg`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
+  `text`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
   extern's name (`clock_face` is the one this store paints, with a sweeping
   second hand the guest never ticks), given the call's copied data arguments
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
   the host lacks renders a placeholder. Every other Ice
-  construct — combo box, images, canvas, stacks, overlays,
+  construct — combo box, images, stacks, overlays,
   mounted components, gradients, the text and interaction utility styles —
   fails the app's build at its `.ice` line with E190. Each is a node kind
   to add to the wire, an emitter arm and a renderer arm. A layout's surface
@@ -835,3 +835,26 @@ These are host boundary prerequisites. Ducktape's module-selected agent/SSH
 processes, session routing and application policy remain separate integration.
 
 ![A native PTY driven by a wasm guest](docs/native-terminal.png)
+
+## Declarative canvas fixture
+
+![Actual wasm canvas capture](docs/declarative-canvas.png)
+
+`tests/canvas-guest` sends solid geometry, transformed and clipped groups,
+guest loops and conditional drawing through an actual wasm bundle. The host
+test checks pixels and clicks through a native mouse area to update guest
+state. Geometry is copied data; native drawing state, host-size bindings,
+gradients, canvas text and canvas images remain refused.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-canvas-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/canvas-fixture
+cd examples/app-store
+cargo test -p app-store-host bundled_canvas_ -- --ignored
+```
+
+Canvas preparation also shares a 16,384-part host budget across the tree for
+flattened segments and estimated dash expansion. Curves are flattened once
+and those line paths are painted; excess draws and unstable arc-to tangents
+are omitted before native tessellation. This bounds work beyond wire size.

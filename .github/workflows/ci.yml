@@ -589,6 +589,14 @@ jobs:
         run: cargo test --locked -p app-store-host terminal_tests -- --ignored
       - name: Verify native PTY draining and view leases
         run: cargo test --locked -p ui-lang-components --features terminal --lib ui::terminal::tests
+      - name: Bundle the declarative canvas fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-canvas-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/canvas-fixture
+      - name: Verify canvas pixels and native pointer routes through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_canvas_ -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

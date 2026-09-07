@@ -1552,3 +1552,7 @@ mod composer_tests;
 #[cfg(all(test, unix))]
 #[path = "terminal_tests.rs"]
 mod terminal_tests;
+
+#[cfg(test)]
+#[path = "canvas_tests.rs"]
+mod canvas_tests;

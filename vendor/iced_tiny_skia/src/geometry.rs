@@ -108,6 +108,7 @@ impl geometry::frame::Backend for Frame {
         paint.shader.transform(self.transform);
 
         self.primitives.push(Primitive::Fill {
+            clip_bounds: self.clip_bounds,
             path,
             paint,
             rule: into_fill_rule(fill.rule),
@@ -135,6 +136,7 @@ impl geometry::frame::Backend for Frame {
         paint.shader.transform(self.transform);
 
         self.primitives.push(Primitive::Fill {
+            clip_bounds: self.clip_bounds,
             path,
             paint,
             rule: into_fill_rule(fill.rule),
@@ -155,6 +157,7 @@ impl geometry::frame::Backend for Frame {
         paint.shader.transform(self.transform);
 
         self.primitives.push(Primitive::Stroke {
+            clip_bounds: self.clip_bounds,
             path,
             paint,
             stroke: skia_stroke,

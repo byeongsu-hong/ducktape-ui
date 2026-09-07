@@ -445,3 +445,8 @@ receives semantic text/selection/submission notices and retains its draft.
 The [native terminal fixture](examples/app-store/README.md#native-terminal-fixture)
 binds a host-selected PTY to a wasm guest, retaining output while its view is
 hidden and delivering bounded title/running/attention notices.
+
+Tree-target canvas sends bounded declarative geometry to the host, including
+solid paths, transforms, clips and guest-selected drawing branches. The
+[canvas fixture](examples/app-store/README.md#declarative-canvas-fixture) checks
+actual wasm pixels and local pointer routing.

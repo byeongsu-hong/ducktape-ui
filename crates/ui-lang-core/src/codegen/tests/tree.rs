@@ -864,7 +864,35 @@ const COVERAGE: &[Coverage] = &[
         "an svg style callback",
     ),
     refused("media: viewer", "", "  viewer picture\n", "`media`"),
-    refused("canvas", "", "  canvas w=40.0 h=24.0\n", "`canvas`"),
+    emitted(
+        "canvas: geometry",
+        "",
+        "  canvas w=40.0 h=24.0\n    circle x=20.0 y=12.0 r=8.0 fill=primary\n",
+    ),
+    refused(
+        "canvas: host size",
+        "",
+        "  canvas\n    circle x=canvas_width y=12.0 r=8.0 fill=primary\n",
+        "canvas host-size bindings",
+    ),
+    refused(
+        "canvas: cache",
+        "",
+        "  canvas cache=true\n    circle x=20.0 y=12.0 r=8.0 fill=primary\n",
+        "native canvas options",
+    ),
+    refused(
+        "canvas: gradient",
+        "",
+        "  canvas\n    circle x=20.0 y=12.0 r=8.0 fill=linear(0.0, bg@0.0, primary@1.0)\n",
+        "canvas gradient",
+    ),
+    refused(
+        "canvas: text",
+        "",
+        "  canvas\n    text \"hello\" x=0.0 y=0.0 color=fg\n",
+        "canvas text",
+    ),
     // Options on the nodes the wire does carry: painted by the host from
     // plain fields on the node.
     emitted(

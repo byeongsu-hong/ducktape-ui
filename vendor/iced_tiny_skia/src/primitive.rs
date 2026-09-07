@@ -4,6 +4,8 @@ use crate::core::Rectangle;
 pub enum Primitive {
     /// A path filled with some paint.
     Fill {
+        /// The frame clipping region in canvas coordinates.
+        clip_bounds: Rectangle,
         /// The path to fill.
         path: tiny_skia::Path,
         /// The paint to use.
@@ -13,6 +15,8 @@ pub enum Primitive {
     },
     /// A path stroked with some paint.
     Stroke {
+        /// The frame clipping region in canvas coordinates.
+        clip_bounds: Rectangle,
         /// The path to stroke.
         path: tiny_skia::Path,
         /// The paint to use.
@@ -23,6 +27,13 @@ pub enum Primitive {
 }
 
 impl Primitive {
+    /// Returns the clipping region retained from the drawing frame.
+    pub fn clip_bounds(&self) -> Rectangle {
+        match self {
+            Self::Fill { clip_bounds, .. } | Self::Stroke { clip_bounds, .. } => *clip_bounds,
+        }
+    }
+
     /// Returns the visible bounds of the [`Primitive`].
     pub fn visible_bounds(&self) -> Rectangle {
         let (bounds, reach) = match self {

@@ -931,6 +931,23 @@ inside the same bounds. Surface names share the extern component registry.
 This establishes a host rendering boundary, not guest GPU execution.
 
 
+## Declarative canvas on the tree target
+
+A canvas sends copied rectangle, circle, line and path commands to the host.
+Path segments, solid fills, even-odd fill rules, stroke caps/joins/dashes,
+transforms and clips use native Iced geometry. Guest `if` and `for` choose the
+commands; the host paints them. Dimensions and coordinates are widget-local.
+A clipped group starts a fresh drawing frame, matching native `with_clip`:
+its clip rectangle and child geometry use canvas coordinates, and transforms
+outside that frame do not carry into it.
+
+Commands, path segments and dash entries share a 4096-part decode/frame budget.
+The host bounds numbers and group depth before rendering. Wrap geometry in
+`mouse` for opt-in local pointer routes. Native canvas state/events/cache and
+interaction options, host `canvas_width`/`canvas_height` bindings, gradient
+paint, canvas text and raster/SVG drawing remain E190 on this target.
+
+
 ## Native editor surfaces in the example host
 
 A named terminal surface may retain a host-owned PTY independently from its
@@ -948,3 +965,8 @@ Composition, native actions and history never cross as Rust values. See the
 [fixture contract](examples/app-store/README.md#rich-composer-fixture) for its
 semantic notice, byte/history bounds and lifecycle. This is an example provider,
 not a new Ice keyword or an encoding for arbitrary native editor callbacks.
+
+Canvas preparation also shares a 16,384-part host budget across the tree for
+flattened segments and estimated dash expansion. Curves are flattened once
+and those line paths are painted; excess draws and unstable arc-to tangents
+are omitted before native tessellation. This bounds work beyond wire size.

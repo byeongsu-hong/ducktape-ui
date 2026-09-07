@@ -1324,3 +1324,23 @@ Assertion-level regression evidence includes short-lived PTY output lost before
 buffered-read draining, unfinished synchronized output lost before parser flush,
 and native focus remaining set with Tree lease cleanup disabled. Disabling
 native background painting reaches the bundled fixture's ANSI pixel assertion.
+
+### Tree canvas boundary
+
+The actual `app-store-canvas-fixture` wasm test checks rectangle/circle/path
+pixels, translated/scaled groups, clip interiors and exteriors, guest loop and
+conditional geometry, and a native mouse press returning local coordinates to
+guest state. A clip regression was reproduced against the pre-fix tiny-skia
+renderer: the outside pixel was white instead of black. The renderer now
+retains each primitive's frame clip, including after child-frame paste.
+Wire tests cover shared decode/sanitize part budgets, decoder reset after
+rejection, finite bounded values and discarded overdeep groups. Native canvas
+callbacks/state/cache options, size bindings, gradients, text and images remain
+explicit tree-target refusals.
+
+Runtime regressions additionally bound short-dash expansion, share the flattened
+path budget, reject unstable arc-to tangents and preserve implicit subpath
+starts. The software renderer's native clip test covers translated live and
+cached geometry and restoration of the following sibling's clip mask. Removing
+the guards and restoring the previous clip renderer reproduces assertion
+failures; restoration passes the corresponding tests.
