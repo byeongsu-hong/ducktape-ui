@@ -933,6 +933,13 @@ This establishes a host rendering boundary, not guest GPU execution.
 
 ## Native editor surfaces in the example host
 
+A named terminal surface may retain a host-owned PTY independently from its
+mounted widget. The example host's `terminal` capability selects the session;
+no surface argument selects a process or injects input. Its `terminal.events`
+stream reports copied title/running/attention data. Native view teardown clears
+focus and clipboard work without ending the session. These are example-host
+capabilities, not portable native session handles in the wire format.
+
 A named surface may keep a native editor document behind an instance-scoped
 view lease and publish ordinary record values. The app-store `rich_composer`
 example demonstrates this with `RichTextEditor`: guest text echoes preserve

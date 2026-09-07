@@ -60,6 +60,8 @@ const DEFAULT_LINES: u16 = 24;
 const DEFAULT_CELL_WIDTH: u16 = 9;
 const DEFAULT_CELL_HEIGHT: u16 = 20;
 
+static NEXT_VIEW_ID: AtomicU64 = AtomicU64::new(1);
+
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
@@ -134,6 +136,27 @@ pub fn terminal_events(session: Session) -> Subscription<Notice> {
         .subscription()
         .with(session)
         .map(handle_event_batch)
+}
+
+/// Applies at most 256 queued terminal events without waiting for a runtime.
+/// Hosts that already own a frame loop can call this while the surface is
+/// unmounted too. Use either this pump or [`terminal_events`] for a session,
+/// not both: they consume the same queue. `None` means no batch was available.
+pub fn poll_terminal_events(session: &Session) -> Option<Notice> {
+    let terminal = session.terminal.as_ref()?;
+    let mut terminal = lock(terminal);
+    let events = {
+        let mut receiver = terminal.events.try_lock().ok()?;
+        let mut events = Vec::new();
+        for _ in 0..256 {
+            match receiver.try_recv() {
+                Ok(event) => events.push(event),
+                Err(_) => break,
+            }
+        }
+        events
+    };
+    (!events.is_empty()).then(|| terminal.handle_events(events))
 }
 
 pub fn terminal_surface(session: &Session) -> Element<'static, ()> {
@@ -306,11 +329,13 @@ impl From<TerminalSize> for WindowSize {
 
 struct Terminal {
     id: u64,
+    running: bool,
     widget_id: iced::widget::Id,
     term: Arc<FairMutex<Term<EventProxy>>>,
     notifier: Notifier,
     events: Arc<tokio::sync::Mutex<UnboundedReceiver<AlacrittyEvent>>>,
     clipboard_requests: Vec<ClipboardRequest>,
+    focused_view: Option<u64>,
     wakeup_pending: Arc<AtomicBool>,
     size: TerminalSize,
     frame: Arc<TerminalFrame>,
@@ -351,16 +376,18 @@ impl Terminal {
             &size,
             event_proxy.clone(),
         )));
-        let event_loop = EventLoop::new(term.clone(), event_proxy, pty, false, false)?;
+        let event_loop = EventLoop::new(term.clone(), event_proxy, pty, true, false)?;
         let notifier = Notifier(event_loop.channel());
         let _ = event_loop.spawn();
         let mut terminal = Self {
+            running: true,
             id,
             widget_id: iced::widget::Id::unique(),
             term,
             notifier,
             events: Arc::new(tokio::sync::Mutex::new(event_receiver)),
             clipboard_requests: Vec::new(),
+            focused_view: None,
             wakeup_pending,
             size,
             frame: Arc::new(TerminalFrame::empty()),
@@ -383,7 +410,6 @@ impl Terminal {
     }
 
     fn handle_events(&mut self, events: Vec<AlacrittyEvent>) -> Notice {
-        let mut running = true;
         let mut attention = false;
         let mut needs_snapshot = false;
 
@@ -406,7 +432,13 @@ impl Terminal {
                         self.notifier.notify(formatter(color).into_bytes());
                     }
                 }
-                AlacrittyEvent::Exit | AlacrittyEvent::ChildExit(_) => running = false,
+                AlacrittyEvent::Exit => {
+                    self.running = false;
+                    needs_snapshot = true;
+                }
+                // The process can exit before the PTY drains its final bytes.
+                // Event::Exit follows that drain; only it completes the session.
+                AlacrittyEvent::ChildExit(_) => {}
                 AlacrittyEvent::ClipboardStore(kind, text) if self.term.lock().is_focused => {
                     self.clipboard_requests
                         .push(ClipboardRequest::Store(kind, text));
@@ -430,7 +462,7 @@ impl Terminal {
         }
 
         Notice {
-            running,
+            running: self.running,
             title: self.title.clone(),
             attention,
         }
@@ -1097,8 +1129,38 @@ impl LineKind {
     }
 }
 
+#[derive(Debug)]
+struct ViewLease {
+    id: u64,
+    terminal: std::sync::Weak<Mutex<Terminal>>,
+}
+impl ViewLease {
+    fn new(terminal: &Arc<Mutex<Terminal>>) -> Self {
+        Self {
+            id: NEXT_VIEW_ID.fetch_add(1, Ordering::Relaxed),
+            terminal: Arc::downgrade(terminal),
+        }
+    }
+}
+impl Drop for ViewLease {
+    fn drop(&mut self) {
+        if let Some(terminal) = self.terminal.upgrade() {
+            let mut terminal = lock(&terminal);
+            if terminal.focused_view == Some(self.id) {
+                terminal.focused_view = None;
+                terminal.set_focused(false);
+                terminal.clipboard_requests.clear();
+                if terminal.mode().contains(TermMode::FOCUS_IN_OUT) {
+                    terminal.write(b"\x1b[O".to_vec());
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct SurfaceState {
+    lease: Option<ViewLease>,
     session_id: u64,
     focused: bool,
     reported_focus: bool,
@@ -1225,6 +1287,17 @@ fn sync_terminal_focus(terminal: &mut Terminal, state: &mut SurfaceState, now: I
         return false;
     }
 
+    if let Some(lease) = &state.lease {
+        if state.focused {
+            terminal.focused_view = Some(lease.id);
+        } else if terminal.focused_view == Some(lease.id) {
+            terminal.focused_view = None;
+            terminal.clipboard_requests.clear();
+        } else {
+            state.reported_focus = false;
+            return false;
+        }
+    }
     terminal.set_focused(state.focused);
     if terminal.mode().contains(TermMode::FOCUS_IN_OUT) {
         terminal.write(if state.focused {
@@ -1311,6 +1384,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
     fn state(&self) -> tree::State {
         tree::State::new(SurfaceState {
             session_id: self.session_id,
+            lease: Some(ViewLease::new(&self.terminal)),
             font_size: FONT_SIZE,
             wide_font_size: FONT_SIZE,
             cell: Size::new(
@@ -1327,6 +1401,7 @@ impl Widget<(), Theme, iced::Renderer> for TerminalSurface {
         if state.session_id != self.session_id {
             *state = SurfaceState {
                 session_id: self.session_id,
+                lease: Some(ViewLease::new(&self.terminal)),
                 font_size: state.font_size,
                 wide_font_size: state.wide_font_size,
                 cell: state.cell,
@@ -3677,11 +3752,8 @@ mod tests {
             "/bin/sh".into(),
             vec![
                 "-c".into(),
-                // `exec cat` parks the child on a read that never returns. Without
-                // it the shell exits the instant it prints, and the event loop can
-                // tear the pty down before parsing what it wrote — the test then
-                // fails on a teardown race rather than on the round trip it is
-                // about. (That race is a real engine bug; it is not this test's.)
+                // Keep the reader alive while checking the keyboard round trip;
+                // one-shot exit draining has its own polling regression below.
                 "IFS= read -r value; [ \"$value\" = \"hello world\" ] && \
                  printf SHELL_SPACE_OK; exec cat"
                     .into(),
@@ -3698,5 +3770,193 @@ mod tests {
         terminal.write(b"world\r".to_vec());
 
         wait_for_visible(&mut terminal, "SHELL_SPACE_OK");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_poll_updates_a_real_pty_without_an_async_runtime() {
+        let session = super::spawn_session(
+            "/bin/sh".into(),
+            vec!["-c".into(), "printf POLL_READY; exec cat".into()],
+            std::env::current_dir().unwrap(),
+            "Polling terminal".into(),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut saw_notice = false;
+        loop {
+            if let Some(notice) = super::poll_terminal_events(&session) {
+                assert!(notice.running);
+                saw_notice = true;
+            }
+            let visible = super::lock(session.terminal.as_ref().unwrap())
+                .frame
+                .text
+                .iter()
+                .map(|run| run.content.as_str())
+                .collect::<String>();
+            if visible.contains("POLL_READY") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "PTY output did not reach the polled native frame"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            saw_notice,
+            "the host must receive the batch that made the frame visible"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_poll_bounds_each_batch_and_keeps_exit_and_final_frame() {
+        let session = super::spawn_session(
+            "/bin/sh".into(),
+            vec!["-c".into(), "exec cat".into()],
+            std::env::current_dir().unwrap(),
+            "Polling terminal".into(),
+        )
+        .unwrap();
+        let (sender, receiver) = mpsc::unbounded_channel();
+        super::lock(session.terminal.as_ref().unwrap()).events =
+            Arc::new(tokio::sync::Mutex::new(receiver));
+        for index in 0..300 {
+            sender
+                .send(AlacrittyEvent::Title(format!("title-{index}")))
+                .unwrap();
+        }
+        assert_eq!(
+            super::poll_terminal_events(&session).unwrap().title,
+            "title-255"
+        );
+        assert_eq!(
+            super::poll_terminal_events(&session).unwrap().title,
+            "title-299"
+        );
+        assert!(super::poll_terminal_events(&session).is_none());
+        {
+            let terminal = super::lock(session.terminal.as_ref().unwrap());
+            let mut parser: alacritty_terminal::vte::ansi::Processor =
+                alacritty_terminal::vte::ansi::Processor::new();
+            parser.advance(&mut *terminal.term.lock(), b"FINAL_FRAME");
+        }
+        sender.send(AlacrittyEvent::Exit).unwrap();
+        assert!(!super::poll_terminal_events(&session).unwrap().running);
+        let visible = super::lock(session.terminal.as_ref().unwrap())
+            .frame
+            .text
+            .iter()
+            .map(|run| run.content.as_str())
+            .collect::<String>();
+        assert!(
+            visible.contains("FINAL_FRAME"),
+            "exit must snapshot the final parsed grid"
+        );
+        sender
+            .send(AlacrittyEvent::Title("late title".into()))
+            .unwrap();
+        let notice = super::poll_terminal_events(&session).unwrap();
+        assert!(
+            !notice.running,
+            "a later batch cannot resurrect an exited session"
+        );
+        assert_eq!(notice.title, "late title");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_poll_keeps_final_output_from_short_lived_children() {
+        for index in 0..16 {
+            let expected = format!("FINAL_OUTPUT_{index}");
+            let session = super::spawn_session(
+                "/bin/sh".into(),
+                vec![
+                    "-c".into(),
+                    if index % 2 == 0 {
+                        format!("printf {expected}")
+                    } else {
+                        format!("printf '\\033[?2026h{expected}'")
+                    },
+                ],
+                std::env::current_dir().unwrap(),
+                "Short lived terminal".into(),
+            )
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            loop {
+                if let Some(notice) = super::poll_terminal_events(&session)
+                    && !notice.running
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "terminal exit was not delivered");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let visible = super::lock(session.terminal.as_ref().unwrap())
+                .frame
+                .text
+                .iter()
+                .map(|run| run.content.as_str())
+                .collect::<String>();
+            assert!(
+                visible.contains(&expected),
+                "completed session lost its final PTY output: {visible:?}, expected {expected}"
+            );
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn terminal_view_lease_clears_focus_and_discards_hidden_clipboard_requests() {
+        use iced::advanced::Widget;
+        let session = super::spawn_session(
+            "/bin/sh".into(),
+            vec!["-c".into(), "exec cat".into()],
+            std::env::current_dir().unwrap(),
+            "Lease".into(),
+        )
+        .unwrap();
+        let terminal = session.terminal.as_ref().unwrap().clone();
+        let surface = super::TerminalSurface {
+            terminal: terminal.clone(),
+            session_id: session.id,
+        };
+        let mut state = surface.state();
+        {
+            let state = state.downcast_mut::<super::SurfaceState>();
+            state.focused = true;
+            super::sync_terminal_focus(&mut super::lock(&terminal), state, Instant::now());
+        }
+        drop(surface);
+        assert!(
+            super::lock(&terminal).term.lock().is_focused,
+            "Element rebuild must retain Tree focus"
+        );
+        super::lock(&terminal).handle_events(vec![super::AlacrittyEvent::ClipboardStore(
+            super::ClipboardType::Clipboard,
+            "visible".into(),
+        )]);
+        assert_eq!(super::lock(&terminal).clipboard_requests.len(), 1);
+        drop(state);
+        let mut terminal = super::lock(&terminal);
+        assert!(
+            !terminal.term.lock().is_focused,
+            "programmatic unmount must clear native focus"
+        );
+        assert!(
+            terminal.clipboard_requests.is_empty(),
+            "unmount must discard pending clipboard work"
+        );
+        terminal.handle_events(vec![super::AlacrittyEvent::ClipboardStore(
+            super::ClipboardType::Clipboard,
+            "hidden".into(),
+        )]);
+        assert!(
+            terminal.clipboard_requests.is_empty(),
+            "hidden output must not queue clipboard work"
+        );
+        assert!(terminal.running, "view release must not end PTY session");
     }
 }

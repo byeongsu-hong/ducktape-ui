@@ -1306,3 +1306,21 @@ oversized replacement that should leave the original selected draft intact.
 Bypassing registry reuse fails the Tree lease identity assertion. Sharing the
 registry across guests makes a second guest replace the first guest's live
 draft. Restored code must pass the same assertions.
+
+
+### Native terminal host boundary
+
+The app-store terminal fixture crosses the actual wasm boundary with a native
+PTY. `terminal_tests` verifies keyboard input via OSC title feedback, ANSI RGB
+pixels, hidden output and exit, final-frame remount, bounded metadata while the
+guest rests with a full reply queue, capability refusal, cancellation and guest
+ownership isolation. Commands are in the app-store native terminal fixture.
+Native `terminal_poll_` tests cover the 256-event bound, sticky exit, final frame
+and real short-lived children, including unfinished synchronized updates.
+`terminal_view_lease_` checks Tree-owned focus and clipboard cleanup without a
+mouse blur, retaining the live process after unmount.
+
+Assertion-level regression evidence includes short-lived PTY output lost before
+buffered-read draining, unfinished synchronized output lost before parser flush,
+and native focus remaining set with Tree lease cleanup disabled. Disabling
+native background painting reaches the bundled fixture's ANSI pixel assertion.

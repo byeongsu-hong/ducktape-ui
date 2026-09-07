@@ -5,7 +5,7 @@
 # and their windows live here.
 [workspace]
 resolver = "2"
-members = ["apps/todo", "apps/counter", "apps/clock", "apps/activity", "apps/chaos", "host", "tests/surface-guest", "tests/clipboard-guest", "tests/widget-guest", "tests/retained-guest", "tests/composer-guest"]
+members = ["apps/todo", "apps/counter", "apps/clock", "apps/activity", "apps/chaos", "host", "tests/surface-guest", "tests/clipboard-guest", "tests/widget-guest", "tests/retained-guest", "tests/composer-guest", "tests/terminal-guest"]
 
 [workspace.dependencies]
 ui-lang = { path = "../../crates/ui-lang" }
@@ -19,6 +19,7 @@ ui-lang-guest = { path = "../../crates/ui-lang-guest" }
 iced = { version = "=0.14.0", default-features = false, features = ["advanced"] }
 
 [patch.crates-io]
+alacritty_terminal = { path = "../../vendor/alacritty_terminal" }
 iced_tiny_skia = { path = "../../vendor/iced_tiny_skia" }
 iced_winit = { path = "../../vendor/iced_winit" }
 

@@ -222,6 +222,9 @@ pub struct Guest {
     /// guest asked to hear about it.
     pub(crate) dark: Option<bool>,
     theme_subscriptions: Vec<u64>,
+    terminal: Option<Arc<std::sync::Mutex<crate::terminal::Terminal>>>,
+    terminal_subscriptions: Vec<u64>,
+    terminal_notice: Option<wire::SurfaceValue>,
     /// The trap that ended the app, if one did. A faulted guest never ticks again.
     pub(crate) fault: Option<String>,
     /// Whether the widget has told the store about that fault. Nothing else
@@ -408,6 +411,16 @@ fn component(entry: &CatalogEntry) -> Result<(Component, bool), String> {
 
 impl Guest {
     fn load(entry: &CatalogEntry) -> Result<Self, String> {
+        Self::load_with_terminal(
+            entry,
+            std::env::var_os("ICE_TERMINAL_PROGRAM").map(Into::into),
+        )
+    }
+
+    fn load_with_terminal(
+        entry: &CatalogEntry,
+        program: Option<std::path::PathBuf>,
+    ) -> Result<Self, String> {
         let path = &entry.path;
         let engine = engine();
         let started = Instant::now();
@@ -459,10 +472,27 @@ impl Guest {
             let trap = format!("{path}: init trapped: {}", first_line(&error));
             return Err(panic_message(&mut store).unwrap_or(trap));
         }
+        let terminal = if entry.capabilities.iter().any(|cap| cap.name == "terminal") {
+            Some(Arc::new(std::sync::Mutex::new(
+                crate::terminal::Terminal::configured(program)?,
+            )))
+        } else {
+            None
+        };
         LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
         let log_session = Arc::new(crate::surfaces::log::Session::default());
+        let mut surfaces = crate::surfaces::registry(log_session.clone());
+        if let Some(terminal) = &terminal {
+            surfaces.insert(
+                "terminal".into(),
+                crate::terminal::provider(terminal.clone()),
+            );
+        }
         Ok(Self {
-            surfaces: crate::surfaces::registry(log_session.clone()),
+            surfaces,
+            terminal,
+            terminal_subscriptions: Vec::new(),
+            terminal_notice: None,
             log_session,
             entry: entry.clone(),
             store,
@@ -546,13 +576,34 @@ impl Guest {
         if self.fault.is_some() {
             return Wake::default();
         }
+        if let Some(terminal) = &self.terminal
+            && let Some(mut notice) = terminal.lock().expect("host terminal").poll(now)
+        {
+            if let Some(wire::SurfaceValue::Record { fields, .. }) = &self.terminal_notice
+                && fields.iter().any(|(name, value)| {
+                    name == "attention" && *value == wire::SurfaceValue::Bool(true)
+                })
+                && let wire::SurfaceValue::Record { fields, .. } = &mut notice
+                && let Some((_, value)) = fields.iter_mut().find(|(name, _)| name == "attention")
+            {
+                *value = wire::SurfaceValue::Bool(true);
+            }
+            if !self.terminal_subscriptions.is_empty() {
+                self.terminal_notice = Some(notice);
+            }
+        }
         // Not "nothing to do" but "not yet": the work is waiting, and so is
         // this guest, because its last tick cost the window more than a
         // frame. It is woken when its rest is up.
         if let Some(until) = self.resting(now) {
             self.skipped += 1;
             return Wake {
-                at: Some(until),
+                at: Some(
+                    self.terminal
+                        .as_ref()
+                        .and_then(|terminal| terminal.lock().expect("host terminal").next_poll())
+                        .map_or(until, |poll| poll.min(until)),
+                ),
                 published: false,
             };
         }
@@ -674,6 +725,7 @@ impl Guest {
             && !self.frame.busy
             && self.widgets.is_empty()
             && self.pending.is_empty()
+            && self.terminal_notice.is_none()
             && self.inbox.lock().expect("inbox").is_empty()
             && !self.due.iter().any(|(at, _)| *at <= now)
             && !self.tickers.iter().any(|ticker| ticker.next <= now)
@@ -685,6 +737,11 @@ impl Guest {
             .iter()
             .map(|(at, _)| *at)
             .chain(self.tickers.iter().map(|ticker| ticker.next))
+            .chain(
+                self.terminal
+                    .as_ref()
+                    .and_then(|terminal| terminal.lock().expect("host terminal").next_poll()),
+            )
             .chain(self.frame.busy.then_some(now))
             .chain((!self.widgets.is_empty()).then_some(now))
             .min()
@@ -707,6 +764,7 @@ impl Guest {
         );
         self.tickers.retain(|ticker| ticker.id != id);
         self.theme_subscriptions.retain(|theme| *theme != id);
+        self.terminal_subscriptions.retain(|pending| *pending != id);
         // Saturating because the subscriber list is keyed by the inbox's
         // address, which a dropped instance can leave behind for the next one.
         if bus::cancel(id, &self.inbox) {
@@ -781,6 +839,15 @@ impl Guest {
         self.pending
             .extend(ready.into_iter().map(|(_, event)| event));
         self.due = later;
+        if let Some(notice) = self.terminal_notice.take() {
+            for &id in &self.terminal_subscriptions {
+                self.pending.push(wire::Event::Response {
+                    id,
+                    result: Ok(wire::encode(&notice)),
+                    done: false,
+                });
+            }
+        }
         for ticker in &mut self.tickers {
             if ticker.next <= now {
                 self.pending.push(wire::Event::Response {
@@ -830,6 +897,28 @@ impl Guest {
             return;
         }
         match (capability, operation) {
+            ("terminal", "events") => {
+                if !payload.is_empty() {
+                    self.reply(now, id, Err("terminal.events takes no payload".into()));
+                } else if self.terminal_subscriptions.len() >= 32 || self.due.len() >= MAX_DUE {
+                    self.reply(
+                        now,
+                        id,
+                        Err("too many terminal subscriptions or pending replies".into()),
+                    );
+                } else if let Some(terminal) = &self.terminal {
+                    let notice = terminal.lock().expect("host terminal").notice(false);
+                    self.terminal_subscriptions.push(id);
+                    self.due.push((
+                        now,
+                        wire::Event::Response {
+                            id,
+                            result: Ok(wire::encode(&notice)),
+                            done: false,
+                        },
+                    ));
+                }
+            }
             ("clipboard", operation) => {
                 if self.clipboard.len() + self.due.len() >= MAX_DUE {
                     self.reply(now, id, Err("too many pending clipboard requests".into()));
@@ -1459,3 +1548,7 @@ mod retained_tests;
 #[cfg(test)]
 #[path = "composer_tests.rs"]
 mod composer_tests;
+
+#[cfg(all(test, unix))]
+#[path = "terminal_tests.rs"]
+mod terminal_tests;

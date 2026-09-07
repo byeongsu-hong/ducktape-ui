@@ -82,7 +82,7 @@ that binary into an isolated view package.
 | Phase | Work in Ice / app-store | Evidence required before calling it complete |
 | --- | --- | --- |
 | 3a — surface values and routes | Typed scalar arguments/events and records/lists/options for data-backed surfaces (implemented, including nested validation). Recursive records and sum types remain pending. Preserve borrowed-call syntax by copying wire values. Reject opaque native values. | Actual bundled wasm uses mixed arguments and link/event routes; host-rendered interaction returns the right payload; wrong payload type and unknown surface are exercised; wire limits and patches remain bounded. |
-| 3b — host surfaces and retained state | Named shader and markdown lowering implemented; Guest-owned registries and a retained native log session/view boundary implemented. A native rich-composer input/semantic-notice boundary is implemented; application highlighting, page semantic adapters and terminal providers remain. Use representative module examples. | Markdown link route; editor edit/submit/selection/IME behavior; terminal/log resource lifecycle, two concurrent instances and cleanup. A no-op provider or placeholder does not count as parity. |
+| 3b — host surfaces and retained state | Named shader and markdown lowering implemented; Guest-owned registries and a retained native log session/view boundary implemented. A native rich-composer input/semantic-notice boundary is implemented; a host-selected native terminal provider with background polling is implemented; application highlighting, page semantic adapters and module process/session adapters remain. Use representative module examples. | Markdown link route; editor edit/submit/selection/IME behavior; terminal/log resource lifecycle, two concurrent instances and cleanup. A no-op provider or placeholder does not count as parity. |
 | 3c — declarative graphics and responsive layout | Canvas geometry data and host-evaluated container rules, with widget-local opt-in measurements only. | Geometry rendering and interaction; multiple container widths with correct branches and no guest layout callback; bounded sensor feedback. |
 | 4a — actual app layouts first | stack/hover/overlay/keyed/lazy/flex/pin/tooltip; preserve union sizing, hit routing, identity, virtualization and scroll behavior. | Representative chat list and menus, page overlay, file/forge list; reorder/edit/scroll assertions and frame measurements, not compile-only coverage. |
 | 4b — remaining content/layout/style | rich text/markdown/qr/image/combo, table/pane grid/theme/themer/float/resize handle and remaining supported surface shapes. | Per-feature native/wire behavior checks and real wasm bundle builds; preserve intentional rejection of native callbacks. |
@@ -169,3 +169,15 @@ composers, demonstrated by an actual bundled guest. It does not port the
 existing opaque `ComposerEvent` API, Ducktape's Markdown highlighter, submission
 policies, page block/menu/comment semantics, or terminal process/session adapter.
 Those remain explicit work; the existing Ducktape sources are unchanged.
+
+
+### Native terminal boundary
+
+The app-store terminal fixture now binds a real host-selected PTY to one guest.
+Native keyboard/ANSI output, background output while unmounted, exit and final
+frame remount, stream cancellation and separate instance ownership are covered.
+Native Tree lifetime clears focus and pending clipboard work on unmount. The
+engine drains buffered reads and unfinished synchronized updates before exit.
+This closes the example-host terminal provider prerequisite in phase 3b; actual
+Ducktape agent/SSH process selection, session routing and policy are still host
+integration work. No Ducktape files are changed.

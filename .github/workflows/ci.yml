@@ -579,6 +579,16 @@ jobs:
       - name: Verify native composer input through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_composer_ -- --ignored
+      - name: Bundle the native terminal fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-terminal-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/terminal-fixture
+      - name: Verify native terminal input and lifetime through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host terminal_tests -- --ignored
+      - name: Verify native PTY draining and view leases
+        run: cargo test --locked -p ui-lang-components --features terminal --lib ui::terminal::tests
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored
