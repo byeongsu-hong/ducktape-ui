@@ -858,6 +858,11 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  svg \"<svg/>\" memory color=fg hover=primary\n",
     ),
+    emitted(
+        "media: inherited svg ink",
+        FLIP,
+        "  button label=\"Icon\" -> flip false\n    svg \"<svg/>\" memory color=inherit\n",
+    ),
     refused(
         "media: svg style callback",
         "",

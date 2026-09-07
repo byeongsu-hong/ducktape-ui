@@ -1124,12 +1124,7 @@ fn svg(
         options.svg_style.is_some(),
         "an svg style callback",
     )?;
-    refuse_when(
-        program,
-        origin,
-        options.svg_inherits_button_ink,
-        "`color=inherit` on an svg",
-    )?;
+    let inherit = options.svg_inherits_button_ink;
     let bytes = if options.svg_memory {
         match media.source_type {
             Type::Bytes => resolved_expr_use_code(program, media.source, env, ValueMode::Owned)?,
@@ -1209,7 +1204,7 @@ fn svg(
         .map(|opacity| clamped_f32_code(opacity, "0.0", "1.0", program, env))
         .transpose()?;
     Ok(format!(
-        "{{ let (__hash, __bytes) = {SLOTS}::picture({bytes}); {WIRE}::Node::Svg {{ key: {}, hash: __hash, bytes: __bytes, label: {}, color: {}, hover: {}, fit: {}, rotation: {}, opacity: {}, width: {}, height: {} }} }}",
+        "{{ let (__hash, __bytes) = {SLOTS}::picture({bytes}); {WIRE}::Node::Svg {{ inherit_button_ink: {inherit}, key: {}, hash: __hash, bytes: __bytes, label: {}, color: {}, hover: {}, fit: {}, rotation: {}, opacity: {}, width: {}, height: {} }} }}",
         key_code(identity, "media", origin, scope, env, program)?,
         option_code(label),
         option_code(color),

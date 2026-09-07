@@ -6,11 +6,19 @@ theme contract AppTheme
   fg
   primary
   danger
+  green
+  blue
+  yellow
+  magenta
 palette app for AppTheme
   bg #000000
   fg #ffffff
   primary #333333
   danger #ff0000
+  green #00ff00
+  blue #0000ff
+  yellow #ffff00
+  magenta #ff00ff
 font ui family="Geist" default=true
 recipe focus_action for button
   @px-4 py-2 font-semibold bg-primary text-fg rounded-8px hover:bg-primary disabled:opacity-50 focus-visible:border-danger
@@ -72,6 +80,40 @@ subscribe
   every 16ms -> pulse
 view
   col
+    row
+      button #ink -> ignored
+        with
+          label="Ink"
+          w=80.0
+          h=48.0
+          p=0.0
+        row gap=8.0
+          svg "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16'/></svg>" memory
+            with
+              w=16.0
+              h=16.0
+              color=inherit
+          svg "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16'/></svg>" memory
+            with
+              w=16.0
+              h=16.0
+              color=magenta
+        active text=danger
+        hovered text=green
+        pressed text=blue
+      button #disabled-ink -> ignored
+        with
+          label="Disabled ink"
+          w=48.0
+          h=48.0
+          p=0.0
+          disabled=true
+        svg "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16'/></svg>" memory
+          with
+            w=16.0
+            h=16.0
+            color=inherit
+        disabled text=yellow
     input "First" #first <-> first
     input "Second" #second <-> second
     button "Cancel focus" #cancel-focus -> canceled_focus
