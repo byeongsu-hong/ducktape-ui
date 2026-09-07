@@ -2343,7 +2343,7 @@ fn surface(
         // Iced Shader defaults to 100x100. The host element is constrained
         // by the same dimensions, including when its provider is missing.
         format!(
-            "{WIRE}::Node::Container {{ key: ::std::format!(\"{{}}/@bounds\", __surface_key), width: ::std::option::Option::Some({}), height: ::std::option::Option::Some({}), padding: ::std::option::Option::None, align_x: ::std::option::Option::None, align_y: ::std::option::Option::None, background: ::std::option::Option::None, border: ::std::option::Option::None, snap: ::std::option::Option::None, content: ::std::boxed::Box::new({surface}) }}",
+            "{WIRE}::Node::Container {{ max_width: None, max_height: None, clip: false, key: ::std::format!(\"{{}}/@bounds\", __surface_key), width: ::std::option::Option::Some({}), height: ::std::option::Option::Some({}), padding: ::std::option::Option::None, align_x: ::std::option::Option::None, align_y: ::std::option::Option::None, background: ::std::option::Option::None, border: ::std::option::Option::None, snap: ::std::option::Option::None, content: ::std::boxed::Box::new({surface}) }}",
             dimension(width)?,
             dimension(height)?,
         )
