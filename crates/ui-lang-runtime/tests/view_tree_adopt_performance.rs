@@ -19,6 +19,7 @@ use ui_lang_wire as wire;
 
 fn input(nth: usize) -> wire::Node {
     wire::Node::Input {
+        options: Default::default(),
         key: format!("App/field/{nth}"),
         placeholder: String::new(),
         value: String::new(),
@@ -26,7 +27,7 @@ fn input(nth: usize) -> wire::Node {
         on_submit: None,
         width: None,
         secure: false,
-        style: wire::InputStyle::default(),
+        style: Box::default(),
     }
 }
 

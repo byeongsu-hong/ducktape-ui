@@ -234,6 +234,9 @@ fn gen_input_face(rng: &mut Rng) -> InputFace {
 
 fn gen_input_style(rng: &mut Rng) -> InputStyle {
     InputStyle {
+        utility: gen_input_face(rng),
+        focus_border: gen_opt_color(rng),
+        focused_hovered: Some(gen_input_face(rng)),
         active: gen_input_face(rng),
         hovered: rng.next_bool().then(|| gen_input_face(rng)),
         focused: rng.next_bool().then(|| gen_input_face(rng)),
@@ -354,6 +357,21 @@ fn gen_button_label(rng: &mut Rng) -> Node {
 
 fn gen_input(rng: &mut Rng) -> Node {
     Node::Input {
+        options: InputOptions {
+            label: gen_string(rng),
+            description: Some(gen_string(rng)),
+            disabled: rng.next_bool(),
+            padding: gen_opt_edges(rng),
+            text_size: gen_opt_f32(rng),
+            line_height: gen_opt_f32(rng),
+            align: Some(AlignX::Center),
+            font: Some(NamedFont {
+                family: FontFamily::Named(gen_string(rng)),
+                weight: Weight::Normal,
+                stretch: FontStretch::Normal,
+                style: FontStyle::Normal,
+            }),
+        },
         key: gen_key(rng),
         placeholder: gen_string(rng),
         value: gen_string(rng),
@@ -361,7 +379,7 @@ fn gen_input(rng: &mut Rng) -> Node {
         on_submit: rng.next_bool().then(|| rng.next_u64() as u32),
         width: gen_opt_length(rng),
         secure: rng.next_bool(),
-        style: gen_input_style(rng),
+        style: Box::new(gen_input_style(rng)),
     }
 }
 
@@ -1361,6 +1379,7 @@ fn check_bounds(
             check_length(height, ctx);
         }
         Node::Input {
+            options,
             placeholder,
             value,
             width,
@@ -1370,10 +1389,31 @@ fn check_bounds(
             check_string(placeholder, ctx, "placeholder");
             check_string(value, ctx, "input value");
             check_length(width, ctx);
+            check_string(&options.label, ctx, "input label");
+            if let Some(value) = &options.description {
+                check_string(value, ctx, "input description");
+            }
+            check_edges(&options.padding, ctx);
+            if let Some(value) = options.text_size {
+                assert!(value.is_finite() && (f32::EPSILON..=TEXT_PIXEL_BOUND).contains(&value));
+            }
+            if let Some(value) = options.line_height {
+                assert!(value.is_finite() && (f32::EPSILON..=16.0).contains(&value));
+            }
+            if let Some(NamedFont {
+                family: FontFamily::Named(name),
+                ..
+            }) = &options.font
+            {
+                check_string(name, ctx, "input font");
+            }
+            check_color(&style.focus_border, ctx);
             for face in [
+                Some(&style.utility),
                 Some(&style.active),
                 style.hovered.as_ref(),
                 style.focused.as_ref(),
+                style.focused_hovered.as_ref(),
                 style.disabled.as_ref(),
             ]
             .into_iter()

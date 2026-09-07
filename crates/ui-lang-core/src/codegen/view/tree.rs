@@ -1266,43 +1266,12 @@ fn input(
         input.binding.secret().is_some(),
         "a secret input",
     )?;
-    refuse_when(program, origin, input.hint.is_some(), "an input hint")?;
-    refuse_when(
-        program,
-        origin,
-        input.disabled.is_some(),
-        "`disabled=` on an input",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        input.accessibility_label.is_some() || input.accessibility_description.is_some(),
-        "an accessibility label on an input",
-    )?;
     refuse_when(program, origin, input.paste.is_some(), "a paste route")?;
     refuse_when(
         program,
         origin,
-        input.padding.is_some()
-            || input.text_size.is_some()
-            || input.line_height.is_some()
-            || input.align.is_some()
-            || input.font.is_some()
-            || input.icon.is_some()
-            || input.custom_style.is_some(),
+        input.icon.is_some() || input.custom_style.is_some(),
         "this input option",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        input.styles.focused_hovered.is_some(),
-        "a `focused hovered` input state",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        !input.utility_style.is_empty(),
-        "a utility style on an input",
     )?;
     let state = resolved_input_state(input, env, program)?;
     let binding_constructor = match &state.state {
@@ -1353,12 +1322,105 @@ fn input(
         Some(expression) => resolved_expr_use_code(program, expression, env, ValueMode::Owned)?,
         None => "false".into(),
     };
+    let string = |value| resolved_expr_use_code(program, value, env, ValueMode::Owned);
+    let hint = input
+        .hint
+        .map(string)
+        .transpose()?
+        .unwrap_or_else(|| "\"\"".into());
+    let label = input
+        .accessibility_label
+        .map(string)
+        .transpose()?
+        .unwrap_or_else(|| rust_string(&input.label));
+    let description = option_code(
+        input
+            .accessibility_description
+            .map(string)
+            .transpose()?
+            .map(|v| format!("({v}).to_string()")),
+    );
+    let disabled = input
+        .disabled
+        .map(string)
+        .transpose()?
+        .unwrap_or_else(|| "false".into());
+    let utilities = &input.utility_style;
+    let padding = option_code(match input.padding {
+        Some(value) => Some(format!("{WIRE}::Edges::all(({}) as f32)", string(value)?)),
+        None => utilities.has_padding().then(|| {
+            format!(
+                "{WIRE}::Edges {{ top: {}f32, right: {}f32, bottom: {}f32, left: {}f32 }}",
+                utilities.padding[0],
+                utilities.padding[1],
+                utilities.padding[2],
+                utilities.padding[3]
+            )
+        }),
+    });
+    let size = option_code(match input.text_size {
+        Some(value) => Some(format!("({}) as f32", string(value)?)),
+        None => program
+            .settings()
+            .default_text_size
+            .map(|value| format!("{:?}f32", value.min(f64::from(f32::MAX)))),
+    });
+    let line_height = option_code(
+        input
+            .line_height
+            .map(string)
+            .transpose()?
+            .map(|v| format!("({v}) as f32")),
+    );
+    let align = option_code(input.align.map(|a| format!("{WIRE}::AlignX::{a:?}")));
+    let fallback = ResolvedDefaultFont {
+        family: FontFamily::SansSerif,
+        weight: FontWeight::Normal,
+        stretch: FontStretch::Normal,
+        style: FontStyle::Normal,
+        origin,
+    };
+    let font = option_code(match &input.font {
+        Some(ResolvedTextFont::Named(font)) => Some(text::named_font(font, None)),
+        Some(ResolvedTextFont::Default) => Some(text::named_font(&fallback, None)),
+        Some(ResolvedTextFont::Monospace) => Some(text::named_font(
+            &ResolvedDefaultFont {
+                family: FontFamily::Monospace,
+                ..fallback
+            },
+            None,
+        )),
+        None => program
+            .settings()
+            .default_font
+            .as_ref()
+            .map(|font| text::named_font(font, None)),
+    });
+    let options = format!(
+        "{WIRE}::InputOptions {{ label: ({label}).to_string(), description: {description}, disabled: {disabled}, padding: {padding}, text_size: {size}, line_height: {line_height}, align: {align}, font: {font} }}"
+    );
+    let utility = format!(
+        "{WIRE}::InputFace {{ background: {}, border: Some({WIRE}::Border {{ color: {}, width: {}, radius: {} }}), ..Default::default() }}",
+        option_code(utilities.background.as_ref().map(rgba_code)),
+        option_code(utilities.border_color.as_ref().map(rgba_code)),
+        option_code(
+            (utilities.border_width != 0).then(|| format!("{}f32", utilities.border_width))
+        ),
+        option_code((utilities.radius != 0).then(|| format!("[{}f32; 4]", utilities.radius))),
+    );
+    let focus_border = option_code(utilities.focus_border_color.as_ref().map(rgba_code));
+    let focused_hovered = option_code(input_face_code(
+        input.styles.focused_hovered.as_ref(),
+        program,
+        env,
+        origin,
+    )?);
     let key = key_code(identity, "input", origin, scope, env, program)?;
     let active = input_face_code(input.styles.active.as_ref(), program, env, origin)?
         .unwrap_or_else(|| format!("{WIRE}::InputFace::default()"));
     Ok(format!(
-        "{WIRE}::Node::Input {{ key: {key}, placeholder: ::std::string::String::from({}), value: ({}).to_string(), on_input: {}, on_submit: {}, width: {}, secure: ({secure}), style: {WIRE}::InputStyle {{ active: {active}, hovered: {}, focused: {}, disabled: {} }} }}",
-        rust_string(&input.label),
+        "{WIRE}::Node::Input {{ options: {options}, key: {key}, placeholder: ::std::string::String::from({}), value: ({}).to_string(), on_input: {}, on_submit: {}, width: {}, secure: ({secure}), style: ::std::boxed::Box::new({WIRE}::InputStyle {{ utility: {utility}, focus_border: {focus_border}, focused_hovered: {focused_hovered}, active: {active}, hovered: {}, focused: {}, disabled: {} }}) }}",
+        hint,
         state.code,
         handler_code(
             "::std::string::String",
@@ -1367,7 +1429,13 @@ fn input(
             "move |__sent: ::std::string::String| ::std::option::Option::Some(__route(__sent))"
         ),
         option_code(on_submit),
-        dimension_code(input.width.as_ref(), false, program, env, origin)?,
+        dimension_code(
+            input.width.as_ref(),
+            utilities.width_fill,
+            program,
+            env,
+            origin
+        )?,
         option_code(input_face_code(
             input.styles.hovered.as_ref(),
             program,

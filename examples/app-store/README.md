@@ -423,10 +423,10 @@ For module packaging requirements and the connected implementation phases, see
   selectable. Tracked graphemes consume the frame node budget. Boxes carry
   `max-w=`, `max-h=`, clipping and padding; buttons accept padding utilities.
   Host and guests must be rebuilt together for these wire fields.
-  The actual Ducktape typed node root now reaches `components/icon.ice:7`
-  (`style=icon_tint(tone)`). Rust style callbacks remain deliberately refused;
-  that icon needs declarative palette colors. SVG button-ink inheritance,
-  and the opaque activity-log surface slot remain prerequisites.
+  After input presentation support, the actual Ducktape typed node root passes
+  the shared kit and input options and reaches the opaque `node_log_timeline`
+  surface slot. The host must own that state and expose data-only arguments and
+  events through the existing surface registry; this needs no new wire variant.
 
 - Button `checked=`, `expanded=` and `description=` cross to the host's native
   accessibility wrapper. False remains distinct from omission; descriptions
@@ -958,3 +958,20 @@ states. Explicit SVG palette colors stay independent. The guest copies only
 the inheritance flag; the host owns the existing native button ink cell.
 Rust SVG style callbacks remain refused. Rebuild host and guests together
 for the SVG wire field.
+
+### Tree input presentation
+
+Tree inputs preserve native label semantics: the positional string (or
+`label=` override) is the accessible name, while `hint=` supplies the visible
+placeholder. Description and disabled state reach the native accessibility
+wrapper; disabled inputs do not produce edits or submit events.
+
+Padding, text size, relative line height, horizontal alignment and named or
+default/mono fonts are copied. Absent typography options use guest app defaults.
+Input recipes preserve utility padding and fill width, with explicit options
+winning, and utility colors/borders precede active and status overrides. Focus
+ring color applies after active and before explicit focused/focused-hovered
+styles. Text metadata shares frame budgets and layout numbers are bounded.
+Rebuild hosts and guests together for InputOptions and the extended InputStyle.
+Secret handles, input icons, paste routes and Rust style callbacks remain
+refused.

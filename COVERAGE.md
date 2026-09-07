@@ -1508,3 +1508,25 @@ mounted widget tests. The raster fixture uses tiny-skia, Light theme, 600x1000,
 scale 1 and the existing Geist font registry.
 Removing focus-ring forwarding also fails the scoped keyboard-ring assertion;
 restoring it passes all six mounted widget tests.
+
+### Tree input presentation evidence
+
+The Tree construct table compiles hints, accessible metadata, disabled state,
+layout options, fonts, input recipes and focused-hovered overrides. Hostile
+frames generate those styles and metadata with excessive/nonfinite numbers,
+and check their bounds after sanitizing. Input labels, descriptions and named
+font families consume the shared text budget.
+
+The actual widget wasm fixture's native AccessKit snapshot separates label
+from hint and description, measures 200x28 for a 13px input with 1.2 line height
+and explicit 6.2px padding overriding its recipe, and checks guest default 19px
+typography. It checks default Geist vs explicit default font descriptors. A
+native click and keyboard event edit the guest input; a separate guest button
+disables it, and a different character must leave the value unchanged.
+
+Red evidence: ignoring the disabled flag changes the value from X to Y and
+fails the native edit assertion. Sending X twice was insufficient because a
+selection replacement could preserve X; the test now sends Y and verifies the
+guest disabled state first. Removing the focus-border pass fails the native
+style precedence assertion (red instead of green). CI runs the widget fixture
+through the `bundled_widget_` filter, including these assertions.

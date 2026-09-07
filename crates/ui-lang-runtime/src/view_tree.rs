@@ -614,7 +614,13 @@ fn input_style(
     status: widget::text_input::Status,
 ) -> widget::text_input::Style {
     let mut resolved = widget::text_input::default(theme, status);
+    apply_input_face(style.utility, &mut resolved);
     apply_input_face(style.active, &mut resolved);
+    if matches!(status, widget::text_input::Status::Focused { .. })
+        && let Some(color_value) = style.focus_border
+    {
+        resolved.border.color = color(color_value);
+    }
     let state = match status {
         widget::text_input::Status::Active => None,
         widget::text_input::Status::Hovered => style.hovered,
@@ -622,6 +628,13 @@ fn input_style(
         widget::text_input::Status::Disabled => style.disabled,
     };
     if let Some(face) = state {
+        apply_input_face(face, &mut resolved);
+    }
+    if matches!(
+        status,
+        widget::text_input::Status::Focused { is_hovered: true }
+    ) && let Some(face) = style.focused_hovered
+    {
         apply_input_face(face, &mut resolved);
     }
     resolved
@@ -1485,6 +1498,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .into()
         }
         wire::Node::Input {
+            options,
             key,
             placeholder,
             value,
@@ -1513,23 +1527,45 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     text,
                 }
             };
-            let style = *style;
+            let style = **style;
             let mut input = widget::text_input(placeholder, current)
                 .id(widget::Id::from(key.clone()))
                 .secure(*secure)
-                .on_input(edit)
-                .on_submit_maybe(on_submit.map(Output::Activate))
+                .on_input_maybe((!options.disabled).then_some(edit))
+                .on_submit_maybe(
+                    on_submit
+                        .filter(|_| !options.disabled)
+                        .map(Output::Activate),
+                )
                 .style(move |theme, status| input_style(style, theme, status));
             if let Some(width) = width {
                 input = input.width(length(*width));
             }
-            accessible(input, StableId::new(key), role)
+            if let Some(edges) = options.padding {
+                input = input.padding(padding(edges));
+            }
+            if let Some(size) = options.text_size {
+                input = input.size(size);
+            }
+            if let Some(height) = options.line_height {
+                input = input.line_height(widget::text::LineHeight::Relative(height));
+            }
+            if let Some(align) = options.align {
+                input = input.align_x(horizontal(align));
+            }
+            if let Some(font) = &options.font {
+                input = input.font(text::named_font(font));
+            }
+            let mut accessible = accessible(input, StableId::new(key), role)
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .focus_id(widget::Id::from(key.clone()))
-                .label(placeholder.clone())
+                .label(options.label.clone())
                 .value_maybe((!secure).then(|| current.to_owned()))
-                .disabled(false)
-                .into()
+                .disabled(options.disabled);
+            if let Some(description) = &options.description {
+                accessible = accessible.description(description.clone());
+            }
+            accessible.into()
         }
         wire::Node::Editor {
             key,
@@ -2060,6 +2096,72 @@ fn selected_children<'a>(children: &'a [wire::Node], kept: &Kept<'_>) -> Vec<&'a
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn input_styles_preserve_utility_active_focus_and_hover_precedence() {
+        let red = wire::Rgba([1.0, 0.0, 0.0, 1.0]);
+        let green = wire::Rgba([0.0, 1.0, 0.0, 1.0]);
+        let blue = wire::Rgba([0.0, 0.0, 1.0, 1.0]);
+        let edge = |color| wire::InputFace {
+            border: Some(wire::Border {
+                color: Some(color),
+                width: None,
+                radius: None,
+            }),
+            ..Default::default()
+        };
+        let style = wire::InputStyle {
+            utility: wire::InputFace {
+                background: Some(red),
+                ..Default::default()
+            },
+            active: edge(red),
+            focus_border: Some(green),
+            focused_hovered: Some(edge(blue)),
+            ..Default::default()
+        };
+        use widget::text_input::Status;
+        let active = input_style(style, &iced::Theme::Light, Status::Active);
+        assert_eq!(
+            active.background,
+            Background::Color(Color::from_rgb(1.0, 0.0, 0.0))
+        );
+        assert_eq!(active.border.color, Color::from_rgb(1.0, 0.0, 0.0));
+        assert_eq!(
+            input_style(
+                style,
+                &iced::Theme::Light,
+                Status::Focused { is_hovered: false }
+            )
+            .border
+            .color,
+            Color::from_rgb(0.0, 1.0, 0.0)
+        );
+        assert_eq!(
+            input_style(
+                style,
+                &iced::Theme::Light,
+                Status::Focused { is_hovered: true }
+            )
+            .border
+            .color,
+            Color::from_rgb(0.0, 0.0, 1.0)
+        );
+        let explicit = wire::InputStyle {
+            focused: Some(edge(red)),
+            ..style
+        };
+        assert_eq!(
+            input_style(
+                explicit,
+                &iced::Theme::Light,
+                Status::Focused { is_hovered: false }
+            )
+            .border
+            .color,
+            Color::from_rgb(1.0, 0.0, 0.0)
+        );
+    }
     use super::*;
 
     #[test]
@@ -2189,6 +2291,7 @@ mod tests {
 
     fn input(value: &str) -> wire::Node {
         wire::Node::Input {
+            options: Default::default(),
             key: "App/draft".into(),
             placeholder: "What needs doing?".into(),
             value: value.into(),
@@ -2196,7 +2299,7 @@ mod tests {
             on_submit: Some(1),
             width: None,
             secure: false,
-            style: wire::InputStyle::default(),
+            style: Box::default(),
         }
     }
 

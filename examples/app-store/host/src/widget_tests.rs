@@ -131,17 +131,17 @@ fn click(ui: &mut Ui, renderer: &mut iced::Renderer, label: &str) {
         &mut vec![],
     );
 }
-fn type_x(ui: &mut Ui, renderer: &mut iced::Renderer) {
+fn type_text(ui: &mut Ui, renderer: &mut iced::Renderer, text: &str) {
     ui.update(
         &[Event::Keyboard(keyboard::Event::KeyPressed {
-            key: keyboard::Key::Character("X".into()),
-            modified_key: keyboard::Key::Character("X".into()),
+            key: keyboard::Key::Character(text.into()),
+            modified_key: keyboard::Key::Character(text.into()),
             physical_key: keyboard::key::Physical::Unidentified(
                 keyboard::key::NativeCode::Unidentified,
             ),
             location: keyboard::Location::Standard,
             modifiers: keyboard::Modifiers::default(),
-            text: Some("X".into()),
+            text: Some(text.into()),
             repeat: false,
         })],
         mouse::Cursor::Unavailable,
@@ -243,7 +243,7 @@ fn bundled_widget_tasks_focus_after_mount_and_edit_only_the_requesting_guest() {
     for _ in 0..4 {
         a = redraw(a, &first, &mut renderer, &mut now);
     }
-    type_x(&mut a, &mut renderer);
+    type_text(&mut a, &mut renderer, "X");
     a = redraw(a, &first, &mut renderer, &mut now);
     assert_eq!(
         value(&first, "WidgetFixture/first"),
@@ -542,6 +542,130 @@ fn bundled_widget_recipe_ring_uses_keyboard_focus_only() {
     assert!(
         red_pixels(&mut ui, &mut renderer) > 50,
         "keyboard focus draws the guest recipe's red ring"
+    );
+}
+
+#[test]
+#[ignore = "requires bundled widget-fixture wasm"]
+fn bundled_widget_input_hint_label_and_disabled_editing() {
+    use iced::futures::StreamExt;
+    use iced_test::runtime::{Action, task};
+    let guest = guest();
+    let mut renderer = renderer();
+    let mut ui = build(&guest, user_interface::Cache::default(), &mut renderer);
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now);
+    }
+    let mut stream = task::into_stream(ui_lang_runtime::snapshot::<String>("Input")).unwrap();
+    let Some(Action::Widget(mut operation)) = iced::futures::executor::block_on(stream.next())
+    else {
+        panic!("snapshot operation")
+    };
+    ui.operate(&renderer, operation.as_mut());
+    let _ = operation.finish();
+    let Some(Action::Output(snapshot)) = iced::futures::executor::block_on(stream.next()) else {
+        panic!("snapshot output")
+    };
+    let input_node = snapshot
+        .update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some("Filter logs"))
+        .map(|(_, node)| node)
+        .expect("input accessible name must be separate from hint");
+    assert_eq!(input_node.description(), Some("Filters the live log"));
+    let bounds = input_node.bounds().expect("native input bounds");
+    assert!(
+        (bounds.width() - 200.0).abs() < 0.01,
+        "explicit width overrides recipe fill"
+    );
+    assert!(
+        (bounds.height() - 28.0).abs() < 0.01,
+        "13px text at 1.2 line height plus 6.2px padding overrides recipe padding"
+    );
+    let first = snapshot
+        .update
+        .nodes
+        .iter()
+        .find(|(_, node)| node.label() == Some("First"))
+        .map(|(_, node)| node)
+        .unwrap();
+    assert!(
+        (first.bounds().unwrap().height() - 34.7).abs() < 0.01,
+        "guest default text size reaches native input layout"
+    );
+    fn input_options<'a>(node: &'a wire::Node, key: &str) -> &'a wire::InputOptions {
+        fn find<'a>(node: &'a wire::Node, key: &str) -> Option<&'a wire::InputOptions> {
+            if let wire::Node::Input {
+                key: found,
+                options,
+                ..
+            } = node
+                && found == key
+            {
+                return Some(options);
+            }
+            node.children().iter().find_map(|child| find(child, key))
+        }
+        find(node, key).unwrap()
+    }
+    {
+        let locked = guest.lock().unwrap();
+        let root = locked.frame.root.as_ref().unwrap();
+        let first = input_options(root, "WidgetFixture/first");
+        assert_eq!(first.text_size, Some(19.0));
+        assert_eq!(
+            first.font.as_ref().unwrap().family,
+            wire::FontFamily::Named("Geist".into())
+        );
+        let second = input_options(root, "WidgetFixture/second");
+        assert_eq!(
+            second.font.as_ref().unwrap().family,
+            wire::FontFamily::SansSerif,
+            "explicit font=default overrides guest named font"
+        );
+    }
+    let click_filter = |ui: &mut Ui, renderer: &mut iced::Renderer| {
+        let point = iced::Point::new(bounds.x0 as f32 + 10.0, bounds.y0 as f32 + 10.0);
+        ui.update(
+            &[
+                Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            ],
+            mouse::Cursor::Available(point),
+            renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut vec![],
+        );
+    };
+    click_filter(&mut ui, &mut renderer);
+    type_text(&mut ui, &mut renderer, "X");
+    ui = redraw(ui, &guest, &mut renderer, &mut now);
+    assert_eq!(
+        value(&guest, "WidgetFixture/filter"),
+        "X",
+        "enabled input edits through wasm"
+    );
+    click(&mut ui, &mut renderer, "Disable filter");
+    for _ in 0..3 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now);
+    }
+    {
+        let locked = guest.lock().unwrap();
+        assert!(
+            input_options(locked.frame.root.as_ref().unwrap(), "WidgetFixture/filter").disabled,
+            "disable button must change the guest state before checking native typing"
+        );
+    }
+    click_filter(&mut ui, &mut renderer);
+    type_text(&mut ui, &mut renderer, "Y");
+    let _ = redraw(ui, &guest, &mut renderer, &mut now);
+    assert_eq!(
+        value(&guest, "WidgetFixture/filter"),
+        "X",
+        "disabled input rejects native typing"
     );
 }
 

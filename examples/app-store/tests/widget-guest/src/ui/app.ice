@@ -1,4 +1,5 @@
 app WidgetFixture
+  text-size 19.0
 extern crate::bridge
   task canceled_focus() -> unit
 theme contract AppTheme
@@ -20,13 +21,19 @@ palette app for AppTheme
   yellow #ffff00
   magenta #ff00ff
 font ui family="Geist" default=true
+recipe control for input
+  @w-full px-13px py-11px bg-primary border border-danger rounded-10px focus:border-fg
 recipe focus_action for button
   @px-4 py-2 font-semibold bg-primary text-fg rounded-8px hover:bg-primary disabled:opacity-50 focus-visible:border-danger
 state
+  filter = ""
+  filter_disabled = false
   first = "abcd"
   second = "other"
   focused = false
   pulses = 0
+on disable_filter
+  filter_disabled = true
 on mount
   task widget focus #first
 on focus_first
@@ -114,8 +121,24 @@ view
             h=16.0
             color=inherit
         disabled text=yellow
+
+    input "Filter logs" #filter <-> filter
+      with
+        hint="filter logs…"
+        description="Filters the live log"
+        disabled=filter_disabled
+        w=200.0
+        p=6.2
+        text-size=13.0
+        line-h=1.2
+        font=ui
+        @control
+      active bg=primary border=danger
+      focused border=fg
+      focused-hovered border=primary
+    button "Disable filter" -> disable_filter
     input "First" #first <-> first
-    input "Second" #second <-> second
+    input "Second" #second <-> second font=default
     button "Cancel focus" #cancel-focus -> canceled_focus
     button "Focus first" #focus-first -> focus_first
     button "Focus second" #focus-second -> focus_second
