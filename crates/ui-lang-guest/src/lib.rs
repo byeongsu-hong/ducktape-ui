@@ -205,6 +205,9 @@ impl<A: App> Driver<A> {
         for event in events {
             let message = match event {
                 wire::Event::Message(index) => slots::take_message::<A::Message>(index),
+                wire::Event::Surface { handler, value } => {
+                    slots::run_handler::<wire::SurfaceValue, A::Message>(handler, value)
+                }
                 wire::Event::Input { handler, text } => {
                     slots::run_handler::<String, A::Message>(handler, text)
                 }

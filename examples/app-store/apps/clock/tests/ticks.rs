@@ -3,7 +3,7 @@
 
 use app_store_clock::{boot_native, tick_native};
 use ui_lang_guest::testing::{answer, find, has_text, item, texts};
-use ui_lang_guest::wire::{Frame, Node, Request, Rgba};
+use ui_lang_guest::wire::{Frame, Node, Request, Rgba, SurfaceValue};
 
 /// 2025-01-01T13:45:00Z.
 const NOW_MS: u64 = 1_735_739_100_000;
@@ -46,7 +46,7 @@ fn ticks_arrive_as_a_stream_and_move_the_display() {
     assert!(
         matches!(
             find(&frame, "Clock/app/content/card/dial/face"),
-            Some(Node::Surface { name, arg, .. }) if name == "clock_face" && arg == "UTC"
+            Some(Node::Surface { name, args, .. }) if name == "clock_face" && args == &[SurfaceValue::Str("UTC".into())]
         ),
         "{:?}",
         frame.root

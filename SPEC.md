@@ -824,3 +824,21 @@ bare/`pure`/`sync` function, or one of the typed adapters (`component`,
 `selector`, `shader`, `task`, `stream`, `sip`, `recipe`, `event-filter`,
 `subscription`, `theme`, `themer`, `window`, `markdown-viewer`, the `editor-*`
 kinds, and the per-widget `*-style` kinds).
+
+## Extern widgets in wasm view modules
+
+For the `tree` target, an `extern` widget names a surface registered by the
+embedding host; it does not call the declaration's native Rust function.
+Positional `unit`, `bool`, `i64`, `f64`, and `str` arguments cross as owned,
+tagged values, including borrowed scalar parameters. A route accepts the
+same scalar result types, with non-payload arguments snapshotted while the
+view is built. The guest ignores a result tagged with a different type and
+nonfinite floating-point events. No route means no guest event.
+
+A provider receives the node key and arguments and returns an element whose
+messages are scalar values. The renderer attaches the node's route. Unknown
+surface names render a visible placeholder. Surface arguments are bounded to
+256 values; text shares the frame text budget and nonfinite argument numbers
+sanitize to zero. Returned strings are truncated on a UTF-8 boundary to the
+wire string limit before entering the guest. Compound and opaque native
+arguments/events fail with E190 until their wire representation exists.

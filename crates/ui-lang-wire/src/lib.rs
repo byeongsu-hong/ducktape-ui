@@ -23,6 +23,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A copied value at a host surface boundary. Opaque native resources are
+/// deliberately absent: their handles and lifecycle belong to the host.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum SurfaceValue {
+    Unit,
+    Bool(bool),
+    I64(i64),
+    F64(f64),
+    Str(String),
+}
+
 /// Something the host tells the guest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
@@ -31,6 +42,8 @@ pub enum Event {
     /// entries in the table the guest filled while building the tree it
     /// last sent.
     Message(u32),
+    /// A registered host surface emitted its declared result value.
+    Surface { handler: u32, value: SurfaceValue },
     /// A text field's content changed. `handler` indexes the guest's
     /// per-frame input-handler table; `text` is the whole value the host now
     /// holds.
@@ -681,16 +694,17 @@ pub enum Node {
         border: Option<Border>,
     },
     /// A region the host paints itself: `name` picks a surface the
-    /// embedding host registered, `arg` is the one text argument the guest
-    /// hands it. The guest never sees what is drawn there, and the host
-    /// repaints it on its own clock — a live video tile, a sweeping hand —
+    /// embedding host registered, `args` are the typed values the guest
+    /// hands it; `on_event` routes a returned value to its handler. The guest
+    /// never sees what is drawn there, and the host repaints it on its own clock — a live video tile, a sweeping hand —
     /// without a guest tick. A name the host has not registered renders as
     /// a visible placeholder. It takes the size its parent gives it: an Ice
     /// `box w= h=` around the `extern` call sets it.
     Surface {
         key: String,
         name: String,
-        arg: String,
+        args: Vec<SurfaceValue>,
+        on_event: Option<u32>,
     },
 }
 
@@ -905,6 +919,9 @@ pub const MAX_SVG_BYTES_PER_FRAME: usize = 1 << 20;
 /// The most options one [`Node::PickList`] may offer: a menu, not a table.
 /// Each option is shaped text and spends the frame's text budget too.
 pub const MAX_OPTIONS: usize = 256;
+
+/// Maximum positional values supplied to one host surface.
+pub const MAX_SURFACE_ARGS: usize = 256;
 /// Text and spacing sizes are pixels; nothing on a screen needs more.
 const MAX_PIXELS: f32 = 8192.0;
 /// A text size, which is not a length: every glyph at it is rasterized and
@@ -1555,10 +1572,19 @@ fn sanitize_node(
             bound_color(bar);
             bound_border(border);
         }
-        Node::Surface { key, name, arg } => {
+        Node::Surface {
+            key, name, args, ..
+        } => {
             claim(key, taken);
             spend_text(name, &mut budgets.text);
-            spend_text(arg, &mut budgets.text);
+            args.truncate(MAX_SURFACE_ARGS);
+            for value in args {
+                match value {
+                    SurfaceValue::Str(text) => spend_text(text, &mut budgets.text),
+                    SurfaceValue::F64(number) if !number.is_finite() => *number = 0.0,
+                    _ => {}
+                }
+            }
         }
     }
     for length in lengths_mut(node) {
@@ -1834,6 +1860,66 @@ mod tests {
             border: None,
             children,
         }
+    }
+
+    #[test]
+    fn surfaces_round_trip_patch_and_bound_their_arguments() {
+        use SurfaceValue as V;
+        let values = vec![
+            V::Unit,
+            V::Bool(true),
+            V::I64(i64::MAX),
+            V::F64(1.25),
+            V::Str("link".into()),
+        ];
+        let node = Node::Surface {
+            key: "view".into(),
+            name: "preview".into(),
+            args: values.clone(),
+            on_event: Some(4),
+        };
+        assert_eq!(decode::<Node>(&encode(&node)).unwrap(), node);
+        for value in values {
+            let event = Event::Surface { handler: 4, value };
+            assert_eq!(decode::<Event>(&encode(&event)).unwrap(), event);
+        }
+        let mut changed = node.clone();
+        if let Node::Surface { args, on_event, .. } = &mut changed {
+            args[1] = V::Bool(false);
+            *on_event = Some(9);
+        }
+        let patches = diff(&mut node.clone(), &mut changed.clone());
+        let mut applied = node;
+        apply(&mut applied, patches).unwrap();
+        assert_eq!(applied, changed);
+        let mut frame = Frame {
+            root: Some(Node::Surface {
+                key: "view".into(),
+                name: "preview".into(),
+                args: std::iter::once(V::F64(f64::NAN))
+                    .chain(std::iter::repeat_n(
+                        V::Str("é".repeat(MAX_STRING_BYTES)),
+                        MAX_SURFACE_ARGS + 1,
+                    ))
+                    .collect(),
+                on_event: None,
+            }),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Node::Surface { name, args, .. } = frame.root.unwrap() else {
+            unreachable!()
+        };
+        assert_eq!(args.len(), MAX_SURFACE_ARGS);
+        assert_eq!(args[0], V::F64(0.0));
+        let bytes = args
+            .iter()
+            .map(|value| match value {
+                V::Str(text) => text.len(),
+                _ => 0,
+            })
+            .sum::<usize>();
+        assert!(bytes + name.len() <= MAX_TEXT_BYTES_PER_FRAME);
     }
 
     #[test]

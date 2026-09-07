@@ -411,6 +411,9 @@ has, and only the whole can be checked for that.
 An honest inventory, grouped by where the work would land. Items marked
 **bug** are wrong today rather than merely absent.
 
+For module packaging requirements and the connected implementation phases, see
+[module-owned wasm views](module-views.md).
+
 ### Wire and rendering
 
 - The wire carries `box`, `mouse`, `col`/`row`, `grid`, `scroll`, `sensor`,
@@ -418,8 +421,8 @@ An honest inventory, grouped by where the work would land. Items marked
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
   extern's name (`clock_face` is the one this store paints, with a sweeping
-  second hand the guest never ticks), given the call's one `str` argument
-  as text; a name the host lacks renders a placeholder. Every other Ice
+  second hand the guest never ticks), given the call's copied scalar arguments
+  (`unit`, `bool`, `i64`, `f64`, `str`); a name the host lacks renders a placeholder. Every other Ice
   construct — combo box, images, canvas, stacks, overlays,
   mounted components, gradients, the text and interaction utility styles —
   fails the app's build at its `.ice` line with E190. Each is a node kind
@@ -434,10 +437,14 @@ An honest inventory, grouped by where the work would land. Items marked
   exceeded` until a user event, timer or window resize drives a tick.
   `key=` is refused with E190: the wire's node key is the identity, and
   a second key that resets the sensor has no field to cross in.
-- A host surface takes one `str` and answers nothing: a route, a second
-  argument or another argument type is refused with E190. Its size is its
-  parent's; a `box w= h=` around the call sets it. Nothing crosses back
-  from the surface — a video tile's clicks are the host's to route.
+- A host surface takes positional scalar values and returns a scalar through
+  the extern's declared route. The provider receives the instance's node key
+  and the values; the renderer attaches the route, and the guest rejects an
+  event whose type differs from the declaration. Strings share the frame's
+  text budget and arguments are capped at 256. Its size is its parent's;
+  a `box w= h=` around the call sets it. Compound values (records, lists,
+  options) and opaque native editor/terminal/log state are not supported yet.
+  Their resource and lifecycle contracts remain work for module-owned views.
 - An `svg` is an embedded asset or a `memory` source, sized, fitted,
   rotated, faded and tinted with an idle and a hover colour; its bytes
   cross once under a content hash and the host keeps them for the guest's
@@ -607,3 +614,16 @@ An honest inventory, grouped by where the work would land. Items marked
 - Typed intents between apps instead of a broadcast bus, notifications,
   badges, detached windows, background (daemon) apps, suspend when hidden.
 
+
+The scalar surface boundary has a dedicated generated guest under
+`tests/surface-guest`; it is not part of the normal app catalog. Its native
+route test and the renderer's clicked-button test cover both sides of the
+boundary. To execute the same guest in wasm (also run by CI):
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-surface-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/surface-fixture
+cargo test --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-host --test surface_routes -- --ignored
+```

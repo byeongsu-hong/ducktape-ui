@@ -402,3 +402,9 @@ canonical Ice syntax or a typed boundary.
 support claim has to show.
 [`RELEASING.md`](RELEASING.md) defines lockstep versions and the generated-code
 compatibility boundary.
+
+Ice's wasm `tree` target emits host-rendered widget data. Extern widgets can
+name host surfaces with copied scalar arguments and typed return events; see
+[app-store](examples/app-store/README.md) for the runnable host and
+[module-owned views](examples/app-store/module-views.md) for the packaging and
+runtime gaps identified from Ducktape's existing screens.

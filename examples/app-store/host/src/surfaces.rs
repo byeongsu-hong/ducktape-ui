@@ -1,5 +1,5 @@
 //! What the host paints inside a guest's view: the surfaces a
-//! `Node::Surface` names. The guest hands over a name and one line of text
+//! `Node::Surface` names. The guest hands over a name and typed argument values
 //! and never sees a pixel; the host repaints the region on its own clock,
 //! without a guest tick.
 
@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use iced::widget::{canvas, column, text};
 use iced::{Length, Point, Rectangle, Renderer, Theme, mouse, window};
-use ui_lang_runtime::view_tree::{Output, Surfaces};
+use ui_lang_runtime::view_tree::Surfaces;
+use ui_lang_wire::SurfaceValue;
 
 use crate::capabilities::clock;
 
@@ -19,7 +20,10 @@ pub fn registry() -> &'static Surfaces {
         let mut surfaces = Surfaces::new();
         surfaces.insert(
             "clock_face".into(),
-            Box::new(|caption: &str| {
+            Box::new(|_key: &str, args: &[SurfaceValue]| {
+                let [SurfaceValue::Str(caption)] = args else {
+                    return text("invalid clock_face arguments").into();
+                };
                 column![
                     canvas(ClockFace).width(Length::Fill).height(Length::Fill),
                     text(caption.to_owned()).size(12),
@@ -38,7 +42,7 @@ struct ClockFace;
 
 const SWEEP: Duration = Duration::from_millis(100);
 
-impl canvas::Program<Output> for ClockFace {
+impl canvas::Program<SurfaceValue> for ClockFace {
     type State = ();
 
     fn update(
@@ -47,7 +51,7 @@ impl canvas::Program<Output> for ClockFace {
         event: &canvas::Event,
         _bounds: Rectangle,
         _cursor: mouse::Cursor,
-    ) -> Option<canvas::Action<Output>> {
+    ) -> Option<canvas::Action<SurfaceValue>> {
         match event {
             canvas::Event::Window(window::Event::RedrawRequested(now)) => {
                 Some(canvas::Action::request_redraw_at(*now + SWEEP))

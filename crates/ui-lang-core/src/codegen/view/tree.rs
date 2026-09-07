@@ -14,8 +14,8 @@
 //!
 //! An extern widget is the one construct that reaches past that vocabulary:
 //! it becomes a `Surface` node the host paints itself, by the extern's name,
-//! with the call's single `str` argument crossing as text. No Rust function
-//! is called on the guest side; the declaration only types the call.
+//! with the call's typed scalar arguments copied across the wire. No Rust
+//! function is called on the guest side; the declaration only types the call.
 //!
 //! An `svg` crosses as bytes the guest holds — an embedded asset or a
 //! `memory` source — under a content hash, and only the first frame that
@@ -93,7 +93,9 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::Slider => slider(node, identity, document, message, env, scope)?,
         ResolvedViewKind::PickList => pick_list(node, identity, document, message, env, scope)?,
         ResolvedViewKind::Progress => progress(node, identity, document, env, scope)?,
-        ResolvedViewKind::ExternComponent => surface(node, identity, document, env, scope)?,
+        ResolvedViewKind::ExternComponent => {
+            surface(node, identity, document, message, env, scope)?
+        }
         // Rendered by the shared emitters: their code is target-neutral.
         ResolvedViewKind::Component { .. }
         | ResolvedViewKind::Slot { .. }
@@ -2218,49 +2220,65 @@ fn progress(
     ))
 }
 
-/// An extern widget crosses as a host surface: the host paints the region
-/// under the extern's name, given the call's one `str` argument as text.
-/// The host answers nothing back, so a route is refused, as is any argument
-/// shape but zero or one `str`.
+/// The declaration types the wire values; no native adapter is called by
+/// the guest. Routes own snapshots of their non-payload arguments.
 fn surface(
     id: ViewId,
     identity: Option<&ResolvedViewIdentity>,
     program: &LoweredProgram,
+    message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
     let component = program.resolved_extern_component(id)?;
     let origin = component.origin;
-    refuse_when(
-        program,
-        origin,
-        component.route.is_some(),
-        "a route on an extern widget",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        component.arguments.len() > 1,
-        "more than one argument on an extern widget",
-    )?;
-    let arg = match component.arguments.first() {
-        None => "::std::string::String::new()".to_string(),
-        Some(argument) => {
-            refuse_when(
-                program,
-                origin,
-                argument.ty != Type::Str,
-                "an extern widget argument that is not `str`",
-            )?;
-            format!(
-                "::std::string::ToString::to_string(&({}))",
-                resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned)?
-            )
-        }
+    let variant = |ty: &Type| match ty {
+        Type::Unit => Some("Unit"),
+        Type::Bool => Some("Bool"),
+        Type::I64 => Some("I64"),
+        Type::F64 => Some("F64"),
+        Type::Str => Some("Str"),
+        _ => None,
     };
+    let args = component
+        .arguments
+        .iter()
+        .map(|argument| {
+            let tag = variant(&argument.ty)
+                .ok_or_else(|| refused(program, origin, "a non-scalar extern widget argument"))?;
+            let value =
+                resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned)?;
+            Ok(if tag == "Unit" {
+                format!("{{ let _ = {value}; {WIRE}::SurfaceValue::Unit }}")
+            } else if tag == "Str" {
+                format!("{WIRE}::SurfaceValue::Str(::std::string::ToString::to_string(&({value})))")
+            } else {
+                format!("{WIRE}::SurfaceValue::{tag}({value})")
+            })
+        })
+        .collect::<Result<Vec<_>, Error>>()?
+        .join(", ");
+    let on_event = component.route.as_ref().map(|route| {
+        let tag = variant(&component.output).ok_or_else(|| refused(
+            program, origin, "a non-scalar extern widget event",
+        ))?;
+        let callback = snapshot_callback(route, "__value", &["__value"], env, program, message)?;
+        let pattern = if tag == "Unit" {
+            format!("{WIRE}::SurfaceValue::Unit")
+        } else {
+            format!("{WIRE}::SurfaceValue::{tag}(__value)")
+        };
+        let guard = if tag == "F64" { " if __value.is_finite()" } else { "" };
+        let value = if tag == "Unit" { "()" } else { "__value" };
+        Ok(handler_code(
+            &format!("{WIRE}::SurfaceValue"), message, &callback,
+            &format!("move |__sent| match __sent {{ {pattern}{guard} => ::std::option::Option::Some(__route({value})), _ => ::std::option::Option::None }}"),
+        ))
+    }).transpose()?;
     Ok(format!(
-        "{WIRE}::Node::Surface {{ key: {}, name: ::std::string::String::from({:?}), arg: {arg} }}",
+        "{WIRE}::Node::Surface {{ key: {}, name: ::std::string::String::from({:?}), args: ::std::vec![{args}], on_event: {} }}",
         key_code(identity, "extern", origin, scope, env, program)?,
         component.function.name,
+        option_code(on_event),
     ))
 }
