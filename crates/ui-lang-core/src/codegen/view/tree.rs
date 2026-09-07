@@ -1324,19 +1324,6 @@ fn slider(
         slider.default.is_some() || slider.shift_step.is_some(),
         "a slider default or shift step",
     )?;
-    // The change handler crosses as the callback itself (see `handler_code`),
-    // so it may hold nothing borrowed: a route argument would be evaluated
-    // in the view, and a `for` binding or the state does not outlive it.
-    refuse_when(
-        program,
-        origin,
-        slider
-            .change
-            .args
-            .iter()
-            .any(|arg| matches!(arg, ResolvedInteractionRouteArg::Expression(_))),
-        "an argument on a slider route",
-    )?;
     refuse_when(
         program,
         origin,
@@ -1350,14 +1337,40 @@ fn slider(
         resolved_expr_use_code(program, expression, env, ValueMode::Owned)
             .map(|code| format!("({code}) as f32"))
     };
-    let callback = resolved_interaction_route_callback_code(
+    // The change handler crosses as the callback itself (see `handler_code`),
+    // so it may hold nothing borrowed: each route argument is evaluated in
+    // the view, while the `for` binding or the state it reads is alive, and
+    // the closure owns the values and clones one out per answer.
+    let arguments =
+        slider
+            .change
+            .args
+            .iter()
+            .filter_map(|arg| match arg {
+                ResolvedInteractionRouteArg::Expression(expression) => Some(
+                    resolved_expr_use_code(program, *expression, env, ValueMode::Owned),
+                ),
+                ResolvedInteractionRouteArg::Payload { .. } => None,
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    let hoists = arguments
+        .iter()
+        .enumerate()
+        .map(|(index, code)| format!("let __route_arg_{index} = {code};"))
+        .collect::<String>();
+    let snapshots = (0..arguments.len())
+        .map(|index| format!("::std::clone::Clone::clone(&__route_arg_{index})"))
+        .collect::<Vec<_>>();
+    let callback = resolved_interaction_route_callback_with_snapshots(
         &slider.change,
         "__value",
         &["__value"],
+        &snapshots,
         env,
         program,
         message,
     )?;
+    let callback = format!("{{ {hoists} {callback} }}");
     let on_release = slider
         .release
         .as_ref()
