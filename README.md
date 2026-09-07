@@ -233,6 +233,9 @@ downloaded, not because the application differs.
 `cargo ice bundle -p PACKAGE` produces the same artifact for your own Ice
 application, and signs and notarizes it when you supply a certificate; see
 [`docs/tooling.md`](docs/tooling.md).
+Bundle metadata `resources = ["../target/views"]` includes prebuilt module
+views beside the installed executable on all three desktop platforms; paths
+are relative to the package manifest (see [resources](docs/tooling.md#resources)).
 
 ## Examples
 

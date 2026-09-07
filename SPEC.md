@@ -994,3 +994,11 @@ reads, literals and comparisons/Boolean combinations of those values. Independen
 calls, arithmetic and lazy `derived` reads are E190: native short-circuit evaluation could skip them,
 whereas copying would execute them before layout. Precompute such thresholds
 explicitly in guest state. Arithmetic involving a measurement runs in the host.
+
+### Desktop bundle resources
+
+`[package.metadata.ice.bundle].resources` is an array of explicit file or directory
+paths relative to the Cargo package manifest. Desktop bundles preserve each
+entry's basename and nested files beside the executable, before signing.
+See [tooling](docs/tooling.md#resources) for platform locations and validation.
+This packaging metadata does not alter the Ice language or wire protocol.

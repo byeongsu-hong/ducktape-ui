@@ -181,3 +181,14 @@ engine drains buffered reads and unfinished synchronized updates before exit.
 This closes the example-host terminal provider prerequisite in phase 3b; actual
 Ducktape agent/SSH process selection, session routing and policy are still host
 integration work. No Ducktape files are changed.
+
+### Host installer resources
+
+Desktop `cargo ice bundle` metadata can carry prebuilt module views using
+`resources = ["../target/views"]` (relative to the host package manifest).
+The installed `views/` directory is beside the executable on macOS, Windows,
+and Linux; macOS copies it before signing. This closes the installer payload
+gap reported by the Ducktape port. Module manifests, discovery, and coordinated
+host/guest builds remain host integration work. The reported Tree component
+`rev_memo` compilation failure is the next prerequisite; text options, utility
+styles, diagnostic origins, and the remaining layouts stay in the phase backlog.

@@ -123,6 +123,7 @@ Only what neither can express lives in the bundle table:
 ```toml
 [package.metadata.ice.bundle]
 icon = "../../assets/icons/ice.svg"
+resources = ["../target/views"]
 category = "public.app-category.developer-tools"
 copyright = "Copyright © 2026 ducktape-ui contributors. MIT licensed."
 # name, identifier, executable, and minimum-system-version are also accepted;
@@ -144,6 +145,23 @@ one permission declared under both its names are all refused when the manifest
 is read. Screen capture is not on the list because macOS has no usage key for
 it; it is granted through Screen Recording in System Settings. The other
 packagers ignore the table — only macOS asks for a sentence.
+
+### Resources
+
+`resources` lists files or directories relative to the package's `Cargo.toml`.
+Each entry installs under its basename beside the executable: `../target/views`
+becomes `views/`, including nested files. Resource files are collected after the
+release build; generate wasm guests before invoking the host bundle command.
+Paths are explicit, without glob expansion. Missing paths, symlinks, special
+files, non-UTF-8 filenames, duplicate names, and executable name collisions are
+errors. Empty directories are not installed.
+
+On macOS resources live under `Name.app/Contents/MacOS/` and are copied before
+code signing. Windows installs them into the MSI application's directory.
+Linux packages with resources install the executable and its resources under
+`/usr/lib/PACKAGE/`, with `/usr/bin/EXECUTABLE` linking to the private executable.
+Hosts can resolve `views/` from `std::env::current_exe()` on each platform.
+This copies payload files; it does not register modules or load their views.
 
 ### Icon
 
