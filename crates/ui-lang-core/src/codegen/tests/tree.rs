@@ -42,6 +42,7 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
           size=28.0
           @text-fg
           @font-bold
+      svg "<svg xmlns='http://www.w3.org/2000/svg'/>" #icon memory w=24.0 h=24.0 color=fg
       row w=fill gap=8.0
         input "What needs doing?" #draft <-> draft w=fill
           active bg=bg border=primary border-w=1.0 r=10.0 value=fg placeholder=fg selection=primary
@@ -68,6 +69,7 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
         "::ui_lang_guest::wire::Node::Linear {",
         "::ui_lang_guest::wire::Node::Scroll {",
         "::ui_lang_guest::wire::Node::Text {",
+        "::ui_lang_guest::wire::Node::Svg {",
         "::ui_lang_guest::wire::Node::Input {",
         "::ui_lang_guest::wire::Node::Button {",
         "axis: ::ui_lang_guest::wire::Axis::Row",
@@ -77,6 +79,8 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
         "padding: ::std::option::Option::Some(::ui_lang_guest::wire::Edges { top: (24.0) as f32",
         // Messages and input handlers go through the guest's per-frame tables.
         "on_press: ::std::option::Option::Some(::ui_lang_guest::slots::message(",
+        // A picture's bytes go through the guest's once-only table.
+        "let (__hash, __bytes) = ::ui_lang_guest::slots::picture((",
         "on_input: ::ui_lang_guest::slots::handler::<::std::string::String, __DemoMessage>(",
         // Colours are the palette's, resolved in the guest.
         "::ui_lang_guest::wire::Rgba([__color.r, __color.g, __color.b, __color.a])",
@@ -402,6 +406,11 @@ const COVERAGE: &[Coverage] = &[
     emitted("layout: scroll", "", "  scroll\n    text \"a\" @text-fg\n"),
     emitted("box", "", "  box\n    text \"a\" @text-fg\n"),
     emitted("text", "", "  text \"a\" @text-fg\n"),
+    emitted(
+        "media: svg",
+        "",
+        "  svg \"<svg/>\" memory w=24.0 h=24.0 color=fg label=\"Icon\"\n",
+    ),
     emitted("input", "", "  input \"p\" <-> draft\n"),
     emitted("button", "", "  button \"go\" -> add\n"),
     emitted("space", "", "  space w=24.0 h=8.0\n"),
@@ -574,7 +583,24 @@ const COVERAGE: &[Coverage] = &[
         "`shader`",
     ),
     refused("media: image", "", "  image picture\n", "`media`"),
-    refused("media: svg", "", "  svg \"<svg/>\" memory\n", "`media`"),
+    refused(
+        "media: svg from a path",
+        "",
+        "  svg draft\n",
+        "an svg read from a path",
+    ),
+    refused(
+        "media: svg option",
+        "",
+        "  svg \"<svg/>\" memory opacity=0.5\n",
+        "this svg option",
+    ),
+    refused(
+        "media: svg hover colour",
+        "",
+        "  svg \"<svg/>\" memory color=fg hover=primary\n",
+        "an svg hover colour",
+    ),
     refused("media: viewer", "", "  viewer picture\n", "`media`"),
     refused("canvas", "", "  canvas w=40.0 h=24.0\n", "`canvas`"),
     // Options on the nodes the wire does carry: painted, driven or measured

@@ -277,6 +277,25 @@ pub enum Node {
         width: Option<Length>,
         align_x: Option<AlignX>,
     },
+    /// A vector picture. Its bytes cross ONCE: the frame that first shows a
+    /// picture carries them under `hash`, and every frame after — a changed
+    /// tree re-sends every node — names the hash alone. The host keeps what
+    /// it decoded by hash for as long as the guest runs; a hash it has not
+    /// seen draws as empty space of the node's size.
+    Svg {
+        key: String,
+        /// The guest's content hash of the picture: an opaque cache key,
+        /// not something the host recomputes.
+        hash: u64,
+        /// The picture, on the first frame it is shown.
+        bytes: Option<Vec<u8>>,
+        /// The accessible name of the picture.
+        label: Option<String>,
+        /// A tint for the whole picture, over its own colours.
+        color: Option<Rgba>,
+        width: Option<Length>,
+        height: Option<Length>,
+    },
     Input {
         key: String,
         placeholder: String,
@@ -406,6 +425,7 @@ impl Node {
             | Self::Grid { key, .. }
             | Self::Scroll { key, .. }
             | Self::Text { key, .. }
+            | Self::Svg { key, .. }
             | Self::Input { key, .. }
             | Self::Button { key, .. }
             | Self::Rule { key, .. }
@@ -431,6 +451,7 @@ impl Node {
             } => vec![child],
             Self::Button { .. }
             | Self::Text { .. }
+            | Self::Svg { .. }
             | Self::Input { .. }
             | Self::Space { .. }
             | Self::Rule { .. }
@@ -440,6 +461,14 @@ impl Node {
             | Self::PickList { .. }
             | Self::Progress { .. }
             | Self::Surface { .. } => Vec::new(),
+        }
+    }
+
+    /// Runs `visit` on every node in the tree, depth first, this one first.
+    pub fn for_each_mut(&mut self, visit: &mut impl FnMut(&mut Node)) {
+        visit(self);
+        for child in self.children_mut() {
+            child.for_each_mut(visit);
         }
     }
 
@@ -456,6 +485,7 @@ impl Node {
             } => child.count(),
             Self::Button { .. }
             | Self::Text { .. }
+            | Self::Svg { .. }
             | Self::Input { .. }
             | Self::Space { .. }
             | Self::Rule { .. }
@@ -494,6 +524,13 @@ pub const MAX_STRING_BYTES: usize = 64 << 10;
 /// milliseconds to lay out however short their text, and a byte of Hangul,
 /// Han or emoji costs some twenty times a byte of ASCII to shape.
 pub const MAX_TEXT_BYTES_PER_FRAME: usize = MAX_STRING_BYTES;
+/// The most picture bytes one frame may carry in total, over every
+/// [`Node::Svg`] that brings its `bytes`. A picture that does not fit in
+/// what is left is dropped whole, not cut: half an SVG is not an SVG, and
+/// the host draws an unknown hash as empty space. A guest sends each
+/// picture once, so this bounds what a frame can make the host parse, not
+/// what an app can show over its life; an icon is a few kilobytes.
+pub const MAX_SVG_BYTES_PER_FRAME: usize = 1 << 20;
 /// The most options one [`Node::PickList`] may offer: a menu, not a table.
 /// Each option is shaped text and spends the frame's text budget too.
 pub const MAX_OPTIONS: usize = 256;
@@ -506,7 +543,8 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 /// Pulls a frame from an untrusted module into what the host is willing to
 /// lay out: the tree is truncated past [`MAX_DEPTH`] and [`MAX_NODES`],
 /// strings past [`MAX_STRING_BYTES`], shaped text past
-/// [`MAX_TEXT_BYTES_PER_FRAME`] in total, text sizes to [`MAX_TEXT_PIXELS`],
+/// [`MAX_TEXT_BYTES_PER_FRAME`] in total, picture bytes past
+/// [`MAX_SVG_BYTES_PER_FRAME`] in total, text sizes to [`MAX_TEXT_PIXELS`],
 /// every other size, colour and spacing clamped to a finite range, and a key
 /// used twice moved off the one already taken. A frame from a well-behaved
 /// guest passes through unchanged.
@@ -515,10 +553,13 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 /// one nested deeper than this walk goes.
 pub fn sanitize(frame: &mut Frame) {
     let mut budget = MAX_NODES;
-    let mut text_budget = MAX_TEXT_BYTES_PER_FRAME;
+    let mut budgets = Budgets {
+        text: MAX_TEXT_BYTES_PER_FRAME,
+        svg: MAX_SVG_BYTES_PER_FRAME,
+    };
     let mut taken = Taken::new();
     if let Some(root) = &mut frame.root {
-        sanitize_node(root, 0, &mut budget, &mut text_budget, &mut taken);
+        sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
     }
     for request in &mut frame.requests {
         truncate_string(&mut request.kind);
@@ -554,6 +595,12 @@ fn claim(key: &mut String, taken: &mut Taken) {
     taken.insert(unique, 2);
 }
 
+/// What is left of a frame's per-frame byte budgets while its tree is walked.
+struct Budgets {
+    text: usize,
+    svg: usize,
+}
+
 /// Truncates one shaped string to what is left of the frame's text budget
 /// and spends what survives. Nodes are walked in tree order, so a frame past
 /// the budget keeps its head and loses its tail.
@@ -562,11 +609,20 @@ fn spend_text(text: &mut String, text_budget: &mut usize) {
     *text_budget -= text.len();
 }
 
+/// Spends a picture's bytes from the frame's picture budget, or drops them
+/// whole when they do not fit.
+fn spend_svg(bytes: &mut Option<Vec<u8>>, svg_budget: &mut usize) {
+    match bytes {
+        Some(picture) if picture.len() <= *svg_budget => *svg_budget -= picture.len(),
+        _ => *bytes = None,
+    }
+}
+
 fn sanitize_node(
     node: &mut Node,
     depth: usize,
     budget: &mut usize,
-    text_budget: &mut usize,
+    budgets: &mut Budgets,
     taken: &mut Taken,
 ) {
     // The caller guarantees one node of budget; a node too deep spends it
@@ -622,9 +678,23 @@ fn sanitize_node(
             ..
         } => {
             claim(key, taken);
-            spend_text(content, text_budget);
+            spend_text(content, &mut budgets.text);
             if let Some(size) = size {
                 *size = bounded(*size).min(MAX_TEXT_PIXELS);
+            }
+            bound_color(color);
+        }
+        Node::Svg {
+            key,
+            bytes,
+            label,
+            color,
+            ..
+        } => {
+            claim(key, taken);
+            spend_svg(bytes, &mut budgets.svg);
+            if let Some(label) = label {
+                truncate_string(label);
             }
             bound_color(color);
         }
@@ -636,8 +706,8 @@ fn sanitize_node(
             ..
         } => {
             claim(key, taken);
-            spend_text(placeholder, text_budget);
-            spend_text(value, text_budget);
+            spend_text(placeholder, &mut budgets.text);
+            spend_text(value, &mut budgets.text);
             for face in [
                 Some(&mut style.active),
                 style.hovered.as_mut(),
@@ -664,7 +734,7 @@ fn sanitize_node(
         } => {
             claim(key, taken);
             if let ButtonContent::Label(label) = content {
-                spend_text(label, text_budget);
+                spend_text(label, &mut budgets.text);
             }
             if let Some(label) = label {
                 truncate_string(label);
@@ -697,7 +767,7 @@ fn sanitize_node(
         }
         Node::Toggle { key, label, .. } | Node::Radio { key, label, .. } => {
             claim(key, taken);
-            spend_text(label, text_budget);
+            spend_text(label, &mut budgets.text);
         }
         Node::Slider {
             key,
@@ -722,10 +792,10 @@ fn sanitize_node(
             claim(key, taken);
             options.truncate(MAX_OPTIONS);
             for option in options.iter_mut() {
-                spend_text(option, text_budget);
+                spend_text(option, &mut budgets.text);
             }
             if let Some(placeholder) = placeholder {
-                spend_text(placeholder, text_budget);
+                spend_text(placeholder, &mut budgets.text);
             }
             if selected.is_some_and(|index| index as usize >= options.len()) {
                 *selected = None;
@@ -745,8 +815,8 @@ fn sanitize_node(
         }
         Node::Surface { key, name, arg } => {
             claim(key, taken);
-            spend_text(name, text_budget);
-            spend_text(arg, text_budget);
+            spend_text(name, &mut budgets.text);
+            spend_text(arg, &mut budgets.text);
         }
     }
     for length in lengths_mut(node) {
@@ -763,7 +833,7 @@ fn sanitize_node(
             if *budget == 0 {
                 break;
             }
-            sanitize_node(child, depth + 1, budget, text_budget, taken);
+            sanitize_node(child, depth + 1, budget, budgets, taken);
             kept += 1;
         }
         children.truncate(kept);
@@ -774,7 +844,7 @@ fn sanitize_node(
             *child = Node::empty();
             continue;
         }
-        sanitize_node(child, depth + 1, budget, text_budget, taken);
+        sanitize_node(child, depth + 1, budget, budgets, taken);
     }
 }
 
@@ -785,6 +855,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Grid { width, height, .. }
         | Node::Scroll { width, height, .. }
         | Node::Button { width, height, .. }
+        | Node::Svg { width, height, .. }
         | Node::Slider { width, height, .. }
         | Node::Space { width, height } => vec![width, height],
         Node::Progress { length, girth, .. } => vec![length, girth],
@@ -1520,6 +1591,50 @@ mod tests {
         assert_eq!(*aspect, Some(0.0));
         assert_eq!(children.len(), MAX_NODES - 1);
         assert_eq!(frame.root.as_ref().unwrap().count(), MAX_NODES);
+    }
+
+    fn picture(bytes: Option<Vec<u8>>) -> Node {
+        Node::Svg {
+            key: "App/icon".into(),
+            hash: 7,
+            bytes,
+            label: None,
+            color: None,
+            width: Some(Length::Fixed(24.0)),
+            height: Some(Length::Fixed(24.0)),
+        }
+    }
+
+    /// A picture past what is left of the frame's budget is dropped whole,
+    /// never cut: half an SVG is not an SVG. The head of the frame keeps
+    /// its pictures; a hash without bytes passes as the reference it is.
+    #[test]
+    fn a_frame_past_the_picture_budget_drops_whole_pictures_from_its_tail() {
+        const EACH: usize = MAX_SVG_BYTES_PER_FRAME / 4 * 3;
+        let mut frame = Frame {
+            root: Some(column(vec![
+                picture(Some(vec![b'<'; EACH])),
+                picture(Some(vec![b'<'; EACH])),
+                picture(None),
+                picture(Some(vec![b'<'; MAX_SVG_BYTES_PER_FRAME / 4])),
+            ])),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        let carried: Vec<Option<usize>> = children
+            .iter()
+            .map(|child| match child {
+                Node::Svg { bytes, .. } => bytes.as_ref().map(Vec::len),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            carried,
+            [Some(EACH), None, None, Some(MAX_SVG_BYTES_PER_FRAME / 4)]
+        );
     }
 
     #[test]

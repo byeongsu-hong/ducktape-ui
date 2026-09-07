@@ -57,6 +57,25 @@ pub mod slots {
     thread_local! {
         static MESSAGES: RefCell<Vec<Box<dyn Any>>> = const { RefCell::new(Vec::new()) };
         static HANDLERS: RefCell<Vec<Box<dyn Any>>> = const { RefCell::new(Vec::new()) };
+        /// Every picture hash a frame has carried the bytes for. Not a
+        /// per-frame table: the host keeps a picture for the guest's life,
+        /// so the bytes cross once and the hash stands for them after.
+        static PICTURES: RefCell<std::collections::HashSet<u64>> =
+            RefCell::new(std::collections::HashSet::new());
+    }
+
+    /// What a [`wire::Node::Svg`] carries for `bytes`: the picture's hash,
+    /// and the picture itself the first time this guest shows it. The hash
+    /// is the process's default hasher over the bytes — an opaque key the
+    /// host never recomputes, consistent for as long as the guest runs.
+    pub fn picture(bytes: impl AsRef<[u8]>) -> (u64, Option<Vec<u8>>) {
+        use std::hash::{Hash, Hasher};
+        let bytes = bytes.as_ref();
+        let mut hasher = std::hash::DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        let hash = hasher.finish();
+        let first = PICTURES.with_borrow_mut(|sent| sent.insert(hash));
+        (hash, first.then(|| bytes.to_vec()))
     }
 
     pub fn message<M: 'static>(message: M) -> u32 {
@@ -78,6 +97,11 @@ pub mod slots {
     pub(crate) fn reset() {
         MESSAGES.with_borrow_mut(Vec::clear);
         HANDLERS.with_borrow_mut(Vec::clear);
+    }
+
+    /// A new driver faces a host that has seen nothing.
+    pub(crate) fn forget_pictures() {
+        PICTURES.with_borrow_mut(std::collections::HashSet::clear);
     }
 
     pub(crate) fn take_message<M: Clone + 'static>(index: u32) -> Option<M> {
@@ -149,6 +173,7 @@ const SUBSCRIPTION_QUEUE: usize = 100;
 
 impl<A: App> Driver<A> {
     pub fn new() -> Self {
+        slots::forget_pictures();
         let (app, boot) = A::boot();
         let (subscribed, produced) = mpsc::channel(SUBSCRIPTION_QUEUE);
         let mut driver = Self {
@@ -207,7 +232,16 @@ impl<A: App> Driver<A> {
         let root = self.app.view();
         let unchanged = self.last_root.as_ref() == Some(&root);
         if !unchanged {
-            self.last_root = Some(root.clone());
+            // Remembered without the picture bytes this frame carried: the
+            // next view names those pictures by hash alone, and that is
+            // the same tree.
+            let mut kept = root.clone();
+            kept.for_each_mut(&mut |node| {
+                if let wire::Node::Svg { bytes, .. } = node {
+                    *bytes = None;
+                }
+            });
+            self.last_root = Some(kept);
         }
         wire::Frame {
             root: Some(root),

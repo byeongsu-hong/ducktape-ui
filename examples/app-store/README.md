@@ -357,14 +357,14 @@ An honest inventory, grouped by where the work would land. Items marked
 
 ### Wire and rendering
 
-- The wire carries `box`, `col`/`row`, `grid`, `scroll`, `text`, `input`,
-  `button`, `space`, `rule`, `checkbox`, `toggler`, `radio`, `slider`,
+- The wire carries `box`, `col`/`row`, `grid`, `scroll`, `text`, `svg`,
+  `input`, `button`, `space`, `rule`, `checkbox`, `toggler`, `radio`, `slider`,
   `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
   extern's name (`clock_face` is the one this store paints, with a sweeping
   second hand the guest never ticks), given the call's one `str` argument
   as text; a name the host lacks renders a placeholder. Every other Ice
-  construct — combo box, images, SVG, canvas, stacks, overlays,
+  construct — combo box, images, canvas, stacks, overlays,
   mounted components, gradients, utility styles — fails the app's build at
   its `.ice` line with E190. Each is a node kind to add to the wire, an
   emitter arm and a renderer arm.
@@ -372,6 +372,11 @@ An honest inventory, grouped by where the work would land. Items marked
   argument or another argument type is refused with E190. Its size is its
   parent's; a `box w= h=` around the call sets it. Nothing crosses back
   from the surface — a video tile's clicks are the host's to route.
+- An `svg` is an embedded asset or a `memory` source, sized and tinted
+  with one colour; its bytes cross once under a content hash and the host
+  keeps them for the guest's life, up to a fixed cap. Fit, rotation,
+  opacity, a hover colour, `color=inherit`, a style callback and a path
+  read at runtime are refused with E190.
 - The form controls cross unstyled: the host paints a checkbox, toggler,
   radio, slider, pick list or progress bar in its own theme, and a status
   style on one (`active checked bg=…`) is refused with E190 like a widget

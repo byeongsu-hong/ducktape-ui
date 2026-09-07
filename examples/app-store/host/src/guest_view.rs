@@ -33,7 +33,12 @@ pub fn wasm_view(surface: Surface, dark: bool) -> Element<'static, String> {
             .clone()
             .unwrap_or_else(ui_lang_wire::Node::empty);
         (
-            view_tree::render(&root, &locked.inputs, crate::surfaces::registry()),
+            view_tree::render(
+                &root,
+                &locked.inputs,
+                &locked.pictures,
+                crate::surfaces::registry(),
+            ),
             locked.frame_rev,
         )
     };

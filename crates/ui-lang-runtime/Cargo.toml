@@ -44,7 +44,7 @@ accesskit = "=0.24.1"
 num-traits = "0.2"
 ouroboros = "0.18"
 rustc-hash = "2.0"
-iced = { version = "=0.14.0", default-features = false, features = ["advanced", "canvas", "qr_code"] }
+iced = { version = "=0.14.0", default-features = false, features = ["advanced", "canvas", "qr_code", "svg"] }
 stacker = "0.1"
 iced_test = { version = "=0.14.0", optional = true }
 iced_tiny_skia = { version = "=0.14.0", default-features = false, optional = true }
