@@ -598,6 +598,14 @@ pub enum Node {
         #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
+    /// A guest-memoized subtree. Generation changes whenever cached content or
+    /// its callable routes are rebuilt, including a rebuild after eviction.
+    Lazy {
+        key: String,
+        generation: u64,
+        #[serde(deserialize_with = "decode_child")]
+        content: Box<Node>,
+    },
     /// Splices selected children into the surrounding layout. It adds no box.
     When {
         key: String,
@@ -888,6 +896,26 @@ impl Node {
         }
     }
 
+    /// Hashes the current copied subtree without allocating an encoded buffer.
+    /// A host uses this after sanitization: shared frame budgets may change
+    /// content even when a guest memo generation stays the same.
+    pub fn fingerprint(&self) -> u64 {
+        use std::hash::Hasher;
+        struct Sink(std::hash::DefaultHasher);
+        impl std::io::Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.write(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut sink = Sink(std::hash::DefaultHasher::new());
+        bincode::serialize_into(&mut sink, self).expect("node fingerprint sink cannot fail");
+        sink.0.finish()
+    }
+
     pub fn key(&self) -> Option<&str> {
         match self {
             Self::Container { key, .. }
@@ -896,6 +924,7 @@ impl Node {
             | Self::Grid { key, .. }
             | Self::KeyedColumn { key, .. }
             | Self::Responsive { key, .. }
+            | Self::Lazy { key, .. }
             | Self::When { key, .. }
             | Self::Sensor { key, .. }
             | Self::Scroll { key, .. }
@@ -928,6 +957,7 @@ impl Node {
         match self {
             Self::Container { content, .. }
             | Self::Responsive { content, .. }
+            | Self::Lazy { content, .. }
             | Self::Sensor { child: content, .. }
             | Self::MouseArea { content, .. }
             | Self::Scroll { content, .. } => std::slice::from_ref(content),
@@ -973,6 +1003,7 @@ impl Node {
         match self {
             Self::Container { content, .. }
             | Self::Responsive { content, .. }
+            | Self::Lazy { content, .. }
             | Self::Sensor { child: content, .. }
             | Self::MouseArea { content, .. }
             | Self::Scroll { content, .. } => std::slice::from_mut(content),
@@ -1021,6 +1052,7 @@ impl Node {
             | Self::Overlay { children, .. } => Some(children),
             Self::Container { .. }
             | Self::Responsive { .. }
+            | Self::Lazy { .. }
             | Self::Sensor { .. }
             | Self::MouseArea { .. }
             | Self::Scroll { .. }
@@ -1541,7 +1573,9 @@ fn sanitize_node(
                 *delay = finite(*delay).max(0.0);
             }
         }
-        Node::MouseArea { key, .. } | Node::Responsive { key, .. } => claim(key, taken),
+        Node::MouseArea { key, .. } | Node::Responsive { key, .. } | Node::Lazy { key, .. } => {
+            claim(key, taken)
+        }
         Node::Stack {
             key,
             padding,
@@ -1998,6 +2032,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Radio { width, .. }
         | Node::PickList { width, .. } => vec![width],
         Node::Rule { .. }
+        | Node::Lazy { .. }
         | Node::Sensor { .. }
         | Node::MouseArea { .. }
         | Node::Overlay { .. }

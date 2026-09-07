@@ -198,6 +198,8 @@ jobs:
       # against the null renderer failed the whole target with 29 errors.
       - name: Test the runtime library in release
         run: cargo test --release --locked -p ui-lang-runtime --lib
+      - name: Verify wire render allocation and latency bounds
+        run: cargo test --release --locked -p ui-lang-runtime --test view_tree_render_performance
       # The same guard for the examples' frame probes, which are
       # `#![cfg(not(debug_assertions))]` modules no debug job compiles: the
       # starter's had rotted against a generated message's new payload. A
@@ -636,6 +638,14 @@ jobs:
       - name: Verify keyed state and viewport mounting through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host store::keyed_tests -- --ignored
+      - name: Bundle lazy module views
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-lazy-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/lazy-fixture
+      - name: Verify lazy native routes through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host store::lazy_tests -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

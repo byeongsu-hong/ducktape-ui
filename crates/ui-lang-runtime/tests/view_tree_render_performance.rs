@@ -17,7 +17,7 @@ use common::clean_window_allocations;
 use std::time::Instant;
 
 use common::assert_wall_clock_budgets;
-use ui_lang_runtime::view_tree::{Inputs, Surfaces, render};
+use ui_lang_runtime::view_tree::{Inputs, Pictures, Surfaces, render};
 use ui_lang_wire as wire;
 
 fn text_node(nth: usize) -> wire::Node {
@@ -57,6 +57,8 @@ fn column_of(children: Vec<wire::Node>) -> wire::Node {
         width: None,
         height: None,
         align: None,
+        background: None,
+        border: None,
         children,
     }
 }
@@ -71,6 +73,7 @@ fn render_again(root: &wire::Node, inputs: &Inputs, samples: usize) -> Vec<u128>
             drop(std::hint::black_box(render(
                 std::hint::black_box(root),
                 std::hint::black_box(inputs),
+                &Pictures::default(),
                 &Surfaces::new(),
             )));
             started.elapsed().as_micros()
@@ -88,9 +91,14 @@ fn render_within_budget(
     p50_budget_us: u128,
     p95_budget_us: u128,
 ) {
-    drop(render(root, inputs, &Surfaces::new()));
+    drop(render(root, inputs, &Pictures::default(), &Surfaces::new()));
     let stats = clean_window_allocations(expected_allocations, || {
-        drop(render(std::hint::black_box(root), inputs, &Surfaces::new()));
+        drop(render(
+            std::hint::black_box(root),
+            inputs,
+            &Pictures::default(),
+            &Surfaces::new(),
+        ));
     });
     assert!(
         stats.allocations <= expected_allocations,
@@ -117,11 +125,12 @@ fn a_column_at_the_wire_cap_renders_within_budget() {
     // Measured after the clone cuts in `view_tree::render_node`: a column's
     // own wrapping (the `Vec` collecting rendered children, its container)
     // adds a fixed handful of allocations on top of a flat per-node cost —
-    // 5 per text node, plus 5 once for the column. A regression that adds
+    // 5 per text node, plus 7 for the current column renderer and 2
+    // for the instance scope (its weak slot and widget). A regression that adds
     // an allocation back per node fails immediately, rather than waiting to
     // be noticed on a slower screen.
     const TEXT_ALLOCATIONS_PER_NODE: usize = 5;
-    const TEXT_FIXED_OVERHEAD: usize = 5;
+    const TEXT_FIXED_OVERHEAD: usize = 9;
     const TEXT_EXPECTED_ALLOCATIONS: usize =
         NODES * TEXT_ALLOCATIONS_PER_NODE + TEXT_FIXED_OVERHEAD;
     const TEXT_P50_BUDGET_US: u128 = 20_000;
@@ -142,7 +151,7 @@ fn a_column_at_the_wire_cap_renders_within_budget() {
     // the accessible wrapper's focus id, on top of the text node's shape —
     // that pair of `widget::Id` allocations is the whole gap.
     const INPUT_ALLOCATIONS_PER_NODE: usize = 8;
-    const INPUT_FIXED_OVERHEAD: usize = 5;
+    const INPUT_FIXED_OVERHEAD: usize = 9;
     const INPUT_EXPECTED_ALLOCATIONS: usize =
         NODES * INPUT_ALLOCATIONS_PER_NODE + INPUT_FIXED_OVERHEAD;
     const INPUT_P50_BUDGET_US: u128 = 130_000;

@@ -335,10 +335,25 @@ pub(in crate::codegen) fn render_structure(
             } else {
                 format!("move |__dependency| {{ {lazy_body} }}")
             };
-            let lazy_code = format!(
-                "::ui_lang_runtime::memo_lazy(({entries}({}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()",
-                borrowed_scope(&child_scope),
-            );
+            let lazy_code = if document.target() == Target::Tree {
+                let key = owned_accessibility_key_code(
+                    identity,
+                    "lazy",
+                    view.origin,
+                    scope,
+                    env,
+                    program,
+                )?;
+                format!(
+                    "{{ let __lazy_key = {key}; ::ui_lang_guest::memo_lazy(({entries}({}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope}), __lazy_key) }}",
+                    borrowed_scope(&child_scope),
+                )
+            } else {
+                format!(
+                    "::ui_lang_runtime::memo_lazy(({entries}({}).to_owned(), __ice_palette.name), {builder}, {site}u64, &({parking_scope})).into()",
+                    borrowed_scope(&child_scope),
+                )
+            };
             Ok(if hoisted.is_empty() {
                 lazy_code
             } else {

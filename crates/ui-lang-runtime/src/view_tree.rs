@@ -30,6 +30,7 @@ mod lists;
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
+mod memo;
 mod text;
 mod tooltip;
 pub use text::register_font_family;
@@ -137,10 +138,28 @@ struct EditorField {
 }
 
 /// The live text of every input and editor in a tree, by node key.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct Inputs {
+    instance: u64,
     fields: HashMap<String, Field>,
     editors: HashMap<String, EditorField>,
+}
+
+impl Default for Inputs {
+    fn default() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        let instance = NEXT
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+            .expect("view instance identities exhausted");
+        Self {
+            instance,
+            fields: HashMap::new(),
+            editors: HashMap::new(),
+        }
+    }
 }
 
 impl Inputs {
@@ -359,6 +378,7 @@ fn collect_inputs(
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
         | wire::Node::Responsive { content, .. }
+        | wire::Node::Lazy { content, .. }
         | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
             collect_inputs(content, into, editors);
@@ -437,6 +457,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
         | wire::Node::Responsive { content, .. }
+        | wire::Node::Lazy { content, .. }
         | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
             collect_pictures(content, into);
@@ -942,7 +963,8 @@ pub fn render(
     pictures: &Pictures,
     surfaces: &Surfaces,
 ) -> IceElement<'static, Output> {
-    render_node(
+    let handle = crate::MemoParkingHandle::unbound();
+    let content = render_node(
         root,
         &Kept {
             button_ink: None,
@@ -951,13 +973,16 @@ pub fn render(
             surfaces,
             canvas: std::rc::Rc::new(canvas::Cache::new(root)),
             containers: &HashMap::new(),
+            memo: handle.clone(),
         },
-    )
+    );
+    memo::scope(content, inputs.instance, handle)
 }
 
 /// What the host keeps across frames, as one borrow for the render walk.
 #[derive(Clone)]
 struct Kept<'a> {
+    memo: crate::MemoParkingHandle,
     button_ink: Option<crate::ButtonInk>,
     inputs: &'a Inputs,
     pictures: &'a Pictures,
@@ -970,6 +995,11 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
     let inputs = kept.inputs;
     match node {
         wire::Node::KeyedColumn { .. } => lists::render(node, kept),
+        wire::Node::Lazy {
+            key,
+            generation,
+            content,
+        } => memo::render(key, *generation, content, kept),
         wire::Node::Responsive {
             key,
             width,
@@ -982,6 +1012,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             let containers = kept.containers.clone();
             let canvas = kept.canvas.clone();
             let button_ink = kept.button_ink.clone();
+            let memo = kept.memo.clone();
             let content = content.clone();
             let key = key.clone();
             let mut responsive = crate::responsive(move |size| {
@@ -990,6 +1021,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 render_node(
                     &content,
                     &Kept {
+                        memo: memo.clone(),
                         button_ink: button_ink.clone(),
                         inputs: &inputs,
                         pictures: &pictures,

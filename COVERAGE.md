@@ -1543,5 +1543,29 @@ on both paths, plus 200 guest rows with at most 32 mounted input widgets before
 and after scrolling to the tail. These operation counts prove mounted reachability,
 not a layout count. Reverting ordinary reconciliation fails the row-focus assertion;
 bypassing virtual rendering fails the 200-versus-32 mounting bound. CI bundles
-the fixture and runs all three tests. Lazy dependency caching is not covered or
-claimed by this change.
+the fixture and runs all three tests. Lazy dependency evidence is separate below.
+
+### Tree lazy evidence
+
+Guest cache tests cover per-Driver isolation, captured message/typed routes,
+nested replay, expiration, capacity and fresh generations after eviction. Nested
+SVG caches retain hashes after their first payload-bearing frame; the pre-fix
+regression failed because hits replayed bytes and forced unchanged-tree patches. Native
+tests cover mount/instance identity, owned parking and nested resource teardown,
+view/layout hits and resize reflow. Shared-budget regressions verify that lazy
+cannot admit a rejected SVG or retain text removed by host sanitization.
+
+The actual bundled nested/by fixture drives native pointer clicks after cache
+hits, typed surface events, hide/remount, dependency changes, stale-route delivery
+and a replacement wasm instance. Removing message replay fails the clicked
+value assertion; removing typed handler replay fails the surface value assertion.
+A second bundled test clicks component-local routes inside virtual keyed lazy
+rows before and after reordering, checking sibling cache generations and state.
+Removing scope from the guest cache key fails the unchanged-sibling generation
+assertion. Restored bundles pass. CI builds the fixture and runs `store::lazy_tests`.
+
+The release render contract preserves the per-node allocation/time bounds. The
+module root adds two fixed allocations (weak slot and wrapper); a scope-free
+measurement separates that from the current renderer's seven fixed allocations.
+The dormant contract's Pictures argument and Linear fields were updated, and CI
+now executes it after the release runtime tests.
