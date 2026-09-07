@@ -814,7 +814,7 @@ view
         generated
             .contains("::ui_lang_runtime::bounded_fill_element(__child, __child_count, false)")
     );
-    assert!(generated.contains("::iced::widget::keyed_column(__children)"));
+    assert!(generated.contains("::ui_lang_runtime::keyed_column(__children)"));
     assert!(generated.contains(".spacing(::ui_lang_runtime::bounded_spacing(8.0, __child_count))"));
     assert!(generated.contains("::ui_lang_runtime::bounded_padding(4.0, 4.0, 4.0, 12.0)"));
     assert!(generated.contains(".width(::iced::Length::FillPortion(2))"));
@@ -1449,7 +1449,7 @@ view
     assert!(generated.contains(".mount("));
     assert!(generated.contains(".finish_render(__ice_root_scope_ref)"));
     assert!(generated.contains("RequestLane0"));
-    assert!(generated.contains("::iced::widget::keyed_column(__children)"));
+    assert!(generated.contains("::ui_lang_runtime::keyed_column(__children)"));
     assert!(generated.contains("format!(\"{}/key({})\""));
 }
 /// Routes to app handlers capture no component state at the top level, so an

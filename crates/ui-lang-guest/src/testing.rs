@@ -26,6 +26,7 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
         | Node::Hover { children, .. }
         | Node::Tooltip { children, .. }
         | Node::Overlay { children, .. }
+        | Node::KeyedColumn { children, .. }
         | Node::When { children, .. } => {
             children.iter().for_each(|child| collect_texts(child, out))
         }
@@ -93,6 +94,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         | Node::Hover { children, .. }
         | Node::Tooltip { children, .. }
         | Node::Overlay { children, .. }
+        | Node::KeyedColumn { children, .. }
         | Node::When { children, .. } => children.iter().find_map(|child| find_by(child, matches)),
 
         Node::Button {
@@ -386,6 +388,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         | Node::Hover { children, .. }
         | Node::Tooltip { children, .. }
         | Node::Overlay { children, .. }
+        | Node::KeyedColumn { children, .. }
         | Node::When { children, .. } => children.iter().for_each(|child| collect_keys(child, out)),
 
         Node::Button {

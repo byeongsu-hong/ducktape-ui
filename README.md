@@ -533,3 +533,8 @@ styles. Text metadata shares frame budgets and layout numbers are bounded.
 Rebuild hosts and guests together for InputOptions and the extended InputStyle.
 Secret handles, input icons, paste routes and Rust style callbacks remain
 refused.
+
+Tree module views support keyed row identity and `virtual-row=` columns. The
+host preserves row input state and focus across reordering and owns viewport
+mounting; see [the bundled evidence](examples/app-store/README.md#keyed-and-virtual-rows).
+Lazy subtree caching remains a separate prerequisite.

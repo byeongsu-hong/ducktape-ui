@@ -627,6 +627,15 @@ jobs:
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host text_wasm_ -- --ignored
 
+
+      - name: Bundle keyed and virtual rows
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-keyed-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/keyed-fixture
+      - name: Verify keyed state and viewport mounting through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host store::keyed_tests -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

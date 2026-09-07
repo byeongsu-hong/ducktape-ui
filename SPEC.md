@@ -1093,3 +1093,15 @@ styles. Text metadata shares frame budgets and layout numbers are bounded.
 Rebuild hosts and guests together for InputOptions and the extended InputStyle.
 Secret handles, input icons, paste routes and Rust style callbacks remain
 refused.
+
+## Tree keyed and virtual columns
+
+`keyed` emits a wire KeyedColumn with copied bool/i64/f64 keys and bounded layout
+properties. Ordinary keys retain native numeric PartialEq semantics; virtual
+keys retain their lossless bit representation. Duplicate keys match old
+occurrences in order. Hosts move widget state with those occurrences on arbitrary
+permutations and discard removed rows. `virtual-row=` on keyed and ordinary
+columns uses native host viewport observation, measured heights and deferred
+offscreen diffing. The guest supplies children and an estimate, never coordinates
+or layout callbacks. Lazy subtree caching and selector-based scroll-to-key
+actions are not enabled by this lowering.

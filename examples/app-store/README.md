@@ -444,7 +444,7 @@ For module packaging requirements and the connected implementation phases, see
   delayed show/hide and the native AccessKit snapshot. Delay is capped at
   60 seconds and both children share the frame budgets.
 
-- The wire carries `box`, `mouse`, `col`/`row`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
+- The wire carries `box`, `mouse`, `col`/`row`, `keyed`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
   `text`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
@@ -947,7 +947,7 @@ cd examples/app-store
 cargo test -p app-store-host bundled_layers_ -- --ignored
 ```
 
-Keyed/lazy lists, flex and pin/tooltip remain separate phase-4 prerequisites.
+Lazy lists, flex and pin remain separate phase-4 prerequisites.
 Host and guests must be rebuilt together for the added wire node variants.
 
 ### Tree SVG button colors
@@ -975,3 +975,21 @@ styles. Text metadata shares frame budgets and layout numbers are bounded.
 Rebuild hosts and guests together for InputOptions and the extended InputStyle.
 Secret handles, input icons, paste routes and Rust style callbacks remain
 refused.
+
+### Keyed and virtual rows
+
+Tree guests emit `keyed` columns with copied bool/i64/f64 keys, spacing, padding,
+lengths, max width and alignment. Host row state follows key occurrences through
+rotations, insertions and removal. Repeated keys match old occurrences in order;
+ordinary float keys use numeric equality, while virtual keys preserve their bits.
+`virtual-row=` on keyed or ordinary columns delegates viewport mounting and
+measurement to the host. The surrounding scroll keeps native synchronization.
+No guest layout callback runs. Widget selectors and `scroll-to-key` commands are
+still separate unsupported Tree features; ordinary host scroll actions work.
+
+The bundled keyed fixture verifies input and focus after reorder/prepend/remove
+on both ordinary and virtual paths. Its 200-row case checks bounded mounted rows
+and scrolling to the last row. Native tests count actual layout work separately.
+Disabling virtualization fails the mounted-row bound; reverting ordinary keyed
+reconciliation fails the focus assertion. Lazy memoization remains unsupported;
+these checks do not claim the entire chat or storage graph is portable yet.

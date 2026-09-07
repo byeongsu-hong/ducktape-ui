@@ -1246,3 +1246,34 @@ view
     .unwrap();
     assert!(generated.contains("::ui_lang_runtime::virtual_scroll("));
 }
+
+#[test]
+fn virtual_rows_receive_utility_and_explicit_gaps() {
+    let source = r#"
+app VirtualGap
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+view
+  col virtual-row=20.0 @gap-8px
+    for item in [1, 2, 3]
+      text item
+"#;
+    let generated = compile(source, "virtual_gap.ice").unwrap();
+    assert!(
+        generated.contains("virtual_children(__children, (20.0) as f32).spacing(8)"),
+        "utility gap belongs on virtual rows: {generated}"
+    );
+    let explicit = compile(&source.replace("@gap-8px", "gap=3.0"), "virtual_gap.ice").unwrap();
+    assert!(
+        explicit.contains("virtual_children(__children, (20.0) as f32).spacing((3.0) as f32)"),
+        "explicit gap belongs on virtual rows: {explicit}"
+    );
+}

@@ -39,6 +39,8 @@
 use super::*;
 mod button;
 mod canvas;
+mod lists;
+pub(super) use lists::keyed_column;
 mod responsive;
 mod text;
 mod tooltip;
@@ -120,6 +122,7 @@ pub(in crate::codegen) fn render_tree_node(
         // Rendered by the shared emitters: their code is target-neutral.
         ResolvedViewKind::Component { .. }
         | ResolvedViewKind::Slot { .. }
+        | ResolvedViewKind::KeyedColumn { .. }
         | ResolvedViewKind::If { .. }
         | ResolvedViewKind::For { .. }
         | ResolvedViewKind::Match { .. } => return Ok(None),
@@ -581,10 +584,9 @@ fn layout(
             refuse_when(
                 program,
                 origin,
-                linear.virtual_row.is_some(),
-                "a virtual-row layout",
+                linear.virtual_row.is_none() && linear.max_width.is_some(),
+                "`max-w`",
             )?;
-            refuse_when(program, origin, linear.max_width.is_some(), "`max-w`")?;
             refuse_when(program, origin, linear.clip.is_some(), "`clip`")?;
             let axis = match linear.axis {
                 ResolvedLinearAxis::Column => "Column",
@@ -615,6 +617,24 @@ fn layout(
                 &child_scope,
                 slot,
             )?;
+            if let Some(estimate) = linear.virtual_row {
+                let estimate = resolved_expr_use_code(program, estimate, env, ValueMode::Owned)?;
+                let max_width = option_code(
+                    linear
+                        .max_width
+                        .map(|value| {
+                            resolved_expr_use_code(program, value, env, ValueMode::Owned)
+                                .map(|value| format!("({value}) as f32"))
+                        })
+                        .transpose()?,
+                );
+                write!(body, " {WIRE}::Node::KeyedColumn {{ key: {key}, keys: None, children: __children, spacing: {}, padding: {}, width: {}, height: {}, align: {}, max_width: {max_width}, virtual_row: Some(({estimate}) as f32), background: {background}, border: {border} }} }}",
+                    option_code(spacing), edges_code(&linear.padding, style.padding, program, env)?,
+                    dimension_code(linear.width.as_ref(), style.width_fill, program, env, origin)?,
+                    dimension_code(linear.height.as_ref(), style.height_fill, program, env, origin)?, option_code(align),
+                ).unwrap();
+                return Ok(body);
+            }
             write!(
                 body,
                 " {WIRE}::Node::Linear {{ key: {key}, wrap: {wrap}, axis: {WIRE}::Axis::{axis}, spacing: {}, padding: {}, width: {}, height: {}, align: {}, background: {background}, border: {border}, children: __children }} }}",
@@ -664,8 +684,12 @@ fn layout(
                 None => "false".into(),
             };
             let content = render_node(children[0], program, message, env, &child_scope, slot)?;
+            let virtual_rows = children.iter().try_fold(false, |found, child| {
+                super::layout::contains_virtual_rows(*child, program, slot)
+                    .map(|value| found || value)
+            })?;
             Ok(format!(
-                "{WIRE}::Node::Scroll {{ key: {key}, direction: {WIRE}::ScrollDirection::{direction}, width: {}, height: {}, bar_hidden: {}, bar_width: {}, bar_margin: {}, scroller_width: {}, bar_spacing: {}, anchor_x: {}, anchor_y: {}, auto_scroll: ({auto_scroll}), background: {background}, border: {border}, content: ::std::boxed::Box::new({content}) }}",
+                "{WIRE}::Node::Scroll {{ virtual_rows: {virtual_rows}, key: {key}, direction: {WIRE}::ScrollDirection::{direction}, width: {}, height: {}, bar_hidden: {}, bar_width: {}, bar_margin: {}, scroller_width: {}, bar_spacing: {}, anchor_x: {}, anchor_y: {}, auto_scroll: ({auto_scroll}), background: {background}, border: {border}, content: ::std::boxed::Box::new({content}) }}",
                 dimension_code(
                     scroll.width.as_ref(),
                     style.width_fill,

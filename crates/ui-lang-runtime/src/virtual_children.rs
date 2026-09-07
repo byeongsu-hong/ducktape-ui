@@ -99,6 +99,7 @@ use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
 use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 
 /// Extra rows kept live on each side of the viewport so a scroll of a row or
 /// two reveals something already measured.
@@ -674,6 +675,7 @@ where
         if self.keys.is_empty() {
             self.diff_live_rows(tree);
             let state = tree.state.downcast_mut::<State>();
+            state.keys.clear();
             state.measured.resize(self.children.len(), None);
             if state
                 .live
@@ -695,20 +697,36 @@ where
         let state = state.downcast_mut::<State>();
         let previous = std::mem::take(&mut state.keys);
 
-        // Child widget state moves to wherever its key went, so a prepend does
-        // not shift every row's memo, cursor, and hover onto its neighbour.
-        // The move is all this does; the trees are diffed below, live rows
-        // now and the rest when they mount.
-        tree::diff_children_custom_with_search(
-            children,
-            &self.children,
-            |_, _| {},
-            |index| {
-                self.keys.get(index).or_else(|| self.keys.last()).copied()
-                    != previous.get(index).copied()
-            },
-            |child| Tree::new(child.as_widget()),
-        );
+        // Move each key occurrence's widget tree, measured height and focus
+        // together. Positional diffing cannot reconcile an arbitrary rotation.
+        let focused = state.live.focused.take();
+        let mut previous_rows: FxHashMap<u64, VecDeque<(Tree, Option<f32>, bool)>> =
+            FxHashMap::default();
+        for (index, (key, child)) in previous
+            .into_iter()
+            .zip(std::mem::take(children))
+            .enumerate()
+        {
+            previous_rows.entry(key).or_default().push_back((
+                child,
+                state.measured.get(index).copied().flatten(),
+                focused == Some(index),
+            ));
+        }
+        state.measured.clear();
+        for (index, (key, child)) in self.keys.iter().zip(&self.children).enumerate() {
+            let (child_tree, height, was_focused) = previous_rows
+                .get_mut(key)
+                .and_then(VecDeque::pop_front)
+                .unwrap_or_else(|| (Tree::new(child.as_widget()), None, false));
+            children.push(child_tree);
+            state.measured.push(height);
+            if was_focused {
+                state.live.focused = Some(index);
+            }
+        }
+        // Offscreen children remain deferred until mounting. The focused row
+        // is already remapped, so it receives the same live diff as visible rows.
         state.stale.clear();
         state.stale.resize(self.children.len(), true);
         for (index, child) in self.children.iter().enumerate() {
@@ -717,28 +735,6 @@ where
                 state.stale[index] = false;
             }
         }
-
-        // Heights are the same kind of per-row state and move the same way. A
-        // list that prepends would otherwise hand every row below the new one
-        // the height of its predecessor, which is a visible jump the moment
-        // rows are not all one height.
-        let heights: FxHashMap<u64, f32> = previous
-            .iter()
-            .zip(&state.measured)
-            .filter_map(|(key, height)| height.map(|height| (*key, height)))
-            .collect();
-        state.measured.clear();
-        state
-            .measured
-            .extend(self.keys.iter().map(|key| heights.get(key).copied()));
-        // And so does the focused row: it is measured wherever it sits, and an
-        // index pointing at its neighbour instead means the focused row stops
-        // being measured, which is how focus gets lost for good.
-        state.live.focused = state
-            .live
-            .focused
-            .and_then(|index| previous.get(index))
-            .and_then(|key| self.keys.iter().position(|candidate| candidate == key));
         state.keys.clone_from(&self.keys);
     }
 
@@ -1515,6 +1511,86 @@ mod tests {
             Some(2),
             "so the row still measured off-window is the one actually focused"
         );
+    }
+
+    #[test]
+    fn rotations_move_row_state_and_duplicate_occurrences_together() {
+        type Row = Element<'static, (), iced::Theme, iced_test::renderer::Renderer>;
+        fn rows(keys: &[u64]) -> Vec<(u64, Row)> {
+            keys.iter()
+                .map(|key| {
+                    (
+                        *key,
+                        Element::new(FocusableRow {
+                            height: *key as f32 * 11.0,
+                        }),
+                    )
+                })
+                .collect()
+        }
+        let renderer = headless_renderer();
+        for (old, new, focused, expected) in [
+            (vec![1, 2, 3], vec![2, 3, 1], 1, Some(0)),
+            (vec![1, 2, 1, 3], vec![3, 1, 2, 1], 2, Some(3)),
+            (vec![1, 2, 3], vec![3, 1], 1, None),
+        ] {
+            let mut widget = virtual_keyed_children(rows(&old), 11.0);
+            let mut tree =
+                Tree::new(&widget as &dyn Widget<(), iced::Theme, iced_test::renderer::Renderer>);
+            let _ = widget.layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(240.0, 1000.0)),
+            );
+            tree.children[focused]
+                .state
+                .downcast_mut::<FocusState>()
+                .focused = true;
+            tree.state.downcast_mut::<State>().live.focused = Some(focused);
+            virtual_keyed_children(rows(&new), 11.0).diff(&mut tree);
+            let actual: Vec<_> = tree
+                .children
+                .iter()
+                .enumerate()
+                .filter_map(|(index, child)| {
+                    child
+                        .state
+                        .downcast_ref::<FocusState>()
+                        .focused
+                        .then_some(index)
+                })
+                .collect();
+            assert_eq!(
+                actual,
+                expected.into_iter().collect::<Vec<_>>(),
+                "widget state must move with the same key occurrence: {old:?} -> {new:?}"
+            );
+            assert_eq!(tree.state.downcast_ref::<State>().live.focused, expected);
+            assert_eq!(
+                tree.state.downcast_ref::<State>().measured,
+                new.iter()
+                    .map(|key| Some(*key as f32 * 11.0))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn clearing_and_refilling_keys_discards_old_measurements() {
+        type Row = Element<'static, (), iced::Theme, iced_test::renderer::Renderer>;
+        let rows = || -> Vec<(u64, Row)> { vec![(1, Element::new(FocusableRow { height: 42.0 }))] };
+        let mut widget = virtual_keyed_children(rows(), 11.0);
+        let mut tree =
+            Tree::new(&widget as &dyn Widget<(), iced::Theme, iced_test::renderer::Renderer>);
+        let _ = widget.layout(
+            &mut tree,
+            &headless_renderer(),
+            &layout::Limits::new(Size::ZERO, Size::new(240.0, 1000.0)),
+        );
+        virtual_keyed_children(Vec::<(u64, Row)>::new(), 11.0).diff(&mut tree);
+        virtual_keyed_children(rows(), 11.0).diff(&mut tree);
+        assert_eq!(tree.state.downcast_ref::<State>().measured, vec![None]);
+        assert_eq!(tree.children.len(), 1);
     }
 
     #[test]

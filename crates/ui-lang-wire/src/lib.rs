@@ -32,10 +32,12 @@ pub use text::{
 mod button;
 pub use button::{ButtonPreset, ButtonRecipe};
 mod canvas;
+mod list;
 pub use canvas::{
     CanvasCommand, CanvasLineCap, CanvasLineJoin, CanvasSegment, CanvasShape, CanvasStroke,
     MAX_CANVAS_PARTS,
 };
+pub use list::ListKey;
 mod query;
 pub use query::{ContainerQuery, MAX_QUERY_OPS, QueryOp};
 
@@ -480,6 +482,23 @@ pub enum ButtonContent {
 /// the accessibility tree.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Node {
+    /// Copied keyed rows; the host owns widget state and optional virtualization.
+    KeyedColumn {
+        key: String,
+        #[serde(deserialize_with = "list::decode_optional_keys")]
+        keys: Option<Vec<ListKey>>,
+        background: Option<Rgba>,
+        border: Option<Border>,
+        spacing: Option<f32>,
+        padding: Option<Edges>,
+        width: Option<Length>,
+        height: Option<Length>,
+        max_width: Option<f32>,
+        align: Option<AlignX>,
+        virtual_row: Option<f32>,
+        #[serde(deserialize_with = "decode_children")]
+        children: Vec<Node>,
+    },
     Container {
         max_width: Option<f32>,
         max_height: Option<f32>,
@@ -602,6 +621,7 @@ pub enum Node {
         child: Box<Node>,
     },
     Scroll {
+        virtual_rows: bool,
         key: String,
         direction: ScrollDirection,
         width: Option<Length>,
@@ -874,6 +894,7 @@ impl Node {
             | Self::MouseArea { key, .. }
             | Self::Linear { key, .. }
             | Self::Grid { key, .. }
+            | Self::KeyedColumn { key, .. }
             | Self::Responsive { key, .. }
             | Self::When { key, .. }
             | Self::Sensor { key, .. }
@@ -916,6 +937,7 @@ impl Node {
             | Self::Hover { children, .. }
             | Self::Tooltip { children, .. }
             | Self::Overlay { children, .. }
+            | Self::KeyedColumn { children, .. }
             | Self::When { children, .. } => children,
 
             Self::Button {
@@ -960,6 +982,7 @@ impl Node {
             | Self::Hover { children, .. }
             | Self::Tooltip { children, .. }
             | Self::Overlay { children, .. }
+            | Self::KeyedColumn { children, .. }
             | Self::When { children, .. } => children,
 
             Self::Button {
@@ -990,6 +1013,7 @@ impl Node {
         match self {
             Self::Linear { children, .. }
             | Self::Grid { children, .. }
+            | Self::KeyedColumn { children, .. }
             | Self::Stack { children, .. }
             | Self::When { children, .. }
             | Self::Hover { children, .. }
@@ -1457,6 +1481,36 @@ fn sanitize_node(
             bound_color(background);
             bound_border(border);
         }
+        Node::KeyedColumn {
+            key,
+            keys,
+            background,
+            border,
+            spacing,
+            padding,
+            max_width,
+            virtual_row,
+            children,
+            ..
+        } => {
+            claim(key, taken);
+            bound_color(background);
+            bound_border(border);
+            bound_optional(spacing);
+            bound_edges(padding);
+            bound_optional(max_width);
+            if let Some(estimate) = virtual_row {
+                *estimate = bounded(*estimate).max(1.0);
+            }
+            let count = keys
+                .as_ref()
+                .map_or(children.len(), |keys| keys.len().min(children.len()))
+                .min(MAX_NODES);
+            if let Some(keys) = keys {
+                keys.truncate(count);
+            }
+            children.truncate(count);
+        }
         Node::Grid {
             key,
             fluid,
@@ -1892,6 +1946,7 @@ fn sanitize_node(
     if let Node::Linear { children, .. }
     | Node::Grid { children, .. }
     | Node::Stack { children, .. }
+    | Node::KeyedColumn { children, .. }
     | Node::When { children, .. } = node
     {
         let mut kept = 0;
@@ -1903,6 +1958,12 @@ fn sanitize_node(
             kept += 1;
         }
         children.truncate(kept);
+        if let Node::KeyedColumn {
+            keys: Some(keys), ..
+        } = node
+        {
+            keys.truncate(kept);
+        }
         return;
     }
     for child in node.children_mut() {
@@ -1919,6 +1980,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         Node::Container { width, height, .. }
         | Node::Linear { width, height, .. }
         | Node::Grid { width, height, .. }
+        | Node::KeyedColumn { width, height, .. }
         | Node::Responsive { width, height, .. }
         | Node::Stack { width, height, .. }
         | Node::Hover { width, height, .. }
