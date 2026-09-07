@@ -1286,6 +1286,63 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
     }
 }
 
+// --------------------------------------------------------------- test 2c
+
+/// `diff` then `apply` is the identity on the new tree, and leaves both
+/// inputs as they were. The new tree is the old one with a handful of
+/// well-behaved edits applied — so the pair shares most of its structure
+/// and the diff has to find moves, inserts, removes and field changes
+/// inside lists whose keys come from a five-entry pool — and, one time in
+/// eight, an unrelated tree, which is a `Replace` at the root. A pair whose
+/// diff runs past `MAX_PATCHES` is the guest's cue to send the tree whole,
+/// so it is only checked for that refusal.
+#[test]
+fn a_diff_applied_to_the_old_tree_is_the_new_tree_for_random_pairs() {
+    const SEED: u64 = 0xD1FF_0000_A99B_1E5A;
+    const NUM_PAIRS: usize = 150;
+    const EDITS_PER_PAIR: usize = 8;
+
+    for i in 0..NUM_PAIRS {
+        let seed = SEED ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let ctx = format!("seed={seed:#x} pair={i}");
+        on_big_stack(move || {
+            let mut rng = Rng::new(seed);
+            let tree = |rng: &mut Rng| {
+                let (depth, width) = (rng.skewed(MAX_DEPTH / 2, 3), rng.skewed(48, 2));
+                let mut frame = gen_frame_with(rng, depth, width);
+                sanitize(&mut frame);
+                frame.root.take().expect("a root")
+            };
+            let mut old = tree(&mut rng);
+            let mut new = match rng.next_range(8) {
+                0 => tree(&mut rng),
+                _ => {
+                    let mut edited = old.clone();
+                    for _ in 0..1 + rng.next_range(EDITS_PER_PAIR) {
+                        let patch = gen_patch(&mut rng, &edited, false);
+                        ui_lang_wire::apply(&mut edited, vec![patch])
+                            .unwrap_or_else(|refused| panic!("{ctx}: {refused}"));
+                    }
+                    edited
+                }
+            };
+            let (old_before, new_before) = (old.clone(), new.clone());
+            let patches = diff(&mut old, &mut new);
+            assert_eq!(old, old_before, "{ctx}: diff moved the old tree");
+            assert_eq!(new, new_before, "{ctx}: diff moved the new tree");
+            let count = patches.len();
+            let mut applied = old;
+            match ui_lang_wire::apply(&mut applied, patches) {
+                Ok(()) => assert_eq!(applied, new, "{ctx}: {count} patches"),
+                Err(refused) => assert!(
+                    count > MAX_PATCHES && refused == "more patches than the host applies",
+                    "{ctx}: {count} patches refused: {refused}"
+                ),
+            }
+        });
+    }
+}
+
 // --------------------------------------------------------------- test 3
 
 /// A hand-crafted length-prefix bomb — a `Frame` whose root is a `Linear`

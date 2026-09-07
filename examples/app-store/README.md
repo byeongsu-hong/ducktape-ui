@@ -283,10 +283,10 @@ deterministic):
 
 | frame | bytes |
 |---|---|
-| the list, whole (the frame before this change, and the first frame after it) | 114,668 (tree 114,642) |
-| the toggle, as patches | 7,584 — three `Props` patches at 344 bytes (the checkbox, the progress bar, the "left" count); the rest is the `storage.set` request whose payload is the list itself |
+| the list, whole (the frame before this change, and the first frame after it) | 133,358 (tree 133,332) |
+| the toggle, as patches | 7,984 — three `Props` patches at 344 bytes (the checkbox, the progress bar, the "left" count); the rest is the `storage.set` request whose payload is the list itself |
 
-Three hundred and thirty times less tree on the wire, and on the host the
+Nearly four hundred times less tree on the wire, and on the host the
 patches are applied to the tree it holds and that tree sanitized again
 instead of a hundred kilobytes decoded; the render is the same either way.
 

@@ -30,6 +30,7 @@ fn toggling_one_of_two_hundred_items_crosses_as_a_patch_not_the_list() {
             id,
             text: format!("Item number {id} on a long list"),
             done: false,
+            priority: 0,
         })
         .collect();
     let full = tick_native(vec![answer(load.id, &encode_items(&items))]);
