@@ -357,10 +357,10 @@ An honest inventory, grouped by where the work would land. Items marked
 
 ### Wire and rendering
 
-- The wire carries `box`, `col`/`row`, `scroll`, `text`, `input`,
+- The wire carries `box`, `col`/`row`, `grid`, `scroll`, `text`, `input`,
   `button`, `space`, `rule`, `checkbox`, `toggler`, `radio`, `slider`,
   `pick` and `progress`, with `if`/`for`/`match` around them. Every other
-  Ice construct — combo box, images, SVG, canvas, grids, stacks, overlays,
+  Ice construct — combo box, images, SVG, canvas, stacks, overlays,
   mounted components, gradients, utility styles — fails the app's build at
   its `.ice` line with E190. Each is a node kind to add to the wire, an
   emitter arm and a renderer arm.

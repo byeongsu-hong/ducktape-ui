@@ -99,22 +99,26 @@ view
           px=28.0
           py=10.0
         text count #count size=56.0 @text-fg
-      row gap=12.0 align=center
-        button "−" #decrement -> decrement
+      grid #controls
+        with
+          cols=3
+          gap=12.0
+          w=360.0
+          h=92.0
+        button "−" #decrement w=fill -> decrement
           active bg=raised text=fg r=8.0
           hovered bg=border text=fg r=8.0
-        button "Reset" #reset -> reset
+        button "Reset" #reset w=fill -> reset
           active bg=raised text=fg r=8.0
           hovered bg=border text=fg r=8.0
-        button "+" #increment -> increment
+        button "+" #increment w=fill -> increment
           active bg=primary text=primary_fg r=8.0
           hovered bg=primary/90 text=primary_fg r=8.0
-      row gap=12.0 align=center
-        button #auto label=auto_label(auto) -> toggle_auto
+        button #auto label=auto_label(auto) w=fill -> toggle_auto
           active bg=raised text=fg r=8.0
           hovered bg=border text=fg r=8.0
           text auto_label(auto) @text-fg
-        button "Ask host" #ask -> ask
+        button "Ask host" #ask w=fill -> ask
           active bg=raised text=fg r=8.0
           hovered bg=border text=fg r=8.0
       text answer #answer size=12.0 @text-muted

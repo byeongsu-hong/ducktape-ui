@@ -152,6 +152,38 @@ fn form_controls_compile_to_wire_nodes_with_handler_slots() {
     }
 }
 
+/// A grid crosses with its column count, cell cap, spacing and sizing
+/// inlined; the host lays the cells out.
+#[test]
+fn a_grid_compiles_to_a_grid_node() {
+    let generated = tree(
+        "  grid cols=3 gap=8.0 h=96.0\n    for item in items\n      button \"×\" -> remove 0\n",
+    );
+    for expected in [
+        "::ui_lang_guest::wire::Node::Grid { key:",
+        "columns: ::std::option::Option::Some(u32::try_from(3",
+        "fluid: ::std::option::Option::None",
+        "spacing: ::std::option::Option::Some((8.0) as f32)",
+        "height: ::std::option::Option::Some(::ui_lang_guest::wire::Length::Fixed((96.0) as f32))",
+        "aspect: ::std::option::Option::None",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected:?} in:\n{generated}"
+        );
+    }
+    let fluid = tree("  grid max-cell=120.0 h=aspect(4.0, 3.0)\n    button \"×\" -> remove 0\n");
+    assert!(
+        fluid.contains("fluid: ::std::option::Option::Some((120.0) as f32)"),
+        "{fluid}"
+    );
+    assert!(
+        fluid.contains("aspect: ::std::option::Option::Some((4.0) as f32 / (3.0) as f32)"),
+        "{fluid}"
+    );
+    assert!(!fluid.contains("::iced::widget::grid("), "{fluid}");
+}
+
 #[test]
 fn a_construct_the_wire_does_not_carry_fails_at_its_line() {
     let source = format!(
@@ -321,6 +353,16 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  row gap=4.0\n    text \"a\" @text-fg\n",
     ),
+    emitted(
+        "layout: grid",
+        "",
+        "  grid cols=2 gap=4.0 h=40.0\n    text \"a\" @text-fg\n",
+    ),
+    emitted(
+        "layout: grid fluid",
+        "",
+        "  grid max-cell=120.0 h=aspect(4.0, 3.0)\n    text \"a\" @text-fg\n",
+    ),
     emitted("layout: scroll", "", "  scroll\n    text \"a\" @text-fg\n"),
     emitted("box", "", "  box\n    text \"a\" @text-fg\n"),
     emitted("text", "", "  text \"a\" @text-fg\n"),
@@ -366,12 +408,6 @@ const COVERAGE: &[Coverage] = &[
     emitted("component", "", "  Slotted\n    text \"a\" @text-fg\n"),
     emitted("slot", "", "  Slotted\n    text \"slotted\" @text-fg\n"),
     // The layouts the wire has no node for.
-    refused(
-        "layout: grid",
-        "",
-        "  grid cols=2\n    text \"a\" @text-fg\n",
-        "`grid`",
-    ),
     refused(
         "layout: stack",
         "",
