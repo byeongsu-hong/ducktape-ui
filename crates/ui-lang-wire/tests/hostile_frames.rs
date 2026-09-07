@@ -148,9 +148,11 @@ fn gen_opt_color(rng: &mut Rng) -> Option<Rgba> {
 
 fn gen_border(rng: &mut Rng) -> Border {
     Border {
-        color: Rgba([gen_f32(rng), gen_f32(rng), gen_f32(rng), gen_f32(rng)]),
-        width: gen_f32(rng),
-        radius: [gen_f32(rng), gen_f32(rng), gen_f32(rng), gen_f32(rng)],
+        color: gen_opt_color(rng),
+        width: gen_opt_f32(rng),
+        radius: rng
+            .next_bool()
+            .then(|| [gen_f32(rng), gen_f32(rng), gen_f32(rng), gen_f32(rng)]),
     }
 }
 
@@ -928,13 +930,14 @@ fn check_color(color: &Option<Rgba>, ctx: &str) {
 
 fn check_border(border: &Option<Border>, ctx: &str) {
     let Some(border) = border else { return };
-    check_color(&Some(border.color), ctx);
-    assert!(
-        border.width.is_finite() && (0.0..=PIXEL_BOUND).contains(&border.width),
-        "{ctx}: border width {} outside 0..={PIXEL_BOUND}",
-        border.width
-    );
-    for radius in border.radius {
+    check_color(&border.color, ctx);
+    if let Some(width) = border.width {
+        assert!(
+            width.is_finite() && (0.0..=PIXEL_BOUND).contains(&width),
+            "{ctx}: border width {width} outside 0..={PIXEL_BOUND}"
+        );
+    }
+    for radius in border.radius.into_iter().flatten() {
         assert!(
             radius.is_finite() && (0.0..=PIXEL_BOUND).contains(&radius),
             "{ctx}: border radius {radius} outside 0..={PIXEL_BOUND}"

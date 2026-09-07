@@ -467,17 +467,30 @@ fn padding(edges: wire::Edges) -> iced::Padding {
 }
 
 fn border(border: wire::Border) -> iced::Border {
-    let [top_left, top_right, bottom_right, bottom_left] =
-        border.radius.map(|radius| radius.max(0.0));
-    iced::Border {
-        color: color(border.color),
-        width: border.width.max(0.0),
-        radius: iced::border::Radius {
-            top_left,
-            top_right,
-            bottom_right,
-            bottom_left,
-        },
+    let mut resolved = iced::Border::default();
+    apply_border(border, &mut resolved);
+    resolved
+}
+
+fn radius(value: [f32; 4]) -> iced::border::Radius {
+    let [top_left, top_right, bottom_right, bottom_left] = value.map(|r| r.max(0.0));
+    iced::border::Radius {
+        top_left,
+        top_right,
+        bottom_right,
+        bottom_left,
+    }
+}
+
+fn apply_border(border: wire::Border, resolved: &mut iced::Border) {
+    if let Some(value) = border.color {
+        resolved.color = color(value);
+    }
+    if let Some(value) = border.width {
+        resolved.width = value.max(0.0);
+    }
+    if let Some(value) = border.radius {
+        resolved.radius = radius(value);
     }
 }
 
@@ -530,7 +543,7 @@ fn apply_face(face: wire::Face, style: &mut widget::button::Style) {
         style.text_color = color(text);
     }
     if let Some(border) = face.border {
-        style.border = self::border(border);
+        apply_border(border, &mut style.border);
     }
 }
 
@@ -558,7 +571,7 @@ fn apply_input_face(face: wire::InputFace, style: &mut widget::text_input::Style
         style.background = Background::Color(color(background));
     }
     if let Some(border) = face.border {
-        style.border = self::border(border);
+        apply_border(border, &mut style.border);
     }
     if let Some(value) = face.value {
         style.value = color(value);
@@ -610,7 +623,7 @@ fn apply_control_face(
         *text = Some(color(fill));
     }
     if let (Some(edge), Some(border)) = (edge, face.border) {
-        *edge = self::border(border);
+        apply_border(border, edge);
     }
 }
 
@@ -688,10 +701,15 @@ fn toggler_style(
             resolved.text_color = Some(color(fill));
         }
         if let Some(border) = face.border {
-            let border = self::border(border);
-            resolved.background_border_color = border.color;
-            resolved.background_border_width = border.width;
-            resolved.border_radius = Some(border.radius);
+            if let Some(value) = border.color {
+                resolved.background_border_color = color(value);
+            }
+            if let Some(value) = border.width {
+                resolved.background_border_width = value.max(0.0);
+            }
+            if let Some(value) = border.radius {
+                resolved.border_radius = Some(radius(value));
+            }
         }
     }
     resolved
@@ -730,8 +748,12 @@ fn radio_style(
             None,
         );
         if let Some(border) = face.border {
-            resolved.border_color = color(border.color);
-            resolved.border_width = border.width.max(0.0);
+            if let Some(value) = border.color {
+                resolved.border_color = color(value);
+            }
+            if let Some(value) = border.width {
+                resolved.border_width = value.max(0.0);
+            }
         }
     }
     resolved
@@ -748,14 +770,18 @@ fn apply_slider_face(face: wire::SliderFace, style: &mut widget::slider::Style) 
         style.rail.width = width.max(0.0);
     }
     if let Some(border) = face.rail_border {
-        style.rail.border = self::border(border);
+        apply_border(border, &mut style.rail.border);
     }
     if let Some(fill) = face.handle {
         style.handle.background = Background::Color(color(fill));
     }
     if let Some(border) = face.handle_border {
-        style.handle.border_color = color(border.color);
-        style.handle.border_width = border.width.max(0.0);
+        if let Some(value) = border.color {
+            style.handle.border_color = color(value);
+        }
+        if let Some(value) = border.width {
+            style.handle.border_width = value.max(0.0);
+        }
     }
 }
 
@@ -782,13 +808,15 @@ fn pick_list_style(
     status: widget::pick_list::Status,
 ) -> widget::pick_list::Style {
     let mut resolved = widget::pick_list::default(theme, status);
-    let face = match status {
-        widget::pick_list::Status::Active => style.active,
-        widget::pick_list::Status::Hovered => style.hovered,
-        widget::pick_list::Status::Opened { is_hovered: false } => style.opened,
-        widget::pick_list::Status::Opened { is_hovered: true } => style.opened_hovered,
+    let states = match status {
+        widget::pick_list::Status::Active => [None, None],
+        widget::pick_list::Status::Hovered => [style.hovered, None],
+        widget::pick_list::Status::Opened { is_hovered: false } => [style.opened, None],
+        widget::pick_list::Status::Opened { is_hovered: true } => {
+            [style.opened, style.opened_hovered]
+        }
     };
-    if let Some(face) = face {
+    for face in style.active.into_iter().chain(states.into_iter().flatten()) {
         if let Some(fill) = face.background {
             resolved.background = Background::Color(color(fill));
         }
@@ -802,7 +830,7 @@ fn pick_list_style(
             resolved.handle_color = color(fill);
         }
         if let Some(border) = face.border {
-            resolved.border = self::border(border);
+            apply_border(border, &mut resolved.border);
         }
     }
     resolved
@@ -817,7 +845,7 @@ fn menu_style(menu: wire::MenuFace, theme: &iced::Theme) -> iced::overlay::menu:
         resolved.text_color = color(fill);
     }
     if let Some(border) = menu.border {
-        resolved.border = self::border(border);
+        apply_border(border, &mut resolved.border);
     }
     if let Some(fill) = menu.selected_text {
         resolved.selected_text_color = color(fill);
@@ -1744,8 +1772,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 Some(wire::Tone::Warning) => widget::progress_bar::warning,
                 Some(wire::Tone::Danger) => widget::progress_bar::danger,
             };
-            let (background, fill, edge) =
-                (background.map(color), fill.map(color), edge.map(border));
+            let (background, fill, edge) = (background.map(color), fill.map(color), *edge);
             let mut bar = widget::progress_bar(range, value).style(move |theme| {
                 let mut style = preset(theme);
                 if let Some(background) = background {
@@ -1755,7 +1782,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     style.bar = Background::Color(fill);
                 }
                 if let Some(edge) = edge {
-                    style.border = edge;
+                    apply_border(edge, &mut style.border);
                 }
                 style
             });
@@ -1825,6 +1852,156 @@ mod tests {
             secure: false,
             style: wire::InputStyle::default(),
         }
+    }
+
+    fn partial_border() -> wire::Border {
+        wire::Border {
+            color: None,
+            width: None,
+            radius: None,
+        }
+    }
+
+    #[test]
+    fn pick_list_border_faces_follow_native_state_inheritance() {
+        let active = wire::PickFace {
+            border: Some(wire::Border {
+                color: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
+                width: Some(3.0),
+                radius: Some([7.0; 4]),
+            }),
+            ..wire::PickFace::default()
+        };
+        let hovered = wire::PickFace {
+            border: Some(wire::Border {
+                color: Some(wire::Rgba([0.0, 1.0, 0.0, 1.0])),
+                ..partial_border()
+            }),
+            ..wire::PickFace::default()
+        };
+        let opened = wire::PickFace {
+            border: Some(wire::Border {
+                width: Some(5.0),
+                ..partial_border()
+            }),
+            ..wire::PickFace::default()
+        };
+        let style = wire::PickListStyle {
+            active: Some(active),
+            hovered: Some(hovered),
+            opened: Some(opened),
+            opened_hovered: Some(hovered),
+            ..wire::PickListStyle::default()
+        };
+        for (status, expected_width) in [
+            (widget::pick_list::Status::Hovered, 3.0),
+            (widget::pick_list::Status::Opened { is_hovered: true }, 5.0),
+        ] {
+            let resolved = pick_list_style(style, &iced::Theme::Light, status);
+            assert_eq!(resolved.border.radius, radius([7.0; 4]));
+            assert_eq!(resolved.border.width, expected_width);
+            assert_eq!(resolved.border.color, Color::from_rgb(0.0, 1.0, 0.0));
+        }
+    }
+
+    #[test]
+    fn checkbox_border_color_keeps_native_rounding_and_width() {
+        let theme = iced::Theme::Light;
+        let status = widget::checkbox::Status::Active { is_checked: false };
+        let native = widget::checkbox::primary(&theme, status);
+        assert!(native.border.radius.top_left > 0.0);
+        let face = wire::ControlFace {
+            border: Some(wire::Border {
+                color: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
+                ..partial_border()
+            }),
+            ..wire::ControlFace::default()
+        };
+        let resolved = checkbox_style(
+            wire::ToggleStyle {
+                active_off: Some(face),
+                ..wire::ToggleStyle::default()
+            },
+            &theme,
+            status,
+        );
+        assert_eq!(resolved.border.radius, native.border.radius);
+        assert_eq!(resolved.border.width, native.border.width);
+        assert_eq!(resolved.border.color, Color::from_rgb(1.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn border_faces_inherit_omissions_but_explicit_zero_clears() {
+        let active = wire::Face {
+            border: Some(wire::Border {
+                color: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
+                width: Some(3.0),
+                radius: Some([2.0, 4.0, 6.0, 8.0]),
+            }),
+            ..wire::Face::default()
+        };
+        let hovered = wire::Face {
+            border: Some(wire::Border {
+                width: Some(5.0),
+                ..partial_border()
+            }),
+            ..wire::Face::default()
+        };
+        let style = wire::ButtonStyle {
+            active,
+            hovered: Some(hovered),
+            ..wire::ButtonStyle::default()
+        };
+        let resolved = button_style(style, &iced::Theme::Light, widget::button::Status::Hovered);
+        assert_eq!(resolved.border.radius, radius([2.0, 4.0, 6.0, 8.0]));
+        assert_eq!(resolved.border.color, Color::from_rgb(1.0, 0.0, 0.0));
+        assert_eq!(resolved.border.width, 5.0);
+        let cleared = wire::Face {
+            border: Some(wire::Border {
+                color: Some(wire::Rgba([0.0; 4])),
+                width: Some(0.0),
+                radius: Some([0.0; 4]),
+            }),
+            ..wire::Face::default()
+        };
+        let resolved = button_style(
+            wire::ButtonStyle {
+                hovered: Some(cleared),
+                ..style
+            },
+            &iced::Theme::Light,
+            widget::button::Status::Hovered,
+        );
+        assert_eq!(resolved.border.radius, iced::border::Radius::default());
+        assert_eq!(resolved.border.width, 0.0);
+        assert_eq!(resolved.border.color, Color::TRANSPARENT);
+    }
+
+    #[test]
+    fn toggler_partial_border_keeps_automatic_rounding() {
+        let theme = iced::Theme::Light;
+        let status = widget::toggler::Status::Active { is_toggled: true };
+        let native = widget::toggler::default(&theme, status);
+        let resolved = toggler_style(
+            wire::ToggleStyle {
+                active_on: Some(wire::ControlFace {
+                    border: Some(wire::Border {
+                        width: Some(2.0),
+                        ..partial_border()
+                    }),
+                    ..wire::ControlFace::default()
+                }),
+                ..wire::ToggleStyle::default()
+            },
+            &theme,
+            status,
+        );
+        assert_eq!(resolved.border_radius, native.border_radius);
+        assert_eq!(
+            resolved.background_border_color,
+            native.background_border_color
+        );
+        assert_eq!(resolved.background_border_width, 2.0);
     }
 
     #[test]
@@ -2286,9 +2463,9 @@ mod tests {
                             auto_scroll: true,
                             background: None,
                             border: Some(wire::Border {
-                                color: wire::Rgba([1.0, 0.0, 0.0, 1.0]),
-                                width: 1.0,
-                                radius: [2.0; 4],
+                                color: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
+                                width: Some(1.0),
+                                radius: Some([2.0; 4]),
                             }),
                             content: Box::new(wire::Node::Space {
                                 width: None,
@@ -2395,9 +2572,9 @@ mod tests {
                                 rail_border: None,
                                 handle: Some(wire::Rgba([0.0, 1.0, 0.0, 1.0])),
                                 handle_border: Some(wire::Border {
-                                    color: wire::Rgba([0.0, 0.0, 1.0, 1.0]),
-                                    width: -1.0,
-                                    radius: [0.0; 4],
+                                    color: Some(wire::Rgba([0.0, 0.0, 1.0, 1.0])),
+                                    width: Some(-1.0),
+                                    radius: Some([0.0; 4]),
                                 }),
                             }),
                             hovered: None,
@@ -2515,9 +2692,9 @@ mod tests {
             mark: Some(wire::Rgba([1.0, 1.0, 1.0, 1.0])),
             text: None,
             border: Some(wire::Border {
-                color: wire::Rgba([1.0, 0.0, 0.0, 1.0]),
-                width: 1.0,
-                radius: [2.0; 4],
+                color: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
+                width: Some(1.0),
+                radius: Some([2.0; 4]),
             }),
         }
     }
