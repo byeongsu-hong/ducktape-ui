@@ -509,8 +509,7 @@ impl Guest {
         if matches!(output, Output::Size { .. }) && !self.sensors.admits(&self.entry.id) {
             return;
         }
-        let event = self.inputs.apply(output);
-        self.pending.push(event);
+        self.inputs.apply(output, &mut self.pending);
     }
 
     /// The window changed size: what the sensors measure next is the

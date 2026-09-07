@@ -51,6 +51,19 @@ pub enum Output {
         width: f32,
         height: f32,
     },
+    /// A left press landed at (`x`, `y`) inside a mouse area, in the area's
+    /// own coordinates.
+    Pointer { handler: u32, x: f32, y: f32 },
+    /// The pointer moved to (`x`, `y`) inside a mouse area. Coalesced by
+    /// [`Inputs::apply`]: one per handler per frame, the last position.
+    Move { handler: u32, x: f32, y: f32 },
+    /// The wheel turned over a mouse area.
+    Scroll {
+        handler: u32,
+        dx: f32,
+        dy: f32,
+        pixels: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -116,7 +129,15 @@ impl Inputs {
             .map_or(fallback, |field| field.text.as_str())
     }
 
-    /// Records what the user did and returns the event the guest hears.
+    /// Records what the user did and queues the event the guest hears on
+    /// `pending`, the events of the guest's next tick.
+    ///
+    /// A pointer move replaces the move already queued for the same handler
+    /// instead of joining it: the guest hears one [`wire::Event::Pointer`]
+    /// per handler per tick, at the last position — a browser's one
+    /// `pointermove` per frame — where every move as its own event would be
+    /// a guest tick per pixel. A press, a scroll and every other event queue
+    /// in order.
     ///
     /// An edit is bounded to [`wire::MAX_STRING_BYTES`] here, the one place
     /// every host goes through before a keystroke or paste reaches a guest:
@@ -125,8 +146,8 @@ impl Inputs {
     /// held. The host's own copy of the field is cut the same way, so the
     /// widget shows exactly what the guest was told — a paste past the
     /// bound is cut, not refused, and the next render paints the cut value.
-    pub fn apply(&mut self, output: Output) -> wire::Event {
-        match output {
+    pub fn apply(&mut self, output: Output, pending: &mut Vec<wire::Event>) {
+        let event = match output {
             Output::Activate(index) => wire::Event::Message(index),
             Output::Edit {
                 key,
@@ -151,7 +172,34 @@ impl Inputs {
                 width,
                 height,
             },
-        }
+            Output::Pointer { handler, x, y } => wire::Event::Pointer { handler, x, y },
+            Output::Move { handler, x, y } => {
+                let queued = pending.iter_mut().rev().find(|event| {
+                    matches!(event, wire::Event::Pointer { handler: queued, .. } if *queued == handler)
+                });
+                if let Some(wire::Event::Pointer {
+                    x: at_x, y: at_y, ..
+                }) = queued
+                {
+                    *at_x = x;
+                    *at_y = y;
+                    return;
+                }
+                wire::Event::Pointer { handler, x, y }
+            }
+            Output::Scroll {
+                handler,
+                dx,
+                dy,
+                pixels,
+            } => wire::Event::Scroll {
+                handler,
+                dx,
+                dy,
+                pixels,
+            },
+        };
+        pending.push(event);
     }
 }
 
@@ -162,6 +210,7 @@ fn collect_inputs(node: &wire::Node, into: &mut HashMap<String, String>) {
         }
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
+        | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
             collect_inputs(content, into);
         }
@@ -230,6 +279,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         } => into.keep(*hash, bytes),
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
+        | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
             collect_pictures(content, into);
         }
@@ -484,6 +534,97 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             accessible(container, StableId::new(key), Role::GenericContainer)
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
+        }
+        wire::Node::MouseArea {
+            key,
+            on_press,
+            on_release,
+            on_double_click,
+            on_right_press,
+            on_right_release,
+            on_middle_press,
+            on_middle_release,
+            on_enter,
+            on_exit,
+            on_move,
+            on_press_at,
+            on_scroll,
+            content,
+        } => {
+            let mut area = widget::mouse_area(render_node(content, kept));
+            // iced's builders take a message each, so every route is set
+            // only when the node carries it — `on_press` set would swallow
+            // the press from the child under it.
+            if let Some(index) = on_press {
+                area = area.on_press(Output::Activate(*index));
+            }
+            if let Some(index) = on_release {
+                area = area.on_release(Output::Activate(*index));
+            }
+            if let Some(index) = on_double_click {
+                area = area.on_double_click(Output::Activate(*index));
+            }
+            if let Some(index) = on_right_press {
+                area = area.on_right_press(Output::Activate(*index));
+            }
+            if let Some(index) = on_right_release {
+                area = area.on_right_release(Output::Activate(*index));
+            }
+            if let Some(index) = on_middle_press {
+                area = area.on_middle_press(Output::Activate(*index));
+            }
+            if let Some(index) = on_middle_release {
+                area = area.on_middle_release(Output::Activate(*index));
+            }
+            if let Some(index) = on_enter {
+                area = area.on_enter(Output::Activate(*index));
+            }
+            if let Some(index) = on_exit {
+                area = area.on_exit(Output::Activate(*index));
+            }
+            if let Some(handler) = *on_move {
+                // iced hands the position inside the area's bounds: local.
+                area = area.on_move(move |point| Output::Move {
+                    handler,
+                    x: point.x,
+                    y: point.y,
+                });
+            }
+            if let Some(handler) = *on_scroll {
+                area = area.on_scroll(move |delta| match delta {
+                    iced::mouse::ScrollDelta::Lines { x, y } => Output::Scroll {
+                        handler,
+                        dx: x,
+                        dy: y,
+                        pixels: false,
+                    },
+                    iced::mouse::ScrollDelta::Pixels { x, y } => Output::Scroll {
+                        handler,
+                        dx: x,
+                        dy: y,
+                        pixels: true,
+                    },
+                });
+            }
+            let element: IceElement<'static, Output> = match *on_press_at {
+                // The observer wraps the finished area, so it fires after
+                // the child — captured or not — has seen the press.
+                Some(handler) => crate::press_area(area)
+                    .on_press_at(move |point: iced::Point| Output::Pointer {
+                        handler,
+                        x: point.x,
+                        y: point.y,
+                    })
+                    .into(),
+                None => area.into(),
+            };
+            accessible(
+                widget::container(element),
+                StableId::new(key),
+                Role::GenericContainer,
+            )
+            .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+            .into()
         }
         wire::Node::Linear {
             key,
@@ -1098,17 +1239,21 @@ mod tests {
     fn the_host_keeps_what_the_user_typed_until_the_guest_moves_the_value() {
         let mut inputs = Inputs::default();
         inputs.adopt(&input(""));
-        let event = inputs.apply(Output::Edit {
-            key: "App/draft".into(),
-            handler: 0,
-            text: "milk".into(),
-        });
+        let mut pending = Vec::new();
+        inputs.apply(
+            Output::Edit {
+                key: "App/draft".into(),
+                handler: 0,
+                text: "milk".into(),
+            },
+            &mut pending,
+        );
         assert_eq!(
-            event,
-            wire::Event::Input {
+            pending,
+            [wire::Event::Input {
                 handler: 0,
                 text: "milk".into()
-            }
+            }]
         );
         // The guest has not caught up yet: it still reports the old value.
         inputs.adopt(&input(""));
@@ -1129,17 +1274,21 @@ mod tests {
         let mut inputs = Inputs::default();
         inputs.adopt(&input(""));
         let text = "milk and éclairs".to_string();
-        let event = inputs.apply(Output::Edit {
-            key: "App/draft".into(),
-            handler: 0,
-            text: text.clone(),
-        });
+        let mut pending = Vec::new();
+        inputs.apply(
+            Output::Edit {
+                key: "App/draft".into(),
+                handler: 0,
+                text: text.clone(),
+            },
+            &mut pending,
+        );
         assert_eq!(
-            event,
-            wire::Event::Input {
+            pending,
+            [wire::Event::Input {
                 handler: 0,
                 text: text.clone()
-            }
+            }]
         );
         assert_eq!(inputs.text("App/draft", ""), text);
     }
@@ -1152,19 +1301,77 @@ mod tests {
         let pasted = format!("{prefix}€€€");
         let mut inputs = Inputs::default();
         inputs.adopt(&input(""));
-        let event = inputs.apply(Output::Edit {
-            key: "App/draft".into(),
-            handler: 0,
-            text: pasted,
-        });
-        let wire::Event::Input { text, .. } = event else {
-            panic!("expected an Input event");
+        let mut pending = Vec::new();
+        inputs.apply(
+            Output::Edit {
+                key: "App/draft".into(),
+                handler: 0,
+                text: pasted,
+            },
+            &mut pending,
+        );
+        let [wire::Event::Input { text, .. }] = pending.as_slice() else {
+            panic!("expected an Input event, got {pending:?}");
         };
         assert_eq!(text.len(), wire::MAX_STRING_BYTES - 1);
         assert!(text.is_char_boundary(text.len()));
-        assert_eq!(text, prefix);
+        assert_eq!(*text, prefix);
         // The host's own copy of the field agrees with what the guest heard.
         assert_eq!(inputs.text("App/draft", ""), prefix);
+    }
+
+    /// Moves are one event per handler per tick, at the last position; a
+    /// press at a position, a scroll and another handler's move are not
+    /// folded into it.
+    #[test]
+    fn pointer_moves_coalesce_per_handler_and_nothing_else_does() {
+        let mut inputs = Inputs::default();
+        let mut pending = Vec::new();
+        let mv = |handler, x, y| Output::Move { handler, x, y };
+        inputs.apply(mv(1, 1.0, 1.0), &mut pending);
+        inputs.apply(mv(2, 5.0, 5.0), &mut pending);
+        inputs.apply(
+            Output::Scroll {
+                handler: 3,
+                dx: 0.0,
+                dy: 1.0,
+                pixels: false,
+            },
+            &mut pending,
+        );
+        inputs.apply(mv(1, 2.0, 3.0), &mut pending);
+        inputs.apply(
+            Output::Pointer {
+                handler: 4,
+                x: 9.0,
+                y: 9.0,
+            },
+            &mut pending,
+        );
+        inputs.apply(
+            Output::Pointer {
+                handler: 4,
+                x: 8.0,
+                y: 8.0,
+            },
+            &mut pending,
+        );
+        let pointer = |handler, x, y| wire::Event::Pointer { handler, x, y };
+        assert_eq!(
+            pending,
+            [
+                pointer(1, 2.0, 3.0),
+                pointer(2, 5.0, 5.0),
+                wire::Event::Scroll {
+                    handler: 3,
+                    dx: 0.0,
+                    dy: 1.0,
+                    pixels: false,
+                },
+                pointer(4, 9.0, 9.0),
+                pointer(4, 8.0, 8.0),
+            ]
+        );
     }
 
     #[test]
@@ -1200,6 +1407,25 @@ mod tests {
                         align_x: None,
                     },
                     input("milk"),
+                    wire::Node::MouseArea {
+                        key: "App/content/pad".into(),
+                        on_press: Some(8),
+                        on_release: Some(9),
+                        on_double_click: Some(10),
+                        on_right_press: Some(11),
+                        on_right_release: Some(12),
+                        on_middle_press: Some(13),
+                        on_middle_release: Some(14),
+                        on_enter: Some(15),
+                        on_exit: Some(16),
+                        on_move: Some(8),
+                        on_press_at: Some(9),
+                        on_scroll: Some(10),
+                        content: Box::new(wire::Node::Space {
+                            width: Some(wire::Length::Fixed(40.0)),
+                            height: Some(wire::Length::Fixed(40.0)),
+                        }),
+                    },
                     wire::Node::Button {
                         key: "App/content/add".into(),
                         content: wire::ButtonContent::Label("Add".into()),

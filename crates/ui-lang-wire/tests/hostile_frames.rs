@@ -429,7 +429,7 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
             node = gen_list(rng, children);
             continue;
         }
-        node = match rng.next_range(5) {
+        node = match rng.next_range(6) {
             4 => Node::Sensor {
                 key: gen_key(rng),
                 on_show: rng.next_bool().then(|| rng.next_u64() as u32),
@@ -438,6 +438,22 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                 anticipate: gen_opt_f32(rng),
                 delay: gen_opt_f32(rng),
                 child: Box::new(node),
+            },
+            5 => Node::MouseArea {
+                key: gen_key(rng),
+                on_press: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_release: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_double_click: None,
+                on_right_press: None,
+                on_right_release: None,
+                on_middle_press: None,
+                on_middle_release: None,
+                on_enter: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_exit: None,
+                on_move: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_press_at: None,
+                on_scroll: rng.next_bool().then(|| rng.next_u64() as u32),
+                content: Box::new(node),
             },
             0 => Node::Container {
                 key: gen_key(rng),
@@ -712,6 +728,7 @@ fn tree_depth(node: &Node) -> usize {
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
+        | Node::MouseArea { content, .. }
         | Node::Scroll { content, .. } => 1 + tree_depth(content),
         Node::Linear { children, .. } | Node::Grid { children, .. } => {
             1 + children.iter().map(tree_depth).max().unwrap_or(0)
@@ -900,6 +917,9 @@ fn check_bounds(
         } => {
             check_length(width, ctx);
             check_length(height, ctx);
+            check_bounds(content, depth + 1, keys, svg_bytes, ctx);
+        }
+        Node::MouseArea { content, .. } => {
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
         Node::Text {

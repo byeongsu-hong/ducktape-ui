@@ -25,8 +25,9 @@
 //! Interaction: a button's message goes into the guest's per-frame table
 //! (`ui_lang_guest::slots::message`) and the node carries the index; an
 //! input's `String -> Message` constructor likewise (`slots::handler`), as
-//! do a checkbox's `bool`, a slider's `f32` and a pick list's option index.
-//! Colours are resolved through the app's palette here and cross as RGBA.
+//! do a checkbox's `bool`, a slider's `f32`, a pick list's option index, a
+//! mouse area's pointer position and scroll delta. Colours are resolved
+//! through the app's palette here and cross as RGBA.
 //!
 //! The form controls cross unstyled: the host paints them in its own theme,
 //! and a status style on one is refused like any other construct the wire
@@ -62,6 +63,9 @@ pub(in crate::codegen) fn render_tree_node(
             node, identity, *content, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::Sensor { content } => sensor(
+            node, identity, *content, document, message, env, scope, slot,
+        )?,
+        ResolvedViewKind::MouseArea { content } => mouse_area(
             node, identity, *content, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::Text => text(node, identity, document, env, scope)?,
@@ -777,6 +781,93 @@ fn container(
         option_code(container.align_y.map(align_y_code)),
         background_code(&container.surface, style, program, origin)?,
         border_code(&container.surface, style, program, env)?,
+    ))
+}
+
+/// A mouse area crosses with every route it names: a discrete one (a press,
+/// an enter) as a message index, a positional one (`move=`, `press-at=`) as
+/// a `(f32, f32)` handler the host answers with the pointer's position in
+/// the area's own coordinates, and `scroll=` as a `(f32, f32, bool)` one.
+/// The cursor is refused: the host paints its own.
+#[allow(clippy::too_many_arguments)]
+fn mouse_area(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    content: ViewId,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+    slot: Option<&SlotContext>,
+) -> Result<String, Error> {
+    let mouse = program.resolved_mouse_area(id)?;
+    let origin = mouse.origin;
+    refuse_when(
+        program,
+        origin,
+        mouse.interaction.is_some() || mouse.interaction_expression.is_some(),
+        "a mouse cursor",
+    )?;
+    let key = key_code(identity, "mouse", origin, scope, env, program)?;
+    let child_scope = rendered_child_scope(identity, scope)?;
+    let content = render_node(content, program, message, env, &child_scope, slot)?;
+    let discrete = |route: &Option<ResolvedInteractionRoute>| -> Result<String, Error> {
+        Ok(option_code(
+            route
+                .as_ref()
+                .map(|route| resolved_interaction_route_code(route, &[], env, program, message))
+                .transpose()?
+                .map(|activate| format!("{SLOTS}::message({activate})")),
+        ))
+    };
+    let positional = |route: &Option<ResolvedInteractionRoute>| -> Result<String, Error> {
+        Ok(option_code(match route {
+            Some(route) => Some(handler_code(
+                "(f32, f32)",
+                message,
+                &snapshot_callback(
+                    route,
+                    "__point: (f64, f64)",
+                    &["__point.0", "__point.1"],
+                    env,
+                    program,
+                    message,
+                )?,
+                "move |__sent: (f32, f32)| ::std::option::Option::Some(__route((f64::from(__sent.0), f64::from(__sent.1))))",
+            )),
+            None => None,
+        }))
+    };
+    let on_scroll = match &mouse.scroll {
+        Some(route) => Some(handler_code(
+            "(f32, f32, bool)",
+            message,
+            &snapshot_callback(
+                route,
+                "__delta: (f64, f64, bool)",
+                &["__delta.0", "__delta.1", "__delta.2"],
+                env,
+                program,
+                message,
+            )?,
+            "move |__sent: (f32, f32, bool)| ::std::option::Option::Some(__route((f64::from(__sent.0), f64::from(__sent.1), __sent.2)))",
+        )),
+        None => None,
+    };
+    Ok(format!(
+        "{WIRE}::Node::MouseArea {{ key: {key}, on_press: {}, on_release: {}, on_double_click: {}, on_right_press: {}, on_right_release: {}, on_middle_press: {}, on_middle_release: {}, on_enter: {}, on_exit: {}, on_move: {}, on_press_at: {}, on_scroll: {}, content: ::std::boxed::Box::new({content}) }}",
+        discrete(&mouse.press)?,
+        discrete(&mouse.release)?,
+        discrete(&mouse.double_click)?,
+        discrete(&mouse.right_press)?,
+        discrete(&mouse.right_release)?,
+        discrete(&mouse.middle_press)?,
+        discrete(&mouse.middle_release)?,
+        discrete(&mouse.enter)?,
+        discrete(&mouse.exit)?,
+        positional(&mouse.move_route)?,
+        positional(&mouse.press_at)?,
+        option_code(on_scroll),
     ))
 }
 
