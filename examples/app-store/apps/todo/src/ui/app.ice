@@ -114,7 +114,7 @@ view
           w=fill
           gap=8.0
           align=center
-        input "What needs doing?" #draft <-> draft w=fill
+        input "What needs doing?" #draft <-> draft hint="What needs doing?" w=fill
           active bg=surface border=border border-w=1.0 r=10.0 value=fg placeholder=muted selection=primary
           focused bg=surface border=primary border-w=1.0 r=10.0
         button "Add" #add -> add
