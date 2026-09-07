@@ -10,7 +10,6 @@ pub(crate) enum ResolvedExternComponentArgumentMode {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExternComponentArgument {
     pub(crate) expression: CheckedExprUseId,
-    #[cfg(test)]
     pub(crate) ty: Type,
     pub(crate) mode: ResolvedExternComponentArgumentMode,
     #[cfg(test)]
@@ -21,7 +20,6 @@ pub(crate) struct ResolvedExternComponentArgument {
 pub(crate) struct ResolvedExternComponentFunction {
     #[cfg(test)]
     pub(crate) id: ExternFnId,
-    #[cfg(test)]
     pub(crate) name: String,
     pub(crate) rust_path: String,
     #[cfg(test)]
@@ -206,7 +204,6 @@ impl Lowerer {
             let mode = extern_component_argument_mode(*borrowed, expected);
             arguments.push(ResolvedExternComponentArgument {
                 expression: *expression,
-                #[cfg(test)]
                 ty: expected.clone(),
                 mode,
                 #[cfg(test)]
@@ -238,7 +235,6 @@ impl Lowerer {
             function: ResolvedExternComponentFunction {
                 #[cfg(test)]
                 id: checked.function,
-                #[cfg(test)]
                 name: declaration.name.clone(),
                 rust_path: declaration.rust_path.clone(),
                 #[cfg(test)]

@@ -2,7 +2,7 @@
 //! tick the host streams against both.
 
 use app_store_clock::{boot_native, tick_native};
-use ui_lang_guest::testing::{answer, has_text, item, texts};
+use ui_lang_guest::testing::{answer, find, has_text, item, texts};
 use ui_lang_guest::wire::{Frame, Node, Request, Rgba};
 
 /// 2025-01-01T13:45:00Z.
@@ -41,6 +41,16 @@ fn ticks_arrive_as_a_stream_and_move_the_display() {
     let now = request_for(&frame.requests, "clock.now");
     assert!(now.payload.is_empty(), "{:?}", now);
     assert!(has_text(&frame, "00:00"), "{:?}", texts(&frame));
+    // The dial is a host surface: the module names it and sends nothing
+    // but the caption.
+    assert!(
+        matches!(
+            find(&frame, "Clock/app/content/card/dial/face"),
+            Some(Node::Surface { name, arg, .. }) if name == "clock_face" && arg == "UTC"
+        ),
+        "{:?}",
+        frame.root
+    );
 
     let mut when = NOW_MS.to_le_bytes().to_vec();
     when.extend_from_slice(&UPTIME_AT_ANSWER_MS.to_le_bytes());

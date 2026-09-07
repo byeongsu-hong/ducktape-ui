@@ -17,7 +17,7 @@ use common::clean_window_allocations;
 use std::time::Instant;
 
 use common::assert_wall_clock_budgets;
-use ui_lang_runtime::view_tree::{Inputs, render};
+use ui_lang_runtime::view_tree::{Inputs, Surfaces, render};
 use ui_lang_wire as wire;
 
 fn text_node(nth: usize) -> wire::Node {
@@ -68,6 +68,7 @@ fn render_again(root: &wire::Node, inputs: &Inputs, samples: usize) -> Vec<u128>
             drop(std::hint::black_box(render(
                 std::hint::black_box(root),
                 std::hint::black_box(inputs),
+                &Surfaces::new(),
             )));
             started.elapsed().as_micros()
         })
@@ -84,9 +85,9 @@ fn render_within_budget(
     p50_budget_us: u128,
     p95_budget_us: u128,
 ) {
-    drop(render(root, inputs));
+    drop(render(root, inputs, &Surfaces::new()));
     let stats = clean_window_allocations(expected_allocations, || {
-        drop(render(std::hint::black_box(root), inputs));
+        drop(render(std::hint::black_box(root), inputs, &Surfaces::new()));
     });
     assert!(
         stats.allocations <= expected_allocations,

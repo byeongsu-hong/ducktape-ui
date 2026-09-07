@@ -299,6 +299,9 @@ const HEAD: &str = concat!(
     "app Demo\n",
     "extern crate::backend\n",
     "  component native_help(active:bool) -> bool\n",
+    "  component host_tile(caption:str) -> unit\n",
+    "  component host_gauge(level:f64) -> unit\n",
+    "  component host_pair(a:str, b:str) -> unit\n",
     "  shader status_shader(speed:f64) -> bool\n",
     "  themer alternate_panel(active:bool) -> unit\n",
     "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\n",
@@ -525,12 +528,6 @@ const COVERAGE: &[Coverage] = &[
         "`markdown`",
     ),
     refused("editor", "", "  editor <-> notes\n", "`editor`"),
-    refused(
-        "extern widget",
-        FLIP,
-        "  extern native_help(busy) -> flip _\n",
-        "`extern widget`",
-    ),
     refused("themer", "", "  themer alternate_panel(true)\n", "`themer`"),
     refused(
         "shader",
@@ -634,6 +631,28 @@ const COVERAGE: &[Coverage] = &[
         CHOOSE,
         "  pick [\"One\", \"Two\"] choice -> choose _\n    active bg=primary\n",
         "a pick list style",
+    ),
+    // An extern widget is a host surface: the host paints the region by the
+    // extern's name, given its one `str` argument as text. A route, a second
+    // argument or an argument of another type has no room on the node.
+    emitted("extern widget", "", "  extern host_tile(draft) #tile\n"),
+    refused(
+        "extern widget: route",
+        FLIP,
+        "  extern native_help(busy) -> flip _\n",
+        "a route on an extern widget",
+    ),
+    refused(
+        "extern widget: argument type",
+        "",
+        "  extern host_gauge(amount)\n",
+        "an extern widget argument that is not `str`",
+    ),
+    refused(
+        "extern widget: two arguments",
+        "",
+        "  extern host_pair(draft, draft)\n",
+        "more than one argument on an extern widget",
     ),
 ];
 

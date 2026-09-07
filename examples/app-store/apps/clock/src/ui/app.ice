@@ -18,6 +18,7 @@ extern crate::host
   pure wall_label(now_at_boot_ms:i64, uptime_ms:i64) -> str
   pure dots_label(ticks:i64) -> str
   pure ticks_label(ticks:i64) -> str
+  component clock_face(caption:str) -> unit
 
 state
   uptime_ms = 0
@@ -78,6 +79,10 @@ view
           px=28.0
           py=10.0
         col gap=6.0 align=center
+          // The dial is the host's: it paints and sweeps it by itself,
+          // between this module's ticks. Only the caption crosses.
+          box #dial w=96.0 h=112.0
+            extern clock_face("UTC") #face
           text "Host uptime" size=14.0 @text-muted
           text uptime_label(uptime_ms) #uptime
             with

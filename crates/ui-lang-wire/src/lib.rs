@@ -363,6 +363,18 @@ pub enum Node {
         length: Option<Length>,
         girth: Option<Length>,
     },
+    /// A region the host paints itself: `name` picks a surface the
+    /// embedding host registered, `arg` is the one text argument the guest
+    /// hands it. The guest never sees what is drawn there, and the host
+    /// repaints it on its own clock — a live video tile, a sweeping hand —
+    /// without a guest tick. A name the host has not registered renders as
+    /// a visible placeholder. It takes the size its parent gives it: an Ice
+    /// `box w= h=` around the `extern` call sets it.
+    Surface {
+        key: String,
+        name: String,
+        arg: String,
+    },
 }
 
 /// Spends generic parameters on nothing: `<(&'a (), M, T) as Erase>::Node`
@@ -401,7 +413,8 @@ impl Node {
             | Self::Radio { key, .. }
             | Self::Slider { key, .. }
             | Self::PickList { key, .. }
-            | Self::Progress { key, .. } => Some(key),
+            | Self::Progress { key, .. }
+            | Self::Surface { key, .. } => Some(key),
             Self::Space { .. } => None,
         }
     }
@@ -425,7 +438,8 @@ impl Node {
             | Self::Radio { .. }
             | Self::Slider { .. }
             | Self::PickList { .. }
-            | Self::Progress { .. } => Vec::new(),
+            | Self::Progress { .. }
+            | Self::Surface { .. } => Vec::new(),
         }
     }
 
@@ -449,7 +463,8 @@ impl Node {
             | Self::Radio { .. }
             | Self::Slider { .. }
             | Self::PickList { .. }
-            | Self::Progress { .. } => 0,
+            | Self::Progress { .. }
+            | Self::Surface { .. } => 0,
         }
     }
 }
@@ -728,6 +743,11 @@ fn sanitize_node(
                 *number = finite(*number);
             }
         }
+        Node::Surface { key, name, arg } => {
+            claim(key, taken);
+            spend_text(name, text_budget);
+            spend_text(arg, text_budget);
+        }
     }
     for length in lengths_mut(node) {
         if let Length::Fixed(value) = length {
@@ -773,7 +793,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Toggle { width, .. }
         | Node::Radio { width, .. }
         | Node::PickList { width, .. } => vec![width],
-        Node::Rule { .. } => Vec::new(),
+        Node::Rule { .. } | Node::Surface { .. } => Vec::new(),
     };
     slots.into_iter().flatten().collect()
 }

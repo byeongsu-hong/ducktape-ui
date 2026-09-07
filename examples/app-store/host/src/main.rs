@@ -7,6 +7,7 @@ mod guest_view;
 mod library;
 mod limits;
 mod store;
+mod surfaces;
 
 ui_lang::include_app!("src/ui/app.ice");
 

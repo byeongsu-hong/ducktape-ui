@@ -51,6 +51,15 @@ struct Field {
     reported: String,
 }
 
+/// What a [`wire::Node::Surface`] renders as: the host's own element for
+/// the node's text argument. The host owns everything about it — its
+/// state, its clock, its redraws — and the guest never sees inside.
+pub type Surface = Box<dyn Fn(&str) -> IceElement<'static, Output> + Send + Sync>;
+
+/// The surfaces the embedding host paints, by the name a guest asks for.
+/// A name not in here renders as a visible placeholder naming it.
+pub type Surfaces = HashMap<String, Surface>;
+
 /// The live text of every input in a tree, by node key.
 #[derive(Debug, Default)]
 pub struct Inputs {
@@ -152,7 +161,8 @@ fn collect_inputs(node: &wire::Node, into: &mut HashMap<String, String>) {
         | wire::Node::Radio { .. }
         | wire::Node::Slider { .. }
         | wire::Node::PickList { .. }
-        | wire::Node::Progress { .. } => {}
+        | wire::Node::Progress { .. }
+        | wire::Node::Surface { .. } => {}
     }
 }
 
@@ -319,11 +329,19 @@ impl std::fmt::Display for Choice {
 
 /// Renders a tree. Strings are cloned out of it, so the element outlives the
 /// frame it came from; the next frame's tree can replace it freely.
-pub fn render(root: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output> {
-    render_node(root, inputs)
+pub fn render(
+    root: &wire::Node,
+    inputs: &Inputs,
+    surfaces: &Surfaces,
+) -> IceElement<'static, Output> {
+    render_node(root, inputs, surfaces)
 }
 
-fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output> {
+fn render_node(
+    node: &wire::Node,
+    inputs: &Inputs,
+    surfaces: &Surfaces,
+) -> IceElement<'static, Output> {
     match node {
         wire::Node::Container {
             key,
@@ -336,8 +354,8 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
             border: edge,
             content,
         } => {
-            let mut container =
-                widget::container(render_node(content, inputs)).id(widget::Id::from(key.clone()));
+            let mut container = widget::container(render_node(content, inputs, surfaces))
+                .id(widget::Id::from(key.clone()));
             if let Some(edges) = edges {
                 container = container.padding(padding(*edges));
             }
@@ -378,7 +396,9 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
             let count = children.len();
             let rendered = children
                 .iter()
-                .map(|child| bounded_fill_element(render_node(child, inputs), count, is_row))
+                .map(|child| {
+                    bounded_fill_element(render_node(child, inputs, surfaces), count, is_row)
+                })
                 .collect::<Vec<_>>();
             let spacing = bounded_spacing(f64::from(spacing.unwrap_or(0.0)), count);
             let layout: IceElement<'static, Output> = match axis {
@@ -437,7 +457,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
             let columns = columns.map(|columns| columns.max(1) as usize);
             let rendered = children
                 .iter()
-                .map(|child| render_node(child, inputs))
+                .map(|child| render_node(child, inputs, surfaces))
                 .collect::<Vec<_>>();
             let mut grid = widget::grid(rendered).spacing(bounded_spacing(
                 f64::from(spacing.unwrap_or(0.0)),
@@ -492,7 +512,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                     horizontal: scrollbar,
                 },
             };
-            let mut scroll = widget::scrollable(render_node(content, inputs))
+            let mut scroll = widget::scrollable(render_node(content, inputs, surfaces))
                 .id(widget::Id::from(key.clone()))
                 .direction(direction);
             if let Some(width) = width {
@@ -602,7 +622,7 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 wire::ButtonContent::Label(label) => {
                     (Some(label.as_str()), widget::text(label.clone()).into())
                 }
-                wire::ButtonContent::Child(child) => (None, render_node(child, inputs)),
+                wire::ButtonContent::Child(child) => (None, render_node(child, inputs, surfaces)),
             };
             let label = name.clone().or_else(|| label_fallback.map(str::to_owned));
             let activate = on_press.map(Output::Activate);
@@ -855,6 +875,30 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
                 .numeric(value.into(), min.into(), max.into(), None)
                 .into()
         }
+        wire::Node::Surface { key, name, arg } => {
+            let content = match surfaces.get(name) {
+                Some(surface) => surface(arg),
+                // Loud, not silent: a guest built against a surface this
+                // host does not paint shows the gap where it would be.
+                None => widget::container(
+                    widget::text(format!("no host surface named {name:?}")).size(13),
+                )
+                .padding(8)
+                .style(|theme: &iced::Theme| widget::container::Style {
+                    border: iced::Border {
+                        color: theme.palette().danger,
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    ..widget::container::Style::default()
+                })
+                .into(),
+            };
+            accessible(widget::container(content), StableId::new(key), Role::Group)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .label(name.clone())
+                .into()
+        }
     }
 }
 
@@ -1094,11 +1138,34 @@ mod tests {
                         length: Some(wire::Length::Fill),
                         girth: Some(wire::Length::Fixed(6.0)),
                     },
+                    wire::Node::Surface {
+                        key: "App/content/tile".into(),
+                        name: "tile".into(),
+                        arg: "camera 1".into(),
+                    },
+                    // A surface this host does not paint: a placeholder,
+                    // not a panic.
+                    wire::Node::Surface {
+                        key: "App/content/missing".into(),
+                        name: "nobody".into(),
+                        arg: String::new(),
+                    },
                 ],
             }),
         };
         let mut inputs = Inputs::default();
         inputs.adopt(&tree);
-        let _element: IceElement<'static, Output> = render(&tree, &inputs);
+        let painted = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = painted.clone();
+        let mut surfaces = Surfaces::new();
+        surfaces.insert(
+            "tile".into(),
+            Box::new(move |arg: &str| {
+                seen.lock().unwrap().push(arg.to_owned());
+                widget::text(arg.to_owned()).into()
+            }),
+        );
+        let _element: IceElement<'static, Output> = render(&tree, &inputs, &surfaces);
+        assert_eq!(*painted.lock().unwrap(), ["camera 1"]);
     }
 }
