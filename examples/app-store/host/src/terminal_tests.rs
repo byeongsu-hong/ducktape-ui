@@ -266,7 +266,9 @@ fn bundled_terminal_native_keyboard_output_and_isolation() {
     }
     assert!(
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[0] > 100
                 && pixel[0] > pixel[1].saturating_mul(2)
                 && pixel[0] > pixel[2].saturating_mul(2))
@@ -426,7 +428,9 @@ fn bundled_terminal_drains_background_output_while_unmounted() {
     let pixels = renderer.screenshot(Size::new(600, 1000), 1.0, iced::Color::BLACK);
     assert!(
         pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[0] > 100
                 && pixel[0] > pixel[1].saturating_mul(2)
                 && pixel[0] > pixel[2].saturating_mul(2))
