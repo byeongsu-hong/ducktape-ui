@@ -337,8 +337,16 @@ fn gen_progress(rng: &mut Rng) -> Node {
 /// A leaf with no children, for filling out a wide `Linear`: every leaf
 /// variant except `Space` carries a string, a colour or a number worth
 /// pulling into range.
+fn gen_surface(rng: &mut Rng) -> Node {
+    Node::Surface {
+        key: gen_key(rng),
+        name: gen_string(rng),
+        arg: gen_string(rng),
+    }
+}
+
 fn gen_leaf(rng: &mut Rng) -> Node {
-    match rng.next_range(10) {
+    match rng.next_range(11) {
         0 => gen_text(rng),
         1 => Node::Space {
             width: gen_opt_length(rng),
@@ -351,6 +359,7 @@ fn gen_leaf(rng: &mut Rng) -> Node {
         6 => gen_slider(rng),
         7 => gen_pick_list(rng),
         8 => gen_progress(rng),
+        9 => gen_surface(rng),
         _ => gen_button_label(rng),
     }
 }
@@ -865,6 +874,10 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
             }
             check_length(length, ctx);
             check_length(girth, ctx);
+        }
+        Node::Surface { name, arg, .. } => {
+            check_string(name, ctx, "surface name");
+            check_string(arg, ctx, "surface arg");
         }
     }
 }

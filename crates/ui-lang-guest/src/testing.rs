@@ -43,7 +43,11 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
             Some(index) => options[*index as usize].clone(),
             None => placeholder.clone().unwrap_or_default(),
         }),
-        Node::Space { .. } | Node::Rule { .. } | Node::Slider { .. } | Node::Progress { .. } => {}
+        Node::Space { .. }
+        | Node::Rule { .. }
+        | Node::Slider { .. }
+        | Node::Progress { .. }
+        | Node::Surface { .. } => {}
     }
 }
 
@@ -80,7 +84,8 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         | Node::Radio { .. }
         | Node::Slider { .. }
         | Node::PickList { .. }
-        | Node::Progress { .. } => None,
+        | Node::Progress { .. }
+        | Node::Surface { .. } => None,
     }
 }
 
@@ -248,7 +253,8 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         | Node::Radio { .. }
         | Node::Slider { .. }
         | Node::PickList { .. }
-        | Node::Progress { .. } => {}
+        | Node::Progress { .. }
+        | Node::Surface { .. } => {}
     }
 }
 

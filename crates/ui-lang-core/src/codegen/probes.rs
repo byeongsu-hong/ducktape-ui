@@ -358,6 +358,11 @@ pub(in crate::codegen) fn generate_extern_probes(
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
 
+    // A view module calls no extern widget: the call crosses the wire as a
+    // host surface by name, so there is no Rust signature to hold it to.
+    if program.target() == Target::Tree {
+        return;
+    }
     for declaration in component_declarations {
         writeln!(out, "{}", source_marker_origin(program, declaration.origin)).unwrap();
         let borrowed = declaration

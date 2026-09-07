@@ -82,7 +82,7 @@ fn layout_frames(root: &wire::Node, samples: usize) -> Vec<u128> {
     let mut renderer = renderer();
     (0..samples)
         .map(|_| {
-            let element = view_tree::render(root, &inputs);
+            let element = view_tree::render(root, &inputs, &view_tree::Surfaces::new());
             let started = Instant::now();
             let mut ui = UserInterface::build(
                 element,

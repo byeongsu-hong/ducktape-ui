@@ -7,10 +7,15 @@
 //! the parent's child list; so a `for` over a list of rows compiles to the
 //! same loop for both targets and only the row inside changes.
 //!
-//! A construct the tree does not model (`stack`, `markdown`, an extern
-//! widget, a gradient background...) fails the build, naming the construct
-//! and its `.ice` line, rather than rendering as something else. The host
-//! has a fixed vocabulary; a view module is written to it.
+//! A construct the tree does not model (`stack`, `markdown`, a gradient
+//! background...) fails the build, naming the construct and its `.ice`
+//! line, rather than rendering as something else. The host has a fixed
+//! vocabulary; a view module is written to it.
+//!
+//! An extern widget is the one construct that reaches past that vocabulary:
+//! it becomes a `Surface` node the host paints itself, by the extern's name,
+//! with the call's single `str` argument crossing as text. No Rust function
+//! is called on the guest side; the declaration only types the call.
 //!
 //! Interaction: a button's message goes into the guest's per-frame table
 //! (`ui_lang_guest::slots::message`) and the node carries the index; an
@@ -71,6 +76,7 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::Slider => slider(node, identity, document, message, env, scope)?,
         ResolvedViewKind::PickList => pick_list(node, identity, document, message, env, scope)?,
         ResolvedViewKind::Progress => progress(node, identity, document, env, scope)?,
+        ResolvedViewKind::ExternComponent => surface(node, identity, document, env, scope)?,
         // Rendered by the shared emitters: their code is target-neutral.
         ResolvedViewKind::Component { .. }
         | ResolvedViewKind::Slot { .. }
@@ -1493,5 +1499,52 @@ fn progress(
         number(progress.max)?,
         dimension_code(progress.length.as_ref(), false, program, env, origin)?,
         dimension_code(progress.girth.as_ref(), false, program, env, origin)?,
+    ))
+}
+
+/// An extern widget crosses as a host surface: the host paints the region
+/// under the extern's name, given the call's one `str` argument as text.
+/// The host answers nothing back, so a route is refused, as is any argument
+/// shape but zero or one `str`.
+fn surface(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let component = program.resolved_extern_component(id)?;
+    let origin = component.origin;
+    refuse_when(
+        program,
+        origin,
+        component.route.is_some(),
+        "a route on an extern widget",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        component.arguments.len() > 1,
+        "more than one argument on an extern widget",
+    )?;
+    let arg = match component.arguments.first() {
+        None => "::std::string::String::new()".to_string(),
+        Some(argument) => {
+            refuse_when(
+                program,
+                origin,
+                argument.ty != Type::Str,
+                "an extern widget argument that is not `str`",
+            )?;
+            format!(
+                "::std::string::ToString::to_string(&({}))",
+                resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned)?
+            )
+        }
+    };
+    Ok(format!(
+        "{WIRE}::Node::Surface {{ key: {}, name: ::std::string::String::from({:?}), arg: {arg} }}",
+        key_code(identity, "extern", origin, scope, env, program)?,
+        component.function.name,
     ))
 }
