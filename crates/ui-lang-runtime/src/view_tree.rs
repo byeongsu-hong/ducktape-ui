@@ -135,7 +135,7 @@ fn collect_inputs(node: &wire::Node, into: &mut HashMap<String, String>) {
         wire::Node::Container { content, .. } | wire::Node::Scroll { content, .. } => {
             collect_inputs(content, into);
         }
-        wire::Node::Linear { children, .. } => {
+        wire::Node::Linear { children, .. } | wire::Node::Grid { children, .. } => {
             for child in children {
                 collect_inputs(child, into);
             }
@@ -422,6 +422,55 @@ fn render_node(node: &wire::Node, inputs: &Inputs) -> IceElement<'static, Output
             )
             .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .into()
+        }
+        wire::Node::Grid {
+            key,
+            columns,
+            fluid,
+            spacing,
+            padding: edges,
+            width,
+            height,
+            aspect,
+            children,
+        } => {
+            let columns = columns.map(|columns| columns.max(1) as usize);
+            let rendered = children
+                .iter()
+                .map(|child| render_node(child, inputs))
+                .collect::<Vec<_>>();
+            let mut grid = widget::grid(rendered).spacing(bounded_spacing(
+                f64::from(spacing.unwrap_or(0.0)),
+                children.len().max(columns.unwrap_or(0)),
+            ));
+            // Neither given leaves the widget's own default, as natively.
+            grid = match (fluid, columns) {
+                (Some(fluid), _) => grid.fluid(fluid.max(f32::EPSILON)),
+                (None, Some(columns)) => grid.columns(columns),
+                (None, None) => grid,
+            };
+            if let Some(aspect) = aspect {
+                grid = grid.height(widget::grid::Sizing::AspectRatio(aspect.max(f32::EPSILON)));
+            } else if let Some(height) = height {
+                grid = grid.height(length(*height));
+            }
+            // The grid is sized in pixels; any other width is the wrapper's.
+            let mut outer_width = None;
+            match width {
+                Some(wire::Length::Fixed(pixels)) => grid = grid.width(pixels.max(0.0)),
+                Some(other) => outer_width = Some(length(*other)),
+                None => {}
+            }
+            let mut layout = widget::container(grid);
+            if let Some(width) = outer_width {
+                layout = layout.width(width);
+            }
+            if let Some(edges) = edges {
+                layout = layout.padding(padding(*edges));
+            }
+            accessible(layout, StableId::new(key), Role::GenericContainer)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .into()
         }
         wire::Node::Scroll {
             key,
@@ -957,6 +1006,40 @@ mod tests {
                             width: None,
                             height: Some(wire::Length::Fixed(10.0)),
                         }),
+                    },
+                    wire::Node::Grid {
+                        key: "App/content/cells".into(),
+                        columns: Some(0),
+                        fluid: None,
+                        spacing: Some(4.0),
+                        padding: Some(wire::Edges::all(2.0)),
+                        width: Some(wire::Length::Fill),
+                        height: Some(wire::Length::Fixed(40.0)),
+                        aspect: None,
+                        children: vec![
+                            wire::Node::Space {
+                                width: None,
+                                height: None,
+                            },
+                            wire::Node::Space {
+                                width: None,
+                                height: None,
+                            },
+                        ],
+                    },
+                    wire::Node::Grid {
+                        key: "App/content/tiles".into(),
+                        columns: None,
+                        fluid: Some(0.0),
+                        spacing: None,
+                        padding: None,
+                        width: Some(wire::Length::Fixed(120.0)),
+                        height: None,
+                        aspect: Some(-1.0),
+                        children: vec![wire::Node::Space {
+                            width: None,
+                            height: None,
+                        }],
                     },
                     wire::Node::Toggle {
                         key: "App/content/hide".into(),

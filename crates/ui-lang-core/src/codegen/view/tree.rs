@@ -7,7 +7,7 @@
 //! the parent's child list; so a `for` over a list of rows compiles to the
 //! same loop for both targets and only the row inside changes.
 //!
-//! A construct the tree does not model (`grid`, `markdown`, an extern
+//! A construct the tree does not model (`stack`, `markdown`, an extern
 //! widget, a gradient background...) fails the build, naming the construct
 //! and its `.ice` line, rather than rendering as something else. The host
 //! has a fixed vocabulary; a view module is written to it.
@@ -558,7 +558,70 @@ fn layout(
                 )?,
             ))
         }
-        ResolvedLayoutMode::Grid(_) => Err(refused(program, origin, "grid")),
+        ResolvedLayoutMode::Grid(grid) => {
+            let number = |expression: CheckedExprUseId| {
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)
+                    .map(|code| format!("({code}) as f32"))
+            };
+            let columns = grid
+                .columns
+                .map(|columns| {
+                    resolved_expr_use_code(program, columns, env, ValueMode::Owned)
+                        .map(|code| format!("u32::try_from({code}).unwrap_or(0)"))
+                })
+                .transpose()?;
+            let spacing = match grid.spacing {
+                Some(spacing) => Some(number(spacing)?),
+                None => style.gap.map(|gap| format!("{gap}.0")),
+            };
+            let width = match grid.width {
+                Some(width) => Some(format!("{WIRE}::Length::Fixed({})", number(width)?)),
+                None => style.width_fill.then(|| format!("{WIRE}::Length::Fill")),
+            };
+            let (height, aspect) = match &grid.height {
+                Some(ResolvedGridHeight::EvenlyDistribute(length)) => {
+                    (Some(length_code(length, program, env, origin)?), None)
+                }
+                Some(ResolvedGridHeight::AspectRatio { width, height }) => (
+                    None,
+                    Some(format!("{} / {}", number(*width)?, number(*height)?)),
+                ),
+                None => (
+                    style.height_fill.then(|| format!("{WIRE}::Length::Fill")),
+                    None,
+                ),
+            };
+            let mut body = format!(
+                "{{ let mut __children: ::std::vec::Vec<__IceElement<'_, {message}>> = ::std::vec::Vec::new();"
+            );
+            render_children(
+                &mut body,
+                children,
+                program,
+                message,
+                env,
+                &child_scope,
+                slot,
+            )?;
+            write!(
+                body,
+                " {WIRE}::Node::Grid {{ key: {key}, columns: {}, fluid: {}, spacing: {}, padding: {}, width: {}, height: {}, aspect: {}, children: __children }} }}",
+                option_code(columns),
+                option_code(grid.max_cell.map(number).transpose()?),
+                option_code(spacing),
+                edges_code(
+                    &ResolvedContainerPadding::default(),
+                    style.padding,
+                    program,
+                    env
+                )?,
+                option_code(width),
+                option_code(height),
+                option_code(aspect),
+            )
+            .unwrap();
+            Ok(body)
+        }
         ResolvedLayoutMode::Stack(_) => Err(refused(program, origin, "stack")),
         ResolvedLayoutMode::Hover(_) => Err(refused(program, origin, "hover")),
         ResolvedLayoutMode::Flex(_) => Err(refused(program, origin, "flex")),

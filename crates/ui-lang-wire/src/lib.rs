@@ -241,6 +241,25 @@ pub enum Node {
         #[serde(deserialize_with = "decode_children")]
         children: Vec<Node>,
     },
+    /// Equal cells in rows of `columns`, or of as many as fit at `fluid`
+    /// pixels each. A cell is `aspect` times as wide as it is tall unless
+    /// `height` gives the rows a length to share; without either the host
+    /// draws squares.
+    Grid {
+        key: String,
+        columns: Option<u32>,
+        /// The widest a cell may be; the column count follows the width.
+        /// Wins over `columns`.
+        fluid: Option<f32>,
+        spacing: Option<f32>,
+        padding: Option<Edges>,
+        width: Option<Length>,
+        height: Option<Length>,
+        /// Horizontal pixels per vertical pixel of a cell.
+        aspect: Option<f32>,
+        #[serde(deserialize_with = "decode_children")]
+        children: Vec<Node>,
+    },
     Scroll {
         key: String,
         direction: ScrollDirection,
@@ -372,6 +391,7 @@ impl Node {
         match self {
             Self::Container { key, .. }
             | Self::Linear { key, .. }
+            | Self::Grid { key, .. }
             | Self::Scroll { key, .. }
             | Self::Text { key, .. }
             | Self::Input { key, .. }
@@ -389,7 +409,9 @@ impl Node {
     fn children_mut(&mut self) -> Vec<&mut Node> {
         match self {
             Self::Container { content, .. } | Self::Scroll { content, .. } => vec![content],
-            Self::Linear { children, .. } => children.iter_mut().collect(),
+            Self::Linear { children, .. } | Self::Grid { children, .. } => {
+                children.iter_mut().collect()
+            }
             Self::Button {
                 content: ButtonContent::Child(child),
                 ..
@@ -411,7 +433,9 @@ impl Node {
     pub fn count(&self) -> usize {
         1 + match self {
             Self::Container { content, .. } | Self::Scroll { content, .. } => content.count(),
-            Self::Linear { children, .. } => children.iter().map(Node::count).sum(),
+            Self::Linear { children, .. } | Self::Grid { children, .. } => {
+                children.iter().map(Node::count).sum()
+            }
             Self::Button {
                 content: ButtonContent::Child(child),
                 ..
@@ -560,6 +584,20 @@ fn sanitize_node(
             bound_optional(spacing);
             bound_edges(padding);
         }
+        Node::Grid {
+            key,
+            fluid,
+            spacing,
+            padding,
+            aspect,
+            ..
+        } => {
+            claim(key, taken);
+            bound_optional(fluid);
+            bound_optional(spacing);
+            bound_edges(padding);
+            bound_optional(aspect);
+        }
         Node::Scroll { key, .. } => claim(key, taken),
         Node::Text {
             key,
@@ -699,7 +737,7 @@ fn sanitize_node(
     // Children past the budget are dropped, not stood in for: a layout of
     // ten thousand rows becomes its first rows, which is what a host can
     // lay out, rather than ten thousand empty nodes it still has to walk.
-    if let Node::Linear { children, .. } = node {
+    if let Node::Linear { children, .. } | Node::Grid { children, .. } = node {
         let mut kept = 0;
         for child in children.iter_mut() {
             if *budget == 0 {
@@ -724,6 +762,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
     let slots: Vec<&mut Option<Length>> = match node {
         Node::Container { width, height, .. }
         | Node::Linear { width, height, .. }
+        | Node::Grid { width, height, .. }
         | Node::Scroll { width, height, .. }
         | Node::Button { width, height, .. }
         | Node::Slider { width, height, .. }
@@ -1418,6 +1457,49 @@ mod tests {
         };
         assert_eq!(key, "App/pick#2");
         assert!(label.len() <= MAX_STRING_BYTES);
+    }
+
+    /// A grid is bounded like a linear layout: its numbers are pulled into
+    /// the pixel range and children past the node budget are dropped, not
+    /// stood in for.
+    #[test]
+    fn a_grid_is_pulled_into_range_and_cut_like_a_linear_layout() {
+        let mut frame = Frame {
+            root: Some(Node::Grid {
+                key: "App/cells".into(),
+                columns: Some(u32::MAX),
+                fluid: Some(f32::NAN),
+                spacing: Some(-3.0),
+                padding: Some(Edges::all(f32::INFINITY)),
+                width: Some(Length::Fixed(f32::MAX)),
+                height: None,
+                aspect: Some(f32::NEG_INFINITY),
+                children: (0..MAX_NODES + 5).map(|_| text("x")).collect(),
+            }),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Grid {
+            columns,
+            fluid,
+            spacing,
+            padding,
+            width,
+            aspect,
+            children,
+            ..
+        }) = &frame.root
+        else {
+            panic!()
+        };
+        assert_eq!(*columns, Some(u32::MAX));
+        assert_eq!(*fluid, Some(0.0));
+        assert_eq!(*spacing, Some(0.0));
+        assert_eq!(*padding, Some(Edges::all(MAX_PIXELS)));
+        assert_eq!(*width, Some(Length::Fixed(MAX_PIXELS)));
+        assert_eq!(*aspect, Some(0.0));
+        assert_eq!(children.len(), MAX_NODES - 1);
+        assert_eq!(frame.root.as_ref().unwrap().count(), MAX_NODES);
     }
 
     #[test]

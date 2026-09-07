@@ -361,6 +361,33 @@ fn gen_leaf(rng: &mut Rng) -> Node {
 /// (`deep_chain_bytes` in `lib.rs`) builds a deep chain the same way,
 /// because a recursive builder would blow its own stack before `decode`
 /// ever got a chance to refuse anything.
+/// Either of the two nodes holding a child list, around `children`.
+fn gen_list(rng: &mut Rng, children: Vec<Node>) -> Node {
+    if rng.next_bool() {
+        return Node::Linear {
+            key: gen_key(rng),
+            axis: gen_axis(rng),
+            spacing: gen_opt_f32(rng),
+            padding: gen_opt_edges(rng),
+            width: gen_opt_length(rng),
+            height: gen_opt_length(rng),
+            align: gen_opt_align_x(rng),
+            children,
+        };
+    }
+    Node::Grid {
+        key: gen_key(rng),
+        columns: rng.next_bool().then(|| rng.next_u64() as u32),
+        fluid: gen_opt_f32(rng),
+        spacing: gen_opt_f32(rng),
+        padding: gen_opt_edges(rng),
+        width: gen_opt_length(rng),
+        height: gen_opt_length(rng),
+        aspect: gen_opt_f32(rng),
+        children,
+    }
+}
+
 fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
     let mut node = gen_leaf(rng);
     let width_level = if depth == 0 { 0 } else { rng.next_range(depth) };
@@ -368,16 +395,7 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
         if level == width_level && width > 0 {
             let mut children: Vec<Node> = (0..width).map(|_| gen_leaf(rng)).collect();
             children.push(node);
-            node = Node::Linear {
-                key: gen_key(rng),
-                axis: gen_axis(rng),
-                spacing: gen_opt_f32(rng),
-                padding: gen_opt_edges(rng),
-                width: gen_opt_length(rng),
-                height: gen_opt_length(rng),
-                align: gen_opt_align_x(rng),
-                children,
-            };
+            node = gen_list(rng, children);
             continue;
         }
         node = match rng.next_range(4) {
@@ -392,16 +410,7 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                 border: gen_opt_border(rng),
                 content: Box::new(node),
             },
-            1 => Node::Linear {
-                key: gen_key(rng),
-                axis: gen_axis(rng),
-                spacing: gen_opt_f32(rng),
-                padding: gen_opt_edges(rng),
-                width: gen_opt_length(rng),
-                height: gen_opt_length(rng),
-                align: gen_opt_align_x(rng),
-                children: vec![node],
-            },
+            1 => gen_list(rng, vec![node]),
             2 => Node::Scroll {
                 key: gen_key(rng),
                 direction: *rng.choose(&[
@@ -540,13 +549,15 @@ fn build_and_encode_bounded(seed: u64) -> (Frame, Vec<u8>) {
 // -------------------------------------------------------- bound assertions
 
 /// The nesting depth `sanitize` would count for this node (root is 0, each
-/// `Container`/`Scroll`/`Linear`/`Button` child adds one) — the same metric
+/// `Container`/`Scroll`/`Linear`/`Grid`/`Button` child adds one) — the same metric
 /// `decode`'s own depth budget counts, so it doubles as "was this tree
 /// really over the door" evidence when `decode` refuses one.
 fn tree_depth(node: &Node) -> usize {
     match node {
         Node::Container { content, .. } | Node::Scroll { content, .. } => 1 + tree_depth(content),
-        Node::Linear { children, .. } => 1 + children.iter().map(tree_depth).max().unwrap_or(0),
+        Node::Linear { children, .. } | Node::Grid { children, .. } => {
+            1 + children.iter().map(tree_depth).max().unwrap_or(0)
+        }
         Node::Button {
             content: ButtonContent::Child(child),
             ..
@@ -663,6 +674,31 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
                     spacing.is_finite() && (0.0..=PIXEL_BOUND).contains(spacing),
                     "{ctx}: spacing {spacing} outside 0..={PIXEL_BOUND}"
                 );
+            }
+            check_edges(padding, ctx);
+            check_length(width, ctx);
+            check_length(height, ctx);
+            for child in children {
+                check_bounds(child, depth + 1, keys, ctx);
+            }
+        }
+        Node::Grid {
+            fluid,
+            spacing,
+            padding,
+            width,
+            height,
+            aspect,
+            children,
+            ..
+        } => {
+            for (name, value) in [("fluid", fluid), ("spacing", spacing), ("aspect", aspect)] {
+                if let Some(value) = value {
+                    assert!(
+                        value.is_finite() && (0.0..=PIXEL_BOUND).contains(value),
+                        "{ctx}: grid {name} {value} outside 0..={PIXEL_BOUND}"
+                    );
+                }
             }
             check_edges(padding, ctx);
             check_length(width, ctx);
