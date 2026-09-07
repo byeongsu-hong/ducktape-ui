@@ -156,8 +156,9 @@ Paths are explicit, without glob expansion. Missing paths, symlinks, special
 files, non-UTF-8 filenames, duplicate names, and executable name collisions are
 errors. Empty directories are not installed.
 
-On macOS resources live under `Name.app/Contents/MacOS/` and are copied before
-code signing. Windows installs them into the MSI application's directory.
+On macOS resource data lives under `Name.app/Contents/Resources/ice-bundle/`,
+with relative links under `Contents/MacOS/` preserving executable-relative access.
+Both data and links are installed before code signing. Windows installs them into the MSI application's directory.
 Linux packages with resources install the executable and its resources under
 `/usr/lib/PACKAGE/`, with `/usr/bin/EXECUTABLE` linking to the private executable.
 Hosts can resolve `views/` from `std::env::current_exe()` on each platform.

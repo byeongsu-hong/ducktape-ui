@@ -106,7 +106,29 @@ fn write_app(
             .map_err(|error| format!("cannot create `{}`: {error}", directory.display()))?;
     }
     super::install(executable, &binaries.join(&meta.executable))?;
-    super::resources::install(payload, &binaries)?;
+    // macOS treats ordinary files in MacOS as nested code. Seal data in
+    // Resources and expose relative links beside the executable instead.
+    super::resources::install(payload, &resources.join("ice-bundle"))?;
+    let roots = payload
+        .iter()
+        .map(|file| {
+            file.destination
+                .components()
+                .next()
+                .expect("resource basename")
+                .as_os_str()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    for name in roots {
+        tool(
+            "ln",
+            &[
+                "-s".into(),
+                path(&Path::new("../Resources/ice-bundle").join(name)),
+                path(&binaries.join(name)),
+            ],
+        )?;
+    }
     if let Some(source) = source {
         let svg = super::read(source)?;
         super::write(
@@ -373,6 +395,7 @@ mod tests {
         assert!(plist.contains("<string>dev.ducktape.ui.showcase</string>"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn app_resources_are_installed_before_signing_and_removed_on_rebuild() {
         let directory = tempfile::tempdir().unwrap();

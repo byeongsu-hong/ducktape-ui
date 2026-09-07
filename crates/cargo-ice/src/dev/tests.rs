@@ -994,6 +994,7 @@ fn stamp_at(stamp: &[(PathBuf, FileStamp)], path: &Path) -> Option<FileStamp> {
         .find_map(|(candidate, stamp)| (candidate == path).then_some(*stamp))
 }
 
+#[cfg(unix)]
 fn replace_symlink(alias: &Path, target: &Path) {
     use std::os::unix::fs::symlink;
 
@@ -1002,8 +1003,8 @@ fn replace_symlink(alias: &Path, target: &Path) {
     std::fs::rename(replacement, alias).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
-
 fn same_content_import_symlink_retarget_invalidates_the_checked_snapshot() {
     use std::os::unix::fs::symlink;
 
