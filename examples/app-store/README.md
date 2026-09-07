@@ -449,6 +449,12 @@ For module packaging requirements and the connected implementation phases, see
   ordered field names and all nested types. Identifier text is never truncated.
   Recursive records, enums and opaque native editor/terminal/log state remain
   unsupported. Resource and lifecycle contracts remain work for module-owned views.
+- A `shader` call uses that same named surface registry and typed routes.
+  Its `w=`/`h=` cross in a containing box, with Iced's 100×100 defaults
+  and zero intrinsic size for `shrink`.
+  The host provider fills that box and owns its rendering and redraws;
+  an unknown shader name shows the usual placeholder. Native shader
+  functions and GPU programs are not linked into the guest.
 - An `svg` is an embedded asset or a `memory` source, sized, fitted,
   rotated, faded and tinted with an idle and a hover colour; its bytes
   cross once under a content hash and the host keeps them for the guest's

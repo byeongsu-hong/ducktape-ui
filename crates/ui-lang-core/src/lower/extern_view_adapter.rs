@@ -10,7 +10,6 @@ pub(crate) enum ResolvedExternViewArgumentMode {
 #[derive(Clone, Debug)]
 pub(crate) struct ResolvedExternViewArgument {
     pub(crate) expression: CheckedExprUseId,
-    #[cfg(test)]
     pub(crate) ty: Type,
     pub(crate) mode: ResolvedExternViewArgumentMode,
     #[cfg(test)]
@@ -21,7 +20,6 @@ pub(crate) struct ResolvedExternViewArgument {
 pub(crate) struct ResolvedExternViewFunction {
     #[cfg(test)]
     pub(crate) id: ExternFnId,
-    #[cfg(test)]
     pub(crate) name: String,
     pub(crate) rust_path: String,
     #[cfg(test)]
@@ -240,7 +238,6 @@ impl Lowerer {
         ResolvedExternViewFunction {
             #[cfg(test)]
             id: declaration.declaration.id,
-            #[cfg(test)]
             name: declaration.name.clone(),
             rust_path: declaration.rust_path.clone(),
             #[cfg(test)]
@@ -281,7 +278,6 @@ impl Lowerer {
             };
             arguments.push(ResolvedExternViewArgument {
                 expression: interaction.option_expressions[index],
-                #[cfg(test)]
                 ty: expected.clone(),
                 mode,
                 #[cfg(test)]

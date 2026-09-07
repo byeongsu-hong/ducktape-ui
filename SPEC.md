@@ -886,3 +886,19 @@ queued clipboard work. Clipboard access remains host-owned and requires
 capability consent at installation. Platform clipboard time participates in
 the host redraw governor; the byte budget is checked before each queued
 operation so exhaustion suppresses subsequent platform access.
+
+## Shader surfaces on the tree target
+
+A `shader name(args) w=… h=… -> handler _` call becomes a named host
+surface. It uses the same scalar/list/option/record argument and event
+validation as an extern component. The guest neither calls the native shader
+function nor emits its native Rust probe. Unsupported native argument types
+remain E190. A call without a route has no event handler.
+
+A wire container carries the declared dimensions, defaulting each omitted
+dimension to 100 pixels, matching Iced Shader. Explicit `shrink` becomes
+zero on that axis because Shader has no intrinsic content size. The provider
+fills that region (e.g. its native Shader uses `width(Fill).height(Fill)`) and owns its renderer,
+state and redraw schedule. An unknown name shows the existing placeholder
+inside the same bounds. Surface names share the extern component registry.
+This establishes a host rendering boundary, not guest GPU execution.

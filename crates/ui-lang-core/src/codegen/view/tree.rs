@@ -12,8 +12,8 @@
 //! line, rather than rendering as something else. The host has a fixed
 //! vocabulary; a view module is written to it.
 //!
-//! An extern widget is the one construct that reaches past that vocabulary:
-//! it becomes a `Surface` node the host paints itself, by the extern's name,
+//! Extern widgets and shaders reach past that vocabulary:
+//! each becomes a `Surface` node the host paints itself, by the extern's name,
 //! with the call's typed data arguments copied across the wire. No Rust
 //! function is called on the guest side; the declaration only types the call.
 //!
@@ -93,7 +93,7 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::Slider => slider(node, identity, document, message, env, scope)?,
         ResolvedViewKind::PickList => pick_list(node, identity, document, message, env, scope)?,
         ResolvedViewKind::Progress => progress(node, identity, document, env, scope)?,
-        ResolvedViewKind::ExternComponent => {
+        ResolvedViewKind::ExternComponent | ResolvedViewKind::Shader => {
             surface(node, identity, document, message, env, scope)?
         }
         // Rendered by the shared emitters: their code is target-neutral.
@@ -2228,38 +2228,52 @@ fn surface(
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
-    let component = program.resolved_extern_component(id)?;
-    let origin = component.origin;
-    let args = component
-        .arguments
-        .iter()
-        .map(|argument| {
-            let value =
-                resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned)?;
-            let encoded = surface_value_code(
-                &argument.ty,
-                "__surface_arg",
-                false,
-                program,
-                origin,
-                &mut Vec::new(),
-            )?;
+    let (name, origin, arguments, output, route, bounds) =
+        if matches!(program.resolved_view(id)?.kind, ResolvedViewKind::Shader) {
+            let shader = program.resolved_shader(id)?;
+            let adapter = &shader.adapter;
+            (
+                &adapter.function.name,
+                shader.origin,
+                adapter
+                    .arguments
+                    .iter()
+                    .map(|arg| (arg.expression, &arg.ty))
+                    .collect::<Vec<_>>(),
+                &adapter.output,
+                &adapter.route,
+                Some((&shader.width, &shader.height)),
+            )
+        } else {
+            let component = program.resolved_extern_component(id)?;
+            (
+                &component.function.name,
+                component.origin,
+                component
+                    .arguments
+                    .iter()
+                    .map(|arg| (arg.expression, &arg.ty))
+                    .collect::<Vec<_>>(),
+                &component.output,
+                &component.route,
+                None,
+            )
+        };
+    let args = arguments
+        .into_iter()
+        .map(|(expression, ty)| {
+            let value = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
+            let encoded =
+                surface_value_code(ty, "__surface_arg", false, program, origin, &mut Vec::new())?;
             Ok(format!("{{ let __surface_arg = &({value}); {encoded} }}"))
         })
         .collect::<Result<Vec<_>, Error>>()?
         .join(", ");
-    let on_event = component
-        .route
+    let on_event = route
         .as_ref()
         .map(|route| {
-            let decoded = surface_value_code(
-                &component.output,
-                "__sent",
-                true,
-                program,
-                origin,
-                &mut Vec::new(),
-            )?;
+            let decoded =
+                surface_value_code(output, "__sent", true, program, origin, &mut Vec::new())?;
             let callback =
                 snapshot_callback(route, "__value", &["__value"], env, program, message)?;
             Ok(handler_code(
@@ -2270,12 +2284,44 @@ fn surface(
             ))
         })
         .transpose()?;
-    Ok(format!(
-        "{WIRE}::Node::Surface {{ key: {}, name: ::std::string::String::from({:?}), args: ::std::vec![{args}], on_event: {} }}",
-        key_code(identity, "extern", origin, scope, env, program)?,
-        component.function.name,
+    let key = key_code(
+        identity,
+        if bounds.is_some() { "shader" } else { "extern" },
+        origin,
+        scope,
+        env,
+        program,
+    )?;
+    let surface_key = if bounds.is_some() {
+        "__surface_key.clone()"
+    } else {
+        &key
+    };
+    let surface = format!(
+        "{WIRE}::Node::Surface {{ key: {surface_key}, name: ::std::string::String::from({name:?}), args: ::std::vec![{args}], on_event: {} }}",
         option_code(on_event),
-    ))
+    );
+    let content = if let Some((width, height)) = bounds {
+        let dimension = |value: &Option<ResolvedContainerLength>| {
+            match value {
+                None => Ok(format!("{WIRE}::Length::Fixed(100.0)")),
+                // Shader is atomic: unlike Container it has no intrinsic
+                // child size, so Shrink resolves to zero on this axis.
+                Some(ResolvedContainerLength::Shrink) => Ok(format!("{WIRE}::Length::Fixed(0.0)")),
+                Some(value) => length_code(value, program, env, origin),
+            }
+        };
+        // Iced Shader defaults to 100x100. The host element is constrained
+        // by the same dimensions, including when its provider is missing.
+        format!(
+            "{WIRE}::Node::Container {{ key: ::std::format!(\"{{}}/@bounds\", __surface_key), width: ::std::option::Option::Some({}), height: ::std::option::Option::Some({}), padding: ::std::option::Option::None, align_x: ::std::option::Option::None, align_y: ::std::option::Option::None, background: ::std::option::Option::None, border: ::std::option::Option::None, snap: ::std::option::Option::None, content: ::std::boxed::Box::new({surface}) }}",
+            dimension(width)?,
+            dimension(height)?,
+        )
+    } else {
+        return Ok(surface);
+    };
+    Ok(format!("{{ let __surface_key = {key}; {content} }}"))
 }
 
 /// Encode a borrowed expression or decode an owned wire value. The generated

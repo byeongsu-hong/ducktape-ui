@@ -836,11 +836,10 @@ const COVERAGE: &[Coverage] = &[
         "this editor option",
     ),
     refused("themer", "", "  themer alternate_panel(true)\n", "`themer`"),
-    refused(
+    emitted(
         "shader",
         FLIP,
         "  shader status_shader(1.0) w=fill h=24.0 -> flip _\n",
-        "`shader`",
     ),
     refused("media: image", "", "  image picture\n", "`media`"),
     refused(
