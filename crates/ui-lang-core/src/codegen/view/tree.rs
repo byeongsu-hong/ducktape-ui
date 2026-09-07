@@ -7,7 +7,7 @@
 //! the parent's child list; so a `for` over a list of rows compiles to the
 //! same loop for both targets and only the row inside changes.
 //!
-//! A construct the tree does not model (`stack`, `markdown`, a gradient
+//! A construct the tree does not model (`flex`, `markdown`, a gradient
 //! background...) fails the build, naming the construct and its `.ice`
 //! line, rather than rendering as something else. The host has a fixed
 //! vocabulary; a view module is written to it.
@@ -44,6 +44,8 @@ pub(in crate::codegen) use responsive::render_container_condition;
 // Reached through the guest crate, which is the app's one dependency: it
 // re-exports the wire so a module never names `ui_lang_wire` itself.
 const WIRE: &str = "::ui_lang_guest::wire";
+mod layers;
+
 const SLOTS: &str = "::ui_lang_guest::slots";
 
 /// The tree rendering of `node`, or `None` when the target is native or
@@ -94,6 +96,9 @@ pub(in crate::codegen) fn render_tree_node(
             env,
             scope,
             slot,
+        )?,
+        ResolvedViewKind::Overlay { content, layer } => layers::overlay(
+            node, identity, *content, *layer, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::Space => space(node, document, env)?,
         ResolvedViewKind::Rule => rule(node, identity, document, env, scope)?,
@@ -535,6 +540,14 @@ fn layout(
     slot: Option<&SlotContext>,
 ) -> Result<String, Error> {
     let layout = program.resolved_layout(id)?;
+    if matches!(
+        layout.mode,
+        ResolvedLayoutMode::Stack(_) | ResolvedLayoutMode::Hover(_)
+    ) {
+        return layers::layout(
+            layout, identity, children, program, message, env, scope, slot,
+        );
+    }
     let origin = layout.origin;
     let style = &layout.utility_style;
     refuse_box_utilities(style, program, origin)?;
@@ -719,8 +732,9 @@ fn layout(
             .unwrap();
             Ok(body)
         }
-        ResolvedLayoutMode::Stack(_) => Err(refused(program, origin, "stack")),
-        ResolvedLayoutMode::Hover(_) => Err(refused(program, origin, "hover")),
+        ResolvedLayoutMode::Stack(_) | ResolvedLayoutMode::Hover(_) => {
+            unreachable!("handled layered layout")
+        }
         ResolvedLayoutMode::Flex(_) => Err(refused(program, origin, "flex")),
     }
 }

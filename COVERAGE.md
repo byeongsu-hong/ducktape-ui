@@ -1402,3 +1402,21 @@ reproduction; CI runs `cargo ice bundle --manifest-path examples/app-store/Cargo
 -p app-store-component-fixture --target wasm32-unknown-unknown` so missing Rust
 scope bindings and native-widget/wire-node type mismatches cannot hide behind
 successful code generation.
+
+### Tree layered-layout evidence
+
+The actual `app-store-layers-fixture` is bundled for wasm and exercised by
+`cargo test -p app-store-host bundled_layers_ -- --ignored`. Native host checks
+cover union and base/under sizing, inferred Fill, responsive child selection,
+hover pixels without guest ticks, held-open hover, top-layer pointer precedence,
+modal panel/backdrop routing, blocked base focus/keyboard, resumed input after
+close, and native surface lease cleanup. `GuestView` forwards nested overlays
+and diverts their events to the owning guest.
+
+For regression evidence, forcing stack dimensions to Shrink fails the inferred
+Fill assertion; removing the modal focus barrier fails the blocked-focus
+assertion. Restoring each implementation passes the host test. The initial
+host bridge without overlay forwarding failed its backdrop-dismissal assertion.
+Random hostile frames now generate Stack/Hover/Overlay, including excessive
+children and nonfinite values. All six decode/sanitize/diff/patch checks pass;
+adding these vectors originally exposed and fixed missing Props attachment.

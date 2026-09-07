@@ -537,6 +537,47 @@ fn gen_leaf(rng: &mut Rng) -> Node {
 /// ever got a chance to refuse anything.
 /// Either of the two nodes holding a child list, around `children`.
 fn gen_list(rng: &mut Rng, children: Vec<Node>) -> Node {
+    match rng.next_range(5) {
+        0 => {
+            return Node::Hover {
+                key: gen_key(rng),
+                width: gen_opt_length(rng),
+                height: gen_opt_length(rng),
+                padding: gen_opt_edges(rng),
+                background: gen_opt_color(rng),
+                border: gen_opt_border(rng),
+                tint: gen_opt_color(rng),
+                radius: gen_f32(rng),
+                open: rng.next_bool(),
+                children,
+            };
+        }
+        1 => {
+            return Node::Overlay {
+                key: gen_key(rng),
+                padding: gen_f32(rng),
+                backdrop: Rgba([gen_f32(rng), gen_f32(rng), gen_f32(rng), gen_f32(rng)]),
+                align_x: gen_opt_align_x(rng).unwrap_or(AlignX::Center),
+                align_y: gen_opt_align_y(rng).unwrap_or(AlignY::Center),
+                on_dismiss: Some(rng.next_u64() as u32),
+                children,
+            };
+        }
+        _ => {}
+    }
+    if rng.next_range(3) == 0 {
+        return Node::Stack {
+            key: gen_key(rng),
+            width: gen_opt_length(rng),
+            height: gen_opt_length(rng),
+            padding: gen_opt_edges(rng),
+            background: gen_opt_color(rng),
+            border: gen_opt_border(rng),
+            clip: rng.next_bool(),
+            under: rng.next_u64() as u32,
+            children,
+        };
+    }
     if rng.next_bool() {
         return Node::Linear {
             key: gen_key(rng),
@@ -726,7 +767,16 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
     for index in &path {
         node = node.and_then(|node| node.children().get(*index as usize));
     }
-    let is_list = node.is_some_and(|node| matches!(node, Node::Linear { .. } | Node::Grid { .. }));
+    let is_list = node.is_some_and(|node| {
+        matches!(
+            node,
+            Node::Linear { .. }
+                | Node::Grid { .. }
+                | Node::Stack { .. }
+                | Node::Hover { .. }
+                | Node::Overlay { .. }
+        )
+    });
     let len = node.map_or(0, |node| node.children().len());
     let index = |rng: &mut Rng, bound: usize| match rng.next_range(8) {
         0 if hostile => rng.next_range(bound + 3) as u32,
@@ -750,13 +800,35 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
             let mut fresh = gen_patch_tree(rng);
             let same_arity = |fresh: &Node| match (node, fresh) {
                 (
-                    Some(Node::Linear { .. } | Node::Grid { .. }),
-                    Node::Linear { .. } | Node::Grid { .. },
+                    Some(
+                        Node::Linear { .. }
+                        | Node::Grid { .. }
+                        | Node::Stack { .. }
+                        | Node::Hover { .. }
+                        | Node::Overlay { .. },
+                    ),
+                    Node::Linear { .. }
+                    | Node::Grid { .. }
+                    | Node::Stack { .. }
+                    | Node::Hover { .. }
+                    | Node::Overlay { .. },
                 ) => true,
                 (Some(at), fresh) => {
-                    !matches!(at, Node::Linear { .. } | Node::Grid { .. })
-                        && !matches!(fresh, Node::Linear { .. } | Node::Grid { .. })
-                        && at.children().len() == fresh.children().len()
+                    !matches!(
+                        at,
+                        Node::Linear { .. }
+                            | Node::Grid { .. }
+                            | Node::Stack { .. }
+                            | Node::Hover { .. }
+                            | Node::Overlay { .. }
+                    ) && !matches!(
+                        fresh,
+                        Node::Linear { .. }
+                            | Node::Grid { .. }
+                            | Node::Stack { .. }
+                            | Node::Hover { .. }
+                            | Node::Overlay { .. }
+                    ) && at.children().len() == fresh.children().len()
                 }
                 (None, _) => false,
             };
@@ -887,10 +959,14 @@ fn tree_depth(node: &Node) -> usize {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
         | Node::MouseArea { content, .. }
+        | Node::Responsive { content, .. }
         | Node::Scroll { content, .. } => 1 + tree_depth(content),
-        Node::Linear { children, .. } | Node::Grid { children, .. } => {
-            1 + children.iter().map(tree_depth).max().unwrap_or(0)
-        }
+        Node::Linear { children, .. }
+        | Node::Grid { children, .. }
+        | Node::Stack { children, .. }
+        | Node::Hover { children, .. }
+        | Node::Overlay { children, .. }
+        | Node::When { children, .. } => 1 + children.iter().map(tree_depth).max().unwrap_or(0),
         Node::Button {
             content: ButtonContent::Child(child),
             ..
@@ -1385,6 +1461,68 @@ fn check_bounds(
             check_color(background, ctx);
             check_color(bar, ctx);
             check_border(border, ctx);
+        }
+        Node::Stack {
+            width,
+            height,
+            padding,
+            background,
+            border,
+            children,
+            under,
+            ..
+        } => {
+            check_length(width, ctx);
+            check_length(height, ctx);
+            check_edges(padding, ctx);
+            check_color(background, ctx);
+            check_border(border, ctx);
+            assert!(*under <= MAX_NODES as u32, "{ctx}: under budget");
+            for child in children {
+                check_bounds(child, depth + 1, keys, svg_bytes, ctx);
+            }
+        }
+        Node::Hover {
+            width,
+            height,
+            padding,
+            background,
+            border,
+            children,
+            tint,
+            radius,
+            ..
+        } => {
+            check_length(width, ctx);
+            check_length(height, ctx);
+            check_edges(padding, ctx);
+            check_color(background, ctx);
+            check_border(border, ctx);
+            check_color(tint, ctx);
+            assert!(
+                radius.is_finite() && (0.0..=PIXEL_BOUND).contains(radius),
+                "{ctx}: hover radius"
+            );
+            assert!(children.len() <= 2, "{ctx}: hover child count");
+            for child in children {
+                check_bounds(child, depth + 1, keys, svg_bytes, ctx);
+            }
+        }
+        Node::Overlay {
+            padding,
+            backdrop,
+            children,
+            ..
+        } => {
+            assert!(
+                padding.is_finite() && (0.0..=PIXEL_BOUND).contains(padding),
+                "{ctx}: overlay padding"
+            );
+            check_color(&Some(*backdrop), ctx);
+            assert!(children.len() <= 2, "{ctx}: overlay child count");
+            for child in children {
+                check_bounds(child, depth + 1, keys, svg_bytes, ctx);
+            }
         }
         Node::Responsive { width, height, .. } => {
             check_length(width, ctx);

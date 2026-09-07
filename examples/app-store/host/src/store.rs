@@ -1560,3 +1560,7 @@ mod canvas_tests;
 #[cfg(test)]
 #[path = "responsive_tests.rs"]
 mod responsive_tests;
+
+#[cfg(test)]
+#[path = "layers_tests.rs"]
+mod layers_tests;

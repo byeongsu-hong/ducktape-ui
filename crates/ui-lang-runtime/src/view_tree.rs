@@ -30,6 +30,7 @@ use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, b
 
 mod canvas;
 mod editor;
+mod layers;
 mod operations;
 pub use operations::execute_widget_command;
 #[cfg(feature = "markdown")]
@@ -42,6 +43,8 @@ pub type IceElement<'a, Message> = Element<'a, Message, iced::Theme, iced::Rende
 /// What the user did to a rendered tree.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Output {
+    /// A native modal boundary consumed the event without a guest route.
+    Ignore,
     /// A button was pressed or an input submitted: the guest's message
     /// table index the node carried.
     Activate(u32),
@@ -226,6 +229,7 @@ impl Inputs {
     /// action for an editor the tree no longer has.
     pub fn apply(&mut self, output: Output, pending: &mut Vec<wire::Event>) {
         let event = match output {
+            Output::Ignore => return,
             Output::Activate(index) => wire::Event::Message(index),
             Output::Surface { handler, mut value } => {
                 let Some(handler) = handler else {
@@ -355,6 +359,9 @@ fn collect_inputs(
         }
         wire::Node::Linear { children, .. }
         | wire::Node::Grid { children, .. }
+        | wire::Node::Stack { children, .. }
+        | wire::Node::Hover { children, .. }
+        | wire::Node::Overlay { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
                 collect_inputs(child, into, editors);
@@ -428,6 +435,9 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         }
         wire::Node::Linear { children, .. }
         | wire::Node::Grid { children, .. }
+        | wire::Node::Stack { children, .. }
+        | wire::Node::Hover { children, .. }
+        | wire::Node::Overlay { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
                 collect_pictures(child, into);
@@ -976,6 +986,10 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         }
         // Structural conditions are expanded by the surrounding layout.
         wire::Node::When { .. } => widget::Space::new().into(),
+        wire::Node::Stack { .. } | wire::Node::Hover { .. } | wire::Node::Overlay { .. } => {
+            layers::render(node, kept)
+        }
+
         wire::Node::Container {
             key,
             width,

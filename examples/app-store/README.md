@@ -416,7 +416,7 @@ For module packaging requirements and the connected implementation phases, see
 
 ### Wire and rendering
 
-- The wire carries `box`, `mouse`, `col`/`row`, `grid`, `scroll`, `sensor`, `responsive`,
+- The wire carries `box`, `mouse`, `col`/`row`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
   `text`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
@@ -424,7 +424,7 @@ For module packaging requirements and the connected implementation phases, see
   second hand the guest never ticks), given the call's copied data arguments
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
   the host lacks renders a placeholder. Every other Ice
-  construct — combo box, images, stacks, overlays,
+  construct — combo box, images,
   mounted components, gradients, the text and interaction utility styles —
   fails the app's build at its `.ice` line with E190. Each is a node kind
   to add to the wire, an emitter arm and a renderer arm. A layout's surface
@@ -896,3 +896,28 @@ app-store-component-fixture --target wasm32-unknown-unknown --out
 examples/app-store/target/component-fixture` from the repository root. It checks
 that a component invoked in a state loop compiles all the way to wasm, including
 an imported palette and its generated scope bindings.
+
+## Layered layouts fixture
+
+![Actual wasm layered modal capture](docs/layered-layouts.png)
+
+`tests/layers-guest` exercises native stacks, hover controls, and modal overlays
+through actual wasm. Stacks preserve union sizing and inferred Fill dimensions;
+hover painting follows the host pointer without guest ticks, while `open` can
+hold the reveal visible. Overlays suppress base keyboard/focus operations,
+consume panel presses, route backdrop dismissal, and release mounted native
+surfaces on close. The host forwards native overlays and their outputs to the
+owning guest.
+
+From the repository root:
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-layers-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/layers-fixture
+cd examples/app-store
+cargo test -p app-store-host bundled_layers_ -- --ignored
+```
+
+Keyed/lazy lists, flex and pin/tooltip remain separate phase-4 prerequisites.
+Host and guests must be rebuilt together for the added wire node variants.
