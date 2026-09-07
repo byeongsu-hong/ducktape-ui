@@ -41,6 +41,7 @@ mod button;
 mod canvas;
 mod responsive;
 mod text;
+mod tooltip;
 pub(in crate::codegen) use responsive::render_container_condition;
 
 // Reached through the guest crate, which is the app's one dependency: it
@@ -98,6 +99,9 @@ pub(in crate::codegen) fn render_tree_node(
             env,
             scope,
             slot,
+        )?,
+        ResolvedViewKind::Tooltip { content, tip } => tooltip::render(
+            node, identity, *content, *tip, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::Overlay { content, layer } => layers::overlay(
             node, identity, *content, *layer, document, message, env, scope, slot,

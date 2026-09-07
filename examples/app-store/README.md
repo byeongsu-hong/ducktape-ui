@@ -426,7 +426,7 @@ For module packaging requirements and the connected implementation phases, see
   The actual Ducktape typed node root now reaches `components/icon.ice:7`
   (`style=icon_tint(tone)`). Rust style callbacks remain deliberately refused;
   that icon needs declarative palette colors. SVG button-ink inheritance,
-  tooltip and the opaque activity-log surface slot remain prerequisites.
+  and the opaque activity-log surface slot remain prerequisites.
 
 - Button `checked=`, `expanded=` and `description=` cross to the host's native
   accessibility wrapper. False remains distinct from omission; descriptions
@@ -437,6 +437,12 @@ For module packaging requirements and the connected implementation phases, see
 - `row wrap` and `col wrap` reflow through native host layout, with copied
   `wrap-gap=` and `wrap-align=`. The text fixture checks resizing and a wrapped
   button route through actual wasm. Rebuild hosts and guests together.
+
+- Tooltips use native delayed overlays with copied position, styling and
+  viewport snapping. Visible tip text supplies an accessible description;
+  explicit descriptions are preserved. The text wasm fixture exercises
+  delayed show/hide and the native AccessKit snapshot. Delay is capped at
+  60 seconds and both children share the frame budgets.
 
 - The wire carries `box`, `mouse`, `col`/`row`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
   `text`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,

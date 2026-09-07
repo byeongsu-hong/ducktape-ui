@@ -652,7 +652,27 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
             node = gen_list(rng, children);
             continue;
         }
-        node = match rng.next_range(6) {
+        node = match rng.next_range(7) {
+            6 => Node::Tooltip {
+                key: gen_key(rng),
+                position: TooltipPosition::Bottom,
+                gap: gen_f32(rng),
+                padding: gen_f32(rng),
+                delay_ms: rng.next_u64(),
+                snap: rng.next_bool(),
+                style: TooltipStyle {
+                    preset: TooltipPreset::Transparent,
+                    background: gen_opt_color(rng),
+                    text: gen_opt_color(rng),
+                    border: gen_opt_border(rng),
+                    shadow_color: gen_opt_color(rng),
+                    shadow_x: gen_opt_f32(rng),
+                    shadow_y: gen_opt_f32(rng),
+                    shadow_blur: gen_opt_f32(rng),
+                    pixel_snap: gen_opt_bool(rng),
+                },
+                children: vec![node, gen_leaf(rng)],
+            },
             4 => Node::Sensor {
                 key: gen_key(rng),
                 on_show: rng.next_bool().then(|| rng.next_u64() as u32),
@@ -1006,6 +1026,7 @@ fn tree_depth(node: &Node) -> usize {
         | Node::Grid { children, .. }
         | Node::Stack { children, .. }
         | Node::Hover { children, .. }
+        | Node::Tooltip { children, .. }
         | Node::Overlay { children, .. }
         | Node::When { children, .. } => 1 + children.iter().map(tree_depth).max().unwrap_or(0),
         Node::Button {
@@ -1155,6 +1176,30 @@ fn check_bounds(
             check_color(background, ctx);
             check_border(border, ctx);
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
+        }
+        Node::Tooltip {
+            gap,
+            padding,
+            delay_ms,
+            style,
+            children,
+            ..
+        } => {
+            check_pixels(&Some(*gap), ctx, "tooltip gap");
+            check_pixels(&Some(*padding), ctx, "tooltip padding");
+            assert!(*delay_ms <= 60_000);
+            check_color(&style.background, ctx);
+            check_color(&style.text, ctx);
+            check_color(&style.shadow_color, ctx);
+            check_border(&style.border, ctx);
+            check_pixels(&style.shadow_blur, ctx, "tooltip blur");
+            for value in [style.shadow_x, style.shadow_y].into_iter().flatten() {
+                assert!(value.is_finite() && value.abs() <= PIXEL_BOUND);
+            }
+            assert!(children.len() <= 2);
+            for child in children {
+                check_bounds(child, depth + 1, keys, svg_bytes, ctx);
+            }
         }
         Node::Linear {
             wrap,

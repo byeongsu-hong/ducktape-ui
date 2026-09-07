@@ -496,3 +496,14 @@ provide children and copied values without measuring pixels. Optional wrapping
 settings distinguish an ordinary layout from a wrapping layout with defaults.
 Inter-line spacing uses the existing wire and child-count spacing limits.
 Rebuild hosts and guests together for the Linear wire field.
+
+### Tree tooltips
+
+Tree tooltips use the host's native overlay, with copied position, gap, padding,
+delay and viewport snapping. Native container presets and concrete solid
+background/text/border/shadow/snap values cross; Rust style callbacks and
+gradients remain refused. The tip's visible text supplies the first eligible
+content node's accessible description, preserving an explicit description.
+Tooltip children share tree limits, numeric style values are sanitized and
+delay is capped at 60 seconds. Rebuild hosts and guests together for the wire
+variant.
