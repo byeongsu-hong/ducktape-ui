@@ -44,7 +44,8 @@ pub trait App: Sized + 'static {
 /// is the index its message took here, an input's `on_input` the index of
 /// its `String -> Message` constructor, a checkbox's `on_toggle` that of a
 /// `bool -> Message` one, a slider's `f32`, a pick list's `u32`, a
-/// sensor's `(f32, f32)` size. The host
+/// sensor's and a mouse area's `(f32, f32)` size or position, a mouse
+/// area's `(f32, f32, bool)` scroll. The host
 /// echoes an index back with the value; the driver looks the handler up in
 /// the table of the frame it echoed and runs it.
 ///
@@ -221,6 +222,15 @@ impl<A: App> Driver<A> {
                     width,
                     height,
                 } => slots::run_handler::<(f32, f32), A::Message>(handler, (width, height)),
+                wire::Event::Pointer { handler, x, y } => {
+                    slots::run_handler::<(f32, f32), A::Message>(handler, (x, y))
+                }
+                wire::Event::Scroll {
+                    handler,
+                    dx,
+                    dy,
+                    pixels,
+                } => slots::run_handler::<(f32, f32, bool), A::Message>(handler, (dx, dy, pixels)),
                 wire::Event::Response { id, result, done } => {
                     host::fulfill(id, result, done);
                     None

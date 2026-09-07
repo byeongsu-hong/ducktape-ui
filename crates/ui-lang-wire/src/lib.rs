@@ -57,6 +57,23 @@ pub enum Event {
         width: f32,
         height: f32,
     },
+    /// The pointer is at (`x`, `y`) inside a [`Node::MouseArea`], in the
+    /// area's own coordinates — the DOM's `offsetX`/`offsetY`, never the
+    /// window's. Carries a move (`on_move`) or a left press (`on_press_at`).
+    ///
+    /// A host sends at most ONE move per handler per redraw frame, the last
+    /// position it saw, as a browser delivers one `pointermove` per frame:
+    /// the pointer crosses a thousand pixels a second and every event is a
+    /// guest tick. A press is never coalesced.
+    Pointer { handler: u32, x: f32, y: f32 },
+    /// The wheel turned over a [`Node::MouseArea`] by (`dx`, `dy`), in
+    /// pixels when `pixels` is set and in lines otherwise.
+    Scroll {
+        handler: u32,
+        dx: f32,
+        dy: f32,
+        pixels: bool,
+    },
     /// One answer to a [`Request`]. A one-shot request gets exactly one with
     /// `done`; a subscription gets many, the last one `done`.
     Response {
@@ -280,6 +297,30 @@ pub enum Node {
         #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
+    /// A region that reports what the pointer does over its one child. The
+    /// discrete routes carry per-frame message indices like a button's
+    /// `on_press`; `on_move` and `on_press_at` carry a handler index the
+    /// host answers with [`Event::Pointer`], `on_scroll` one it answers
+    /// with [`Event::Scroll`]. The node paints nothing of its own.
+    MouseArea {
+        key: String,
+        on_press: Option<u32>,
+        on_release: Option<u32>,
+        on_double_click: Option<u32>,
+        on_right_press: Option<u32>,
+        on_right_release: Option<u32>,
+        on_middle_press: Option<u32>,
+        on_middle_release: Option<u32>,
+        on_enter: Option<u32>,
+        on_exit: Option<u32>,
+        on_move: Option<u32>,
+        /// Fires for a left press even when the child took it — a button
+        /// inside the area — where `on_press` does not.
+        on_press_at: Option<u32>,
+        on_scroll: Option<u32>,
+        #[serde(deserialize_with = "decode_child")]
+        content: Box<Node>,
+    },
     Linear {
         key: String,
         axis: Axis,
@@ -487,6 +528,7 @@ impl Node {
     pub fn key(&self) -> Option<&str> {
         match self {
             Self::Container { key, .. }
+            | Self::MouseArea { key, .. }
             | Self::Linear { key, .. }
             | Self::Grid { key, .. }
             | Self::Sensor { key, .. }
@@ -514,6 +556,7 @@ impl Node {
         match self {
             Self::Container { content, .. }
             | Self::Sensor { child: content, .. }
+            | Self::MouseArea { content, .. }
             | Self::Scroll { content, .. } => std::slice::from_ref(content),
             Self::Linear { children, .. } | Self::Grid { children, .. } => children,
             Self::Button {
@@ -547,6 +590,7 @@ impl Node {
         match self {
             Self::Container { content, .. }
             | Self::Sensor { child: content, .. }
+            | Self::MouseArea { content, .. }
             | Self::Scroll { content, .. } => std::slice::from_mut(content),
             Self::Linear { children, .. } | Self::Grid { children, .. } => children,
             Self::Button {
@@ -576,6 +620,7 @@ impl Node {
             Self::Linear { children, .. } | Self::Grid { children, .. } => Some(children),
             Self::Container { .. }
             | Self::Sensor { .. }
+            | Self::MouseArea { .. }
             | Self::Scroll { .. }
             | Self::Button { .. }
             | Self::Text { .. }
@@ -1038,7 +1083,7 @@ fn sanitize_node(
                 *delay = finite(*delay).max(0.0);
             }
         }
-        Node::Scroll { key, .. } => claim(key, taken),
+        Node::Scroll { key, .. } | Node::MouseArea { key, .. } => claim(key, taken),
         Node::Text {
             key,
             content,
@@ -1233,7 +1278,9 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Toggle { width, .. }
         | Node::Radio { width, .. }
         | Node::PickList { width, .. } => vec![width],
-        Node::Rule { .. } | Node::Sensor { .. } | Node::Surface { .. } => Vec::new(),
+        Node::Rule { .. } | Node::Sensor { .. } | Node::MouseArea { .. } | Node::Surface { .. } => {
+            Vec::new()
+        }
     };
     slots.into_iter().flatten().collect()
 }
@@ -1508,6 +1555,17 @@ mod tests {
             Event::Select {
                 handler: 3,
                 index: 1,
+            },
+            Event::Pointer {
+                handler: 4,
+                x: 12.5,
+                y: 3.0,
+            },
+            Event::Scroll {
+                handler: 5,
+                dx: 0.0,
+                dy: -1.0,
+                pixels: false,
             },
             Event::Response {
                 id: 1,
@@ -1887,6 +1945,63 @@ mod tests {
             ..Frame::default()
         });
         assert!(decode::<Frame>(&bytes).is_err());
+    }
+
+    fn mouse_area(key: &str, on_move: Option<u32>, content: Node) -> Node {
+        Node::MouseArea {
+            key: key.into(),
+            on_press: Some(1),
+            on_release: None,
+            on_double_click: None,
+            on_right_press: None,
+            on_right_release: None,
+            on_middle_press: None,
+            on_middle_release: None,
+            on_enter: Some(2),
+            on_exit: None,
+            on_move,
+            on_press_at: None,
+            on_scroll: Some(3),
+            content: Box::new(content),
+        }
+    }
+
+    /// A mouse area recurses like a container, is diffed as a node with
+    /// one fixed child, and claims its key like every other node.
+    #[test]
+    fn a_mouse_area_round_trips_diffs_by_props_and_claims_its_key() {
+        let frame = Frame {
+            root: Some(mouse_area("App/m", Some(0), text("inside"))),
+            ..Frame::default()
+        };
+        assert_eq!(decode::<Frame>(&encode(&frame)).unwrap(), frame);
+        assert_eq!(frame.root.as_ref().unwrap().count(), 2);
+
+        // A changed route index is a `Props` patch that keeps the child.
+        let mut old = mouse_area("App/m", Some(0), text("inside"));
+        let mut new = mouse_area("App/m", Some(7), text("inside"));
+        let patches = diff(&mut old, &mut new);
+        assert!(
+            matches!(patches.as_slice(), [Patch::Props { path, .. }] if path.is_empty()),
+            "{patches:?}"
+        );
+        apply(&mut old, patches).unwrap();
+        assert_eq!(old, new);
+
+        // Two areas on one key: the second is moved off it, its child kept.
+        let mut frame = Frame {
+            root: Some(column(vec![
+                mouse_area("App/m", None, text("a")),
+                mouse_area("App/m", None, text("b")),
+            ])),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        assert_eq!(children[1].key(), Some("App/m#2"));
+        assert_eq!(children[1].children().len(), 1);
     }
 
     /// Building and encoding a chain this deep recurses as far as decoding

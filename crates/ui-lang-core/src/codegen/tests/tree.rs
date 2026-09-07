@@ -156,6 +156,36 @@ fn form_controls_compile_to_wire_nodes_with_handler_slots() {
     }
 }
 
+/// A mouse area crosses with a message per discrete route and a handler per
+/// positional one, typed by what the host sends back.
+#[test]
+fn a_mouse_area_compiles_to_a_mouse_area_node_with_handler_slots() {
+    let generated = tree_with(
+        "on moved(_x, _y)\non wheeled(_x, _y, _pixels)\n",
+        "  col\n    button \"×\" -> remove 0\n    for item in items\n      mouse press=add enter=add move=moved press-at=moved scroll=wheeled\n        text item @text-fg\n",
+    );
+    for expected in [
+        "::ui_lang_guest::wire::Node::MouseArea { key:",
+        "on_press: ::std::option::Option::Some(::ui_lang_guest::slots::message(",
+        "on_enter: ::std::option::Option::Some(::ui_lang_guest::slots::message(",
+        "on_exit: ::std::option::Option::None",
+        "on_move: ::std::option::Option::Some(::ui_lang_guest::slots::handler::<(f32, f32), __DemoMessage>(",
+        "on_press_at: ::std::option::Option::Some(::ui_lang_guest::slots::handler::<(f32, f32), __DemoMessage>(",
+        "on_scroll: ::std::option::Option::Some(::ui_lang_guest::slots::handler::<(f32, f32, bool), __DemoMessage>(",
+        "__DemoMessage::Moved(__point.0, __point.1)",
+        "__DemoMessage::Wheeled(__delta.0, __delta.1, __delta.2)",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected:?} in:\n{generated}"
+        );
+    }
+    assert!(
+        !generated.contains("::iced::widget::mouse_area("),
+        "{generated}"
+    );
+}
+
 /// A grid crosses with its column count, cell cap, spacing and sizing
 /// inlined; the host lays the cells out.
 #[test]
@@ -390,6 +420,7 @@ const FLIP: &str = "on flip(value)\n  busy = value\n";
 const CHOOSE: &str = "on choose(value)\n  draft = value\n";
 const SLIDE: &str = "on slide(value)\n  amount = value\n";
 const MEASURE: &str = "on measured(_width, _height)\n  busy = true\non hidden\n  busy = false\n";
+const MOVED: &str = "on moved(_x, _y)\n";
 
 /// The tree target's coverage contract.
 ///
@@ -437,6 +468,31 @@ const COVERAGE: &[Coverage] = &[
         "  sensor show=measured resize=measured hide=hidden anticipate=48.0 delay=16\n    text \"a\" @text-fg\n",
     ),
     emitted("box", "", "  box\n    text \"a\" @text-fg\n"),
+    emitted(
+        "mouse area",
+        "",
+        "  mouse press=add\n    text \"a\" @text-fg\n",
+    ),
+    emitted(
+        "mouse area: buttons",
+        "",
+        "  mouse release=add double=add right-press=add right-release=add middle-press=add middle-release=add enter=add exit=add\n    text \"a\" @text-fg\n",
+    ),
+    emitted(
+        "mouse area: move",
+        MOVED,
+        "  mouse move=moved\n    text \"a\" @text-fg\n",
+    ),
+    emitted(
+        "mouse area: press-at",
+        MOVED,
+        "  mouse press-at=moved\n    text \"a\" @text-fg\n",
+    ),
+    emitted(
+        "mouse area: scroll",
+        "on wheeled(_x, _y, _pixels)\n",
+        "  mouse scroll=wheeled\n    text \"a\" @text-fg\n",
+    ),
     emitted("text", "", "  text \"a\" @text-fg\n"),
     emitted(
         "media: svg",
@@ -547,12 +603,6 @@ const COVERAGE: &[Coverage] = &[
         "`lazy`",
     ),
     refused(
-        "mouse area",
-        "",
-        "  mouse press=add\n    text \"a\" @text-fg\n",
-        "`mouse area`",
-    ),
-    refused(
         "resize handle",
         "on resized(_dx, _dy)\n",
         "  resize-handle drag=resized\n    box w=24.0 h=12.0\n      text \"a\" @text-fg\n",
@@ -636,6 +686,12 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  col\n    with\n      @bg-primary\n      @rounded-md\n    text \"a\" @text-fg\n",
         "a surface utility style on a layout",
+    ),
+    refused(
+        "mouse area: cursor",
+        "",
+        "  mouse press=add cursor=pointer\n    text \"a\" @text-fg\n",
+        "a mouse cursor",
     ),
     refused(
         "box: px-snap",

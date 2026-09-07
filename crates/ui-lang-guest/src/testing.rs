@@ -17,6 +17,7 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
+        | Node::MouseArea { content, .. }
         | Node::Scroll { content, .. } => collect_texts(content, out),
         Node::Linear { children, .. } | Node::Grid { children, .. } => {
             children.iter().for_each(|child| collect_texts(child, out))
@@ -70,6 +71,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
+        | Node::MouseArea { content, .. }
         | Node::Scroll { content, .. } => find_by(content, matches),
         Node::Linear { children, .. } | Node::Grid { children, .. } => {
             children.iter().find_map(|child| find_by(child, matches))
@@ -256,6 +258,65 @@ pub fn hide(frame: &Frame, name: &str) -> Vec<Event> {
     vec![Event::Message(*message)]
 }
 
+/// The mouse area with key `name`.
+fn mouse_area<'a>(frame: &'a Frame, name: &str) -> &'a Node {
+    let found = frame.root.as_ref().and_then(|root| {
+        find_by(
+            root,
+            &|node| matches!(node, Node::MouseArea { key, .. } if key == name),
+        )
+    });
+    match found {
+        Some(node) => node,
+        None => panic!("no mouse area {name:?} in {:?}", keys(frame)),
+    }
+}
+
+/// The events the host sends when the pointer enters the mouse area with
+/// key `name`.
+pub fn hover(frame: &Frame, name: &str) -> Vec<Event> {
+    let Node::MouseArea { on_enter, .. } = mouse_area(frame, name) else {
+        unreachable!()
+    };
+    let Some(message) = on_enter else {
+        panic!("mouse area {name:?} has no enter route");
+    };
+    vec![Event::Message(*message)]
+}
+
+/// The events the host sends when the pointer moves to (`x`, `y`) inside
+/// the mouse area with key `name` — the area's own coordinates.
+pub fn move_to(frame: &Frame, name: &str, x: f32, y: f32) -> Vec<Event> {
+    let Node::MouseArea { on_move, .. } = mouse_area(frame, name) else {
+        unreachable!()
+    };
+    let Some(handler) = on_move else {
+        panic!("mouse area {name:?} has no move route");
+    };
+    vec![Event::Pointer {
+        handler: *handler,
+        x,
+        y,
+    }]
+}
+
+/// The events the host sends when the wheel turns by (`dx`, `dy`) lines
+/// over the mouse area with key `name`.
+pub fn scroll(frame: &Frame, name: &str, dx: f32, dy: f32) -> Vec<Event> {
+    let Node::MouseArea { on_scroll, .. } = mouse_area(frame, name) else {
+        unreachable!()
+    };
+    let Some(handler) = on_scroll else {
+        panic!("mouse area {name:?} has no scroll route");
+    };
+    vec![Event::Scroll {
+        handler: *handler,
+        dx,
+        dy,
+        pixels: false,
+    }]
+}
+
 /// Every node key in the tree, depth first.
 pub fn keys(frame: &Frame) -> Vec<String> {
     let mut out = Vec::new();
@@ -272,6 +333,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
+        | Node::MouseArea { content, .. }
         | Node::Scroll { content, .. } => collect_keys(content, out),
         Node::Linear { children, .. } | Node::Grid { children, .. } => {
             children.iter().for_each(|child| collect_keys(child, out))

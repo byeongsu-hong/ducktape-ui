@@ -47,6 +47,20 @@ pub fn shared_label(published: bool) -> String {
     }
 }
 
+/// Where the pointer is over the card, in the card's own pixels.
+pub fn point_label(x: f64, y: f64) -> String {
+    format!("Pointer at {}, {}", x.round(), y.round())
+}
+
+/// One wheel notch is one count, up for scrolling up.
+pub fn wheel_step(dy: f64) -> i64 {
+    match dy.partial_cmp(&0.0) {
+        Some(std::cmp::Ordering::Greater) => 1,
+        Some(std::cmp::Ordering::Less) => -1,
+        _ => 0,
+    }
+}
+
 pub fn auto_label(auto: bool) -> String {
     if auto {
         "Auto: on".into()

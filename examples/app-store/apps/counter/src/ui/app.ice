@@ -16,12 +16,15 @@ extern crate::host
   pure question(count:i64) -> str
   pure auto_label(auto:bool) -> str
   pure shared_label(published:bool) -> str
+  pure point_label(x:f64, y:f64) -> str
+  pure wheel_step(dy:f64) -> i64
 
 state
   count = 0
   auto = false
   published = false
   answer = "Ask host sends a question through the host and shows what comes back."
+  pointer = ""
   active_palette:palette[CounterTheme] = CounterTheme.light
   dark = false
 
@@ -66,6 +69,21 @@ on elapsed
 on published(ok)
   published = ok
 
+// The pointer over the card: the host sends where it is, in the card's
+// own coordinates, and what the wheel did — one move per redraw at most.
+on hovered
+  pointer = "Scroll to count"
+
+on pointer_left
+  pointer = ""
+
+on moved(x, y)
+  pointer = point_label(x, y)
+
+on wheeled(_x, y, _pixels)
+  count = count + wheel_step(y)
+  run every publish_count(count) -> published _ | host_failed _
+
 on ask
   run every ask_host(question(count)) -> answered _ | host_failed _
 
@@ -97,15 +115,22 @@ view
             size=28.0
             @text-fg
             @font-bold
-      box #card
+      mouse #pad
         with
-          bg=surface
-          border=border
-          border-w=1.0
-          r=10.0
-          px=28.0
-          py=10.0
-        text count #count size=56.0 @text-fg
+          enter=hovered
+          exit=pointer_left
+          move=moved
+          scroll=wheeled
+        box #card
+          with
+            bg=surface
+            border=border
+            border-w=1.0
+            r=10.0
+            px=28.0
+            py=10.0
+          text count #count size=56.0 @text-fg
+      text pointer #pointer size=11.0 @text-muted
       grid #controls
         with
           cols=3

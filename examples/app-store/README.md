@@ -24,9 +24,10 @@ crates/ui-lang-guest/  (workspace crate) what an app needs to run in wasm: a
                 the manifest
 crates/ui-lang-runtime/view_tree   (workspace crate) the host's half: the tree
                 rendered with iced's widgets, every input's text kept host-side
-apps/counter/   three buttons; Auto is an Ice `subscribe every`, which the guest
-                runtime routes to the host's ticker; every change goes on the
-                bus and into the store's log
+apps/counter/   three buttons and a card that is a `mouse` area — hover, move
+                and wheel reach the guest; Auto is an Ice `subscribe every`,
+                which the guest runtime routes to the host's ticker; every
+                change goes on the bus and into the store's log
 apps/todo/      a list kept in the host's storage — it survives uninstall/reinstall
 apps/clock/     host uptime from a subscription, UTC from one `clock.now` plus
                 arithmetic; the module has no clock
@@ -234,7 +235,10 @@ through the same table and answer from its own subscriptions.
    text itself, adopting the guest's value only when the guest moved it
    (its handler cleared the field). What the user does comes back as
    meaning: a press is `Event::Message(i)`, typing is
-   `Event::Input { handler, text }`. The widget that wraps the rendered
+   `Event::Input { handler, text }`, the pointer over a `mouse` area is
+   `Event::Pointer { handler, x, y }` in the area's own pixels — at most
+   one per handler per redraw, the last position, as a browser sends one
+   `pointermove` per frame. The widget that wraps the rendered
    tree ticks the guest once per redraw with a fresh fuel budget, answers
    its requests, and rebuilds the window's view when the tree changed.
    Answers are delivered as events: an echo on the next redraw, a timer at
@@ -269,9 +273,11 @@ A guest is ticked only when something is due for it, so Counter sits at
 0/s and Clock at 1/s; a press or a keystroke reaches the window it
 happened in, so one guest ticks instead of five; a tree that changed
 nothing crosses as a flag, and one that changed crosses as patches.
-Pointer movement never reaches a guest at all — hover is the host's
-widgets' — so a window with the pointer moving over it costs what any
-native iced window does. The Monitor page keeps the counters per app:
+Pointer movement reaches a guest only over a `mouse` area with a `move=`
+route, and then as one event per redraw — hover over anything else is the
+host's widgets' — so a window with the pointer moving over it costs what
+any native iced window does until the pointer is over such an area, and
+then one tick per frame. The Monitor page keeps the counters per app:
 ticks against the redraws it slept through, how many of its frames crossed
 without their tree, and the bytes of the last whole frame beside the bytes
 of the last patch frame.
@@ -289,6 +295,24 @@ deterministic):
 Nearly four hundred times less tree on the wire, and on the host the
 patches are applied to the tree it holds and that tree sanitized again
 instead of a hundred kilobytes decoded; the render is the same either way.
+
+What a pointer event costs in fuel, on Counter's card (`cargo test -p
+app-store-host --test move_fuel -- --ignored --nocapture` from
+`examples/app-store` after bundling the counter; the same figures on every
+launch and every run, since a tick is deterministic; the component as
+`cargo ice bundle` writes it without `wasm-opt`):
+
+| tick | fuel |
+|---|---|
+| idle (no event, tree unchanged) | 69,408 |
+| `+` pressed: handler, view, publish | 158,123 |
+| the pointer entering the card: handler, view | 140,592 |
+| one `move`: handler with the position, view, one `Props` patch | 142,007 |
+| one wheel notch: handler, view, publish | 162,757 |
+
+A move costs what a press does — the handler and the view, not the
+event — and the host sends at most one per redraw, so a pointer sweeping
+the card at 60 Hz spends under 9M fuel a second against the 600M budget.
 
 ## The sandbox
 
@@ -387,7 +411,7 @@ An honest inventory, grouped by where the work would land. Items marked
 
 ### Wire and rendering
 
-- The wire carries `box`, `col`/`row`, `grid`, `scroll`, `sensor`, `text`,
+- The wire carries `box`, `mouse`, `col`/`row`, `grid`, `scroll`, `sensor`, `text`,
   `svg`, `input`, `button`, `space`, `rule`, `checkbox`, `toggler`, `radio`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
@@ -420,6 +444,10 @@ An honest inventory, grouped by where the work would land. Items marked
   radio, slider, pick list or progress bar in its own theme, and a status
   style on one (`active checked bg=…`) is refused with E190 like a widget
   the wire does not carry. A slider carries `f64` values only.
+- A `mouse` area carries every route — press, release, double, right and
+  middle buttons, enter, exit, `move=`, `press-at=`, `scroll=` — but not
+  `cursor=`: the pointer's shape over it is the host's, and the option is
+  refused with E190.
 - No scale factor or locale reaches the guest. The colour mode does, as a
   `host.theme` stream the app has to subscribe to and act on itself.
 - The host's accessibility tree names every node by its key, but nothing
@@ -428,11 +456,12 @@ An honest inventory, grouped by where the work would land. Items marked
 ### Events and input
 
 - Only a button's press, an input's edit and submit, a checkbox's or
-  toggler's flip, a radio's or pick list's selection, and a slider's drag
-  and release cross.
-  Keys, pointer position, hover, scroll position, drag and drop, window
-  focus and close requests are the host's widgets' and never reach the
-  guest.
+  toggler's flip, a radio's or pick list's selection, a slider's drag and
+  release, and what a `mouse` area hears — its buttons, enter and exit, the
+  pointer's position in its own pixels, the wheel — cross. Keys, scroll
+  position, drag and drop, window focus and close requests are the host's
+  widgets' and never reach the guest; the pointer over anything but a
+  `mouse` area does not either.
 - A guest cannot move focus, scroll to a row or select text: widget
   operations are the host's, and a task that asks for one is dropped.
 
@@ -537,7 +566,8 @@ An honest inventory, grouped by where the work would land. Items marked
   winit's web backend as dead code (about 600 KB after the wasm-bindgen
   metadata is stripped); a guest needs only iced's types.
 - Native tests drive the app through the wire — `press`, `type_into`,
-  `submit` by key or label, `answer` / `item` / `refuse` for the host —
+  `submit` by key or label, `hover` / `move_to` / `scroll` on a `mouse`
+  area by key, `answer` / `item` / `refuse` for the host —
   and read the tree back with `texts` and `find`; the Ice test harness
   (`agent_inspect`) is not available inside a module (`test = false`). No
   request-log or fuel profiler for debugging.

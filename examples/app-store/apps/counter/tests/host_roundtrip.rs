@@ -150,3 +150,46 @@ fn a_picture_crosses_once_and_its_hash_stands_for_it_after() {
     };
     assert_eq!(first_hash, second_hash);
 }
+
+/// The card is a mouse area: entering and leaving it swap a hint in and out,
+/// a move shows where the pointer is in the card's own pixels, and a wheel
+/// notch counts — and publishes like a press.
+#[test]
+fn the_card_hears_the_pointer_and_the_wheel() {
+    use ui_lang_guest::testing::{hover, move_to, scroll};
+    let frame = boot();
+    assert!(!has_text(&frame, "Scroll to count"), "{:?}", texts(&frame));
+
+    let frame = tick_native(hover(&frame, "Counter/app/content/pad"));
+    assert!(has_text(&frame, "Scroll to count"), "{:?}", texts(&frame));
+
+    let frame = tick_native(move_to(&frame, "Counter/app/content/pad", 12.4, 30.6));
+    assert!(has_text(&frame, "Pointer at 12, 31"), "{:?}", texts(&frame));
+
+    let frame = tick_native(scroll(&frame, "Counter/app/content/pad", 0.0, 1.0));
+    assert!(has_text(&frame, "1"), "{:?}", texts(&frame));
+    assert!(
+        frame
+            .requests
+            .iter()
+            .any(|request| request.kind == "bus.publish" && request.payload == b"counter\n1"),
+        "{:?}",
+        frame.requests
+    );
+    let frame = tick_native(scroll(&frame, "Counter/app/content/pad", 0.0, -1.0));
+    assert!(has_text(&frame, "0"), "{:?}", texts(&frame));
+
+    // Leaving: the hint goes, the count stays.
+    let Some(ui_lang_guest::wire::Node::MouseArea { on_exit, .. }) =
+        find(&frame, "Counter/app/content/pad")
+    else {
+        panic!("no mouse area: {:?}", texts(&frame));
+    };
+    let frame = tick_native(vec![ui_lang_guest::wire::Event::Message(on_exit.unwrap())]);
+    assert!(
+        !has_text(&frame, "Pointer at 12, 31"),
+        "{:?}",
+        texts(&frame)
+    );
+    assert!(has_text(&frame, "0"), "{:?}", texts(&frame));
+}
