@@ -602,6 +602,11 @@ jobs:
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
             -p app-store-responsive-fixture --target wasm32-unknown-unknown \
             --out examples/app-store/target/responsive-fixture
+      - name: Bundle components in state loops
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-component-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/component-fixture
       - name: Verify host container rules and native input through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_responsive_ -- --ignored

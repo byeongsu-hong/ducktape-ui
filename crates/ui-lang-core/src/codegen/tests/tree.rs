@@ -1214,3 +1214,15 @@ fn responsive_conditions_refuse_short_circuit_sensitive_snapshots() {
         );
     }
 }
+
+#[test]
+fn component_in_a_state_loop_does_not_emit_native_layout_memo() {
+    let source = format!(
+        "app Demo\n{PALETTE}state\n  rows:[str] = [\"a\", \"b\"]\ncomponent Chip(label:str)\n  box px=7.0 py=3.0\n    text label size=9.0\nview\n  col w=fill\n    for row in rows\n      Chip label=row\n"
+    );
+    let generated = compile_for(&source, "component.ice", Target::Tree).unwrap();
+    assert!(
+        !generated.contains("::ui_lang_runtime::rev_memo("),
+        "Tree components must return wire nodes, not native layout memo widgets"
+    );
+}
