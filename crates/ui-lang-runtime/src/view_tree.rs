@@ -29,6 +29,8 @@ use ui_lang_wire as wire;
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
 mod editor;
+mod operations;
+pub use operations::execute_widget_command;
 #[cfg(feature = "markdown")]
 mod markdown;
 #[cfg(feature = "markdown")]

@@ -555,6 +555,14 @@ jobs:
       - name: Run clipboard Tasks through the mounted host boundary
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_clipboard_ -- --ignored
+      - name: Bundle the widget operation fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-widget-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/widget-fixture
+      - name: Run widget Tasks through mounted guest views
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_widget_ -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

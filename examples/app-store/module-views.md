@@ -58,8 +58,10 @@ that binary into an isolated view package.
   unmount. Do not stringify arbitrary native state to claim support.
 - **Effects:** `ui-lang-guest` executes task outputs and clipboard actions;
   clipboard uses a manifest capability and the mounted host's platform interface.
-  Widget/window/font/image/reload/exit actions remain dropped and logged. Focus,
-  scroll, keyboard handling and clipboard are functional requirements of the
+  Checked Ice focus/selection/scroll statements now use the mounted host's
+  widget request channel. Arbitrary native Widget actions and window/font/
+  image/reload/exit actions remain dropped and logged. Keyboard handling and
+  these effects are functional requirements of the
   existing screens, not optional visual polish. Existing host request/stream
   transport can carry domain capabilities; ducktape must supply authorization,
   signing, query/submit/page and cancellation semantics later.
@@ -84,7 +86,7 @@ that binary into an isolated view package.
 | 3c — declarative graphics and responsive layout | Canvas geometry data and host-evaluated container rules, with widget-local opt-in measurements only. | Geometry rendering and interaction; multiple container widths with correct branches and no guest layout callback; bounded sensor feedback. |
 | 4a — actual app layouts first | stack/hover/overlay/keyed/lazy/flex/pin/tooltip; preserve union sizing, hit routing, identity, virtualization and scroll behavior. | Representative chat list and menus, page overlay, file/forge list; reorder/edit/scroll assertions and frame measurements, not compile-only coverage. |
 | 4b — remaining content/layout/style | rich text/markdown/qr/image/combo, table/pane grid/theme/themer/float/resize handle and remaining supported surface shapes. | Per-feature native/wire behavior checks and real wasm bundle builds; preserve intentional rejection of native callbacks. |
-| Runtime alongside 3–4 | Clipboard Tasks implemented through the mounted host; widget/window requests, input subscriptions, assets, mount/unmount and host context remain. | Focus/scroll/copy, keyboard and cancellation driven through a real host boundary; separate guest instances cannot affect one another. |
+| Runtime alongside 3–4 | Clipboard Tasks and checked widget focus/selection/scroll requests implemented through the mounted host; window requests, input subscriptions, assets, mount/unmount and host context remain. | Focus/scroll/copy, keyboard and cancellation driven through a real host boundary; separate guest instances cannot affect one another. |
 | Hot reload after state/lifecycle boundary | Generated snapshot/restore exports and catalog watch in the example host. | Same window and UI draft survive replacement; failure retains usable old instance; no duplicated side effects, stale routes or leaked subscriptions. |
 | Ducktape integration — deferred | Extract per-module guest roots, bind real capabilities/surfaces, add view to module artifact and build/hydration/activation paths, mount from module packages. | Every existing module-owned screen builds and runs from its package; no wasm embedded in desktop binary; module+index+view hash/activation/removal agree; real workflows and permissions pass. |
 

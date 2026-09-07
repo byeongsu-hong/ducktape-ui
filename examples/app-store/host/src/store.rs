@@ -176,6 +176,12 @@ pub(crate) struct Wake {
     pub(crate) published: bool,
 }
 
+/// Native operation access to one actually mounted guest frame.
+pub(crate) struct MountedWidgets<'a> {
+    pub(crate) revision: u64,
+    pub(crate) execute: &'a mut dyn FnMut(wire::WidgetCommand) -> Result<Vec<u8>, String>,
+}
+
 pub struct Guest {
     /// Kept whole so a faulted instance can be reloaded in place.
     entry: CatalogEntry,
@@ -199,6 +205,7 @@ pub struct Guest {
     /// One-shot answers, each with the moment it becomes due.
     due: Vec<(Instant, wire::Event)>,
     clipboard: Vec<(u64, clipboard::Command)>,
+    widgets: Vec<(u64, u64, wire::WidgetCommand)>,
     tickers: Vec<Ticker>,
     inbox: Inbox,
     /// How many entries this guest has in the process-wide subscriber list.
@@ -463,6 +470,7 @@ impl Guest {
             pictures: Pictures::default(),
             due: Vec::new(),
             clipboard: Vec::new(),
+            widgets: Vec::new(),
             tickers: Vec::new(),
             inbox: Inbox::default(),
             subscriptions: 0,
@@ -528,6 +536,7 @@ impl Guest {
         &mut self,
         now: Instant,
         platform: &mut dyn iced::advanced::Clipboard,
+        mut widgets: Option<MountedWidgets<'_>>,
     ) -> Wake {
         if self.fault.is_some() {
             return Wake::default();
@@ -547,6 +556,11 @@ impl Guest {
             return self.wake(now);
         }
         let started = Instant::now();
+        self.reply_bytes = 0;
+        let mut operations_left = MAX_REQUESTS_PER_TICK;
+        // Run the frame already mounted before a busy guest publishes its
+        // successor, or a timer could forever supersede boot-time focus.
+        self.execute_widgets(now, &mut widgets, &mut operations_left);
         self.deliver_due(now);
         self.tick();
         self.ticks += 1;
@@ -558,7 +572,6 @@ impl Guest {
         {
             self.recent.pop_front();
         }
-        self.reply_bytes = 0;
         for (nth, request) in std::mem::take(&mut self.frame.requests)
             .into_iter()
             .enumerate()
@@ -581,6 +594,9 @@ impl Guest {
             self.wake_pending = true;
         }
         self.execute_clipboard(now, platform);
+        // Newly queued requests must see this tick's cancellations first.
+        // A request for a new tree waits until GuestView mounts that tree.
+        self.execute_widgets(now, &mut widgets, &mut operations_left);
         // What the whole redraw cost the window thread, not only the call
         // into the module: answering a tick's requests is the host's work,
         // and the guest chose how much of it there would be.
@@ -651,6 +667,7 @@ impl Guest {
     fn quiet(&self, now: Instant) -> bool {
         self.ticks > 0
             && !self.frame.busy
+            && self.widgets.is_empty()
             && self.pending.is_empty()
             && self.inbox.lock().expect("inbox").is_empty()
             && !self.due.iter().any(|(at, _)| *at <= now)
@@ -664,6 +681,7 @@ impl Guest {
             .map(|(at, _)| *at)
             .chain(self.tickers.iter().map(|ticker| ticker.next))
             .chain(self.frame.busy.then_some(now))
+            .chain((!self.widgets.is_empty()).then_some(now))
             .min()
     }
 
@@ -678,6 +696,7 @@ impl Guest {
     /// The guest stopped waiting for `id`: drop whatever the host kept for it.
     fn cancel(&mut self, id: u64) {
         self.clipboard.retain(|(pending, _)| *pending != id);
+        self.widgets.retain(|(pending, _, _)| *pending != id);
         self.due.retain(
             |(_, event)| !matches!(event, wire::Event::Response { id: due, .. } if *due == id),
         );
@@ -704,6 +723,42 @@ impl Guest {
             }
             let result = clipboard::execute(command, platform);
             self.reply(now, id, Ok(result));
+        }
+    }
+
+    fn execute_widgets(
+        &mut self,
+        now: Instant,
+        mounted: &mut Option<MountedWidgets<'_>>,
+        operations_left: &mut usize,
+    ) {
+        if self.fault.is_some() {
+            self.widgets.clear();
+            return;
+        }
+        let Some(mounted) = mounted else { return };
+        for (id, revision, command) in std::mem::take(&mut self.widgets) {
+            if revision != self.frame_rev {
+                self.reply(
+                    now,
+                    id,
+                    Err("widget request belongs to a superseded frame".into()),
+                );
+            } else if revision != mounted.revision {
+                self.widgets.push((id, revision, command));
+            } else if *operations_left == 0 {
+                self.reply(
+                    now,
+                    id,
+                    Err("too many widget operations this redraw".into()),
+                );
+            } else if let Some(error) = self.over_budget() {
+                self.reply(now, id, Err(error));
+            } else {
+                *operations_left -= 1;
+                let result = (mounted.execute)(command);
+                self.reply(now, id, result);
+            }
         }
     }
 
@@ -775,6 +830,19 @@ impl Guest {
                 } else {
                     match clipboard::decode(operation, &payload) {
                         Ok(command) => self.clipboard.push((id, command)),
+                        Err(error) => self.reply(now, id, Err(error)),
+                    }
+                }
+            }
+            ("host", "widget") => {
+                if self.widgets.len() + self.clipboard.len() + self.due.len() >= MAX_DUE {
+                    self.reply(now, id, Err("too many pending widget requests".into()));
+                } else {
+                    match wire::decode::<wire::WidgetCommand>(&payload).and_then(|mut command| {
+                        command.validate()?;
+                        Ok(command)
+                    }) {
+                        Ok(command) => self.widgets.push((id, self.frame_rev, command)),
                         Err(error) => self.reply(now, id, Err(error)),
                     }
                 }
@@ -1373,3 +1441,7 @@ mod tests {
 #[cfg(test)]
 #[path = "clipboard_tests.rs"]
 mod clipboard_tests;
+
+#[cfg(test)]
+#[path = "widget_tests.rs"]
+mod widget_tests;

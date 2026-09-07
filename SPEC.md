@@ -380,6 +380,16 @@ Default and monospace fonts are supported; named fonts and inline gradients
 are rejected with E190 on this target. The default runtime provider requires
 the `markdown` feature (included in `full-runtime`).
 
+On the tree target, checked `task widget` focus, focused-query, input cursor/
+selection and scroll/snap statements emit `host.widget` requests containing
+`ui_lang_wire::WidgetCommand`. Qualified widget paths are copied exactly;
+no native widget Id or operation object crosses. The host waits for the
+requesting frame to be mounted and traverses only that guest's widgets and
+overlays. Focused queries return bool (false for a missing target); mutations
+acknowledge unit, preserving sequential Task ordering. Widget selectors and
+virtual-row scrolling are rejected with E190 on this target. Native extern
+Tasks returning opaque widget operations are outside this lowering contract.
+
 ## 6. Semantic invariants
 
 These are the rules a construct listing cannot express.

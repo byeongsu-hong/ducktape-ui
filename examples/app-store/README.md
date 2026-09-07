@@ -522,16 +522,21 @@ For module packaging requirements and the connected implementation phases, see
   position, drag and drop, window focus and close requests are the host's
   widgets' and never reach the guest; the pointer over anything but a
   `mouse` area does not either.
-- A guest cannot move focus, scroll to a row or select text: widget
-  operations are the host's, and a task that asks for one is dropped.
+- Checked `task widget` statements can focus a named input, move focus
+  forward/backward, query focus, move/select input text and scroll/snap a
+  named region. `snap-end` respects either content anchor. Requests use
+  `host.widget` and operate only inside that mounted guest, including its
+  overlays. The first mount is awaited; superseded requests are refused,
+  cancellation removes queued work, and native work counts toward host
+  throttling. Widget selectors and virtual-row scrolling remain E190.
 
 ### Tasks and runtime
 
 - Task outputs and clipboard actions are executed. Clipboard access requires
-  the declared capability. Widget operations (focus, scroll-to), window,
-  font, image, reload and exit actions are
-  dropped — each one with a `host::log` line naming what was dropped, so
-  the store's stderr says so, but nothing runs them.
+  the declared capability. Checked Ice widget statements lower to the mounted
+  host channel; arbitrary native `Action::Widget` values returned by Rust
+  extern Tasks are not serialized. Those actions, and window, font, image,
+  reload and exit actions, are still dropped with a `host::log` diagnostic.
 - `every` carries no instant in a module and refuses a route that binds
   one (E190): there is no `now` to make it from. Every other subscription
   source that is a toolkit's — keyboard, mouse, window events, `system
@@ -675,4 +680,19 @@ cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
   --out examples/app-store/target/clipboard-fixture
 cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host \
   bundled_clipboard_ -- --ignored
+```
+
+### Mounted widget operation fixture
+
+`tests/widget-guest` exercises focus, focused replies, selection/cursor and
+scroll commands while a 16ms timer changes its view. The host test mounts two
+actual wasm instances, clicks controls and types into native inputs. CI also
+checks stale/canceled/over-budget requests and redraw-time accounting.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-widget-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/widget-fixture
+cargo test --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-host bundled_widget_ -- --ignored
 ```

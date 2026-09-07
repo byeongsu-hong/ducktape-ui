@@ -33,6 +33,7 @@ mod markdown;
 pub use markdown::Markdown;
 pub mod host;
 pub mod testing;
+pub mod widget;
 
 /// What `export_app!` needs from the generated application.
 pub trait App: Sized + 'static {

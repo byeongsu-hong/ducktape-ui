@@ -78,7 +78,7 @@ fn has_text(guest: &Guest, text: &str) -> bool {
 }
 fn step(guest: &mut Guest, clipboard: &mut MemoryClipboard, now: &mut Instant) {
     *now += Duration::from_secs(1);
-    guest.redraw(*now, clipboard);
+    guest.redraw(*now, clipboard, None);
     assert!(guest.fault.is_none(), "{:?}", guest.fault);
 }
 

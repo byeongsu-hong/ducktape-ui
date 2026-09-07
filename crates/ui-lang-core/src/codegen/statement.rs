@@ -30,11 +30,11 @@ fn self_assignment_code(
     resolved_expr_use_code(program, value, &moved, ValueMode::Owned)
 }
 
-fn resolved_widget_target_code(
+fn resolved_widget_target_parts(
     target: &ResolvedWidgetTarget,
     env: &dyn BindingEnvironment,
     program: &LoweredProgram,
-) -> Result<String, Error> {
+) -> Result<(String, &'static str), Error> {
     // The check layer admits `window=` only for app-scoped handlers in a
     // daemon keeping mounted state, where every rendered id is qualified by
     // its window — rebuild the same root `root_scope_code` renders with.
@@ -86,6 +86,15 @@ fn resolved_widget_target_code(
     } else {
         scope
     };
+    Ok((path, constructor))
+}
+
+fn resolved_widget_target_code(
+    target: &ResolvedWidgetTarget,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+) -> Result<String, Error> {
+    let (path, constructor) = resolved_widget_target_parts(target, env, program)?;
     Ok(format!("::iced::widget::Id::{constructor}({path})"))
 }
 
@@ -1020,96 +1029,108 @@ pub(in crate::codegen) fn generate_statements(
                         format!("({code}) as {cast}")
                     })
                 };
-                let task = match operation {
-                    ResolvedWidgetOperation::FocusPrevious => {
-                        format!("::iced::widget::operation::focus_previous::<{message}>()")
-                    }
-                    ResolvedWidgetOperation::FocusNext => {
-                        format!("::iced::widget::operation::focus_next::<{message}>()")
-                    }
-                    ResolvedWidgetOperation::Focus { target } => format!(
-                        "::iced::widget::operation::focus::<{message}>({})",
-                        id(target)?
-                    ),
-                    ResolvedWidgetOperation::Focused { target } => {
-                        let route = route.as_ref().expect("checker requires focused route");
-                        let message_code =
-                            resolved_route_code(route, &["value"], env, program, message)?;
-                        format!(
-                            "::iced::widget::operation::is_focused({}).map(move |value| {message_code})",
-                            id(target)?
-                        )
-                    }
-                    ResolvedWidgetOperation::CursorFront { target } => format!(
-                        "::iced::widget::operation::move_cursor_to_front::<{message}>({})",
-                        id(target)?
-                    ),
-                    ResolvedWidgetOperation::CursorEnd { target } => format!(
-                        "::iced::widget::operation::move_cursor_to_end::<{message}>({})",
-                        id(target)?
-                    ),
-                    ResolvedWidgetOperation::Cursor { target, position } => format!(
-                        "::iced::widget::operation::move_cursor_to::<{message}>({}, {})",
-                        id(target)?,
-                        value(*position, "usize")?
-                    ),
-                    ResolvedWidgetOperation::SelectAll { target } => format!(
-                        "::iced::widget::operation::select_all::<{message}>({})",
-                        id(target)?
-                    ),
-                    ResolvedWidgetOperation::Select { target, start, end } => format!(
-                        "::iced::widget::operation::select_range::<{message}>({}, {}, {})",
-                        id(target)?,
-                        value(*start, "usize")?,
-                        value(*end, "usize")?
-                    ),
-                    ResolvedWidgetOperation::Snap { target, x, y } => {
-                        let x = resolved_expr_use_code(program, *x, env, ValueMode::Owned)?;
-                        let y = resolved_expr_use_code(program, *y, env, ValueMode::Owned)?;
-                        format!(
-                            "::iced::widget::operation::snap_to::<{message}>({}, ::iced::widget::operation::RelativeOffset {{ x: (({x}) as f32).max(0.0).min(1.0), y: (({y}) as f32).max(0.0).min(1.0) }})",
-                            id(target)?,
-                        )
-                    }
-                    ResolvedWidgetOperation::SnapEnd { target } => format!(
-                        "::ui_lang_runtime::snap_to_content_end::<{message}>({})",
-                        id(target)?
-                    ),
-                    ResolvedWidgetOperation::ScrollTo { target, x, y } => format!(
-                        "::iced::widget::operation::scroll_to::<{message}>({}, ::iced::widget::operation::AbsoluteOffset {{ x: {}, y: {} }})",
-                        id(target)?,
-                        value(*x, "f32")?,
-                        value(*y, "f32")?
-                    ),
-                    ResolvedWidgetOperation::ScrollBy { target, x, y } => format!(
-                        "::iced::widget::operation::scroll_by::<{message}>({}, ::iced::widget::operation::AbsoluteOffset {{ x: {}, y: {} }})",
-                        id(target)?,
-                        value(*x, "f32")?,
-                        value(*y, "f32")?
-                    ),
-                    ResolvedWidgetOperation::ScrollToKey { target, key } => {
-                        let key = resolved_expr_use_code(program, *key, env, ValueMode::Owned)?;
-                        format!(
-                            "::ui_lang_runtime::scroll_to_key::<{message}>({}, ::ui_lang_runtime::VirtualKey::virtual_key({key}))",
-                            id(target)?
-                        )
-                    }
-                    ResolvedWidgetOperation::Find { selector, all } => {
-                        let route = route.as_ref().expect("checker requires selector route");
-                        let (selector, conversion) =
-                            resolved_widget_selector_code(selector, env, program)?;
-                        let function = if *all { "find_all" } else { "find" };
-                        let mut task = format!("::iced::widget::selector::{function}({selector})");
-                        if let Some(conversion) = conversion {
-                            if *all {
-                                write!(task, ".map(|values| values.into_iter().map({conversion}).collect::<::std::vec::Vec<_>>())").unwrap();
-                            } else {
-                                write!(task, ".map(|value| value.map({conversion}))").unwrap();
-                            }
+                let task = if program.target() == Target::Tree {
+                    widget::tree_widget_task(
+                        operation,
+                        route.as_ref(),
+                        statement.origin,
+                        env,
+                        program,
+                        message,
+                    )?
+                } else {
+                    match operation {
+                        ResolvedWidgetOperation::FocusPrevious => {
+                            format!("::iced::widget::operation::focus_previous::<{message}>()")
                         }
-                        let message_code =
-                            resolved_route_code(route, &["value"], env, program, message)?;
-                        format!("{task}.map(move |value| {message_code})")
+                        ResolvedWidgetOperation::FocusNext => {
+                            format!("::iced::widget::operation::focus_next::<{message}>()")
+                        }
+                        ResolvedWidgetOperation::Focus { target } => format!(
+                            "::iced::widget::operation::focus::<{message}>({})",
+                            id(target)?
+                        ),
+                        ResolvedWidgetOperation::Focused { target } => {
+                            let route = route.as_ref().expect("checker requires focused route");
+                            let message_code =
+                                resolved_route_code(route, &["value"], env, program, message)?;
+                            format!(
+                                "::iced::widget::operation::is_focused({}).map(move |value| {message_code})",
+                                id(target)?
+                            )
+                        }
+                        ResolvedWidgetOperation::CursorFront { target } => format!(
+                            "::iced::widget::operation::move_cursor_to_front::<{message}>({})",
+                            id(target)?
+                        ),
+                        ResolvedWidgetOperation::CursorEnd { target } => format!(
+                            "::iced::widget::operation::move_cursor_to_end::<{message}>({})",
+                            id(target)?
+                        ),
+                        ResolvedWidgetOperation::Cursor { target, position } => format!(
+                            "::iced::widget::operation::move_cursor_to::<{message}>({}, {})",
+                            id(target)?,
+                            value(*position, "usize")?
+                        ),
+                        ResolvedWidgetOperation::SelectAll { target } => format!(
+                            "::iced::widget::operation::select_all::<{message}>({})",
+                            id(target)?
+                        ),
+                        ResolvedWidgetOperation::Select { target, start, end } => format!(
+                            "::iced::widget::operation::select_range::<{message}>({}, {}, {})",
+                            id(target)?,
+                            value(*start, "usize")?,
+                            value(*end, "usize")?
+                        ),
+                        ResolvedWidgetOperation::Snap { target, x, y } => {
+                            let x = resolved_expr_use_code(program, *x, env, ValueMode::Owned)?;
+                            let y = resolved_expr_use_code(program, *y, env, ValueMode::Owned)?;
+                            format!(
+                                "::iced::widget::operation::snap_to::<{message}>({}, ::iced::widget::operation::RelativeOffset {{ x: (({x}) as f32).max(0.0).min(1.0), y: (({y}) as f32).max(0.0).min(1.0) }})",
+                                id(target)?,
+                            )
+                        }
+                        ResolvedWidgetOperation::SnapEnd { target } => format!(
+                            "::ui_lang_runtime::snap_to_content_end::<{message}>({})",
+                            id(target)?
+                        ),
+                        ResolvedWidgetOperation::ScrollTo { target, x, y } => format!(
+                            "::iced::widget::operation::scroll_to::<{message}>({}, ::iced::widget::operation::AbsoluteOffset {{ x: {}, y: {} }})",
+                            id(target)?,
+                            value(*x, "f32")?,
+                            value(*y, "f32")?
+                        ),
+                        ResolvedWidgetOperation::ScrollBy { target, x, y } => format!(
+                            "::iced::widget::operation::scroll_by::<{message}>({}, ::iced::widget::operation::AbsoluteOffset {{ x: {}, y: {} }})",
+                            id(target)?,
+                            value(*x, "f32")?,
+                            value(*y, "f32")?
+                        ),
+                        ResolvedWidgetOperation::ScrollToKey { target, key } => {
+                            let key = resolved_expr_use_code(program, *key, env, ValueMode::Owned)?;
+                            format!(
+                                "::ui_lang_runtime::scroll_to_key::<{message}>({}, ::ui_lang_runtime::VirtualKey::virtual_key({key}))",
+                                id(target)?
+                            )
+                        }
+                        ResolvedWidgetOperation::Find { selector, all } => {
+                            let route = route.as_ref().expect("checker requires selector route");
+                            let (selector, conversion) =
+                                resolved_widget_selector_code(selector, env, program)?;
+                            let function = if *all { "find_all" } else { "find" };
+                            let mut task =
+                                format!("::iced::widget::selector::{function}({selector})");
+                            if let Some(conversion) = conversion {
+                                if *all {
+                                    write!(task, ".map(|values| values.into_iter().map({conversion}).collect::<::std::vec::Vec<_>>())").unwrap();
+                                } else {
+                                    write!(task, ".map(|value| value.map({conversion}))").unwrap();
+                                }
+                            }
+                            let message_code =
+                                resolved_route_code(route, &["value"], env, program, message)?;
+                            format!("{task}.map(move |value| {message_code})")
+                        }
                     }
                 };
                 writeln!(out, "{}{task}{}", task_prefix, task_suffix).unwrap();
@@ -1578,6 +1599,7 @@ pub(in crate::codegen) fn generate_statements(
 
 mod task;
 pub(in crate::codegen) mod view_fn;
+mod widget;
 
 pub(super) use task::*;
 pub(super) use view_fn::*;
