@@ -830,7 +830,7 @@ pub(super) fn contains_virtual_rows(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_flex_children(
+pub(super) fn render_flex_children(
     out: &mut String,
     children: &[ViewId],
     document: &LoweredProgram,
@@ -951,7 +951,15 @@ fn render_flex_children(
                 else {
                     continue;
                 };
-                let item = if let Some(min_cell) = min_cell {
+                let item = if document.target() == Target::Tree {
+                    let options = match view.kind {
+                        ResolvedViewKind::Container { .. } => {
+                            Some(&document.resolved_container(*child)?.flex_item)
+                        }
+                        _ => None,
+                    };
+                    super::tree::flex_item_code("__flex_child", options, min_cell, document, env)?
+                } else if let Some(min_cell) = min_cell {
                     format!(
                         "::ui_lang_runtime::flex_item(__flex_child).grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed({}))",
                         clamped_f32_code(min_cell, "f32::EPSILON", "f32::MAX", document, env,)?
@@ -1062,7 +1070,9 @@ fn resolved_flex_margin_code(
     })
 }
 
-fn resolved_flex_item_alignment_name(align: ResolvedContainerFlexAlignment) -> &'static str {
+pub(super) fn resolved_flex_item_alignment_name(
+    align: ResolvedContainerFlexAlignment,
+) -> &'static str {
     match align {
         ResolvedContainerFlexAlignment::Start => "Start",
         ResolvedContainerFlexAlignment::End => "End",
@@ -1074,7 +1084,7 @@ fn resolved_flex_item_alignment_name(align: ResolvedContainerFlexAlignment) -> &
     }
 }
 
-fn resolved_flex_direction_name(direction: ResolvedFlexDirection) -> &'static str {
+pub(super) fn resolved_flex_direction_name(direction: ResolvedFlexDirection) -> &'static str {
     match direction {
         ResolvedFlexDirection::Row => "Row",
         ResolvedFlexDirection::RowReverse => "RowReverse",
@@ -1083,7 +1093,9 @@ fn resolved_flex_direction_name(direction: ResolvedFlexDirection) -> &'static st
     }
 }
 
-fn resolved_flex_content_alignment_name(align: ResolvedFlexContentAlignment) -> &'static str {
+pub(super) fn resolved_flex_content_alignment_name(
+    align: ResolvedFlexContentAlignment,
+) -> &'static str {
     match align {
         ResolvedFlexContentAlignment::Start => "Start",
         ResolvedFlexContentAlignment::End => "End",

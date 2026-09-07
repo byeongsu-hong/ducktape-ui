@@ -1127,3 +1127,22 @@ providers and live input/editor values. A different layout limit reflows the
 child. Lazy snapshots cannot re-admit assets rejected by shared host budgets.
 Existing lazy purity/type restrictions and Tree widget restrictions still apply.
 Host and guest must be rebuilt together for the Lazy wire variant.
+
+
+## Tree flex layouts
+
+Tree flex sends layout rules and a parallel vector of per-child item rules to
+the host's existing native flex engine. It preserves direction/reversal,
+nowrap/wrap/wrap-reverse, justify/items/content alignment, independent gaps,
+padding, dimensions/maxima and clipping. Item order, grow/shrink, fixed/content/
+percentage basis, self alignment and fixed/percentage/auto margins use the same
+checked lowering, including min-cell and if/for/match expansion. Utility sizing
+on the painted outer container remains separate from explicit inner dimensions.
+
+Metadata is decode-bounded and normalized to surviving child count after the
+shared node budget. Numeric values follow existing wire size bounds; margins
+retain finite negative values. The guest supplies neither measured coordinates
+nor a layout callback. Native layout, input, hit testing and clipping stay host
+responsibilities. Flex can be retained inside a Tree lazy boundary and reflows
+when the host's layout limits change. Rebuild hosts and guests together for the
+Flex wire variant. Other Tree widget/style restrictions continue to apply.

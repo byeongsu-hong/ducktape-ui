@@ -23,6 +23,12 @@
 
 use serde::{Deserialize, Serialize};
 
+mod flex;
+pub use flex::{
+    FlexBasis, FlexContentAlignment, FlexDirection, FlexItem, FlexItemAlignment, FlexLayout,
+    FlexMargin, FlexMargins, FlexWrap,
+};
+
 mod tooltip;
 pub use tooltip::{TooltipPosition, TooltipPreset, TooltipStyle};
 mod text;
@@ -482,6 +488,17 @@ pub enum ButtonContent {
 /// the accessibility tree.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Node {
+    /// Flex rules and item metadata, interpreted by the host's native layout engine.
+    Flex {
+        key: String,
+        layout: FlexLayout,
+        background: Option<Rgba>,
+        border: Option<Border>,
+        #[serde(deserialize_with = "flex::decode_items")]
+        items: Vec<FlexItem>,
+        #[serde(deserialize_with = "decode_children")]
+        children: Vec<Node>,
+    },
     /// Copied keyed rows; the host owns widget state and optional virtualization.
     KeyedColumn {
         key: String,
@@ -923,6 +940,7 @@ impl Node {
             | Self::Linear { key, .. }
             | Self::Grid { key, .. }
             | Self::KeyedColumn { key, .. }
+            | Self::Flex { key, .. }
             | Self::Responsive { key, .. }
             | Self::Lazy { key, .. }
             | Self::When { key, .. }
@@ -968,6 +986,7 @@ impl Node {
             | Self::Tooltip { children, .. }
             | Self::Overlay { children, .. }
             | Self::KeyedColumn { children, .. }
+            | Self::Flex { children, .. }
             | Self::When { children, .. } => children,
 
             Self::Button {
@@ -1014,6 +1033,7 @@ impl Node {
             | Self::Tooltip { children, .. }
             | Self::Overlay { children, .. }
             | Self::KeyedColumn { children, .. }
+            | Self::Flex { children, .. }
             | Self::When { children, .. } => children,
 
             Self::Button {
@@ -1045,6 +1065,7 @@ impl Node {
             Self::Linear { children, .. }
             | Self::Grid { children, .. }
             | Self::KeyedColumn { children, .. }
+            | Self::Flex { children, .. }
             | Self::Stack { children, .. }
             | Self::When { children, .. }
             | Self::Hover { children, .. }
@@ -1512,6 +1533,24 @@ fn sanitize_node(
             bound_edges(padding);
             bound_color(background);
             bound_border(border);
+        }
+        Node::Flex {
+            key,
+            layout,
+            background,
+            border,
+            items,
+            children,
+        } => {
+            claim(key, taken);
+            layout.sanitize();
+            bound_color(background);
+            bound_border(border);
+            children.truncate(MAX_NODES);
+            items.resize(children.len(), FlexItem::default());
+            for item in items {
+                item.sanitize();
+            }
         }
         Node::KeyedColumn {
             key,
@@ -1981,6 +2020,7 @@ fn sanitize_node(
     | Node::Grid { children, .. }
     | Node::Stack { children, .. }
     | Node::KeyedColumn { children, .. }
+    | Node::Flex { children, .. }
     | Node::When { children, .. } = node
     {
         let mut kept = 0;
@@ -1997,6 +2037,9 @@ fn sanitize_node(
         } = node
         {
             keys.truncate(kept);
+        }
+        if let Node::Flex { items, .. } = node {
+            items.truncate(kept);
         }
         return;
     }
@@ -2033,6 +2076,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::PickList { width, .. } => vec![width],
         Node::Rule { .. }
         | Node::Lazy { .. }
+        | Node::Flex { .. }
         | Node::Sensor { .. }
         | Node::MouseArea { .. }
         | Node::Overlay { .. }

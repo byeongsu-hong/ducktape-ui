@@ -26,6 +26,7 @@ use iced::widget::text_editor;
 use iced::{Background, Color, Element, Length, widget};
 use ui_lang_wire as wire;
 
+mod flex;
 mod lists;
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
@@ -390,6 +391,7 @@ fn collect_inputs(
         | wire::Node::Tooltip { children, .. }
         | wire::Node::Overlay { children, .. }
         | wire::Node::KeyedColumn { children, .. }
+        | wire::Node::Flex { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
                 collect_inputs(child, into, editors);
@@ -469,6 +471,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         | wire::Node::Tooltip { children, .. }
         | wire::Node::Overlay { children, .. }
         | wire::Node::KeyedColumn { children, .. }
+        | wire::Node::Flex { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
                 collect_pictures(child, into);
@@ -1000,6 +1003,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             generation,
             content,
         } => memo::render(key, *generation, content, kept),
+        wire::Node::Flex { .. } => flex::render(node, kept),
         wire::Node::Responsive {
             key,
             width,

@@ -922,7 +922,7 @@ public behavior has direct documented Ice syntax and tests.
 | `canvas` | native | declarative rectangle/circle/line/text/path geometry; complete path builder segments, fill rules, solid/linear fill and stroke, caps/joins/dashes, transforms, clips, typed `if`/`for`, complete raster/SVG frame drawing fields, dependency-keyed geometry cache with shared named groups, typed local `Program::State`, all five event families and every variant, state updates, publish/capture/next-frame/timed-redraw actions, pointer routes, and static/state-dependent/out-of-bounds interaction cover the complete public Program behavior |
 | `checkbox` | native | native label/value/disabled event, size/width/spacing, text typography/wrapping, complete font descriptors and custom icon; all four presets, every concrete Style field across active/hovered/disabled checked and unchecked statuses, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `column` | native | children, typed spacing/per-side padding, all `Length` bounds, max width, cross-axis alignment, clipping and wrapping column spacing/alignment, and `virtual-row=` viewport-bounded layout whose generated scroll synchronization cannot be outrun by a rapid wheel transaction |
-| `flex` | native | dependency-free runtime flexbox with row/column reverse directions, nowrap/wrap/wrap-reverse, justify/content/items alignment, axis gaps, padding and clipping; box items support stable order, grow/shrink/basis/self alignment, and fixed/percentage/auto margins |
+| `flex` | native | dependency-free runtime flexbox with row/column reverse directions, nowrap/wrap/wrap-reverse, justify/content/items alignment, axis gaps, padding and clipping; box items support stable order, grow/shrink/basis/self alignment, and fixed/percentage/auto margins; Tree copies these rules into the same native engine (see Tree flex evidence) |
 | `combo_box` | native | direct checked ID; native typed replaceable and incrementally pushable search state/selection, every builder setter, complete text-input icon, every concrete input Style field across active/hovered/focused/focused-hovered/disabled statuses, complete menu overlay Style fields, typed native input/menu style callbacks, and all events |
 | `box` | native | native one-child container with ID, complete concrete layout API, every concrete Style field including linear background, text, per-corner border, shadow and pixel snap, plus typed theme-aware runtime callbacks covering the default Theme's advanced classes; `border-dash=` is composed rather than native — `iced::Border` has no dash style, so it lowers to a radius-tracing canvas stroke stacked over the surface in place of the solid border |
 | `float` | native | one child, positive scale, all original-bounds and viewport geometry exposed as scoped f64 translation inputs, and every concrete Style field through checked shadow color/offset/blur and per-corner shadow radius |
@@ -1569,3 +1569,19 @@ module root adds two fixed allocations (weak slot and wrapper); a scope-free
 measurement separates that from the current renderer's seven fixed allocations.
 The dormant contract's Pictures argument and Linear fields were updated, and CI
 now executes it after the release runtime tests.
+
+
+### Tree flex evidence
+
+The Tree construct table and complete-option codegen test cover layout/item
+rules and nested conditional/loop/match children. Wire tests bound hostile
+numbers, preserve negative margins, reject excessive item counts before reading
+payloads, and keep metadata aligned after shared node-budget truncation.
+
+Native host geometry tests cover independent gaps, wrapping after width changes,
+item order/grow/percentage basis, and separate outer utility sizing. Disabling
+wrap/order fails child positions; omitting outer sizing fails width100 versus180.
+The actual bundled fixture compiles full flex options and drives native reaction
+clicks through a resized lazy subtree, then keyboard input and Send update guest
+state. Removing wrap fails the narrow-row assertion. CI bundles the fixture and
+runs `store::flex_tests`; other application graph restrictions remain separate.

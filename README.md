@@ -539,3 +539,5 @@ host preserves row input state and focus across reordering and owns viewport
 mounting; see [the bundled evidence](examples/app-store/README.md#keyed-and-virtual-rows).
 Tree `lazy` caches guest subtrees and callable routes, while the host memoizes
 native views/layout and owns their unmount lifetime. See [lazy module views](examples/app-store/README.md#lazy-module-views).
+Tree `flex` copies layout and item rules to the existing native engine, including
+wrapping, sizing and order. See [flex module views](examples/app-store/README.md#flex-module-views).
