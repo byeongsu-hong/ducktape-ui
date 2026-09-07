@@ -947,7 +947,7 @@ cd examples/app-store
 cargo test -p app-store-host bundled_layers_ -- --ignored
 ```
 
-Lazy lists, flex and pin remain separate phase-4 prerequisites.
+Flex and pin remain separate phase-4 prerequisites. Lazy caching is described below.
 Host and guests must be rebuilt together for the added wire node variants.
 
 ### Tree SVG button colors
@@ -991,5 +991,33 @@ The bundled keyed fixture verifies input and focus after reorder/prepend/remove
 on both ordinary and virtual paths. Its 200-row case checks bounded mounted rows
 and scrolling to the last row. Native tests count actual layout work separately.
 Disabling virtualization fails the mounted-row bound; reverting ordinary keyed
-reconciliation fails the focus assertion. Lazy memoization remains unsupported;
-these checks do not claim the entire chat or storage graph is portable yet.
+reconciliation fails the focus assertion. These checks do not claim the entire
+chat or storage graph is portable yet.
+
+### Lazy module views
+
+Tree `lazy`, including nested and `by` forms, caches copied guest subtrees and
+restores their message and typed event routes on hits. The host memoizes native
+views and layout, reflows on changed limits, and parks inner unmounts within the
+module instance. Restart or module unmount releases that instance's native
+resources. Cache entries are bounded to 1024 and evicted entries rebuild with
+fresh generations. SVG cache hits retain hashes without resending picture bytes.
+Guest and host must be rebuilt together.
+
+The actual lazy wasm fixture checks native pointer clicks after unrelated-state
+cache hits, a typed host surface event after a nested hit, hide/remount, changed
+dependencies, expired routes and replacing one module with another in the same
+native UI cache. A second test clicks component-local routes inside virtual keyed
+lazy rows before and after reordering, preserving sibling state and generations.
+Native tests separately count layout hits/reflows and verify
+resource release and shared text/image budgets. Other Tree refusals, including
+flex, pin, rich text and retained components, still block larger application
+graphs.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-lazy-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/lazy-fixture
+cd examples/app-store
+cargo test -p app-store-host store::lazy_tests -- --ignored
+```

@@ -1067,6 +1067,7 @@ fn tree_depth(node: &Node) -> usize {
         | Node::Sensor { child: content, .. }
         | Node::MouseArea { content, .. }
         | Node::Responsive { content, .. }
+        | Node::Lazy { content, .. }
         | Node::Scroll { content, .. } => 1 + tree_depth(content),
         Node::Linear { children, .. }
         | Node::Grid { children, .. }
@@ -1747,6 +1748,7 @@ fn check_bounds(
                 check_bounds(child, depth + 1, keys, svg_bytes, ctx);
             }
         }
+        Node::Lazy { content, .. } => check_bounds(content, depth + 1, keys, svg_bytes, ctx),
         Node::Responsive { width, height, .. } => {
             check_length(width, ctx);
             check_length(height, ctx);

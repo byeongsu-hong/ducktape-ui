@@ -347,6 +347,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "app-store-lazy-fixture"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "app-store-responsive-fixture"
 version = "0.1.0"
 dependencies = [

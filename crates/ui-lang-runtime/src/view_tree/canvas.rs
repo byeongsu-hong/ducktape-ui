@@ -38,6 +38,34 @@ impl Cache {
         );
         Self { geometries }
     }
+    /// Retain only this subtree's already-budgeted paths. Re-preparing each
+    /// lazy child would incorrectly give every child a fresh frame budget.
+    pub(super) fn subset(&self, root: &ui_lang_wire::Node) -> (Self, u64) {
+        use std::hash::{Hash, Hasher};
+        fn visit(
+            cache: &Cache,
+            node: &ui_lang_wire::Node,
+            into: &mut std::collections::HashMap<String, Geometry>,
+            hash: &mut rustc_hash::FxHasher,
+        ) {
+            if let ui_lang_wire::Node::Canvas { key, .. } = node {
+                let geometry = cache.geometries.get(key).expect("prepared wire canvas");
+                key.hash(hash);
+                for path in &geometry.paths {
+                    path.is_some().hash(hash);
+                }
+                into.insert(key.clone(), geometry.clone());
+            }
+            for child in node.children() {
+                visit(cache, child, into, hash);
+            }
+        }
+        let mut geometries = Default::default();
+        let mut hash = rustc_hash::FxHasher::default();
+        visit(self, root, &mut geometries, &mut hash);
+        (Self { geometries }, hash.finish())
+    }
+
     pub(super) fn get(&self, key: &str) -> Geometry {
         self.geometries
             .get(key)

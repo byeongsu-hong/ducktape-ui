@@ -123,6 +123,7 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::Component { .. }
         | ResolvedViewKind::Slot { .. }
         | ResolvedViewKind::KeyedColumn { .. }
+        | ResolvedViewKind::Lazy { .. }
         | ResolvedViewKind::If { .. }
         | ResolvedViewKind::For { .. }
         | ResolvedViewKind::Match { .. } => return Ok(None),

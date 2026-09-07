@@ -61,6 +61,13 @@ pub(crate) fn memoize<D: Hash>(
     }
     // Builders may recursively use this cache. No borrow spans application code.
     let (node, routes) = slots::capture(|| build(&dependency));
+    // The first returned frame carries new pictures; retained hits need only hashes.
+    let mut retained = node.clone();
+    retained.for_each_mut(&mut |node| {
+        if let wire::Node::Svg { bytes, .. } = node {
+            *bytes = None;
+        }
+    });
     let (generation, replaced, evicted) = {
         let mut cache = cache.borrow_mut();
         cache.generation = cache
@@ -75,7 +82,7 @@ pub(crate) fn memoize<D: Hash>(
                 dependency: dependency_hash,
                 generation,
                 used,
-                node: node.clone(),
+                node: retained,
                 routes,
             },
         );
@@ -96,10 +103,101 @@ pub(crate) fn memoize<D: Hash>(
     Cached { node, generation }
 }
 
+/// Caches a pure tree view and restores its callable routes on cache hits.
+/// `key` names the stable wire boundary; `site` and `scope` identify the cache
+/// entry independently of its dependency revision.
+pub fn memo_lazy<D: Hash>(
+    dependency: D,
+    build: impl FnOnce(&D) -> wire::Node,
+    site: u64,
+    scope: &str,
+    key: String,
+) -> wire::Node {
+    let cached = memoize(dependency, build, site, scope);
+    wire::Node::Lazy {
+        key,
+        generation: cached.generation,
+        content: Box::new(cached.node),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn nested_lazy_keeps_picture_bytes_only_in_the_first_returned_frame() {
+        let context = slots::Context::default();
+        let _scope = context.enter();
+        let mut first = memo_lazy(
+            0,
+            |_| {
+                memo_lazy(
+                    0,
+                    |_| {
+                        let (hash, bytes) = slots::picture(b"<svg/>");
+                        wire::Node::Svg {
+                            key: "image".into(),
+                            hash,
+                            bytes,
+                            inherit_button_ink: false,
+                            label: None,
+                            color: None,
+                            hover: None,
+                            fit: None,
+                            rotation: None,
+                            opacity: None,
+                            width: None,
+                            height: None,
+                        }
+                    },
+                    2,
+                    "inner",
+                    "inner".into(),
+                )
+            },
+            1,
+            "outer",
+            "outer".into(),
+        );
+        fn payload(node: &wire::Node) -> Option<&[u8]> {
+            if let wire::Node::Svg { bytes, .. } = node {
+                return bytes.as_deref();
+            }
+            node.children().iter().find_map(payload)
+        }
+        assert_eq!(payload(&first), Some(b"<svg/>".as_slice()));
+        slots::reset();
+        let second = memo_lazy(0, |_| panic!("outer cache hit"), 1, "outer", "outer".into());
+        assert_eq!(
+            payload(&second),
+            None,
+            "a cache hit must not replay picture payload bytes"
+        );
+        first.for_each_mut(&mut |node| {
+            if let wire::Node::Svg { bytes, .. } = node {
+                *bytes = None;
+            }
+        });
+        assert_eq!(
+            first, second,
+            "the driver must recognize an unchanged lazy picture tree"
+        );
+        slots::reset();
+        let rebuilt_outer = memo_lazy(
+            1,
+            |_| memo_lazy(0, |_| panic!("inner cache hit"), 2, "inner", "inner".into()),
+            1,
+            "outer",
+            "outer".into(),
+        );
+        assert_eq!(
+            payload(&rebuilt_outer),
+            None,
+            "nested hits also retain only hashes"
+        );
+    }
 
     fn cached_message(value: u32) -> wire::Node {
         wire::Node::Button {

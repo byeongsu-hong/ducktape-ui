@@ -1103,5 +1103,27 @@ occurrences in order. Hosts move widget state with those occurrences on arbitrar
 permutations and discard removed rows. `virtual-row=` on keyed and ordinary
 columns uses native host viewport observation, measured heights and deferred
 offscreen diffing. The guest supplies children and an estimate, never coordinates
-or layout callbacks. Lazy subtree caching and selector-based scroll-to-key
-actions are not enabled by this lowering.
+or layout callbacks. Selector-based scroll-to-key actions remain unsupported.
+
+## Tree lazy subtrees
+
+Tree `lazy` uses the checked native dependency/revision and `by` lowering. The
+guest caches the resulting Node and callable route snapshots per Driver, keyed
+by expression and reconciliation scope. Cache hits restore only the current
+frame's routes; removed routes expire. Cache entries keep the latest dependency
+revision and are bounded to 1024 entries. Retained SVG nodes keep hashes only;
+new payload bytes cross in the first returned frame and are not replayed on hits. An eviction rebuild receives a
+fresh generation even when dependency values match an older entry.
+
+Wire Lazy carries a stable key, generation and copied child. Hosts retain native
+view/layout state in a module-owned parking lot, with weak ownership from parked
+children. Inner unmount/remount can reuse state; replacing or dropping the module
+releases it, including nested native resources. A fresh Inputs value identifies
+a new module generation; render snapshots preserve that identity.
+
+Host memo invalidation includes sanitized child content, prepared canvas admission,
+ancestor container measurements, inherited button ink, admitted images, surface
+providers and live input/editor values. A different layout limit reflows the
+child. Lazy snapshots cannot re-admit assets rejected by shared host budgets.
+Existing lazy purity/type restrictions and Tree widget restrictions still apply.
+Host and guest must be rebuilt together for the Lazy wire variant.

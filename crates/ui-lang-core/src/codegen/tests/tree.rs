@@ -735,11 +735,10 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  keyed item in [1, 2] by=item\n    text item @text-fg\n",
     ),
-    refused(
+    emitted(
         "lazy",
         "",
         "  lazy draft as cached\n    text cached @text-fg\n",
-        "`lazy`",
     ),
     refused(
         "resize handle",
@@ -1368,4 +1367,14 @@ fn keyed_and_virtual_columns_emit_copied_rows_without_native_elements() {
         assert!(!generated.contains("::ui_lang_runtime::virtual_keyed_children("));
         assert!(!generated.contains("::ui_lang_runtime::bounded_fill_element(__child"));
     }
+}
+
+#[test]
+fn tree_lazy_emits_a_guest_cache_with_a_stable_wire_boundary() {
+    let source = format!(
+        "app Demo\n{PALETTE}state\n  draft = \"hello\"\nview\n  lazy draft as cached\n    text cached @text-fg\n"
+    );
+    let generated = compile_for(&source, "lazy.ice", Target::Tree).unwrap();
+    assert!(generated.contains("::ui_lang_guest::memo_lazy("));
+    assert!(!generated.contains("::ui_lang_runtime::memo_lazy("));
 }

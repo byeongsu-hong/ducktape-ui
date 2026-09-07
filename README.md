@@ -537,4 +537,5 @@ refused.
 Tree module views support keyed row identity and `virtual-row=` columns. The
 host preserves row input state and focus across reordering and owns viewport
 mounting; see [the bundled evidence](examples/app-store/README.md#keyed-and-virtual-rows).
-Lazy subtree caching remains a separate prerequisite.
+Tree `lazy` caches guest subtrees and callable routes, while the host memoizes
+native views/layout and owns their unmount lifetime. See [lazy module views](examples/app-store/README.md#lazy-module-views).

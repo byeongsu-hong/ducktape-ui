@@ -1577,3 +1577,7 @@ mod text_tests;
 #[cfg(test)]
 #[path = "keyed_tests.rs"]
 mod keyed_tests;
+
+#[cfg(test)]
+#[path = "lazy_tests.rs"]
+mod lazy_tests;

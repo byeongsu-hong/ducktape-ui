@@ -30,6 +30,7 @@ mod clipboard;
 mod markdown;
 mod memo;
 pub use markdown::Markdown;
+pub use memo::memo_lazy;
 pub mod host;
 pub mod testing;
 pub mod widget;
