@@ -61,6 +61,9 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::Container { content } => container(
             node, identity, *content, document, message, env, scope, slot,
         )?,
+        ResolvedViewKind::Sensor { content } => sensor(
+            node, identity, *content, document, message, env, scope, slot,
+        )?,
         ResolvedViewKind::Text => text(node, identity, document, env, scope)?,
         ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,
@@ -638,6 +641,75 @@ fn layout(
         ResolvedLayoutMode::Hover(_) => Err(refused(program, origin, "hover")),
         ResolvedLayoutMode::Flex(_) => Err(refused(program, origin, "flex")),
     }
+}
+
+/// A sensor's size routes cross as `(f32, f32)` handlers: the host answers
+/// with the child's own laid-out size (see `wire::Event::Size`), never a
+/// window position. `key=` is refused: the wire's node key is the node's
+/// identity, and a second key that resets the sensor when it changes has no
+/// field to cross in.
+#[allow(clippy::too_many_arguments)]
+fn sensor(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    content: ViewId,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+    slot: Option<&SlotContext>,
+) -> Result<String, Error> {
+    let sensor = program.resolved_sensor(id)?;
+    let origin = sensor.origin;
+    refuse_when(program, origin, sensor.key.is_some(), "a sensor key")?;
+    let key = key_code(identity, "sensor", origin, scope, env, program)?;
+    let child_scope = rendered_child_scope(identity, scope)?;
+    let child = render_node(content, program, message, env, &child_scope, slot)?;
+    let mut size_handlers = Vec::new();
+    for route in [&sensor.show, &sensor.resize] {
+        let handler = route
+            .as_ref()
+            .map(|route| {
+                let callback = snapshot_callback(
+                    route,
+                    "__size: (f64, f64)",
+                    &["__size.0", "__size.1"],
+                    env,
+                    program,
+                    message,
+                )?;
+                Ok::<_, Error>(handler_code(
+                    "(f32, f32)",
+                    message,
+                    &callback,
+                    "move |__sent: (f32, f32)| ::std::option::Option::Some(__route((f64::from(__sent.0), f64::from(__sent.1))))",
+                ))
+            })
+            .transpose()?;
+        size_handlers.push(option_code(handler));
+    }
+    let on_hide = sensor
+        .hide
+        .as_ref()
+        .map(|route| resolved_interaction_route_code(route, &[], env, program, message))
+        .transpose()?
+        .map(|activate| format!("{SLOTS}::message({activate})"));
+    let number = |expression: Option<CheckedExprUseId>| {
+        expression
+            .map(|expression| {
+                resolved_expr_use_code(program, expression, env, ValueMode::Owned)
+                    .map(|code| format!("({code}) as f32"))
+            })
+            .transpose()
+    };
+    Ok(format!(
+        "{WIRE}::Node::Sensor {{ key: {key}, on_show: {}, on_resize: {}, on_hide: {}, anticipate: {}, delay: {}, child: ::std::boxed::Box::new({child}) }}",
+        size_handlers[0],
+        size_handlers[1],
+        option_code(on_hide),
+        option_code(number(sensor.anticipate)?),
+        option_code(number(sensor.delay_ms)?),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1283,6 +1355,44 @@ fn rule(
 /// with a finite set of answers precomputes one message per answer the
 /// same way, and only a slider, whose answer is a number, hands the
 /// callback itself over.
+/// A route's callback for a value-carrying handler. It crosses as the
+/// callback itself (see `handler_code`), so it may hold nothing borrowed:
+/// each route argument is evaluated in the view, while the `for` binding
+/// or the state it reads is alive, and the closure owns the values and
+/// clones one out per answer.
+fn snapshot_callback(
+    route: &ResolvedInteractionRoute,
+    pattern: &str,
+    payloads: &[&str],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
+    let arguments =
+        route
+            .args
+            .iter()
+            .filter_map(|arg| match arg {
+                ResolvedInteractionRouteArg::Expression(expression) => Some(
+                    resolved_expr_use_code(program, *expression, env, ValueMode::Owned),
+                ),
+                ResolvedInteractionRouteArg::Payload { .. } => None,
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+    let hoists = arguments
+        .iter()
+        .enumerate()
+        .map(|(index, code)| format!("let __route_arg_{index} = {code};"))
+        .collect::<String>();
+    let snapshots = (0..arguments.len())
+        .map(|index| format!("::std::clone::Clone::clone(&__route_arg_{index})"))
+        .collect::<Vec<_>>();
+    let callback = resolved_interaction_route_callback_with_snapshots(
+        route, pattern, payloads, &snapshots, env, program, message,
+    )?;
+    Ok(format!("{{ {hoists} {callback} }}"))
+}
+
 fn handler_code(argument: &str, message: &str, callback: &str, body: &str) -> String {
     format!(
         "{SLOTS}::handler::<{argument}, {message}>(::std::boxed::Box::new({{ let __route = {callback}; {body} }}))"
@@ -1436,40 +1546,14 @@ fn slider(
         resolved_expr_use_code(program, expression, env, ValueMode::Owned)
             .map(|code| format!("({code}) as f32"))
     };
-    // The change handler crosses as the callback itself (see `handler_code`),
-    // so it may hold nothing borrowed: each route argument is evaluated in
-    // the view, while the `for` binding or the state it reads is alive, and
-    // the closure owns the values and clones one out per answer.
-    let arguments =
-        slider
-            .change
-            .args
-            .iter()
-            .filter_map(|arg| match arg {
-                ResolvedInteractionRouteArg::Expression(expression) => Some(
-                    resolved_expr_use_code(program, *expression, env, ValueMode::Owned),
-                ),
-                ResolvedInteractionRouteArg::Payload { .. } => None,
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-    let hoists = arguments
-        .iter()
-        .enumerate()
-        .map(|(index, code)| format!("let __route_arg_{index} = {code};"))
-        .collect::<String>();
-    let snapshots = (0..arguments.len())
-        .map(|index| format!("::std::clone::Clone::clone(&__route_arg_{index})"))
-        .collect::<Vec<_>>();
-    let callback = resolved_interaction_route_callback_with_snapshots(
+    let callback = snapshot_callback(
         &slider.change,
         "__value",
         &["__value"],
-        &snapshots,
         env,
         program,
         message,
     )?;
-    let callback = format!("{{ {hoists} {callback} }}");
     let on_release = slider
         .release
         .as_ref()

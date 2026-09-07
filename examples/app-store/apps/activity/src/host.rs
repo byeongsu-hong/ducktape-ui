@@ -47,6 +47,15 @@ pub fn count_label(log: &[Entry]) -> String {
     format!("{} events", log.len())
 }
 
+/// A row is its 14 px text line inside 12 px of padding, under an 8 px gap.
+const ROW_HEIGHT: f64 = 17.0 + 24.0 + 8.0;
+
+/// How many of the log's rows the feed's measured `height` shows.
+pub fn visible_label(height: f64, log: &[Entry]) -> String {
+    let fit = (height / ROW_HEIGHT).floor().max(0.0) as usize;
+    format!("{} rows visible", fit.min(log.len()))
+}
+
 /// The host's colour mode: `light` or `dark`, once on subscribing and again
 /// on every change.
 pub fn theme_changes() -> impl Stream<Item = Result<String, BusError>> + Send + 'static {

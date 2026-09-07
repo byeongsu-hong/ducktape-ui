@@ -15,9 +15,9 @@ pub fn texts(frame: &Frame) -> Vec<String> {
 
 fn collect_texts(node: &Node, out: &mut Vec<String>) {
     match node {
-        Node::Container { content, .. } | Node::Scroll { content, .. } => {
-            collect_texts(content, out)
-        }
+        Node::Container { content, .. }
+        | Node::Sensor { child: content, .. }
+        | Node::Scroll { content, .. } => collect_texts(content, out),
         Node::Linear { children, .. } | Node::Grid { children, .. } => {
             children.iter().for_each(|child| collect_texts(child, out))
         }
@@ -68,7 +68,9 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         return Some(node);
     }
     match node {
-        Node::Container { content, .. } | Node::Scroll { content, .. } => find_by(content, matches),
+        Node::Container { content, .. }
+        | Node::Sensor { child: content, .. }
+        | Node::Scroll { content, .. } => find_by(content, matches),
         Node::Linear { children, .. } | Node::Grid { children, .. } => {
             children.iter().find_map(|child| find_by(child, matches))
         }
@@ -222,6 +224,38 @@ pub fn pick(frame: &Frame, name: &str, option: &str) -> Vec<Event> {
     }]
 }
 
+/// The events the host sends when the sensor with key `name` measures its
+/// child at `width` by `height`: a first measurement is a show, so the
+/// show route hears it, and a sensor with only a resize route hears it
+/// there.
+pub fn measure(frame: &Frame, name: &str, width: f32, height: f32) -> Vec<Event> {
+    let Some(Node::Sensor {
+        on_show, on_resize, ..
+    }) = find(frame, name)
+    else {
+        panic!("no sensor {name:?} in {:?}", keys(frame));
+    };
+    let Some(handler) = on_show.or(*on_resize) else {
+        panic!("sensor {name:?} has no size route");
+    };
+    vec![Event::Size {
+        handler,
+        width,
+        height,
+    }]
+}
+
+/// The events the host sends when the sensor with key `name` leaves view.
+pub fn hide(frame: &Frame, name: &str) -> Vec<Event> {
+    let Some(Node::Sensor { on_hide, .. }) = find(frame, name) else {
+        panic!("no sensor {name:?} in {:?}", keys(frame));
+    };
+    let Some(message) = on_hide else {
+        panic!("sensor {name:?} has no hide route");
+    };
+    vec![Event::Message(*message)]
+}
+
 /// Every node key in the tree, depth first.
 pub fn keys(frame: &Frame) -> Vec<String> {
     let mut out = Vec::new();
@@ -236,9 +270,9 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         out.push(key.to_string());
     }
     match node {
-        Node::Container { content, .. } | Node::Scroll { content, .. } => {
-            collect_keys(content, out)
-        }
+        Node::Container { content, .. }
+        | Node::Sensor { child: content, .. }
+        | Node::Scroll { content, .. } => collect_keys(content, out),
         Node::Linear { children, .. } | Node::Grid { children, .. } => {
             children.iter().for_each(|child| collect_keys(child, out))
         }

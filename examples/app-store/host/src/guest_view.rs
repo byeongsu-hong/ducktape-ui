@@ -159,6 +159,9 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
             shell.input_method_mut().merge(local.input_method());
         }
         let mut guest = self.guest.lock().expect("guest lock");
+        if let Event::Window(window::Event::Resized(_)) = event {
+            guest.window_resized();
+        }
         if !outputs.is_empty() {
             for output in outputs {
                 guest.deliver(output);

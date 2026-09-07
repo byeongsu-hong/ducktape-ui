@@ -222,6 +222,32 @@ fn a_slider_route_argument_from_a_for_binding_is_owned_by_the_handler() {
 }
 
 #[test]
+fn a_sensor_compiles_to_a_sensor_node_with_size_handlers() {
+    let generated = tree_with(
+        "on measured(width, height)\n  amount = width * height\non hidden\n  busy = true\n",
+        "  col\n    button \"×\" -> remove 0\n    for item in items\n      sensor show=measured resize=measured hide=hidden anticipate=48.0 delay=16\n        text item @text-fg\n",
+    );
+    let sensor = generated
+        .find("::ui_lang_guest::wire::Node::Sensor {")
+        .map(|at| &generated[at..])
+        .expect("the sensor is emitted");
+    for expected in [
+        "on_show: ::std::option::Option::Some(::ui_lang_guest::slots::handler::<(f32, f32), __DemoMessage>(",
+        "on_resize: ::std::option::Option::Some(::ui_lang_guest::slots::handler::<(f32, f32), __DemoMessage>(",
+        "on_hide: ::std::option::Option::Some(::ui_lang_guest::slots::message(",
+        "anticipate: ::std::option::Option::Some((48.0) as f32)",
+        "delay: ::std::option::Option::Some((16) as f32)",
+        "move |__size: (f64, f64)| __DemoMessage::Measured(__size.0, __size.1)",
+        "move |__sent: (f32, f32)| ::std::option::Option::Some(__route((f64::from(__sent.0), f64::from(__sent.1))))",
+    ] {
+        assert!(
+            sensor.contains(expected),
+            "missing {expected:?} in:\n{sensor}"
+        );
+    }
+}
+
+#[test]
 fn a_construct_the_wire_does_not_carry_fails_at_its_line() {
     let source = format!(
         "app Demo\n{PALETTE}state\n  draft = \"\"\nview\n  col\n    text \"before\" @text-fg\n    qr draft\n"
@@ -363,6 +389,7 @@ const HEAD: &str = concat!(
 const FLIP: &str = "on flip(value)\n  busy = value\n";
 const CHOOSE: &str = "on choose(value)\n  draft = value\n";
 const SLIDE: &str = "on slide(value)\n  amount = value\n";
+const MEASURE: &str = "on measured(_width, _height)\n  busy = true\non hidden\n  busy = false\n";
 
 /// The tree target's coverage contract.
 ///
@@ -404,6 +431,11 @@ const COVERAGE: &[Coverage] = &[
         "  grid max-cell=120.0 h=aspect(4.0, 3.0)\n    text \"a\" @text-fg\n",
     ),
     emitted("layout: scroll", "", "  scroll\n    text \"a\" @text-fg\n"),
+    emitted(
+        "sensor",
+        MEASURE,
+        "  sensor show=measured resize=measured hide=hidden anticipate=48.0 delay=16\n    text \"a\" @text-fg\n",
+    ),
     emitted("box", "", "  box\n    text \"a\" @text-fg\n"),
     emitted("text", "", "  text \"a\" @text-fg\n"),
     emitted(
@@ -545,12 +577,6 @@ const COVERAGE: &[Coverage] = &[
         "`pin`",
     ),
     refused(
-        "sensor",
-        "on measured(_width, _height)\non hidden\n",
-        "  sensor show=measured resize=measured hide=hidden\n    text \"a\" @text-fg\n",
-        "`sensor`",
-    ),
-    refused(
         "tooltip",
         "",
         "  tooltip delay=0\n    text \"a\" @text-fg\n    text \"tip\" @text-fg\n",
@@ -634,6 +660,12 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  scroll auto=busy\n    text \"a\" @text-fg\n",
         "a scroll route",
+    ),
+    refused(
+        "sensor: key",
+        MEASURE,
+        "  sensor show=measured key=draft\n    text \"a\" @text-fg\n",
+        "a sensor key",
     ),
     refused(
         "rule: style preset",

@@ -429,7 +429,16 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
             node = gen_list(rng, children);
             continue;
         }
-        node = match rng.next_range(4) {
+        node = match rng.next_range(5) {
+            4 => Node::Sensor {
+                key: gen_key(rng),
+                on_show: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_resize: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_hide: rng.next_bool().then(|| rng.next_u64() as u32),
+                anticipate: gen_opt_f32(rng),
+                delay: gen_opt_f32(rng),
+                child: Box::new(node),
+            },
             0 => Node::Container {
                 key: gen_key(rng),
                 width: gen_opt_length(rng),
@@ -701,7 +710,9 @@ fn build_and_encode_bounded(seed: u64) -> (Frame, Vec<u8>) {
 /// really over the door" evidence when `decode` refuses one.
 fn tree_depth(node: &Node) -> usize {
     match node {
-        Node::Container { content, .. } | Node::Scroll { content, .. } => 1 + tree_depth(content),
+        Node::Container { content, .. }
+        | Node::Sensor { child: content, .. }
+        | Node::Scroll { content, .. } => 1 + tree_depth(content),
         Node::Linear { children, .. } | Node::Grid { children, .. } => {
             1 + children.iter().map(tree_depth).max().unwrap_or(0)
         }
@@ -860,6 +871,26 @@ fn check_bounds(
             for child in children {
                 check_bounds(child, depth + 1, keys, svg_bytes, ctx);
             }
+        }
+        Node::Sensor {
+            anticipate,
+            delay,
+            child,
+            ..
+        } => {
+            if let Some(anticipate) = anticipate {
+                assert!(
+                    anticipate.is_finite() && (0.0..=PIXEL_BOUND).contains(anticipate),
+                    "{ctx}: sensor anticipate {anticipate} outside 0..={PIXEL_BOUND}"
+                );
+            }
+            if let Some(delay) = delay {
+                assert!(
+                    delay.is_finite() && *delay >= 0.0,
+                    "{ctx}: sensor delay {delay} is not a finite non-negative number"
+                );
+            }
+            check_bounds(child, depth + 1, keys, svg_bytes, ctx);
         }
         Node::Scroll {
             width,

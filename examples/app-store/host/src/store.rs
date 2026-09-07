@@ -244,6 +244,56 @@ pub struct Guest {
     /// When the recent ticks ran and what each burned, for the ticks-per-
     /// second figure and the sustained fuel the throttle watches.
     recent: VecDeque<(Instant, u64)>,
+    sensors: SensorLoop,
+}
+
+/// How many ticks in a row a guest's own sensors may drive before their
+/// size events stop being delivered: the DOM's `ResizeObserver` rule. A
+/// size event is delivered after layout; a guest whose answer changes the
+/// tree so the child measures differently is measured again on the next
+/// redraw, and one that always answers with a different size would tick
+/// every frame forever. Past the limit the host drops the size events and
+/// logs it, until something else — a user's event, a timer, a window
+/// resize — drives a tick.
+const SENSOR_LOOP_LIMIT: u32 = 4;
+
+/// Consecutive ticks driven by [`wire::Event::Size`] events alone.
+#[derive(Debug, Default)]
+struct SensorLoop {
+    runs: u32,
+    logged: bool,
+}
+
+impl SensorLoop {
+    /// Whether a size event may be queued for the guest's next tick.
+    fn admits(&mut self, app: &str) -> bool {
+        if self.runs < SENSOR_LOOP_LIMIT {
+            return true;
+        }
+        if !self.logged {
+            eprintln!("[{app}] sensor loop limit exceeded");
+            self.logged = true;
+        }
+        false
+    }
+
+    /// A tick ran on `events`.
+    fn ticked(&mut self, events: &[wire::Event]) {
+        let sensors_only = !events.is_empty()
+            && events
+                .iter()
+                .all(|event| matches!(event, wire::Event::Size { .. }));
+        match sensors_only {
+            true => self.runs += 1,
+            false => self.reset(),
+        }
+    }
+
+    /// Something other than the guest's own answer changed what the
+    /// sensors measure.
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
 }
 
 impl std::fmt::Debug for Guest {
@@ -437,6 +487,7 @@ impl Guest {
             frame_bytes: 0,
             patch_bytes: 0,
             recent: VecDeque::new(),
+            sensors: SensorLoop::default(),
         })
     }
 
@@ -455,8 +506,17 @@ impl Guest {
     /// What the user did to the tree, as the widgets report it: recorded
     /// host-side (an input's text) and queued for the guest's next tick.
     pub(crate) fn deliver(&mut self, output: Output) {
+        if matches!(output, Output::Size { .. }) && !self.sensors.admits(&self.entry.id) {
+            return;
+        }
         let event = self.inputs.apply(output);
         self.pending.push(event);
+    }
+
+    /// The window changed size: what the sensors measure next is the
+    /// window's doing, not a loop of the guest's.
+    pub(crate) fn window_resized(&mut self) {
+        self.sensors.reset();
     }
 
     /// One redraw: deliver what is due, tick, answer the new requests, and
@@ -808,6 +868,7 @@ impl Guest {
     /// budget. A trap ends the app; the store keeps the message and moves on.
     fn tick(&mut self) {
         let events = std::mem::take(&mut self.pending);
+        self.sensors.ticked(&events);
         let bytes = wire::encode(&events);
         let started = Instant::now();
         arm(&mut self.store);
@@ -1009,6 +1070,40 @@ mod tests {
             kind: "x".repeat(bytes),
             payload: Vec::new(),
         }
+    }
+
+    fn size(width: f32) -> wire::Event {
+        wire::Event::Size {
+            handler: 0,
+            width,
+            height: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_sensor_loop_is_cut_after_the_limit_and_freed_by_anything_else() {
+        let mut sensors = SensorLoop::default();
+        for run in 0..SENSOR_LOOP_LIMIT {
+            assert!(sensors.admits("app"), "run {run} is within the limit");
+            sensors.ticked(&[size(run as f32)]);
+        }
+        assert!(!sensors.admits("app"), "the tick past the limit is refused");
+        assert!(!sensors.admits("app"), "and stays refused");
+        // A tick the user drove frees it, even one that also carries a size.
+        sensors.ticked(&[size(9.0), wire::Event::Message(1)]);
+        assert!(sensors.admits("app"));
+        for run in 0..SENSOR_LOOP_LIMIT {
+            sensors.ticked(&[size(run as f32)]);
+        }
+        assert!(!sensors.admits("app"));
+        // So does a window resize, and a tick on nothing (a timer).
+        sensors.reset();
+        assert!(sensors.admits("app"));
+        for run in 0..SENSOR_LOOP_LIMIT {
+            sensors.ticked(&[size(run as f32)]);
+        }
+        sensors.ticked(&[]);
+        assert!(sensors.admits("app"));
     }
 
     #[test]

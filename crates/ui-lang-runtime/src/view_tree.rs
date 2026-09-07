@@ -45,6 +45,12 @@ pub enum Output {
     Slide { handler: u32, value: f32 },
     /// A pick list chose its option at `index`.
     Select { handler: u32, index: u32 },
+    /// A sensor's child was shown at or resized to `width` by `height`.
+    Size {
+        handler: u32,
+        width: f32,
+        height: f32,
+    },
 }
 
 #[derive(Debug)]
@@ -136,6 +142,15 @@ impl Inputs {
             Output::Toggle { handler, on } => wire::Event::Toggle { handler, on },
             Output::Slide { handler, value } => wire::Event::Slide { handler, value },
             Output::Select { handler, index } => wire::Event::Select { handler, index },
+            Output::Size {
+                handler,
+                width,
+                height,
+            } => wire::Event::Size {
+                handler,
+                width,
+                height,
+            },
         }
     }
 }
@@ -145,7 +160,9 @@ fn collect_inputs(node: &wire::Node, into: &mut HashMap<String, String>) {
         wire::Node::Input { key, value, .. } => {
             into.insert(key.clone(), value.clone());
         }
-        wire::Node::Container { content, .. } | wire::Node::Scroll { content, .. } => {
+        wire::Node::Container { content, .. }
+        | wire::Node::Sensor { child: content, .. }
+        | wire::Node::Scroll { content, .. } => {
             collect_inputs(content, into);
         }
         wire::Node::Linear { children, .. } | wire::Node::Grid { children, .. } => {
@@ -211,7 +228,9 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
             bytes: Some(bytes),
             ..
         } => into.keep(*hash, bytes),
-        wire::Node::Container { content, .. } | wire::Node::Scroll { content, .. } => {
+        wire::Node::Container { content, .. }
+        | wire::Node::Sensor { child: content, .. }
+        | wire::Node::Scroll { content, .. } => {
             collect_pictures(content, into);
         }
         wire::Node::Linear { children, .. } | wire::Node::Grid { children, .. } => {
@@ -573,6 +592,40 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             accessible(layout, StableId::new(key), Role::GenericContainer)
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
+        }
+        wire::Node::Sensor {
+            key: _,
+            on_show,
+            on_resize,
+            on_hide,
+            anticipate,
+            delay,
+            child,
+        } => {
+            let size = |handler: u32| {
+                move |size: iced::Size| Output::Size {
+                    handler,
+                    width: size.width,
+                    height: size.height,
+                }
+            };
+            let mut sensor = widget::sensor(render_node(child, kept));
+            if let Some(handler) = on_show {
+                sensor = sensor.on_show(size(*handler));
+            }
+            if let Some(handler) = on_resize {
+                sensor = sensor.on_resize(size(*handler));
+            }
+            if let Some(message) = on_hide {
+                sensor = sensor.on_hide(Output::Activate(*message));
+            }
+            if let Some(anticipate) = anticipate {
+                sensor = sensor.anticipate(*anticipate);
+            }
+            if let Some(delay) = delay {
+                sensor = sensor.delay(std::time::Duration::from_secs_f32(*delay / 1000.0));
+            }
+            sensor.into()
         }
         wire::Node::Scroll {
             key,
@@ -1163,14 +1216,22 @@ mod tests {
                         thickness: 1.0,
                         color: None,
                     },
-                    wire::Node::Scroll {
-                        key: "App/content/list".into(),
-                        direction: wire::ScrollDirection::Vertical,
-                        width: None,
-                        height: None,
-                        content: Box::new(wire::Node::Space {
+                    wire::Node::Sensor {
+                        key: "App/content/watch".into(),
+                        on_show: Some(0),
+                        on_resize: Some(1),
+                        on_hide: Some(2),
+                        anticipate: Some(48.0),
+                        delay: Some(16.0),
+                        child: Box::new(wire::Node::Scroll {
+                            key: "App/content/list".into(),
+                            direction: wire::ScrollDirection::Vertical,
                             width: None,
-                            height: Some(wire::Length::Fixed(10.0)),
+                            height: None,
+                            content: Box::new(wire::Node::Space {
+                                width: None,
+                                height: Some(wire::Length::Fixed(10.0)),
+                            }),
                         }),
                     },
                     wire::Node::Grid {
