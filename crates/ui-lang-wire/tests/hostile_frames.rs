@@ -611,6 +611,10 @@ fn gen_list(rng: &mut Rng, children: Vec<Node>) -> Node {
     }
     if rng.next_bool() {
         return Node::Linear {
+            wrap: rng.next_bool().then(|| Wrap {
+                spacing: gen_opt_f32(rng),
+                align: gen_opt_align_x(rng),
+            }),
             key: gen_key(rng),
             axis: gen_axis(rng),
             spacing: gen_opt_f32(rng),
@@ -1153,6 +1157,7 @@ fn check_bounds(
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
         Node::Linear {
+            wrap,
             spacing,
             padding,
             width,
@@ -1162,6 +1167,12 @@ fn check_bounds(
             children,
             ..
         } => {
+            if let Some(Wrap {
+                spacing: Some(gap), ..
+            }) = wrap
+            {
+                assert!(gap.is_finite() && (0.0..=PIXEL_BOUND).contains(gap));
+            }
             if let Some(spacing) = spacing {
                 assert!(
                     spacing.is_finite() && (0.0..=PIXEL_BOUND).contains(spacing),
@@ -1969,6 +1980,7 @@ fn a_length_prefix_bomb_is_refused_without_the_allocation() {
     fn linear(children: Vec<Node>) -> Frame {
         Frame {
             root: Some(Node::Linear {
+                wrap: None,
                 key: "k".into(),
                 axis: Axis::Column,
                 spacing: None,

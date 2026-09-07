@@ -668,6 +668,7 @@ mod tests {
 
         fn view(&self) -> wire::Node {
             wire::Node::Linear {
+                wrap: None,
                 key: "App/list".into(),
                 axis: wire::Axis::Column,
                 spacing: None,

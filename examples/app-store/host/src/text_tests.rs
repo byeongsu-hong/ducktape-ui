@@ -235,3 +235,39 @@ fn container_bounds(ui: &mut Ui, renderer: &iced::Renderer, key: &str) -> Rectan
     ui.operate(renderer, &mut find);
     find.1.expect("named container bounds")
 }
+
+#[test]
+#[ignore = "requires bundled text-fixture wasm"]
+fn text_wasm_wrapping_reflows_and_routes_after_resize() {
+    let guest = guest();
+    let mut renderer = renderer();
+    let mut ui = build(
+        &guest,
+        user_interface::Cache::default(),
+        &mut renderer,
+        900.0,
+    );
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now, 900.0);
+    }
+    let first = bounds(&mut ui, &mut renderer, "First").unwrap();
+    let second = bounds(&mut ui, &mut renderer, "Second").unwrap();
+    assert_eq!(first.y, second.y, "wide host keeps actions on one row");
+    ui = build(&guest, ui.into_cache(), &mut renderer, 180.0);
+    let first = bounds(&mut ui, &mut renderer, "First").unwrap();
+    let second = bounds(&mut ui, &mut renderer, "Second").unwrap();
+    let third = bounds(&mut ui, &mut renderer, "Third").unwrap();
+    assert_eq!(
+        second.y - first.y,
+        36.0,
+        "narrow host wraps with 6px inter-line gap"
+    );
+    assert_eq!(third.y - second.y, 36.0);
+    click(&mut ui, &mut renderer, "Third");
+    ui = redraw(ui, &guest, &mut renderer, &mut now, 180.0);
+    assert!(
+        bounds(&mut ui, &mut renderer, "Applied").is_some(),
+        "wrapped button routes through wasm"
+    );
+}

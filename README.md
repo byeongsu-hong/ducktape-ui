@@ -486,3 +486,13 @@ Tree buttons also copy resolved recipes and all eight native presets, including
 label typography, disabled colors/opacity, padding and keyboard focus rings.
 Named label fonts use the same trusted host registry as plain text. Rebuild
 hosts and guests together for the ButtonStyle wire change.
+
+### Tree wrapping rows and columns
+
+Tree `row wrap` and `col wrap` use the native host wrapping widgets. They carry
+`wrap-gap=` and `wrap-align=` alongside ordinary spacing, dimensions, padding
+and child alignment. The host reflows when its available size changes; guests
+provide children and copied values without measuring pixels. Optional wrapping
+settings distinguish an ordinary layout from a wrapping layout with defaults.
+Inter-line spacing uses the existing wire and child-count spacing limits.
+Rebuild hosts and guests together for the Linear wire field.

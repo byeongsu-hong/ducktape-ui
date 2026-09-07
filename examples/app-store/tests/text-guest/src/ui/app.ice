@@ -51,5 +51,26 @@ view
           bg=primary
         text "Clipped content extending past its parent" wrap=none size=28.0
       button "Apply" #apply @px-4 py-2 -> apply
+      row #actions wrap
+        with
+          w=fill
+          gap=8.0
+          wrap-gap=6.0
+          wrap-align=end
+        button "First" -> apply
+          with
+            w=100.0
+            h=30.0
+            p=0.0
+        button "Second" -> apply
+          with
+            w=100.0
+            h=30.0
+            p=0.0
+        button "Third" -> apply
+          with
+            w=100.0
+            h=30.0
+            p=0.0
       if clicked
         text "Applied" #status

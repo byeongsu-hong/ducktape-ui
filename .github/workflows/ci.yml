@@ -625,7 +625,7 @@ jobs:
             --out examples/app-store/target/text-fixture
       - name: Check wasm text layout and button routes
         working-directory: examples/app-store
-        run: cargo test --locked -p app-store-host text_wasm_preserves_layout_and_padding_routes -- --ignored
+        run: cargo test --locked -p app-store-host text_wasm_ -- --ignored
 
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store

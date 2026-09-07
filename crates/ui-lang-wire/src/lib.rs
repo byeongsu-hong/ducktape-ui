@@ -251,6 +251,13 @@ pub enum Axis {
     Row,
 }
 
+/// Optional native row/column wrapping configuration.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Wrap {
+    pub spacing: Option<f32>,
+    pub align: Option<AlignX>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ScrollDirection {
     Vertical,
@@ -498,6 +505,7 @@ pub enum Node {
     },
     Linear {
         key: String,
+        wrap: Option<Wrap>,
         axis: Axis,
         spacing: Option<f32>,
         padding: Option<Edges>,
@@ -1396,6 +1404,7 @@ fn sanitize_node(
         }
         Node::Linear {
             key,
+            wrap,
             spacing,
             padding,
             background,
@@ -1404,6 +1413,9 @@ fn sanitize_node(
         } => {
             claim(key, taken);
             bound_optional(spacing);
+            if let Some(wrap) = wrap {
+                bound_optional(&mut wrap.spacing);
+            }
             bound_edges(padding);
             bound_color(background);
             bound_border(border);
@@ -2073,6 +2085,7 @@ mod tests {
 
     fn column(children: Vec<Node>) -> Node {
         Node::Linear {
+            wrap: None,
             key: "App/col".into(),
             axis: Axis::Column,
             spacing: Some(8.0),
