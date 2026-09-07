@@ -130,3 +130,14 @@ fixtures, docs, CI and coverage; workspace --tests check passed before rebase
 integrations and wire/hostile checks pass; runtime library 337 tests pass. Rebuilt
 wasm and all three actual keyed host tests pass. Root and full app-store Clippy
 pass. Final integration review found no actionable findings. Lazy remains next.
+
+PR #967 CI caught two performance contracts. The 4,000-column lowering test
+now counts the runtime keyed helper (same count and two-second limit; local
+359.6 ms). The allocation contract exposed per-key queue allocations: 64,768
+allocations / 33,361,664 bytes across 32 warmed reorder pairs. Reconciliation
+now reuses flat occurrence queues and tree/measurement buffers; the strengthened
+contract asserts zero allocations and bytes. Its intended assertion fails before
+the fix and passes after restoration. Native virtual state tests 14/14 and actual
+wasm keyed host tests 3/3 pass. Independent allocation-fix review found no issues.
+Evidence: .keyed-reorder-allocation-{red,green}.log,
+.keyed-reorder-state-green.log, .keyed-reorder-host-green.log.

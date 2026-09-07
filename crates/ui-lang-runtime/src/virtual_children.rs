@@ -99,7 +99,6 @@ use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
 use rustc_hash::FxHashMap;
-use std::collections::VecDeque;
 
 /// Extra rows kept live on each side of the viewport so a scroll of a row or
 /// two reveals something already measured.
@@ -233,6 +232,10 @@ struct State {
     /// `measured` and `live.focused` across to whatever index a row moved to.
     /// Empty for an unkeyed column.
     keys: Vec<u64>,
+    // Reused flat occurrence queues: no allocation per row or settled reorder.
+    reorder_rows: Vec<Option<(Tree, Option<f32>, bool)>>,
+    reorder_next: Vec<Option<usize>>,
+    reorder_heads: FxHashMap<u64, usize>,
     /// The visible region the last pass worked against.
     viewport: Rectangle,
     /// What layout actually measured, so draw and events agree with it.
@@ -695,36 +698,46 @@ where
             state, children, ..
         } = tree;
         let state = state.downcast_mut::<State>();
-        let previous = std::mem::take(&mut state.keys);
-
-        // Move each key occurrence's widget tree, measured height and focus
-        // together. Positional diffing cannot reconcile an arbitrary rotation.
+        // Move each key occurrence's tree, measurement and focus together.
+        // Flat linked queues retain FIFO duplicate semantics without one heap
+        // allocation for every distinct key. Scratch capacity survives frames.
         let focused = state.live.focused.take();
-        let mut previous_rows: FxHashMap<u64, VecDeque<(Tree, Option<f32>, bool)>> =
-            FxHashMap::default();
-        for (index, (key, child)) in previous
-            .into_iter()
-            .zip(std::mem::take(children))
-            .enumerate()
-        {
-            previous_rows.entry(key).or_default().push_back((
-                child,
-                state.measured.get(index).copied().flatten(),
-                focused == Some(index),
-            ));
+        state.reorder_rows.clear();
+        state
+            .reorder_rows
+            .extend(children.drain(..).enumerate().map(|(index, child)| {
+                Some((
+                    child,
+                    state.measured.get(index).copied().flatten(),
+                    focused == Some(index),
+                ))
+            }));
+        state.reorder_heads.clear();
+        state.reorder_next.resize(state.keys.len(), None);
+        for (index, key) in state.keys.iter().copied().enumerate().rev() {
+            state.reorder_next[index] = state.reorder_heads.insert(key, index);
         }
         state.measured.clear();
         for (index, (key, child)) in self.keys.iter().zip(&self.children).enumerate() {
-            let (child_tree, height, was_focused) = previous_rows
-                .get_mut(key)
-                .and_then(VecDeque::pop_front)
-                .unwrap_or_else(|| (Tree::new(child.as_widget()), None, false));
+            let previous = state.reorder_heads.get_mut(key).and_then(|head| {
+                let old = *head;
+                if old == usize::MAX {
+                    return None;
+                }
+                *head = state.reorder_next[old].unwrap_or(usize::MAX);
+                state.reorder_rows.get_mut(old).and_then(Option::take)
+            });
+            let (child_tree, height, was_focused) =
+                previous.unwrap_or_else(|| (Tree::new(child.as_widget()), None, false));
             children.push(child_tree);
             state.measured.push(height);
             if was_focused {
                 state.live.focused = Some(index);
             }
         }
+        // Removed rows are dropped now; retain only empty scratch capacity.
+        state.reorder_rows.clear();
+        state.reorder_heads.clear();
         // Offscreen children remain deferred until mounting. The focused row
         // is already remapped, so it receives the same live diff as visible rows.
         state.stale.clear();
