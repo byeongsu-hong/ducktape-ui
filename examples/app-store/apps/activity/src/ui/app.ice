@@ -79,7 +79,14 @@ view
         text visible_label(feed_height, log) #visible size=12.0 @text-muted
       text status #status size=12.0 @text-muted
       sensor #watch show=feed_measured resize=feed_measured
-        scroll #feed w=fill h=fill
+        // Rows land on top: `keep` holds the row the reader is on still.
+        scroll #feed
+          with
+            w=fill
+            h=fill
+            anchor-y=keep
+            bar-w=6.0
+            scroller-w=4.0
           col w=fill gap=8.0
             for entry in log
               box

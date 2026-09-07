@@ -657,6 +657,8 @@ mod tests {
                 width: None,
                 height: None,
                 align: None,
+                background: None,
+                border: None,
                 children: (0..40)
                     .map(|row| wire::Node::Button {
                         key: format!("App/list/{row}"),

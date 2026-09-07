@@ -127,12 +127,17 @@ view
                     gap=12.0
                     align=center
                   checkbox item.text checked=item.done w=fill -> toggle item.id
+                    active checked bg=primary icon=primary_fg text=fg border=primary border-w=1.0 r=4.0
+                    active unchecked bg=surface text=fg border=border border-w=1.0 r=4.0
+                    hovered unchecked bg=raised border=primary border-w=1.0 r=4.0
                   slider priority_of(item) -> prioritise item.id _
                     with
                       min=0.0
                       max=3.0
                       step=1.0
                       w=96.0
+                    active rail-start=primary rail-end=border rail-w=4.0 handle-color=primary
+                    hovered rail-start=primary rail-end=border rail-w=4.0 handle-color=primary handle-border=fg handle-border-w=1.0
                   button "×" -> remove item.id
                     active bg=raised text=danger r=8.0
                     hovered bg=border text=danger r=8.0
@@ -141,6 +146,9 @@ view
           min=0.0
           max=1.0
           girth=4.0
+          bg=raised
+          bar=primary
+          r=2.0
       row
         with
           w=fill
@@ -148,4 +156,6 @@ view
           align=center
         text remaining(items) #remaining size=14.0 @text-muted
         toggler "Hide done" #hide checked=hide_done -> hide _
+          active checked bg=primary fg=primary_fg
+          active unchecked bg=raised fg=muted
         text status #status size=12.0 @text-muted

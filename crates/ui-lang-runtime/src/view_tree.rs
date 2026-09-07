@@ -457,6 +457,270 @@ fn input_style(
     resolved
 }
 
+/// A control face over the host's theme: the box or track, the mark, the
+/// label and the border, each only where the face names one.
+fn apply_control_face(
+    face: wire::ControlFace,
+    background: &mut Background,
+    mark: &mut Color,
+    text: &mut Option<Color>,
+    edge: Option<&mut iced::Border>,
+) {
+    if let Some(fill) = face.background {
+        *background = Background::Color(color(fill));
+    }
+    if let Some(fill) = face.mark {
+        *mark = color(fill);
+    }
+    if let Some(fill) = face.text {
+        *text = Some(color(fill));
+    }
+    if let (Some(edge), Some(border)) = (edge, face.border) {
+        *edge = self::border(border);
+    }
+}
+
+/// The faces a two-valued control paints for `status`: the active face of
+/// its value, then the state's own face over it, as natively.
+fn control_faces(
+    style: wire::ToggleStyle,
+    hovered: bool,
+    disabled: bool,
+    on: bool,
+) -> impl Iterator<Item = wire::ControlFace> {
+    let active = if on {
+        style.active_on
+    } else {
+        style.active_off
+    };
+    let state = match (hovered, disabled, on) {
+        (_, true, true) => style.disabled_on,
+        (_, true, false) => style.disabled_off,
+        (true, false, true) => style.hovered_on,
+        (true, false, false) => style.hovered_off,
+        (false, false, _) => None,
+    };
+    active.into_iter().chain(state)
+}
+
+fn checkbox_style(
+    style: wire::ToggleStyle,
+    theme: &iced::Theme,
+    status: widget::checkbox::Status,
+) -> widget::checkbox::Style {
+    let preset = match style.tone {
+        Some(wire::Tone::Secondary) => widget::checkbox::secondary,
+        Some(wire::Tone::Success) => widget::checkbox::success,
+        Some(wire::Tone::Danger) => widget::checkbox::danger,
+        None | Some(wire::Tone::Primary | wire::Tone::Warning) => widget::checkbox::primary,
+    };
+    let mut resolved = preset(theme, status);
+    let (hovered, disabled, on) = match status {
+        widget::checkbox::Status::Active { is_checked } => (false, false, is_checked),
+        widget::checkbox::Status::Hovered { is_checked } => (true, false, is_checked),
+        widget::checkbox::Status::Disabled { is_checked } => (false, true, is_checked),
+    };
+    for face in control_faces(style, hovered, disabled, on) {
+        apply_control_face(
+            face,
+            &mut resolved.background,
+            &mut resolved.icon_color,
+            &mut resolved.text_color,
+            Some(&mut resolved.border),
+        );
+    }
+    resolved
+}
+
+fn toggler_style(
+    style: wire::ToggleStyle,
+    theme: &iced::Theme,
+    status: widget::toggler::Status,
+) -> widget::toggler::Style {
+    let mut resolved = widget::toggler::default(theme, status);
+    let (hovered, disabled, on) = match status {
+        widget::toggler::Status::Active { is_toggled } => (false, false, is_toggled),
+        widget::toggler::Status::Hovered { is_toggled } => (true, false, is_toggled),
+        widget::toggler::Status::Disabled { is_toggled } => (false, true, is_toggled),
+    };
+    for face in control_faces(style, hovered, disabled, on) {
+        if let Some(fill) = face.background {
+            resolved.background = Background::Color(color(fill));
+        }
+        if let Some(fill) = face.mark {
+            resolved.foreground = Background::Color(color(fill));
+        }
+        if let Some(fill) = face.text {
+            resolved.text_color = Some(color(fill));
+        }
+        if let Some(border) = face.border {
+            let border = self::border(border);
+            resolved.background_border_color = border.color;
+            resolved.background_border_width = border.width;
+            resolved.border_radius = Some(border.radius);
+        }
+    }
+    resolved
+}
+
+fn radio_style(
+    style: wire::RadioStyle,
+    theme: &iced::Theme,
+    status: widget::radio::Status,
+) -> widget::radio::Style {
+    let mut resolved = widget::radio::default(theme, status);
+    let (hovered, on) = match status {
+        widget::radio::Status::Active { is_selected } => (false, is_selected),
+        widget::radio::Status::Hovered { is_selected } => (true, is_selected),
+    };
+    let faces = control_faces(
+        wire::ToggleStyle {
+            tone: None,
+            active_on: style.active_on,
+            active_off: style.active_off,
+            hovered_on: style.hovered_on,
+            hovered_off: style.hovered_off,
+            disabled_on: None,
+            disabled_off: None,
+        },
+        hovered,
+        false,
+        on,
+    );
+    for face in faces {
+        apply_control_face(
+            face,
+            &mut resolved.background,
+            &mut resolved.dot_color,
+            &mut resolved.text_color,
+            None,
+        );
+        if let Some(border) = face.border {
+            resolved.border_color = color(border.color);
+            resolved.border_width = border.width.max(0.0);
+        }
+    }
+    resolved
+}
+
+fn apply_slider_face(face: wire::SliderFace, style: &mut widget::slider::Style) {
+    if let Some(fill) = face.rail_start {
+        style.rail.backgrounds.0 = Background::Color(color(fill));
+    }
+    if let Some(fill) = face.rail_end {
+        style.rail.backgrounds.1 = Background::Color(color(fill));
+    }
+    if let Some(width) = face.rail_width {
+        style.rail.width = width.max(0.0);
+    }
+    if let Some(border) = face.rail_border {
+        style.rail.border = self::border(border);
+    }
+    if let Some(fill) = face.handle {
+        style.handle.background = Background::Color(color(fill));
+    }
+    if let Some(border) = face.handle_border {
+        style.handle.border_color = color(border.color);
+        style.handle.border_width = border.width.max(0.0);
+    }
+}
+
+fn slider_style(
+    style: wire::SliderStyle,
+    theme: &iced::Theme,
+    status: widget::slider::Status,
+) -> widget::slider::Style {
+    let mut resolved = widget::slider::default(theme, status);
+    let state = match status {
+        widget::slider::Status::Active => None,
+        widget::slider::Status::Hovered => style.hovered,
+        widget::slider::Status::Dragged => style.dragged,
+    };
+    for face in style.active.into_iter().chain(state) {
+        apply_slider_face(face, &mut resolved);
+    }
+    resolved
+}
+
+fn pick_list_style(
+    style: wire::PickListStyle,
+    theme: &iced::Theme,
+    status: widget::pick_list::Status,
+) -> widget::pick_list::Style {
+    let mut resolved = widget::pick_list::default(theme, status);
+    let face = match status {
+        widget::pick_list::Status::Active => style.active,
+        widget::pick_list::Status::Hovered => style.hovered,
+        widget::pick_list::Status::Opened { is_hovered: false } => style.opened,
+        widget::pick_list::Status::Opened { is_hovered: true } => style.opened_hovered,
+    };
+    if let Some(face) = face {
+        if let Some(fill) = face.background {
+            resolved.background = Background::Color(color(fill));
+        }
+        if let Some(fill) = face.text {
+            resolved.text_color = color(fill);
+        }
+        if let Some(fill) = face.placeholder {
+            resolved.placeholder_color = color(fill);
+        }
+        if let Some(fill) = face.handle {
+            resolved.handle_color = color(fill);
+        }
+        if let Some(border) = face.border {
+            resolved.border = self::border(border);
+        }
+    }
+    resolved
+}
+
+fn menu_style(menu: wire::MenuFace, theme: &iced::Theme) -> iced::overlay::menu::Style {
+    let mut resolved = iced::overlay::menu::default(theme);
+    if let Some(fill) = menu.background {
+        resolved.background = Background::Color(color(fill));
+    }
+    if let Some(fill) = menu.text {
+        resolved.text_color = color(fill);
+    }
+    if let Some(border) = menu.border {
+        resolved.border = self::border(border);
+    }
+    if let Some(fill) = menu.selected_text {
+        resolved.selected_text_color = color(fill);
+    }
+    if let Some(fill) = menu.selected_background {
+        resolved.selected_background = Background::Color(color(fill));
+    }
+    resolved
+}
+
+fn anchor(anchor: wire::ScrollAnchor) -> widget::scrollable::Anchor {
+    match anchor {
+        wire::ScrollAnchor::Start | wire::ScrollAnchor::Keep => widget::scrollable::Anchor::Start,
+        wire::ScrollAnchor::End => widget::scrollable::Anchor::End,
+    }
+}
+
+/// The box a layout's surface utilities draw around it; nothing when the
+/// layout has none.
+fn surfaced<'a>(
+    content: impl Into<IceElement<'a, Output>>,
+    background: Option<wire::Rgba>,
+    edge: Option<wire::Border>,
+) -> widget::Container<'a, Output, iced::Theme, iced::Renderer> {
+    let mut layout = widget::container(content);
+    if background.is_some() || edge.is_some() {
+        let background = background.map(color);
+        let edge = edge.map(border);
+        layout = layout.style(move |_theme| widget::container::Style {
+            background: background.map(Background::Color),
+            border: edge.unwrap_or_default(),
+            ..widget::container::Style::default()
+        });
+    }
+    layout
+}
+
 /// One pick list option: its index is what crosses back, its text is what
 /// iced shows and compares.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -505,6 +769,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             align_y,
             background,
             border: edge,
+            snap,
             content,
         } => {
             let mut container =
@@ -526,10 +791,15 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             }
             let background = background.map(color);
             let edge = edge.map(border);
-            container = container.style(move |_theme| widget::container::Style {
-                background: background.map(Background::Color),
-                border: edge.unwrap_or_default(),
-                ..widget::container::Style::default()
+            let snap = *snap;
+            container = container.style(move |_theme| {
+                let default = widget::container::Style::default();
+                widget::container::Style {
+                    background: background.map(Background::Color),
+                    border: edge.unwrap_or_default(),
+                    snap: snap.unwrap_or(default.snap),
+                    ..default
+                }
             });
             accessible(container, StableId::new(key), Role::GenericContainer)
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
@@ -634,6 +904,8 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             width,
             height,
             align,
+            background,
+            border: edge,
             children,
         } => {
             let is_row = matches!(axis, wire::Axis::Row);
@@ -678,7 +950,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 }
             };
             accessible(
-                widget::container(layout),
+                surfaced(layout, *background, *edge),
                 StableId::new(key),
                 Role::GenericContainer,
             )
@@ -694,6 +966,8 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             width,
             height,
             aspect,
+            background,
+            border: edge,
             children,
         } => {
             let columns = columns.map(|columns| columns.max(1) as usize);
@@ -723,7 +997,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 Some(other) => outer_width = Some(length(*other)),
                 None => {}
             }
-            let mut layout = widget::container(grid);
+            let mut layout = surfaced(grid, *background, *edge);
             if let Some(width) = outer_width {
                 layout = layout.width(width);
             }
@@ -773,9 +1047,34 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             direction,
             width,
             height,
+            bar_hidden,
+            bar_width,
+            bar_margin,
+            scroller_width,
+            bar_spacing,
+            anchor_x,
+            anchor_y,
+            auto_scroll,
+            background,
+            border: edge,
             content,
         } => {
-            let scrollbar = widget::scrollable::Scrollbar::new();
+            let mut scrollbar = match bar_hidden {
+                true => widget::scrollable::Scrollbar::hidden(),
+                false => widget::scrollable::Scrollbar::new(),
+            };
+            if let Some(width) = bar_width {
+                scrollbar = scrollbar.width(width.max(0.0));
+            }
+            if let Some(margin) = bar_margin {
+                scrollbar = scrollbar.margin(margin.max(0.0));
+            }
+            if let Some(width) = scroller_width {
+                scrollbar = scrollbar.scroller_width(width.max(0.0));
+            }
+            if let Some(spacing) = bar_spacing {
+                scrollbar = scrollbar.spacing(spacing.max(0.0));
+            }
             let direction = match direction {
                 wire::ScrollDirection::Vertical => {
                     widget::scrollable::Direction::Vertical(scrollbar)
@@ -790,13 +1089,26 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             };
             let mut scroll = widget::scrollable(render_node(content, kept))
                 .id(widget::Id::from(key.clone()))
-                .direction(direction);
+                .direction(direction)
+                .anchor_x(anchor(*anchor_x))
+                .anchor_y(anchor(*anchor_y))
+                .auto_scroll(*auto_scroll);
             if let Some(width) = width {
                 scroll = scroll.width(length(*width));
             }
             if let Some(height) = height {
                 scroll = scroll.height(length(*height));
             }
+            // `Keep` wraps the scrollable alone, as natively, so the
+            // wrapper's operation walk reaches it first.
+            let scroll: IceElement<'static, Output> = match anchor_y {
+                wire::ScrollAnchor::Keep => crate::scroll_anchor(scroll).into(),
+                _ => scroll.into(),
+            };
+            let scroll: IceElement<'static, Output> = match (background, edge) {
+                (None, None) => scroll,
+                _ => surfaced(scroll, *background, *edge).into(),
+            };
             accessible(scroll, StableId::new(key), Role::ScrollView)
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
@@ -837,6 +1149,10 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             hash,
             label,
             color: tint,
+            hover,
+            fit,
+            rotation,
+            opacity,
             width,
             height,
             ..
@@ -852,9 +1168,40 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     if let Some(height) = height {
                         svg = svg.height(length(*height));
                     }
+                    if let Some(fit) = fit {
+                        svg = svg.content_fit(match fit {
+                            wire::ContentFit::Contain => iced::ContentFit::Contain,
+                            wire::ContentFit::Cover => iced::ContentFit::Cover,
+                            wire::ContentFit::Fill => iced::ContentFit::Fill,
+                            wire::ContentFit::None => iced::ContentFit::None,
+                            wire::ContentFit::ScaleDown => iced::ContentFit::ScaleDown,
+                        });
+                    }
+                    if let Some(rotation) = rotation {
+                        let finite = |radians: f32| {
+                            iced::Radians(if radians.is_finite() { radians } else { 0.0 })
+                        };
+                        svg = svg.rotation(match *rotation {
+                            wire::Rotation::Floating(radians) => {
+                                iced::Rotation::Floating(finite(radians))
+                            }
+                            wire::Rotation::Solid(radians) => {
+                                iced::Rotation::Solid(finite(radians))
+                            }
+                        });
+                    }
+                    if let Some(opacity) = opacity {
+                        svg = svg.opacity(opacity.clamp(0.0, 1.0));
+                    }
                     let tint = tint.map(color);
-                    svg.style(move |_theme, _status| widget::svg::Style { color: tint })
-                        .into()
+                    let hover = hover.map(|hover| hover.map(color)).unwrap_or(tint);
+                    svg.style(move |_theme, status| widget::svg::Style {
+                        color: match status {
+                            widget::svg::Status::Idle => tint,
+                            widget::svg::Status::Hovered => hover,
+                        },
+                    })
+                    .into()
                 }
                 None => {
                     let mut space = widget::Space::new();
@@ -978,13 +1325,33 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             axis,
             thickness,
             color: fg,
+            weak,
+            radius,
+            snap,
         } => {
             let thickness = thickness.max(0.0);
             let fg = fg.map(color);
+            let (weak, radius, snap) = (*weak, *radius, *snap);
             let styled = move |theme: &iced::Theme| {
-                let mut style = widget::rule::default(theme);
+                let mut style = match weak {
+                    true => widget::rule::weak(theme),
+                    false => widget::rule::default(theme),
+                };
                 if let Some(fg) = fg {
                     style.color = fg;
+                }
+                if let Some([top_left, top_right, bottom_right, bottom_left]) =
+                    radius.map(|radius| radius.map(|corner| corner.max(0.0)))
+                {
+                    style.radius = iced::border::Radius {
+                        top_left,
+                        top_right,
+                        bottom_right,
+                        bottom_left,
+                    };
+                }
+                if let Some(snap) = snap {
+                    style.snap = snap;
                 }
                 style
             };
@@ -1003,8 +1370,10 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             checked,
             on_toggle,
             width,
+            style,
         } => {
             let checked = *checked;
+            let style = *style;
             let flip = on_toggle.map(|handler| move |on| Output::Toggle { handler, on });
             let activate = on_toggle.map(|handler| Output::Toggle {
                 handler,
@@ -1014,7 +1383,8 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 wire::ToggleKind::Checkbox => {
                     let mut checkbox = widget::checkbox(checked)
                         .label(label.clone())
-                        .on_toggle_maybe(flip);
+                        .on_toggle_maybe(flip)
+                        .style(move |theme, status| checkbox_style(style, theme, status));
                     if let Some(width) = width {
                         checkbox = checkbox.width(length(*width));
                     }
@@ -1023,7 +1393,8 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 wire::ToggleKind::Switch => {
                     let mut toggler = widget::toggler(checked)
                         .label(label.clone())
-                        .on_toggle_maybe(flip);
+                        .on_toggle_maybe(flip)
+                        .style(move |theme, status| toggler_style(style, theme, status));
                     if let Some(width) = width {
                         toggler = toggler.width(length(*width));
                     }
@@ -1045,13 +1416,16 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             selected,
             on_select,
             width,
+            style,
         } => {
             let activate = Output::Activate(*on_select);
             let choose = activate.clone();
+            let style = *style;
             let mut radio =
                 widget::radio(label.clone(), true, selected.then_some(true), move |_| {
                     choose.clone()
-                });
+                })
+                .style(move |theme, status| radio_style(style, theme, status));
             if let Some(width) = width {
                 radio = radio.width(length(*width));
             }
@@ -1075,7 +1449,9 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             axis,
             width,
             height,
+            style,
         } => {
+            let style = *style;
             // iced divides by the step and by the range: a step of zero or
             // an empty range would put the handle at NaN.
             let (min, max) = match *max > *min {
@@ -1094,7 +1470,9 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             let down = (value - step >= min).then(|| change(value - step));
             let slider: IceElement<'static, Output> = match axis {
                 wire::Axis::Row => {
-                    let mut slider = widget::slider(min..=max, value, change).step(step);
+                    let mut slider = widget::slider(min..=max, value, change)
+                        .step(step)
+                        .style(move |theme, status| slider_style(style, theme, status));
                     if let Some(release) = release.clone() {
                         slider = slider.on_release(release);
                     }
@@ -1107,7 +1485,9 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     slider.into()
                 }
                 wire::Axis::Column => {
-                    let mut slider = widget::vertical_slider(min..=max, value, change).step(step);
+                    let mut slider = widget::vertical_slider(min..=max, value, change)
+                        .step(step)
+                        .style(move |theme, status| slider_style(style, theme, status));
                     if let Some(release) = release {
                         slider = slider.on_release(release);
                     }
@@ -1136,7 +1516,9 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             placeholder,
             on_select,
             width,
+            style,
         } => {
+            let style = *style;
             let choices: Vec<Choice> = options
                 .iter()
                 .enumerate()
@@ -1149,7 +1531,11 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     handler,
                     index: choice.0,
                 }
-            });
+            })
+            .style(move |theme, status| pick_list_style(style, theme, status));
+            if let Some(menu) = style.menu {
+                pick = pick.menu_style(move |theme| menu_style(menu, theme));
+            }
             if let Some(placeholder) = placeholder {
                 pick = pick.placeholder(placeholder.clone());
             }
@@ -1170,11 +1556,36 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             axis,
             length: along,
             girth,
+            tone,
+            background,
+            bar: fill,
+            border: edge,
         } => {
             let (range, value) =
                 crate::progress_range((*min).into(), (*max).into(), (*value).into());
             let (min, max) = (*range.start(), *range.end());
-            let mut bar = widget::progress_bar(range, value);
+            let preset = match tone {
+                None | Some(wire::Tone::Primary) => widget::progress_bar::primary,
+                Some(wire::Tone::Secondary) => widget::progress_bar::secondary,
+                Some(wire::Tone::Success) => widget::progress_bar::success,
+                Some(wire::Tone::Warning) => widget::progress_bar::warning,
+                Some(wire::Tone::Danger) => widget::progress_bar::danger,
+            };
+            let (background, fill, edge) =
+                (background.map(color), fill.map(color), edge.map(border));
+            let mut bar = widget::progress_bar(range, value).style(move |theme| {
+                let mut style = preset(theme);
+                if let Some(background) = background {
+                    style.background = Background::Color(background);
+                }
+                if let Some(fill) = fill {
+                    style.bar = Background::Color(fill);
+                }
+                if let Some(edge) = edge {
+                    style.border = edge;
+                }
+                style
+            });
             if let Some(along) = along {
                 bar = bar.length(length(*along));
             }
@@ -1385,6 +1796,7 @@ mod tests {
             align_y: Some(wire::AlignY::Center),
             background: Some(wire::Rgba([0.0, 0.0, 0.0, 1.0])),
             border: None,
+            snap: Some(true),
             content: Box::new(wire::Node::Linear {
                 key: "App/content".into(),
                 axis: wire::Axis::Column,
@@ -1393,6 +1805,8 @@ mod tests {
                 width: None,
                 height: None,
                 align: Some(wire::AlignX::Left),
+                background: Some(wire::Rgba([0.1, 0.1, 0.1, 1.0])),
+                border: None,
                 children: vec![
                     wire::Node::Text {
                         key: "App/content/title".into(),
@@ -1441,6 +1855,9 @@ mod tests {
                         axis: wire::Axis::Row,
                         thickness: 1.0,
                         color: None,
+                        weak: true,
+                        radius: Some([1.0, -1.0, 0.0, f32::NAN]),
+                        snap: Some(false),
                     },
                     wire::Node::Sensor {
                         key: "App/content/watch".into(),
@@ -1454,6 +1871,20 @@ mod tests {
                             direction: wire::ScrollDirection::Vertical,
                             width: None,
                             height: None,
+                            bar_hidden: true,
+                            bar_width: Some(-4.0),
+                            bar_margin: Some(2.0),
+                            scroller_width: Some(0.0),
+                            bar_spacing: Some(1.0),
+                            anchor_x: wire::ScrollAnchor::End,
+                            anchor_y: wire::ScrollAnchor::Keep,
+                            auto_scroll: true,
+                            background: None,
+                            border: Some(wire::Border {
+                                color: wire::Rgba([1.0, 0.0, 0.0, 1.0]),
+                                width: 1.0,
+                                radius: [2.0; 4],
+                            }),
                             content: Box::new(wire::Node::Space {
                                 width: None,
                                 height: Some(wire::Length::Fixed(10.0)),
@@ -1469,6 +1900,8 @@ mod tests {
                         width: Some(wire::Length::Fill),
                         height: Some(wire::Length::Fixed(40.0)),
                         aspect: None,
+                        background: None,
+                        border: None,
                         children: vec![
                             wire::Node::Space {
                                 width: None,
@@ -1489,6 +1922,8 @@ mod tests {
                         width: Some(wire::Length::Fixed(120.0)),
                         height: None,
                         aspect: Some(-1.0),
+                        background: Some(wire::Rgba([0.2, 0.2, 0.2, 1.0])),
+                        border: None,
                         children: vec![wire::Node::Space {
                             width: None,
                             height: None,
@@ -1501,6 +1936,15 @@ mod tests {
                         checked: false,
                         on_toggle: Some(3),
                         width: None,
+                        style: wire::ToggleStyle {
+                            tone: None,
+                            active_on: Some(face()),
+                            active_off: None,
+                            hovered_on: None,
+                            hovered_off: Some(face()),
+                            disabled_on: None,
+                            disabled_off: None,
+                        },
                     },
                     wire::Node::Toggle {
                         key: "App/content/agree".into(),
@@ -1509,6 +1953,11 @@ mod tests {
                         checked: true,
                         on_toggle: None,
                         width: Some(wire::Length::Fill),
+                        style: wire::ToggleStyle {
+                            tone: Some(wire::Tone::Warning),
+                            disabled_on: Some(face()),
+                            ..wire::ToggleStyle::default()
+                        },
                     },
                     wire::Node::Radio {
                         key: "App/content/first".into(),
@@ -1516,6 +1965,10 @@ mod tests {
                         selected: true,
                         on_select: 4,
                         width: None,
+                        style: wire::RadioStyle {
+                            active_on: Some(face()),
+                            ..wire::RadioStyle::default()
+                        },
                     },
                     // A hostile slider: empty range, zero step, value outside.
                     wire::Node::Slider {
@@ -1529,6 +1982,22 @@ mod tests {
                         axis: wire::Axis::Column,
                         width: Some(wire::Length::Fixed(20.0)),
                         height: Some(wire::Length::Fill),
+                        style: wire::SliderStyle {
+                            active: Some(wire::SliderFace {
+                                rail_start: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
+                                rail_end: None,
+                                rail_width: Some(-3.0),
+                                rail_border: None,
+                                handle: Some(wire::Rgba([0.0, 1.0, 0.0, 1.0])),
+                                handle_border: Some(wire::Border {
+                                    color: wire::Rgba([0.0, 0.0, 1.0, 1.0]),
+                                    width: -1.0,
+                                    radius: [0.0; 4],
+                                }),
+                            }),
+                            hovered: None,
+                            dragged: Some(wire::SliderFace::default()),
+                        },
                     },
                     wire::Node::PickList {
                         key: "App/content/mode".into(),
@@ -1537,6 +2006,20 @@ mod tests {
                         placeholder: Some("Mode".into()),
                         on_select: 7,
                         width: None,
+                        style: wire::PickListStyle {
+                            active: Some(wire::PickFace {
+                                background: Some(wire::Rgba([0.0, 0.0, 0.0, 1.0])),
+                                text: Some(wire::Rgba([1.0, 1.0, 1.0, 1.0])),
+                                placeholder: None,
+                                handle: None,
+                                border: None,
+                            }),
+                            menu: Some(wire::MenuFace {
+                                selected_background: Some(wire::Rgba([0.0, 0.5, 0.5, 1.0])),
+                                ..wire::MenuFace::default()
+                            }),
+                            ..wire::PickListStyle::default()
+                        },
                     },
                     wire::Node::Progress {
                         key: "App/content/done".into(),
@@ -1546,6 +2029,10 @@ mod tests {
                         axis: wire::Axis::Row,
                         length: Some(wire::Length::Fill),
                         girth: Some(wire::Length::Fixed(6.0)),
+                        tone: Some(wire::Tone::Success),
+                        background: None,
+                        bar: Some(wire::Rgba([0.0, 1.0, 0.0, 1.0])),
+                        border: None,
                     },
                     picture(Some(b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec())),
                     // A hash the host never saw: empty space of the size.
@@ -1555,6 +2042,10 @@ mod tests {
                         bytes: None,
                         label: None,
                         color: None,
+                        hover: None,
+                        fit: None,
+                        rotation: None,
+                        opacity: None,
                         width: None,
                         height: None,
                     },
@@ -1598,8 +2089,25 @@ mod tests {
             bytes,
             label: Some("Icon".into()),
             color: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
+            hover: Some(None),
+            fit: Some(wire::ContentFit::Cover),
+            rotation: Some(wire::Rotation::Solid(f32::NAN)),
+            opacity: Some(2.0),
             width: Some(wire::Length::Fixed(24.0)),
             height: Some(wire::Length::Fixed(24.0)),
+        }
+    }
+
+    fn face() -> wire::ControlFace {
+        wire::ControlFace {
+            background: Some(wire::Rgba([0.0, 0.0, 0.0, 1.0])),
+            mark: Some(wire::Rgba([1.0, 1.0, 1.0, 1.0])),
+            text: None,
+            border: Some(wire::Border {
+                color: wire::Rgba([1.0, 0.0, 0.0, 1.0]),
+                width: 1.0,
+                radius: [2.0; 4],
+            }),
         }
     }
 
@@ -1626,6 +2134,10 @@ mod tests {
             bytes: Some(vec![b' '; MAX_PICTURE_BYTES + 1]),
             label: None,
             color: None,
+            hover: None,
+            fit: None,
+            rotation: None,
+            opacity: None,
             width: None,
             height: None,
         });

@@ -397,6 +397,8 @@ const HEAD: &str = concat!(
     "  component host_pair(a:str, b:str) -> unit\n",
     "  shader status_shader(speed:f64) -> bool\n",
     "  themer alternate_panel(active:bool) -> unit\n",
+    "  checkbox-style checkbox_look(active:bool)\n",
+    "  svg-style tinted(active:bool)\n",
     "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\n",
     "palette app for AppTheme\n",
     "  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n",
@@ -665,27 +667,30 @@ const COVERAGE: &[Coverage] = &[
         "  svg draft\n",
         "an svg read from a path",
     ),
-    refused(
+    emitted(
         "media: svg option",
         "",
-        "  svg \"<svg/>\" memory opacity=0.5\n",
-        "this svg option",
+        "  svg \"<svg/>\" memory opacity=0.5 fit=contain rotate=rotation.solid(radians(0.5))\n",
     ),
-    refused(
+    emitted(
         "media: svg hover colour",
         "",
         "  svg \"<svg/>\" memory color=fg hover=primary\n",
-        "an svg hover colour",
+    ),
+    refused(
+        "media: svg style callback",
+        "",
+        "  svg \"<svg/>\" memory style=tinted(busy)\n",
+        "an svg style callback",
     ),
     refused("media: viewer", "", "  viewer picture\n", "`media`"),
     refused("canvas", "", "  canvas w=40.0 h=24.0\n", "`canvas`"),
-    // Options on the nodes the wire does carry: painted, driven or measured
-    // by widgets the wire has no room for.
-    refused(
+    // Options on the nodes the wire does carry: painted by the host from
+    // plain fields on the node.
+    emitted(
         "layout: surface utility",
         "",
         "  col\n    with\n      @bg-primary\n      @rounded-md\n    text \"a\" @text-fg\n",
-        "a surface utility style on a layout",
     ),
     refused(
         "mouse area: cursor",
@@ -693,30 +698,40 @@ const COVERAGE: &[Coverage] = &[
         "  mouse press=add cursor=pointer\n    text \"a\" @text-fg\n",
         "a mouse cursor",
     ),
-    refused(
+    emitted(
         "box: px-snap",
         "",
         "  box px-snap=true\n    text \"a\" @text-fg\n",
-        "`px-snap` on a surface",
     ),
-    refused(
+    emitted(
         "layout: scroll bar option",
         "",
-        "  scroll bar=hidden\n    text \"a\" @text-fg\n",
-        "a scroll bar option",
+        "  scroll bar=hidden bar-w=4.0 scroller-w=2.0\n    text \"a\" @text-fg\n",
     ),
-    refused(
+    emitted(
         "layout: scroll anchor",
         "",
         "  scroll anchor-y=end\n    text \"a\" @text-fg\n",
-        "a scroll anchor",
     ),
-    refused(
+    emitted(
+        "layout: scroll anchor keep",
+        "",
+        "  scroll anchor-y=keep\n    text \"a\" @text-fg\n",
+    ),
+    emitted(
         "layout: scroll auto",
         "",
         "  scroll auto=busy\n    text \"a\" @text-fg\n",
+    ),
+    refused(
+        "layout: scroll route",
+        "on scrolled(_x, _y, _rx, _ry)\n",
+        "  scroll scroll=scrolled\n    text \"a\" @text-fg\n",
         "a scroll route",
     ),
+    emitted("rule: style preset", "", "  rule horizontal style=weak\n"),
+    emitted("rule: snap", "", "  rule horizontal snap=busy\n"),
+    emitted("rule: radius", "", "  rule horizontal r=2.0\n"),
     refused(
         "sensor: key",
         MEASURE,
@@ -724,59 +739,66 @@ const COVERAGE: &[Coverage] = &[
         "a sensor key",
     ),
     refused(
-        "rule: style preset",
+        "rule: fill",
         "",
-        "  rule horizontal style=weak\n",
-        "a rule style preset",
+        "  rule horizontal fill=percent(50.0)\n",
+        "a rule fill",
     ),
-    refused(
-        "rule: snap",
-        "",
-        "  rule horizontal snap=busy\n",
-        "`snap` on a rule",
-    ),
-    refused(
-        "rule: radius",
-        "",
-        "  rule horizontal r=2.0\n",
-        "a rule radius",
-    ),
-    // The form controls cross unstyled: the host paints them in its theme.
-    refused(
+    // The form controls' literal per-state styles cross as faces the host
+    // paints over its theme; a style given as a Rust callback does not.
+    emitted(
         "checkbox: style",
         FLIP,
-        "  checkbox \"e\" checked=busy -> flip _\n    active checked bg=primary\n",
-        "a checkbox style",
+        "  checkbox \"e\" checked=busy -> flip _\n    active checked bg=primary icon=fg text=fg border=danger border-w=1.0 r=2.0\n    hovered unchecked bg=danger\n",
+    ),
+    emitted(
+        "checkbox: preset",
+        FLIP,
+        "  checkbox \"e\" checked=busy style=success -> flip _\n",
     ),
     refused(
+        "checkbox: style callback",
+        FLIP,
+        "  checkbox \"e\" checked=busy style=checkbox_look(busy) -> flip _\n",
+        "a checkbox style callback",
+    ),
+    emitted(
         "toggler: style",
         FLIP,
-        "  toggler \"e\" checked=busy -> flip _\n    active checked bg=primary\n",
-        "a toggler style",
+        "  toggler \"e\" checked=busy -> flip _\n    active checked bg=primary fg=fg bg-border=danger bg-border-w=1.0 text=fg\n",
     ),
     refused(
+        "toggler: knob border",
+        FLIP,
+        "  toggler \"e\" checked=busy -> flip _\n    active checked fg-border=danger\n",
+        "a toggler knob border or padding ratio",
+    ),
+    emitted(
         "radio: style",
         SLIDE,
-        "  radio \"a\" value=1.0 selected=(amount == 1.0) -> slide _\n    active selected dot=primary\n",
-        "a radio style",
+        "  radio \"a\" value=1.0 selected=(amount == 1.0) -> slide _\n    active selected dot=primary bg=bg border=fg border-w=1.0 text=fg\n",
     ),
-    refused(
+    emitted(
         "slider: style",
         SLIDE,
-        "  slider amount min=0.0 max=100.0 -> slide _\n    active rail-start=primary\n",
-        "a slider style",
+        "  slider amount min=0.0 max=100.0 -> slide _\n    active rail-start=primary rail-end=bg rail-w=3.0 rail-border=fg rail-border-w=1.0 handle-color=fg handle-border=danger handle-border-w=1.0\n    dragged rail-start=danger\n",
     ),
     refused(
-        "progress: style",
+        "slider: handle shape",
+        SLIDE,
+        "  slider amount min=0.0 max=100.0 -> slide _\n    active handle=circle(4.0)\n",
+        "a slider handle shape",
+    ),
+    emitted("progress: style", "", "  progress amount style=success\n"),
+    emitted(
+        "progress: colours",
         "",
-        "  progress amount style=success\n",
-        "a progress style",
+        "  progress amount bg=bg bar=primary border=fg border-w=1.0 r=2.0\n",
     ),
-    refused(
+    emitted(
         "pick list: style",
         CHOOSE,
-        "  pick [\"One\", \"Two\"] choice -> choose _\n    active bg=primary\n",
-        "a pick list style",
+        "  pick [\"One\", \"Two\"] choice -> choose _\n    active bg=primary text=fg placeholder=fg handle=fg border=danger border-w=1.0 r=4.0\n    opened bg=bg\n    menu bg=bg text=fg selected-bg=primary selected-text=fg\n",
     ),
     // An extern widget is a host surface: the host paints the region by the
     // extern's name, given its one `str` argument as text. A route, a second
