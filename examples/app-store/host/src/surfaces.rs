@@ -3,8 +3,10 @@
 //! and never sees a pixel; the host repaints the region on its own clock,
 //! without a guest tick.
 
-use std::sync::OnceLock;
+use std::sync::Arc;
 use std::time::Duration;
+
+pub(crate) mod log;
 
 use iced::widget::{canvas, column, text};
 use iced::{Length, Point, Rectangle, Renderer, Theme, mouse, window};
@@ -13,31 +15,29 @@ use ui_lang_wire::SurfaceValue;
 
 use crate::capabilities::clock;
 
-/// The surfaces every guest window can name.
-pub fn registry() -> &'static Surfaces {
-    static SURFACES: OnceLock<Surfaces> = OnceLock::new();
-    SURFACES.get_or_init(|| {
-        let mut surfaces = Surfaces::new();
-        surfaces.insert(
-            "ice.markdown".into(),
-            Box::new(ui_lang_runtime::view_tree::markdown_surface),
-        );
-        surfaces.insert(
-            "clock_face".into(),
-            Box::new(|_key: &str, args: &[SurfaceValue]| {
-                let [SurfaceValue::Str(caption)] = args else {
-                    return text("invalid clock_face arguments").into();
-                };
-                column![
-                    canvas(ClockFace).width(Length::Fill).height(Length::Fill),
-                    text(caption.to_owned()).size(12),
-                ]
-                .align_x(iced::Alignment::Center)
-                .into()
-            }),
-        );
-        surfaces
-    })
+/// Providers bound to one guest instance and its host-owned session.
+pub fn registry(session: Arc<log::Session>) -> Surfaces {
+    let mut surfaces = Surfaces::new();
+    surfaces.insert(
+        "ice.markdown".into(),
+        Box::new(ui_lang_runtime::view_tree::markdown_surface),
+    );
+    surfaces.insert(
+        "clock_face".into(),
+        Box::new(|_key: &str, args: &[SurfaceValue]| {
+            let [SurfaceValue::Str(caption)] = args else {
+                return text("invalid clock_face arguments").into();
+            };
+            column![
+                canvas(ClockFace).width(Length::Fill).height(Length::Fill),
+                text(caption.to_owned()).size(12),
+            ]
+            .align_x(iced::Alignment::Center)
+            .into()
+        }),
+    );
+    surfaces.insert("session_log".into(), log::provider(session));
+    surfaces
 }
 
 /// An analog UTC dial whose second hand sweeps: the host asks for its own

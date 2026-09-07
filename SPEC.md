@@ -390,6 +390,12 @@ acknowledge unit, preserving sequential Task ordering. Widget selectors and
 virtual-row scrolling are rejected with E190 on this target. Native extern
 Tasks returning opaque widget operations are outside this lowering contract.
 
+Host surface registries may bind host-owned sessions per guest instance.
+Copied node keys are local identities, not authority to look up process-wide
+native resources. The example host distinguishes registry/mount identity from
+session ownership: unmount releases view state without ending an independently
+owned host session. Only semantic copied arguments/events cross this boundary.
+
 ## 6. Semantic invariants
 
 These are the rules a construct listing cannot express.

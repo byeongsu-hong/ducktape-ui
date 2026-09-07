@@ -82,7 +82,7 @@ that binary into an isolated view package.
 | Phase | Work in Ice / app-store | Evidence required before calling it complete |
 | --- | --- | --- |
 | 3a — surface values and routes | Typed scalar arguments/events and records/lists/options for data-backed surfaces (implemented, including nested validation). Recursive records and sum types remain pending. Preserve borrowed-call syntax by copying wire values. Reject opaque native values. | Actual bundled wasm uses mixed arguments and link/event routes; host-rendered interaction returns the right payload; wrong payload type and unknown surface are exercised; wire limits and patches remain bounded. |
-| 3b — host surfaces and retained state | Named shader and markdown surface lowering implemented; editor/terminal/log resource and event boundaries remain. Use representative module examples. | Markdown link route; editor edit/submit/selection/IME behavior; terminal/log resource lifecycle, two concurrent instances and cleanup. A no-op provider or placeholder does not count as parity. |
+| 3b — host surfaces and retained state | Named shader and markdown lowering implemented; Guest-owned registries and a retained native log session/view boundary implemented. Rich editor semantic events and terminal providers remain. Use representative module examples. | Markdown link route; editor edit/submit/selection/IME behavior; terminal/log resource lifecycle, two concurrent instances and cleanup. A no-op provider or placeholder does not count as parity. |
 | 3c — declarative graphics and responsive layout | Canvas geometry data and host-evaluated container rules, with widget-local opt-in measurements only. | Geometry rendering and interaction; multiple container widths with correct branches and no guest layout callback; bounded sensor feedback. |
 | 4a — actual app layouts first | stack/hover/overlay/keyed/lazy/flex/pin/tooltip; preserve union sizing, hit routing, identity, virtualization and scroll behavior. | Representative chat list and menus, page overlay, file/forge list; reorder/edit/scroll assertions and frame measurements, not compile-only coverage. |
 | 4b — remaining content/layout/style | rich text/markdown/qr/image/combo, table/pane grid/theme/themer/float/resize handle and remaining supported surface shapes. | Per-feature native/wire behavior checks and real wasm bundle builds; preserve intentional rejection of native callbacks. |
@@ -134,3 +134,22 @@ Runtime mouse/raster tests and the bundled surface fixture cover link routes,
 append/replacement, guest colors and custom viewer arguments/events. The
 remaining phase 3b work is the editor/terminal/log resource boundary; actual
 Ducktape markdown providers and image assets still require host integration.
+
+### Retained host session boundary
+
+The example now constructs a surface registry for every Guest. A provider
+captures its host-authorized session, and its mounted native widget retains
+view state independently. `session_log` demonstrates this with the actual
+LogTimelineState/virtual-list renderer, semantic notice records, a bounded
+host log ring and preserved paused history during front eviction. The native
+Element is retained as well as its Iced Tree, preserving button/scrollbar
+feedback across update and draw.
+
+Two registries may share one host session without sharing selection or scroll.
+Registry identity distinguishes replacement guests even at identical node
+keys. Unmount releases the view lease; host ownership can keep the session
+receiving data after the view or guest exits. The bundled fixture tests these
+boundaries; this supplies the ownership pattern for terminal/log adapters,
+not the actual Ducktape terminal, log filter or rich page/editor adapter.
+Opaque native values remain refused. Those adapters still need deliberate
+semantic argument/event definitions at their eventual integration boundary.

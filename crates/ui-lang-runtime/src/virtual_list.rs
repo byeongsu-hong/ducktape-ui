@@ -575,6 +575,17 @@ where
         }
     }
 
+    /// Restores an anchor after rows shifted, including the native scrollable.
+    pub(crate) fn restore_scroll_offset(
+        &mut self,
+        offset: f32,
+        item_count: usize,
+        config: VirtualListConfig,
+    ) -> bool {
+        let rows = self.rows(item_count, config);
+        self.scroll.restore_offset(offset, &rows)
+    }
+
     /// Scrolls an item into view without changing selection.
     pub fn scroll_to_item(
         &mut self,
