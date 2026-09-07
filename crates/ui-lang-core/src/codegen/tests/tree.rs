@@ -757,11 +757,10 @@ const COVERAGE: &[Coverage] = &[
         "  float x=2.0 y=3.0\n    text \"a\" @text-fg\n",
         "`float`",
     ),
-    refused(
+    emitted(
         "pin",
         "",
         "  pin w=64.0 h=24.0 x=2.0 y=3.0\n    text \"a\" @text-fg\n",
-        "`pin`",
     ),
     emitted(
         "tooltip",

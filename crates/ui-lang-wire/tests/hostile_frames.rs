@@ -1071,6 +1071,7 @@ fn tree_depth(node: &Node) -> usize {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
         | Node::MouseArea { content, .. }
+        | Node::Pin { content, .. }
         | Node::Responsive { content, .. }
         | Node::Lazy { content, .. }
         | Node::Scroll { content, .. } => 1 + tree_depth(content),
@@ -1229,6 +1230,20 @@ fn check_bounds(
             check_edges(padding, ctx);
             check_color(background, ctx);
             check_border(border, ctx);
+            check_bounds(content, depth + 1, keys, svg_bytes, ctx);
+        }
+        Node::Pin {
+            x,
+            y,
+            width,
+            height,
+            content,
+            ..
+        } => {
+            assert!(x.is_finite() && x.abs() <= PIXEL_BOUND);
+            assert!(y.is_finite() && y.abs() <= PIXEL_BOUND);
+            check_length(width, ctx);
+            check_length(height, ctx);
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
         Node::Tooltip {

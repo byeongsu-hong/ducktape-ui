@@ -1146,3 +1146,13 @@ nor a layout callback. Native layout, input, hit testing and clipping stay host
 responsibilities. Flex can be retained inside a Tree lazy boundary and reflows
 when the host's layout limits change. Rebuild hosts and guests together for the
 Flex wire variant. Other Tree widget/style restrictions continue to apply.
+
+## Tree pinned children
+
+The Tree target carries `pin` as one child plus evaluated local `x`/`y` and
+optional `w`/`h`. The host uses native Pin layout, drawing, hit testing and overlay
+forwarding. Omitted dimensions retain native Fill defaults. Nested offsets are
+relative to each pin, never window coordinates; the guest does not measure them.
+Signed offsets are bounded to ±8192 logical pixels (NaN becomes zero), and
+lengths use the existing wire sanitizer. Native `length` values remain refused.
+Host and guest must be rebuilt together for the Pin wire variant.

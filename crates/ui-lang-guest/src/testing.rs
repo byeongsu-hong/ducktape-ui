@@ -17,6 +17,7 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
+        | Node::Pin { content, .. }
         | Node::Responsive { content, .. }
         | Node::Lazy { content, .. }
         | Node::MouseArea { content, .. }
@@ -87,6 +88,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
+        | Node::Pin { content, .. }
         | Node::Responsive { content, .. }
         | Node::Lazy { content, .. }
         | Node::MouseArea { content, .. }
@@ -383,6 +385,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
+        | Node::Pin { content, .. }
         | Node::Responsive { content, .. }
         | Node::Lazy { content, .. }
         | Node::MouseArea { content, .. }

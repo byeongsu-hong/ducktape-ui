@@ -18,10 +18,14 @@ palette app for AppTheme
 
 state
   modal = false
+  pin_x = 36.0
   held = false
   hit = "none"
   draft = ""
   modal_draft = ""
+on pinned
+  pin_x = pin_x + 20.0
+  hit = "pinned"
 on opened
   modal = true
 on closed
@@ -98,6 +102,16 @@ view
           button "Reveal" #reveal -> revealed
             active bg=primary text=fg
         button "Hold reveal" #hold -> hold
+        box #pin-parent w=200.0 h=60.0
+          pin x=pin_x y=6.0
+            pin
+              with
+                w=80.0
+                h=30.0
+                x=-4.0
+                y=2.0
+              box #pin-child w=70.0 h=28.0
+                button "Pinned" #pinned w=fill h=fill -> pinned
     layer
       box #panel
         with

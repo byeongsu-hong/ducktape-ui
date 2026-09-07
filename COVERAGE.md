@@ -1585,3 +1585,14 @@ The actual bundled fixture compiles full flex options and drives native reaction
 clicks through a resized lazy subtree, then keyboard input and Send update guest
 state. Removing wrap fails the narrow-row assertion. CI bundles the fixture and
 runs `store::flex_tests`; other application graph restrictions remain separate.
+
+### Tree pin evidence
+
+The Tree construct table emits pin with copied dimensions and local offsets.
+`ui-lang-wire/tests/pin.rs` checks roundtrip, child traversal and signed finite
+bounds; changing signed x sanitization to size sanitization fails on -4.
+The native sizing test checks default Fill, fixed sizes and Shrink; forcing
+default Shrink fails the expected 200-pixel width. The bundled layers fixture
+exercises nested positive/negative offsets, explicit dimensions, pointer routing
+and guest-driven repositioning; removing its negative offset fails at 36 vs 32.
+CI selects `store::layers_tests -- --ignored` after bundling that fixture.

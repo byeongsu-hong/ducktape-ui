@@ -619,7 +619,7 @@ jobs:
             --out examples/app-store/target/layers-fixture
       - name: Verify layered layout and modal interactions through wasm
         working-directory: examples/app-store
-        run: cargo test --locked -p app-store-host bundled_layers_ -- --ignored
+        run: cargo test --locked -p app-store-host store::layers_tests -- --ignored
       - name: Bundle text layout fixture
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \

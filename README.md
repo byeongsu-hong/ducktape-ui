@@ -541,3 +541,7 @@ Tree `lazy` caches guest subtrees and callable routes, while the host memoizes
 native views/layout and owns their unmount lifetime. See [lazy module views](examples/app-store/README.md#lazy-module-views).
 Tree `flex` copies layout and item rules to the existing native engine, including
 wrapping, sizing and order. See [flex module views](examples/app-store/README.md#flex-module-views).
+
+
+Tree `pin` copies widget-local offsets and optional dimensions to the native host.
+See [pinned module children](examples/app-store/README.md#pinned-module-children).
