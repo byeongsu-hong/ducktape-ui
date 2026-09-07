@@ -608,3 +608,28 @@ jobs:
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored
+
+  native-bundle-resources:
+    name: Native bundle resources (${{ matrix.os }})
+    # Keep macOS packaging validation opt-in; ordinary PRs retain their cost cap.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install WiX
+        if: runner.os == 'Windows'
+        run: dotnet tool install --global wix --version 6.0.2
+      - name: Check macOS signing includes wasm resources
+        if: runner.os == 'macOS'
+        run: cargo test --locked -p cargo-ice a_signed_bundle_becomes_a_disk_image -- --nocapture
+      - name: Check installed Windows wasm resources
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p cargo-ice resource_msi_extracts_wasm_beside_the_executable -- --ignored --nocapture

@@ -12,6 +12,7 @@ pub(super) fn bundle(
     executable: &Path,
     source: Option<&Path>,
     arch: &str,
+    resources: &[super::resources::Resource],
 ) -> Result<Vec<PathBuf>, String> {
     let architecture = debian_architecture(arch)?;
     let root = output.join(format!("{}-{architecture}", meta.package));
@@ -19,7 +20,22 @@ pub(super) fn bundle(
 
     let binaries = root.join("usr/bin");
     super::create_dir(&binaries)?;
-    super::install(executable, &binaries.join(&meta.executable))?;
+    if resources.is_empty() {
+        super::install(executable, &binaries.join(&meta.executable))?;
+    } else {
+        let payload = root.join("usr/lib").join(&meta.package);
+        super::create_dir(&payload)?;
+        super::install(executable, &payload.join(&meta.executable))?;
+        super::resources::install(resources, &payload)?;
+        tool(
+            "ln",
+            &[
+                "-s".into(),
+                format!("../lib/{}/{}", meta.package, meta.executable),
+                path(&binaries.join(&meta.executable)),
+            ],
+        )?;
+    }
 
     let applications = root.join("usr/share/applications");
     super::create_dir(&applications)?;
@@ -311,6 +327,54 @@ mod tests {
         assert!(debian_architecture("riscv64").is_err());
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn resources_ship_beside_a_package_private_executable() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("showcase");
+        fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        let views = directory.path().join("target/views/nested");
+        fs::create_dir_all(&views).unwrap();
+        fs::write(views.join("module.wasm"), b"wasm resource bytes").unwrap();
+        let resources = crate::bundle::resources::collect(
+            directory.path(),
+            &["target/views".into()],
+            "showcase",
+        )
+        .unwrap();
+        let built = bundle(
+            directory.path(),
+            &showcase_meta(),
+            &executable,
+            None,
+            "x86_64",
+            &resources,
+        )
+        .unwrap();
+        let extracted = directory.path().join("extracted");
+        tool(
+            "dpkg-deb",
+            &["-x".into(), path(&built[0]), path(&extracted)],
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(extracted.join("usr/lib/showcase/views/nested/module.wasm")).unwrap(),
+            b"wasm resource bytes"
+        );
+        assert_eq!(
+            fs::read_link(extracted.join("usr/bin/showcase")).unwrap(),
+            Path::new("../lib/showcase/showcase")
+        );
+        assert_eq!(
+            fs::canonicalize(extracted.join("usr/bin/showcase")).unwrap(),
+            extracted.join("usr/lib/showcase/showcase")
+        );
+        assert!(
+            !extracted.join("usr/bin/views").exists(),
+            "resource names must not collide across packages"
+        );
+    }
+
     /// Drives the real `dpkg-shlibdeps` and `dpkg-deb`, so the staging layout
     /// and control stanza are wrong here rather than on a release tag.
     #[cfg(target_os = "linux")]
@@ -332,6 +396,7 @@ mod tests {
             &executable,
             Some(&icon),
             "x86_64",
+            &[],
         )
         .expect("build the package");
 

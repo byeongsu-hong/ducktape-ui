@@ -12,13 +12,14 @@ pub(super) fn bundle(
     executable: &Path,
     icon: Option<&Path>,
     arch: &str,
+    resources: &[super::resources::Resource],
 ) -> Result<Vec<PathBuf>, String> {
     let identity = signing_identity();
     let notary = Notary::from_env();
     check_signing_plan(&identity, notary.is_some())?;
 
     let app = output.join(format!("{}.app", meta.name));
-    write_app(&app, meta, executable, icon)?;
+    write_app(&app, meta, executable, icon, resources)?;
     sign(&app, &identity)?;
 
     let dmg = output.join(format!("{}-{}-{arch}.dmg", meta.name, meta.version));
@@ -92,6 +93,7 @@ fn write_app(
     meta: &BundleMeta,
     executable: &Path,
     source: Option<&Path>,
+    payload: &[super::resources::Resource],
 ) -> Result<(), String> {
     // A stale bundle keeps files the new one does not list, and codesign seals
     // whatever it finds, so the layout starts empty every time.
@@ -104,6 +106,29 @@ fn write_app(
             .map_err(|error| format!("cannot create `{}`: {error}", directory.display()))?;
     }
     super::install(executable, &binaries.join(&meta.executable))?;
+    // macOS treats ordinary files in MacOS as nested code. Seal data in
+    // Resources and expose relative links beside the executable instead.
+    super::resources::install(payload, &resources.join("ice-bundle"))?;
+    let roots = payload
+        .iter()
+        .map(|file| {
+            file.destination
+                .components()
+                .next()
+                .expect("resource basename")
+                .as_os_str()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    for name in roots {
+        tool(
+            "ln",
+            &[
+                "-s".into(),
+                path(&Path::new("../Resources/ice-bundle").join(name)),
+                path(&binaries.join(name)),
+            ],
+        )?;
+    }
     if let Some(source) = source {
         let svg = super::read(source)?;
         super::write(
@@ -354,7 +379,7 @@ mod tests {
         fs::create_dir_all(app.join("Contents/MacOS")).expect("seed a stale bundle");
         fs::write(app.join("Contents/MacOS/stale"), b"old").expect("seed a stale file");
 
-        write_app(&app, &showcase_meta(), &executable, Some(&icon)).expect("write the bundle");
+        write_app(&app, &showcase_meta(), &executable, Some(&icon), &[]).expect("write the bundle");
 
         assert_eq!(
             fs::read(app.join("Contents/MacOS/showcase")).expect("bundled executable"),
@@ -368,6 +393,37 @@ mod tests {
         let plist = fs::read_to_string(app.join("Contents/Info.plist")).expect("Info.plist");
         assert!(plist.contains("<key>CFBundleIdentifier</key>"));
         assert!(plist.contains("<string>dev.ducktape.ui.showcase</string>"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn app_resources_are_installed_before_signing_and_removed_on_rebuild() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("showcase");
+        fs::write(&executable, b"binary").unwrap();
+        fs::create_dir_all(directory.path().join("target/views/nested")).unwrap();
+        fs::write(
+            directory.path().join("target/views/nested/module.wasm"),
+            b"wasm payload",
+        )
+        .unwrap();
+        let resources = crate::bundle::resources::collect(
+            directory.path(),
+            &["target/views".into()],
+            "showcase",
+        )
+        .unwrap();
+        let app = directory.path().join("Showcase.app");
+        write_app(&app, &showcase_meta(), &executable, None, &resources).unwrap();
+        assert_eq!(
+            fs::read(app.join("Contents/MacOS/views/nested/module.wasm")).unwrap(),
+            b"wasm payload"
+        );
+        write_app(&app, &showcase_meta(), &executable, None, &[]).unwrap();
+        assert!(
+            !app.join("Contents/MacOS/views").exists(),
+            "omitted resources must not survive into the next signature"
+        );
     }
 
     /// The one check that drives the real `codesign`, `ditto`, and `hdiutil`
@@ -393,7 +449,24 @@ mod tests {
         let app = directory.path().join("Showcase.app");
         let icon = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icons/ice.svg");
 
-        write_app(&app, &meta, &executable, Some(&icon)).expect("write the bundle");
+        fs::create_dir(directory.path().join("views")).unwrap();
+        fs::write(
+            directory.path().join("views/module.wasm"),
+            b"\0asm\x01\0\0\0",
+        )
+        .unwrap();
+        fs::write(directory.path().join("license.txt"), b"license resource").unwrap();
+        let resources = crate::bundle::resources::collect(
+            directory.path(),
+            &["views".into(), "license.txt".into()],
+            &meta.executable,
+        )
+        .unwrap();
+        write_app(&app, &meta, &executable, Some(&icon), &resources).expect("write the bundle");
+        assert_eq!(
+            fs::read(app.join("Contents/MacOS/views/module.wasm")).unwrap(),
+            b"\0asm\x01\0\0\0"
+        );
         sign(&app, AD_HOC_IDENTITY).expect("sign the bundle");
         tool(
             "codesign",
@@ -419,6 +492,19 @@ mod tests {
             UDIF_MAGIC,
             "`{}` is not a UDIF disk image",
             dmg.display()
+        );
+        fs::write(
+            app.join("Contents/MacOS/views/module.wasm"),
+            b"changed after signing",
+        )
+        .unwrap();
+        assert!(
+            tool(
+                "codesign",
+                &["--verify".into(), "--strict".into(), path(&app)]
+            )
+            .is_err(),
+            "the app signature must seal the copied wasm resource"
         );
     }
 }

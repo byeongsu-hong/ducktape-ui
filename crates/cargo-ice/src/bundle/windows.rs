@@ -14,9 +14,13 @@ pub(super) fn bundle(
     executable: &Path,
     source: Option<&Path>,
     arch: &str,
+    resources: &[super::resources::Resource],
 ) -> Result<Vec<PathBuf>, String> {
-    let staged = output.join(&meta.executable);
+    let payload = output.join(format!("{}-payload", meta.package));
+    super::recreate(&payload)?;
+    let staged = payload.join(&meta.executable);
     super::install(executable, &staged)?;
+    super::resources::install(resources, &payload)?;
     // The executable is signed before it is carried into the package, so the
     // file a user runs is signed whether they install or copy it out.
     sign(&staged)?;
@@ -29,7 +33,13 @@ pub(super) fn bundle(
     let authoring = output.join(format!("{}.wxs", meta.name));
     super::write(
         &authoring,
-        package_authoring(meta, &staged, source.map(|_| icon_file.as_path()))?.as_bytes(),
+        package_authoring(
+            meta,
+            &staged,
+            source.map(|_| icon_file.as_path()),
+            resources,
+        )?
+        .as_bytes(),
     )?;
 
     let msi = output.join(format!("{}-{}-{arch}.msi", meta.name, meta.version));
@@ -48,6 +58,74 @@ pub(super) fn bundle(
     Ok(vec![msi])
 }
 
+fn resource_id(prefix: &str, relative: &Path) -> String {
+    let digest = Sha256::digest(relative.to_string_lossy().replace('\\', "/").as_bytes());
+    let mut id = String::with_capacity(prefix.len() + 32);
+    id.push_str(prefix);
+    for byte in &digest[..16] {
+        write!(id, "{byte:02x}").unwrap();
+    }
+    id
+}
+
+fn resource_authoring(
+    payload: &Path,
+    resources: &[super::resources::Resource],
+) -> (String, String) {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut directories: BTreeMap<PathBuf, BTreeSet<PathBuf>> = BTreeMap::new();
+    let mut components = String::new();
+    for resource in resources {
+        let parent = resource.destination.parent().expect("relative file parent");
+        let mut directory = parent;
+        while !directory.as_os_str().is_empty() {
+            let above = directory.parent().expect("relative directory parent");
+            directories
+                .entry(above.to_owned())
+                .or_default()
+                .insert(directory.to_owned());
+            directory = above;
+        }
+        let directory_id = if parent.as_os_str().is_empty() {
+            "INSTALLFOLDER".into()
+        } else {
+            resource_id("ResourceDirectory", parent)
+        };
+        let component_id = resource_id("ResourceComponent", &resource.destination);
+        let file_id = resource_id("ResourceFile", &resource.destination);
+        let source = escape(&path(&payload.join(&resource.destination)));
+        let name = escape(
+            resource
+                .destination
+                .file_name()
+                .expect("resource name")
+                .to_str()
+                .expect("validated UTF-8 resource"),
+        );
+        writeln!(components, "      <Component Id=\"{component_id}\" Directory=\"{directory_id}\">\n        <File Id=\"{file_id}\" Source=\"{source}\" Name=\"{name}\" KeyPath=\"yes\" />\n      </Component>").unwrap();
+    }
+    fn render(parent: &Path, directories: &BTreeMap<PathBuf, BTreeSet<PathBuf>>, out: &mut String) {
+        if let Some(children) = directories.get(parent) {
+            for child in children {
+                let id = resource_id("ResourceDirectory", child);
+                let name = escape(
+                    child
+                        .file_name()
+                        .expect("directory name")
+                        .to_str()
+                        .expect("validated UTF-8 resource"),
+                );
+                writeln!(out, "        <Directory Id=\"{id}\" Name=\"{name}\">").unwrap();
+                render(child, directories, out);
+                out.push_str("        </Directory>\n");
+            }
+        }
+    }
+    let mut xml = String::new();
+    render(Path::new(""), &directories, &mut xml);
+    (xml, components)
+}
+
 fn wix_architecture(arch: &str) -> Result<&'static str, String> {
     match arch {
         "x86_64" => Ok("x64"),
@@ -63,6 +141,7 @@ fn package_authoring(
     meta: &BundleMeta,
     executable: &Path,
     icon_file: Option<&Path>,
+    resources: &[super::resources::Resource],
 ) -> Result<String, String> {
     let icon_authoring = icon_file.map_or_else(String::new, |icon| {
         format!(
@@ -76,6 +155,10 @@ fn package_authoring(
     } else {
         ""
     };
+    let (resource_directories, resource_components) = resource_authoring(
+        executable.parent().expect("staged executable parent"),
+        resources,
+    );
     Ok(format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
@@ -84,11 +167,12 @@ fn package_authoring(
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
 {icon_authoring}    <StandardDirectory Id="LocalAppDataFolder">
-      <Directory Id="INSTALLFOLDER" Name="{name}" />
+      <Directory Id="INSTALLFOLDER" Name="{name}">
+{resource_directories}      </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder" />
     <Feature Id="Main">
-      <Component Directory="INSTALLFOLDER">
+{resource_components}      <Component Directory="INSTALLFOLDER">
         <File Id="AppExecutable" Source="{executable}" Name="{executable_name}" KeyPath="yes" />
       </Component>
       <Component Directory="ProgramMenuFolder">
@@ -226,6 +310,7 @@ mod tests {
             &windows_meta(),
             Path::new("/build/showcase.exe"),
             Some(Path::new("/build/Showcase.ico")),
+            &[],
         )
         .expect("author the package");
 
@@ -255,9 +340,106 @@ mod tests {
     }
 
     #[test]
+    fn resource_files_have_stable_nested_install_directories() {
+        let resources = vec![super::super::resources::Resource {
+            source: PathBuf::from("/source/views/a&b/module.wasm"),
+            destination: PathBuf::from("views/a&b/module.wasm"),
+        }];
+        let authored = package_authoring(
+            &windows_meta(),
+            Path::new("/payload/showcase.exe"),
+            None,
+            &resources,
+        )
+        .unwrap();
+        assert!(authored.contains("Name=\"views\""), "{authored}");
+        assert!(authored.contains("Name=\"a&amp;b\""), "{authored}");
+        assert!(authored.contains("Name=\"module.wasm\""), "{authored}");
+        assert!(
+            authored.contains(&escape(&path(
+                &Path::new("/payload").join("views/a&b/module.wasm")
+            ))),
+            "{authored}"
+        );
+        let parent = resource_id("ResourceDirectory", Path::new("views/a&b"));
+        assert!(
+            authored.contains(&format!("Directory=\"{parent}\"")),
+            "{authored}"
+        );
+        assert_eq!(
+            parent,
+            resource_id("ResourceDirectory", Path::new("views/a&b"))
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "requires WiX 6; exercised by the manual native bundle CI gate"]
+    fn resource_msi_extracts_wasm_beside_the_executable() {
+        use std::fs;
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("showcase.exe");
+        fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+        fs::create_dir(directory.path().join("views")).unwrap();
+        fs::write(
+            directory.path().join("views/module.wasm"),
+            b"wasm installer payload",
+        )
+        .unwrap();
+        let resources =
+            crate::bundle::resources::collect(directory.path(), &["views".into()], "showcase.exe")
+                .unwrap();
+        let built = bundle(
+            directory.path(),
+            &windows_meta(),
+            &executable,
+            None,
+            "x86_64",
+            &resources,
+        )
+        .unwrap();
+        let extracted = directory.path().join("extracted");
+        tool(
+            "msiexec",
+            &[
+                "/a".into(),
+                path(&built[0]),
+                "/qn".into(),
+                format!("TARGETDIR={}", path(&extracted)),
+            ],
+        )
+        .unwrap();
+        fn find(root: &Path) -> Option<PathBuf> {
+            for entry in fs::read_dir(root).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    if let Some(found) = find(&path) {
+                        return Some(found);
+                    }
+                } else if path.file_name().unwrap() == "module.wasm" {
+                    return Some(path);
+                }
+            }
+            None
+        }
+        let wasm = find(&extracted).expect("wasm file in extracted MSI");
+        assert_eq!(fs::read(&wasm).unwrap(), b"wasm installer payload");
+        assert_eq!(wasm.parent().unwrap().file_name().unwrap(), "views");
+        assert!(
+            wasm.parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("showcase.exe")
+                .is_file()
+        );
+    }
+
+    #[test]
     fn an_icon_free_package_names_no_icon() {
-        let authoring = package_authoring(&windows_meta(), Path::new("/build/showcase.exe"), None)
-            .expect("author the package");
+        let authoring =
+            package_authoring(&windows_meta(), Path::new("/build/showcase.exe"), None, &[])
+                .expect("author the package");
         assert!(!authoring.contains("AppIcon"), "{authoring}");
     }
 
@@ -271,6 +453,7 @@ mod tests {
             },
             Path::new("/build/showcase.exe"),
             None,
+            &[],
         )
         .expect("author the package");
         assert!(

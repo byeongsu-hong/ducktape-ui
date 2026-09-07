@@ -7,12 +7,13 @@
 //! Identity comes from what the project already declares. The Ice `app`
 //! declaration names the application and its `id`; the Cargo manifest carries
 //! the version, description, authors, and homepage. Only what none of those
-//! can express — the icon and the per-platform store fields — lives in
+//! can express — resources, the icon, and the per-platform store fields — lives in
 //! `[package.metadata.ice.bundle]`.
 
 mod icon;
 mod linux;
 mod macos;
+mod resources;
 mod wasm;
 mod windows;
 
@@ -70,12 +71,16 @@ pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
     let output = package.target_directory.join("ice-bundle");
     create_dir(&output)?;
     let executable = link_executable(&package, &request, &output)?;
+    let resources =
+        resources::collect(&package.root, &package.options.resources, &meta.executable)?;
     let arch = request.arch_label();
     let source = package.icon.as_deref();
     let built = match platform {
-        Platform::MacOs => macos::bundle(&output, &meta, &executable, source, &arch)?,
-        Platform::Linux => linux::bundle(&output, &meta, &executable, source, &arch)?,
-        Platform::Windows => windows::bundle(&output, &meta, &executable, source, &arch)?,
+        Platform::MacOs => macos::bundle(&output, &meta, &executable, source, &arch, &resources)?,
+        Platform::Linux => linux::bundle(&output, &meta, &executable, source, &arch, &resources)?,
+        Platform::Windows => {
+            windows::bundle(&output, &meta, &executable, source, &arch, &resources)?
+        }
     };
     for artifact in &built {
         println!("{}", artifact.display());
@@ -346,6 +351,7 @@ struct BundleOptions {
     category: Option<String>,
     copyright: Option<String>,
     minimum_system_version: Option<String>,
+    resources: Vec<String>,
     usage: BTreeMap<String, String>,
 }
 
@@ -366,6 +372,7 @@ impl BundleOptions {
             "copyright",
             "minimum-system-version",
             "usage",
+            "resources",
         ];
         if let Some(unknown) = table.keys().find(|key| !known.contains(&key.as_str())) {
             return Err(format!(
@@ -390,6 +397,14 @@ impl BundleOptions {
             category: string("category")?,
             copyright: string("copyright")?,
             minimum_system_version: string("minimum-system-version")?,
+            resources: match table.get("resources") {
+                None => Vec::new(),
+                Some(Value::Array(values)) => values.iter().map(|value| match value {
+                    Value::String(value) if !value.is_empty() => Ok(value.clone()),
+                    _ => Err("[package.metadata.ice.bundle] `resources` must contain non-empty paths".to_owned()),
+                }).collect::<Result<_, _>>()?,
+                Some(_) => return Err("[package.metadata.ice.bundle] `resources` must be a list of paths".into()),
+            },
             usage: usage_descriptions(table.get("usage").unwrap_or(&Value::Null))?,
         })
     }
@@ -896,11 +911,20 @@ mod tests {
     }
 
     #[test]
+    fn resource_metadata_requires_an_explicit_nonempty_path_list() {
+        for value in [json!("views"), json!([""]), json!([7]), json!([null])] {
+            let error = BundleOptions::read(&json!({"resources": value})).unwrap_err();
+            assert!(error.contains("resources"), "{error}");
+        }
+    }
+
+    #[test]
     fn bundle_options_read_the_manifest_table() {
         let options = BundleOptions::read(&json!({
             "name": "Showcase",
             "icon": "../../assets/icons/ice.svg",
             "minimum-system-version": "12.0",
+            "resources": ["../target/views", "assets/license.txt"],
         }))
         .expect("read the table");
         assert_eq!(
@@ -909,6 +933,7 @@ mod tests {
                 name: Some("Showcase".into()),
                 icon: Some("../../assets/icons/ice.svg".into()),
                 minimum_system_version: Some("12.0".into()),
+                resources: vec!["../target/views".into(), "assets/license.txt".into()],
                 ..BundleOptions::default()
             }
         );

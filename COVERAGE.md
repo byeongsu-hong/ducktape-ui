@@ -1377,3 +1377,16 @@ thread's stack on the original left-associated 17-clause budget fixture; local
 Rust 1.98 full core tests with incremental compilation disabled did not reproduce
 it. The fixture now balances the same 67 operations to isolate the wire budget.
 This is not a fix or a support claim for stack-safe deep expression lowering.
+
+### Desktop bundle resources evidence
+
+`cargo test -p cargo-ice bundle::` checks resource metadata, collision and symlink
+rejection, recursive byte preservation, macOS app staging and stale-file removal,
+Windows installer authoring, and actual Linux Debian extraction. The opt-in
+`native-bundle-resources` CI job exercises macOS signing and rejects a tampered
+wasm payload; on Windows it builds and administratively extracts an MSI to
+check that the wasm file is installed beside the executable. Native platform
+results must be inspected separately from the portable authoring tests.
+
+Removing the ancestor symlink guard and destination-prefix collision guard
+makes their two regression assertions fail; restoring them passes both.
