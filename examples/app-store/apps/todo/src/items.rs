@@ -113,6 +113,18 @@ pub async fn save_items(items: Vec<Item>) -> Result<String, StorageError> {
     Ok(format!("saved {} items", items.len()))
 }
 
+/// The notes, one value under their own key; empty until first saved.
+pub async fn load_notes() -> Result<String, StorageError> {
+    let bytes = host::request("storage.get", b"notes").await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+pub async fn save_notes(text: String) -> Result<String, StorageError> {
+    let payload = format!("notes\n{text}");
+    host::request("storage.set", payload.as_bytes()).await?;
+    Ok("saved notes".to_owned())
+}
+
 /// The host's colour mode: `light` or `dark`, once on subscribing and again
 /// on every change.
 pub fn theme_changes() -> impl Stream<Item = Result<String, StorageError>> + Send + 'static {

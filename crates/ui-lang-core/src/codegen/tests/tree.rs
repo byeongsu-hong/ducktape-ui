@@ -25,7 +25,7 @@ fn tree(view: &str) -> String {
 /// a view that uses one brings it along.
 fn tree_with(handlers: &str, view: &str) -> String {
     let source = format!(
-        "app Demo\n{PALETTE}state\n  draft = \"\"\n  items = [\"a\", \"b\"]\n  busy = false\n  amount = 0.0\n  choice:str? = none\non add\n  draft = \"\"\non remove(index)\n  busy = true\n{handlers}view\n{view}"
+        "app Demo\n{PALETTE}state\n  draft = \"\"\n  items = [\"a\", \"b\"]\n  busy = false\n  amount = 0.0\n  choice:str? = none\n  notes:editor = \"Notes\"\non add\n  draft = \"\"\non remove(index)\n  busy = true\n{handlers}view\n{view}"
     );
     compile_for(&source, "demo.ice", Target::Tree).unwrap_or_else(|error| {
         panic!("{}", error.render("demo.ice"));
@@ -184,6 +184,40 @@ fn a_mouse_area_compiles_to_a_mouse_area_node_with_handler_slots() {
         !generated.contains("::iced::widget::mouse_area("),
         "{generated}"
     );
+}
+
+/// An `editor` state field is a `String` in a view module — the host owns
+/// the `text_editor::Content` — and the `<->` binding's message carries the
+/// whole text back, like an input's.
+#[test]
+fn an_editor_is_a_string_the_host_edits() {
+    let generated = tree_with(
+        "on clear\n  notes = editor(\"\")\nderived\n  lines = editor_line_count(notes)\n  second = editor_line(notes, 1)\n",
+        "  col\n    editor #notes <-> notes hint=\"Write\" h=fill min-h=80.0 disabled=busy\n    text editor_text(notes) @text-fg\n    text lines @text-fg\n    button \"Clear\" -> clear\n    button \"×\" -> remove 0\n",
+    );
+    for expected in [
+        "notes: ::std::string::String,",
+        "__EditNotes(::std::string::String),",
+        "__DemoMessage::__EditNotes(__text) => {",
+        "::ui_lang_guest::wire::Node::Editor { key:",
+        "placeholder: \"Write\".to_owned()",
+        "text: (self.notes).to_string()",
+        "on_edit: if (self.busy) { ::std::option::Option::None } else { ::std::option::Option::Some(::ui_lang_guest::slots::handler::<::std::string::String, __DemoMessage>(",
+        "height: ::std::option::Option::Some(::ui_lang_guest::wire::Length::Fill)",
+        "min_height: ::std::option::Option::Some((80.0) as f32)",
+        "(self.notes).clone()",
+        ".split('\\n').nth(__line)",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected:?} in:\n{generated}"
+        );
+    }
+    assert!(
+        !generated.contains("text_editor::Content"),
+        "a view module never holds a Content:\n{generated}"
+    );
+    assert!(!generated.contains("__CaretNotes"), "{generated}");
 }
 
 /// A grid crosses with its column count, cell cap, spacing and sizing
@@ -399,6 +433,10 @@ const HEAD: &str = concat!(
     "  themer alternate_panel(active:bool) -> unit\n",
     "  checkbox-style checkbox_look(active:bool)\n",
     "  svg-style tinted(active:bool)\n",
+    "  editor-action track_edits()\n",
+    "  editor-binding editor_keys(readonly:bool) -> str\n",
+    "  editor-highlighter editor_highlight(language:str)\n",
+    "  editor-style editor_surface(readonly:bool)\n",
     "theme contract AppTheme\n  bg\n  fg\n  primary\n  danger\n",
     "palette app for AppTheme\n",
     "  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n",
@@ -652,7 +690,53 @@ const COVERAGE: &[Coverage] = &[
         "  markdown docs -> link_opened _\n",
         "`markdown`",
     ),
-    refused("editor", "", "  editor <-> notes\n", "`editor`"),
+    emitted(
+        "editor",
+        "",
+        "  editor #notes <-> notes hint=\"Write\" w=320.0 h=fill min-h=80.0 max-h=240.0 disabled=busy\n",
+    ),
+    refused(
+        "editor: action",
+        "",
+        "  editor <-> notes action=track_edits()\n",
+        "an editor action",
+    ),
+    refused(
+        "editor: key binding",
+        "on command(_value)\n",
+        "  editor <-> notes key-binding=editor_keys(busy) -> command _\n",
+        "an editor key binding",
+    ),
+    refused(
+        "editor: highlight",
+        "",
+        "  editor <-> notes highlight=\"rs\"\n",
+        "an editor highlighter",
+    ),
+    refused(
+        "editor: highlighter",
+        "",
+        "  editor <-> notes highlighter=editor_highlight(draft)\n",
+        "an editor highlighter",
+    ),
+    refused(
+        "editor: style callback",
+        "",
+        "  editor <-> notes style=editor_surface(busy)\n",
+        "a style on an editor",
+    ),
+    refused(
+        "editor: status style",
+        "",
+        "  editor <-> notes\n    active bg=bg\n",
+        "a style on an editor",
+    ),
+    refused(
+        "editor: text option",
+        "",
+        "  editor <-> notes size=14.0\n",
+        "this editor option",
+    ),
     refused("themer", "", "  themer alternate_panel(true)\n", "`themer`"),
     refused(
         "shader",

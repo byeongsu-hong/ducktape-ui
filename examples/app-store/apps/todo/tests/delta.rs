@@ -23,7 +23,7 @@ fn toggling_one_of_two_hundred_items_crosses_as_a_patch_not_the_list() {
     let load = frame
         .requests
         .iter()
-        .find(|request| request.kind == "storage.get")
+        .find(|request| request.kind == "storage.get" && request.payload == b"items")
         .expect("the load");
     let items: Vec<Item> = (0..200)
         .map(|id| Item {

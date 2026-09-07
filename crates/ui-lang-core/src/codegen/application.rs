@@ -1002,6 +1002,20 @@ pub(in crate::codegen) fn generate_update(
         {
             let variant = component_editor_variant(&component.name, &state.name);
             let entry = entry("__scope");
+            if program.target() == Target::Tree {
+                let write = state_write_code(
+                    program,
+                    "__local",
+                    ResolvedValueRef::ComponentState(state.id),
+                    StateWrite::Assign("__text".into()),
+                );
+                writeln!(
+                    out,
+                    "{message}::{variant}(__scope, __text) => {{ {entry} {write} ::iced::Task::none() }},"
+                )
+                .unwrap();
+                continue;
+            }
             let perform =
                 match program.component_controlled_editor_action(&component.name, &state.name) {
                     Some(action) => format!(
@@ -1097,6 +1111,20 @@ pub(in crate::codegen) fn generate_update(
     }
     for binding in program.controlled_editor_bindings()? {
         let variant = editor_variant(&binding.name);
+        if program.target() == Target::Tree {
+            let write = state_write_code(
+                program,
+                "self",
+                ResolvedValueRef::AppState(binding.state),
+                StateWrite::Assign("__text".into()),
+            );
+            writeln!(
+                out,
+                "{message}::{variant}(__text) => {{ {write} ::iced::Task::none() }}"
+            )
+            .unwrap();
+            continue;
+        }
         let perform = match binding.action {
             Some(action) => format!(
                 "{}(&mut self.{}, action)",

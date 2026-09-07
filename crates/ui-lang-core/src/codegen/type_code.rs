@@ -1,9 +1,31 @@
 use super::*;
 
 pub(super) fn rust_type_code(program: &LoweredProgram, ty: &Type) -> String {
+    if *ty == Type::Editor {
+        return editor_type_code(program).to_owned();
+    }
     rust_type_code_with_named(ty, &|name| {
         program.struct_rust_path_by_name(name).map(str::to_owned)
     })
+}
+
+/// What an `editor` state field holds. A view module never holds a
+/// `text_editor::Content`: the host owns the caret, selection and undo, and
+/// the guest keeps the text alone (`ui_lang_wire::Node::Editor`).
+pub(super) fn editor_type_code(program: &LoweredProgram) -> &'static str {
+    match program.target() {
+        Target::Tree => "::std::string::String",
+        Target::Native => "::iced::widget::text_editor::Content",
+    }
+}
+
+/// What an editor's message carries: the action the widget performed
+/// natively, the whole text the host now holds on the tree target.
+pub(super) fn editor_message_payload_code(program: &LoweredProgram) -> &'static str {
+    match program.target() {
+        Target::Tree => "::std::string::String",
+        Target::Native => "::iced::widget::text_editor::Action",
+    }
 }
 
 fn rust_type_code_with_named(

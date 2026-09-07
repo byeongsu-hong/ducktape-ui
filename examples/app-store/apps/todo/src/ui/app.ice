@@ -21,6 +21,8 @@ extern crate::items
   pure next_after(items:[Item]) -> i64
   load_items() -> [Item] ! StorageError
   save_items(items:[Item]) -> str ! StorageError
+  load_notes() -> str ! StorageError
+  save_notes(text:str) -> str ! StorageError
   stream theme_changes() -> str ! StorageError
 
 state
@@ -31,12 +33,15 @@ state
   active_palette:palette[TodoTheme] = TodoTheme.light
   dark = false
   hide_done = false
+  // The host owns the editor's caret and selection; the guest holds the text.
+  notes:editor = ""
 
 // The list lives in the host's storage: it survives uninstall and reinstall.
 // The colour mode is the host's too, streamed in and followed here.
 on mount
   parallel
     run every load_items() -> loaded _ | failed _
+    run every load_notes() -> notes_loaded _ | failed _
     stream every theme_changes() -> themed _ | theme_failed _
 
 on themed(mode)
@@ -52,6 +57,12 @@ on loaded(stored)
   items = stored
   next_id = next_after(stored)
   status = ""
+
+on notes_loaded(text)
+  notes = editor(text)
+
+on keep_notes
+  run every save_notes(editor_text(notes)) -> saved _ | failed _
 
 on add
   items = add_item(items, next_id, draft)
@@ -141,6 +152,10 @@ view
                   button "×" -> remove item.id
                     active bg=raised text=danger r=8.0
                     hovered bg=border text=danger r=8.0
+      editor #notes <-> notes hint="Notes" h=96.0
+      button "Save notes" #keep -> keep_notes
+        active bg=raised text=fg r=8.0
+        hovered bg=border text=fg r=8.0
       progress done_share(items) #done
         with
           min=0.0

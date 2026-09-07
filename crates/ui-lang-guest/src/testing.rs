@@ -4,7 +4,7 @@
 use crate::wire::{ButtonContent, Event, Frame, Node};
 
 /// Every text the tree shows, depth first: text nodes, button labels, and
-/// the value or placeholder of an input.
+/// the value or placeholder of an input or editor.
 pub fn texts(frame: &Frame) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(root) = &frame.root {
@@ -24,11 +24,16 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
         }
         Node::Text { content, .. } => out.push(content.clone()),
         Node::Input {
-            value, placeholder, ..
-        } => out.push(if value.is_empty() {
+            value: text,
+            placeholder,
+            ..
+        }
+        | Node::Editor {
+            text, placeholder, ..
+        } => out.push(if text.is_empty() {
             placeholder.clone()
         } else {
-            value.clone()
+            text.clone()
         }),
         Node::Button { content, .. } => match content {
             ButtonContent::Label(label) => out.push(label.clone()),
@@ -84,6 +89,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         | Node::Text { .. }
         | Node::Svg { .. }
         | Node::Input { .. }
+        | Node::Editor { .. }
         | Node::Space { .. }
         | Node::Rule { .. }
         | Node::Toggle { .. }
@@ -144,6 +150,29 @@ pub fn type_into(frame: &Frame, name: &str, text: &str) -> Vec<Event> {
     };
     vec![Event::Input {
         handler: *on_input,
+        text: text.to_string(),
+    }]
+}
+
+/// The events the host sends when the editor with key or placeholder `name`
+/// now reads `text`.
+pub fn edit(frame: &Frame, name: &str, text: &str) -> Vec<Event> {
+    let editor = frame.root.as_ref().and_then(|root| {
+        find_by(root, &|node| match node {
+            Node::Editor {
+                key, placeholder, ..
+            } => key == name || placeholder == name,
+            _ => false,
+        })
+    });
+    let Some(Node::Editor { on_edit, .. }) = editor else {
+        panic!("no editor {name:?} in {:?}", texts(frame));
+    };
+    let Some(handler) = on_edit else {
+        panic!("editor {name:?} is disabled");
+    };
+    vec![Event::Edit {
+        handler: *handler,
         text: text.to_string(),
     }]
 }
@@ -346,6 +375,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         | Node::Text { .. }
         | Node::Svg { .. }
         | Node::Input { .. }
+        | Node::Editor { .. }
         | Node::Space { .. }
         | Node::Rule { .. }
         | Node::Toggle { .. }

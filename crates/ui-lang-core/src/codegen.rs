@@ -904,7 +904,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         let clone_fields = viewed
             .iter()
             .map(|state| {
-                if state.ty == Type::Editor {
+                if state.ty == Type::Editor && program.target() == Target::Native {
                     format!("{name}: __state.{name}.text(),", name = state.name)
                 } else {
                     format!("{name}: __state.{name}.clone(),", name = state.name)
@@ -1098,8 +1098,9 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         {
             writeln!(
                 out,
-                "pub(crate) {}: ::iced::widget::text_editor::Content,",
-                component_editor_initial_field(&component.name, &state.name)
+                "pub(crate) {}: {},",
+                component_editor_initial_field(&component.name, &state.name),
+                editor_type_code(program)
             )
             .unwrap();
         }
@@ -1209,16 +1210,19 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         {
             writeln!(
                 out,
-                "{}(::std::string::String, ::iced::widget::text_editor::Action),",
-                component_editor_variant(&component.name, &state.name)
+                "{}(::std::string::String, {}),",
+                component_editor_variant(&component.name, &state.name),
+                editor_message_payload_code(program)
             )
             .unwrap();
-            writeln!(
-                out,
-                "{}(::std::string::String, usize, usize),",
-                component_editor_caret_variant(&component.name, &state.name)
-            )
-            .unwrap();
+            if program.target() == Target::Native {
+                writeln!(
+                    out,
+                    "{}(::std::string::String, usize, usize),",
+                    component_editor_caret_variant(&component.name, &state.name)
+                )
+                .unwrap();
+            }
         }
     }
     if !program.secrets().is_empty() {
@@ -1239,16 +1243,21 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     for binding in program.controlled_editor_bindings()? {
         writeln!(
             out,
-            "{}(::iced::widget::text_editor::Action),",
-            editor_variant(&binding.name)
+            "{}({}),",
+            editor_variant(&binding.name),
+            editor_message_payload_code(program)
         )
         .unwrap();
-        writeln!(
-            out,
-            "{}(usize, usize),",
-            editor_caret_variant(&binding.name)
-        )
-        .unwrap();
+        // The caret moves through accessibility, which the host owns on
+        // the tree target.
+        if program.target() == Target::Native {
+            writeln!(
+                out,
+                "{}(usize, usize),",
+                editor_caret_variant(&binding.name)
+            )
+            .unwrap();
+        }
     }
     if needs_extern_noop(program) {
         writeln!(out, "__ExternNoop,").unwrap();
@@ -1479,7 +1488,7 @@ mod type_code;
 mod view;
 
 pub(crate) use expr::copy_expression_type;
-use type_code::rust_type_code;
+use type_code::{editor_message_payload_code, editor_type_code, rust_type_code};
 
 use application::*;
 use canvas::*;

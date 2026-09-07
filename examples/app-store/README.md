@@ -23,12 +23,14 @@ crates/ui-lang-guest/  (workspace crate) what an app needs to run in wasm: a
                 `export_app!`, which adds the `ice:view` component exports and
                 the manifest
 crates/ui-lang-runtime/view_tree   (workspace crate) the host's half: the tree
-                rendered with iced's widgets, every input's text kept host-side
+                rendered with iced's widgets, every input's text and every
+                editor's content kept host-side
 apps/counter/   three buttons and a card that is a `mouse` area — hover, move
                 and wheel reach the guest; Auto is an Ice `subscribe every`,
                 which the guest runtime routes to the host's ticker; every
                 change goes on the bus and into the store's log
-apps/todo/      a list kept in the host's storage — it survives uninstall/reinstall
+apps/todo/      a list and a notes editor kept in the host's storage — they
+                survive uninstall/reinstall
 apps/clock/     host uptime from a subscription, UTC from one `clock.now` plus
                 arithmetic; the module has no clock
 apps/activity/  a live feed of what the other apps publish, and who published it
@@ -411,8 +413,8 @@ An honest inventory, grouped by where the work would land. Items marked
 
 ### Wire and rendering
 
-- The wire carries `box`, `mouse`, `col`/`row`, `grid`, `scroll`, `sensor`, `text`,
-  `svg`, `input`, `button`, `space`, `rule`, `checkbox`, `toggler`, `radio`,
+- The wire carries `box`, `mouse`, `col`/`row`, `grid`, `scroll`, `sensor`,
+  `text`, `svg`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
   extern's name (`clock_face` is the one this store paints, with a sweeping
@@ -457,6 +459,21 @@ An honest inventory, grouped by where the work would land. Items marked
   middle buttons, enter, exit, `move=`, `press-at=`, `scroll=` — but not
   `cursor=`: the pointer's shape over it is the host's, and the option is
   refused with E190.
+- An `editor` is its text in a view module: the host owns the
+  `text_editor::Content` (caret, selection, undo) and the guest's `editor`
+  state is a `String` it hears whole after every edit, like an input's. It
+  carries a hint, a width in pixels, a height and min/max heights, and
+  `disabled=`. Everything the host would have to call back into the guest
+  for is refused with E190: an `editor-action`, `editor-binding`,
+  `editor-highlighter` or `editor-style` extern, `highlight=`, a status
+  style, and the text options (`size=`, `p=`, `line-h=`, `wrap=`, `font=`).
+  The caret builtins (`editor_cursor_line`, `editor_cursor_column`,
+  `editor_has_selection`) are refused too — the guest never sees the caret
+  — and, because an expression carries no origin, that E190 names the
+  builtin but not its line. `editor_line_count` and `editor_line` read the
+  string. Accessibility exports the editor's value, caret and one text run
+  per line, and `SetTextSelection` moves the host's caret without a guest
+  tick.
 - No scale factor or locale reaches the guest. The colour mode does, as a
   `host.theme` stream the app has to subscribe to and act on itself.
 - The host's accessibility tree names every node by its key, but nothing

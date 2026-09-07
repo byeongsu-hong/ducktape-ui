@@ -333,6 +333,19 @@ fn gen_input(rng: &mut Rng) -> Node {
     }
 }
 
+fn gen_editor(rng: &mut Rng) -> Node {
+    Node::Editor {
+        key: gen_key(rng),
+        placeholder: gen_string(rng),
+        text: gen_string(rng),
+        on_edit: rng.next_bool().then(|| rng.next_u64() as u32),
+        width: rng.next_bool().then(|| gen_f32(rng)),
+        height: gen_opt_length(rng),
+        min_height: rng.next_bool().then(|| gen_f32(rng)),
+        max_height: rng.next_bool().then(|| gen_f32(rng)),
+    }
+}
+
 fn gen_rule(rng: &mut Rng) -> Node {
     Node::Rule {
         key: gen_key(rng),
@@ -490,9 +503,10 @@ fn gen_surface(rng: &mut Rng) -> Node {
 }
 
 fn gen_leaf(rng: &mut Rng) -> Node {
-    match rng.next_range(11) {
+    match rng.next_range(12) {
         0 => gen_text(rng),
         10 => gen_svg(rng),
+        11 => gen_editor(rng),
         1 => Node::Space {
             width: gen_opt_length(rng),
             height: gen_opt_length(rng),
@@ -1368,6 +1382,25 @@ fn check_bounds(
         Node::Surface { name, arg, .. } => {
             check_string(name, ctx, "surface name");
             check_string(arg, ctx, "surface arg");
+        }
+        Node::Editor {
+            placeholder,
+            text,
+            width,
+            height,
+            min_height,
+            max_height,
+            ..
+        } => {
+            check_string(placeholder, ctx, "editor placeholder");
+            check_string(text, ctx, "editor text");
+            check_length(height, ctx);
+            for value in [width, min_height, max_height].into_iter().flatten() {
+                assert!(
+                    value.is_finite() && (0.0..=PIXEL_BOUND).contains(value),
+                    "{ctx}: editor size {value} outside 0..={PIXEL_BOUND}"
+                );
+            }
         }
     }
 }
