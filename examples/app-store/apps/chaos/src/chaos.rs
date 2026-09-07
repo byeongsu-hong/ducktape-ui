@@ -4,8 +4,8 @@
 //! host for things it will not give: a capability the manifest never
 //! declared, and more requests than one tick allows.
 
-use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
+use ui_lang_guest::host;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HostError {

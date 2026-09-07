@@ -117,8 +117,15 @@ fn editing_the_notes_echoes_them_and_save_writes_them() {
     let Some(Node::Editor { text, .. }) = find(&frame, "Todo/app/content/notes") else {
         panic!("no editor in {:?}", keys(&frame));
     };
-    assert_eq!(text, "buy milk\nand eggs", "the guest echoes the host's text");
-    assert!(frame.requests.is_empty(), "typing saves nothing: {:?}", frame.requests);
+    assert_eq!(
+        text, "buy milk\nand eggs",
+        "the guest echoes the host's text"
+    );
+    assert!(
+        frame.requests.is_empty(),
+        "typing saves nothing: {:?}",
+        frame.requests
+    );
 
     let frame = tick_native(press(&frame, "Save notes"));
     let [save] = frame.requests.as_slice() else {

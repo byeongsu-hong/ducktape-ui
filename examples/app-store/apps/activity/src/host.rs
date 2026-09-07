@@ -1,7 +1,7 @@
 //! A feed of everything on the host's bus.
 
-use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
+use ui_lang_guest::host;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct BusError {

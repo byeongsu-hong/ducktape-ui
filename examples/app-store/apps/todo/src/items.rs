@@ -2,8 +2,8 @@
 //! is rewritten by a pure Rust function rather than mutated in place. The
 //! list itself lives in the host's storage as one line per item.
 
-use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
+use ui_lang_guest::host;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Item {
