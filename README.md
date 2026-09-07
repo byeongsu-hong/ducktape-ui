@@ -426,3 +426,8 @@ performs the platform operation and returns reads to the guest's handler.
 Tree-target `shader` calls use named host surfaces with typed data arguments
 and event routes. The guest's dimensions bound the region; rendering remains
 in the host. See [the wire rendering contract](examples/app-store/README.md#wire-and-rendering).
+
+Checked Ice widget statements also cross to a wasm view's mounted host:
+focus/query, input cursor/selection and scroll/snap operations stay confined
+to that view. Arbitrary native widget Tasks and host window actions still
+need separate boundaries. See the [app-store fixture](examples/app-store/README.md#mounted-widget-operation-fixture).

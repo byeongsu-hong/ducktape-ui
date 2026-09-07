@@ -11,7 +11,7 @@ use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, r
 use iced::{Element, Event, Length, Rectangle, Size, Vector, widget, window};
 use ui_lang_runtime::view_tree::{self, Output};
 
-use crate::store::{Guest, Surface};
+use crate::store::{Guest, MountedWidgets, Surface};
 
 /// The guest's window. It emits `"restart"` when the user asks for one,
 /// `"ended"` when the instance ended on its own, and `"wake"` when the tree
@@ -176,7 +176,34 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
         guest.set_theme(*now, self.dark);
         // Not every redraw of the window is a tick of the guest: one with
         // nothing to deliver is left alone.
-        let wake = guest.redraw(*now, clipboard);
+        let wake = {
+            let content = &mut self.content;
+            let mut execute = |command| {
+                view_tree::execute_widget_command(command, |operation| {
+                    content
+                        .as_widget_mut()
+                        .operate(tree, layout, renderer, operation);
+                    // Traverse this guest's overlays as well, never the
+                    // desktop root or another mounted guest's widgets.
+                    if let Some(mut overlay) = content
+                        .as_widget_mut()
+                        .overlay(tree, layout, renderer, viewport, Vector::ZERO)
+                        .map(overlay::Nested::new)
+                    {
+                        let bounds = overlay.layout(renderer, viewport.size());
+                        overlay.operate(Layout::new(&bounds), renderer, operation);
+                    }
+                })
+            };
+            guest.redraw(
+                *now,
+                clipboard,
+                Some(MountedWidgets {
+                    revision: self.rev,
+                    execute: &mut execute,
+                }),
+            )
+        };
         if let Some(at) = wake.at {
             shell.request_redraw_at(at);
         }

@@ -1208,3 +1208,45 @@ source append removal likewise fails its preserved-source assertion.
 Nested list/optional markdown state also appears in the real wasm fixture.
 The codegen assertion for guest list content failed before recursive target
 mapping and passes after the fix; the fixture then bundles successfully.
+
+### Tree-target widget requests
+
+Checked widget focus/next/previous/query, input cursor/selection and
+scroll/snap statements use typed `host.widget` requests. Native codegen stays
+unchanged. Runtime execution reuses native operations, including chained
+focus traversal and content-end snapping for both anchors. Host queues wait
+for the requesting frame to mount, run prior eligible work before a busy
+guest replaces that frame, cancel pending work and account native execution
+in redraw throttling. Selectors, virtual-row scrolling and arbitrary native
+Rust widget Tasks are outside this claim.
+
+Evidence: wire tests reject oversized target identities and nonfinite offsets;
+guest tests check mutation acknowledgement before a chained focused query;
+codegen tests check tree lowering and existing native generation. Runtime
+headless tests observe focus, selection replacement after typing, signed
+scroll offsets and both content-end anchors. The `widget-guest` wasm fixture
+and ignored `bundled_widget_` host tests exercise actual mounted views, real
+mouse/key events, two-instance isolation, timer-driven boot focus, focus
+replies, cancellation, stale/budget checks and elapsed-time throttling.
+CI explicitly bundles and runs this fixture.
+
+Red/Green: dropping focus replies fails the guest handler assertion. Removing
+wire target/offset guards fails the corresponding refusal assertions. Before
+lowering tree statements, the codegen host-request assertion fails. Skipping
+native traversal or its chained passes fails the runtime focus and scroll
+assertions; restoration passes.
+
+The shared-window test mounts two guest views with identical widget IDs and
+an independently focused host input in one UI root. A command for the first
+guest preserves the second guest and the host input. Temporarily applying
+that command to the whole UI root fails the complete focus-state assertion.
+Replacing mounted execution with a unit reply fails boot focus; removing
+pending-request cancellation fails the queue assertion. All are assertion
+failures, and restoring the behavior passes all four bundled host tests.
+
+Commands: `cargo test -p ui-lang-wire -p ui-lang-guest -p ui-lang-runtime
+-p ui-lang-core`; `cargo ice bundle --manifest-path examples/app-store/Cargo.toml
+-p app-store-widget-fixture --target wasm32-unknown-unknown
+--out examples/app-store/target/widget-fixture`; and
+`cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host
+bundled_widget_ -- --ignored`.

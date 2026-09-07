@@ -248,6 +248,7 @@ version = "0.1.0"
 dependencies = [
  "getrandom 0.3.4",
  "iced",
+ "iced_test",
  "sha2 0.10.9",
  "ui-lang",
  "ui-lang-build",
@@ -270,6 +271,17 @@ dependencies = [
 
 [[package]]
 name = "app-store-todo"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
+]
+
+[[package]]
+name = "app-store-widget-fixture"
 version = "0.1.0"
 dependencies = [
  "iced",

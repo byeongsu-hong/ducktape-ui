@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 
 mod markdown;
 pub use markdown::MarkdownDocument;
+mod widget;
+pub use widget::WidgetCommand;
 
 mod surface;
 pub use surface::{MAX_SURFACE_DEPTH, MAX_SURFACE_VALUES, SurfaceValue, sanitize_surface_event};

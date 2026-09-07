@@ -1087,3 +1087,56 @@ fn nested_markdown_state_uses_guest_content_types() {
         "optional markdown must use guest content"
     );
 }
+
+#[test]
+fn widget_statements_request_operations_on_the_mounted_host() {
+    let source = format!(
+        r#"app Operations
+{PALETTE}state
+  value = ""
+  focused = false
+on checked(value)
+  focused = value
+on previous
+  task widget focus-prev
+on next
+  task widget focus-next
+on focus
+  task widget focus #field
+on query
+  task widget focused #field -> checked _
+on front
+  task widget cursor-front #field
+on end
+  task widget cursor-end #field
+on cursor
+  task widget cursor #field 2
+on all
+  task widget select-all #field
+on range
+  task widget select #field 1 3
+on snap
+  task widget snap #list 0.0 1.0
+on snap_end
+  task widget snap-end #list
+on scroll_to
+  task widget scroll-to #list 0.0 24.0
+on scroll_by
+  task widget scroll-by #list -4.0 8.0
+view
+  col
+    input "Value" #field <-> value
+    button "Operate" -> focus
+    scroll #list
+      text "Content"
+"#
+    );
+    let generated = compile_for(&source, "operations.ice", Target::Tree).unwrap();
+    assert!(
+        generated.contains("::ui_lang_guest::widget::perform"),
+        "tree widget statements must request mounted host operations"
+    );
+    assert!(generated.contains("::ui_lang_guest::widget::is_focused"));
+    assert!(generated.contains("Operations/field"));
+    assert!(!generated.contains("::iced::widget::operation::focus"));
+}
