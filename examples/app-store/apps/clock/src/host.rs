@@ -1,7 +1,7 @@
 //! The clock's one source of time: a stream of ticks the host sends.
 
-use ui_lang_guest::host;
 use iced::futures::{Stream, StreamExt};
+use ui_lang_guest::host;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ClockError {
