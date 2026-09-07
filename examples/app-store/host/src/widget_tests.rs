@@ -8,6 +8,17 @@ use iced_test::runtime::{UserInterface, user_interface};
 use ui_lang_runtime::view_tree;
 
 fn renderer() -> iced::Renderer {
+    view_tree::register_font_family("Geist");
+    for bytes in [
+        include_bytes!("../../../../assets/fonts/Geist-Regular.ttf").as_slice(),
+        include_bytes!("../../../../assets/fonts/Geist-Bold.ttf").as_slice(),
+    ] {
+        iced_test::renderer::graphics::text::font_system()
+            .write()
+            .unwrap()
+            .load_font(bytes.into());
+    }
+
     iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
         Font::DEFAULT,
         Pixels(16.0),
@@ -468,5 +479,53 @@ fn bundled_widget_commands_preserve_siblings_and_host_focus_in_one_window() {
             (iced::widget::Id::new("WidgetFixture/second"), false),
         ],
         "guest boot commands must preserve siblings and the host in the same UI root"
+    );
+}
+
+#[test]
+#[ignore = "requires bundled widget-fixture wasm"]
+fn bundled_widget_recipe_ring_uses_keyboard_focus_only() {
+    fn red_pixels(ui: &mut Ui, renderer: &mut iced::Renderer) -> usize {
+        ui.draw(
+            renderer,
+            &iced::Theme::Light,
+            &iced::advanced::renderer::Style {
+                text_color: iced::Color::BLACK,
+            },
+            mouse::Cursor::Unavailable,
+        );
+        renderer
+            .screenshot(Size::new(600, 1000), 1.0, iced::Color::WHITE)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[0] > 240 && pixel[1] < 20 && pixel[2] < 20)
+            .count()
+    }
+    let guest = guest();
+    let mut renderer = renderer();
+    let mut ui = build(&guest, user_interface::Cache::default(), &mut renderer);
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now);
+    }
+    click(&mut ui, &mut renderer, "Query");
+    assert_eq!(
+        red_pixels(&mut ui, &mut renderer),
+        0,
+        "pointer focus has no recipe ring"
+    );
+    view_tree::execute_widget_command(
+        wire::WidgetCommand::Focus {
+            target: "WidgetFixture/query".into(),
+        },
+        |op| {
+            ui.operate(&renderer, op);
+        },
+    )
+    .unwrap();
+    assert!(
+        red_pixels(&mut ui, &mut renderer) > 50,
+        "keyboard focus draws the guest recipe's red ring"
     );
 }

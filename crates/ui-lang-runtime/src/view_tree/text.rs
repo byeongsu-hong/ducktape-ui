@@ -15,7 +15,7 @@ pub fn register_font_family(family: &'static str) {
         .insert(family);
 }
 
-fn named_font(face: &wire::NamedFont) -> iced::Font {
+pub(super) fn named_font(face: &wire::NamedFont) -> iced::Font {
     use iced::font::{Family, Stretch, Style};
     let family = match &face.family {
         wire::FontFamily::Named(name) => FAMILIES

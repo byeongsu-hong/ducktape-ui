@@ -478,6 +478,11 @@ host and guest rebuilds together.
 Tree buttons preserve optional `checked=`, `expanded=` and `description=`.
 The host forwards them to the native accessible wrapper: `false` is distinct
 from omission, and descriptions share the frame text budget. This changes the
-Button wire layout; rebuild hosts and guests together. Button recipes remain
-separate work. Native AccessKit snapshot tests cover true/false/absent states;
+Button wire layout; rebuild hosts and guests together.
+Native AccessKit snapshot tests cover true/false/absent states;
 the widget wasm fixture verifies copied state after a native focus-button click.
+
+Tree buttons also copy resolved recipes and all eight native presets, including
+label typography, disabled colors/opacity, padding and keyboard focus rings.
+Named label fonts use the same trusted host registry as plain text. Rebuild
+hosts and guests together for the ButtonStyle wire change.

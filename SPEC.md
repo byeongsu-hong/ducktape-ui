@@ -1030,6 +1030,19 @@ host and guest rebuilds together.
 Tree buttons preserve optional `checked=`, `expanded=` and `description=`.
 The host forwards them to the native accessible wrapper: `false` is distinct
 from omission, and descriptions share the frame text budget. This changes the
-Button wire layout; rebuild hosts and guests together. Button recipes remain
-separate work. Native AccessKit snapshot tests cover true/false/absent states;
+Button wire layout; rebuild hosts and guests together.
+Native AccessKit snapshot tests cover true/false/absent states;
 the widget wasm fixture verifies copied state after a native focus-button click.
+
+### Tree button recipes
+
+The tree target copies resolved button preset, recipe colors, border, label
+size/relative line height/font and focus-visible ring color. Hosts resolve the
+native preset, recipe base/status colors, typed active face, typed status face,
+then recipe disabled treatment unless a typed disabled face exists. Guest
+default font and text size apply to compact labels; fixed dimensions center
+content on the corresponding axes. Explicit zero padding overrides native
+defaults, including `@p-0px`. Font names share the frame text budget and trusted
+host registry; numeric recipe values are sanitized. Unsupported utility
+properties and Rust style callbacks remain E190. ButtonStyle changes require
+host and guest rebuilds together.

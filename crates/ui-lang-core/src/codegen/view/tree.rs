@@ -37,6 +37,7 @@
 //! (`style=some_fn(…)`) is refused, since no Rust runs on the host's side.
 
 use super::*;
+mod button;
 mod canvas;
 mod responsive;
 mod text;
@@ -1546,18 +1547,8 @@ fn button(
         button.custom_style.is_some(),
         "a custom button style",
     )?;
-    refuse_when(
-        program,
-        origin,
-        button.preset != ResolvedButtonPreset::Primary,
-        "a button preset (give the states explicitly)",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        button.utility_style.has_non_padding_properties(),
-        "a utility style on a button",
-    )?;
+    let recipe = button::recipe(button, program, env)?;
+    let preset = format!("{WIRE}::ButtonPreset::{:?}", button.preset);
     let key = key_code(identity, "button", origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     let content = match (&button.content, content) {
@@ -1586,24 +1577,20 @@ fn button(
             "{WIRE}::Edges::all(({}) as f32)",
             resolved_expr_use_code(program, padding, env, ValueMode::Owned)?
         )),
-        None => {
-            if button.utility_style.padding == [0; 4] {
-                None
-            } else {
-                Some(format!(
-                    "{WIRE}::Edges {{ top: {}f32, right: {}f32, bottom: {}f32, left: {}f32 }}",
-                    button.utility_style.padding[0],
-                    button.utility_style.padding[1],
-                    button.utility_style.padding[2],
-                    button.utility_style.padding[3]
-                ))
-            }
-        }
+        None => button.utility_style.has_padding().then(|| {
+            format!(
+                "{WIRE}::Edges {{ top: {}f32, right: {}f32, bottom: {}f32, left: {}f32 }}",
+                button.utility_style.padding[0],
+                button.utility_style.padding[1],
+                button.utility_style.padding[2],
+                button.utility_style.padding[3],
+            )
+        }),
     };
     let active = button_face_code(button.styles.active.as_ref(), program, env, origin)?
         .unwrap_or_else(|| format!("{WIRE}::Face::default()"));
     Ok(format!(
-        "{WIRE}::Node::Button {{ checked: {checked}, expanded: {expanded}, description: {description}, key: {key}, content: {content}, label: {}, on_press: {on_press}, width: {}, height: {}, padding: {}, style: {WIRE}::ButtonStyle {{ active: {active}, hovered: {}, pressed: {}, disabled: {} }} }}",
+        "{WIRE}::Node::Button {{ checked: {checked}, expanded: {expanded}, description: {description}, key: {key}, content: {content}, label: {}, on_press: {on_press}, width: {}, height: {}, padding: {}, style: {WIRE}::ButtonStyle {{ preset: {preset}, recipe: {recipe}, active: {active}, hovered: {}, pressed: {}, disabled: {} }} }}",
         option_code(label),
         dimension_code(button.width.as_ref(), false, program, env, origin)?,
         dimension_code(button.height.as_ref(), false, program, env, origin)?,

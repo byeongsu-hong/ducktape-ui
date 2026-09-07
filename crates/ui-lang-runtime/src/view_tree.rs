@@ -30,6 +30,7 @@ use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, b
 
 mod text;
 pub use text::register_font_family;
+mod button;
 mod canvas;
 mod editor;
 mod layers;
@@ -578,22 +579,11 @@ fn apply_face(face: wire::Face, style: &mut widget::button::Style) {
 }
 
 fn button_style(
-    style: wire::ButtonStyle,
+    style: &wire::ButtonStyle,
     theme: &iced::Theme,
     status: widget::button::Status,
 ) -> widget::button::Style {
-    let mut resolved = widget::button::primary(theme, status);
-    apply_face(style.active, &mut resolved);
-    let state = match status {
-        widget::button::Status::Active => None,
-        widget::button::Status::Hovered => style.hovered,
-        widget::button::Status::Pressed => style.pressed,
-        widget::button::Status::Disabled => style.disabled,
-    };
-    if let Some(face) = state {
-        apply_face(face, &mut resolved);
-    }
-    resolved
+    button::style(style, theme, status)
 }
 
 fn apply_input_face(face: wire::InputFace, style: &mut widget::text_input::Style) {
@@ -1543,17 +1533,44 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             // names its own accessible label never pays for the fallback.
             let (label_fallback, inner): (Option<&str>, IceElement<'static, Output>) = match content
             {
-                wire::ButtonContent::Label(label) => {
-                    (Some(label.as_str()), widget::text(label.clone()).into())
-                }
+                wire::ButtonContent::Label(label) => (
+                    Some(label.as_str()),
+                    button::label(label, style.recipe.as_ref()),
+                ),
                 wire::ButtonContent::Child(child) => (None, render_node(child, kept)),
+            };
+            let center_x = matches!(width, Some(wire::Length::Fixed(_)));
+            let center_y = matches!(height, Some(wire::Length::Fixed(_)));
+            let inner = if center_x || center_y {
+                let mut centered = widget::container(inner);
+                if center_x {
+                    centered = centered.width(iced::Fill).align_x(Horizontal::Center);
+                }
+                if center_y {
+                    centered = centered.height(iced::Fill).align_y(Vertical::Center);
+                }
+                IceElement::from(centered)
+            } else {
+                inner
             };
             let label = name.clone().or_else(|| label_fallback.map(str::to_owned));
             let activate = on_press.map(Output::Activate);
-            let style = *style;
+            let style = style.clone();
+            let focus_ring = style.recipe.as_ref().and_then(|recipe| {
+                recipe.focus_ring.map(|fg| {
+                    (
+                        fg,
+                        recipe
+                            .base
+                            .border
+                            .and_then(|b| b.radius)
+                            .map_or(0.0, |r| r[0]),
+                    )
+                })
+            });
             let mut button = widget::button(inner)
                 .on_press_maybe(activate.clone())
-                .style(move |theme, status| button_style(style, theme, status));
+                .style(move |theme, status| button_style(&style, theme, status));
             if let Some(width) = width {
                 button = button.width(length(*width));
             }
@@ -1577,6 +1594,9 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             }
             if let Some(value) = description {
                 accessible = accessible.description(value.clone());
+            }
+            if let Some((fg, radius)) = focus_ring {
+                accessible = accessible.focus_ring(color(fg), radius);
             }
             accessible.into()
         }
@@ -2120,11 +2140,13 @@ mod tests {
             ..wire::Face::default()
         };
         let style = wire::ButtonStyle {
+            preset: wire::ButtonPreset::default(),
+            recipe: None,
             active,
             hovered: Some(hovered),
             ..wire::ButtonStyle::default()
         };
-        let resolved = button_style(style, &iced::Theme::Light, widget::button::Status::Hovered);
+        let resolved = button_style(&style, &iced::Theme::Light, widget::button::Status::Hovered);
         assert_eq!(resolved.border.radius, radius([2.0, 4.0, 6.0, 8.0]));
         assert_eq!(resolved.border.color, Color::from_rgb(1.0, 0.0, 0.0));
         assert_eq!(resolved.border.width, 5.0);
@@ -2137,7 +2159,7 @@ mod tests {
             ..wire::Face::default()
         };
         let resolved = button_style(
-            wire::ButtonStyle {
+            &wire::ButtonStyle {
                 hovered: Some(cleared),
                 ..style
             },

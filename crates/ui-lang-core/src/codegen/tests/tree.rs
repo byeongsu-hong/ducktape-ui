@@ -1279,3 +1279,55 @@ fn tree_button_carries_accessible_state_and_description() {
         );
     }
 }
+
+#[test]
+fn tree_button_recipes_copy_faces_and_focus_ring() {
+    let source = format!(
+        "app Demo\n{PALETTE}font ui family=\"Geist\" weight=normal default=true\nrecipe action for button\n  @px-4 py-2 font-semibold bg-primary text-fg rounded-8px hover:bg-danger disabled:opacity-50 focus-visible:border-primary\non hit\nview\n  button \"Action\" @action -> hit\n"
+    );
+    let generated = compile_for(&source, "recipe.ice", Target::Tree).unwrap();
+    for expected in [
+        "ButtonRecipe",
+        "FontFamily::Named(\"Geist\"",
+        "Weight::Semibold",
+        "ButtonPreset::Primary",
+        "disabled_opacity: ::std::option::Option::Some(0.5f32)",
+        "focus_ring: ::std::option::Option::Some",
+        "left: 16f32",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected} in {generated}"
+        );
+    }
+}
+
+#[test]
+fn tree_button_defaults_keep_guest_label_typography() {
+    for utility in ["", " @p-0px"] {
+        let source = format!(
+            "app Demo\n  text-size 24\n{PALETTE}font ui family=\"Geist\" default=true\non hit\nview\n  button \"Action\"{utility} -> hit\n"
+        );
+        let generated = compile_for(&source, "defaults.ice", Target::Tree).unwrap();
+        assert!(
+            generated.contains("FontFamily::Named(\"Geist\""),
+            "guest default family must reach plain labels"
+        );
+        assert!(generated.contains("text_size: ::std::option::Option::Some(24.0f32)"));
+    }
+}
+
+#[test]
+fn explicit_zero_button_padding_clears_native_defaults() {
+    let source = format!("app Demo\n{PALETTE}on hit\nview\n  button \"Action\" @p-0px -> hit\n");
+    for (target, expected) in [
+        (Target::Native, ".padding(::iced::Padding { top: 0.0"),
+        (Target::Tree, "Edges { top: 0f32"),
+    ] {
+        let generated = compile_for(&source, "padding.ice", target).unwrap();
+        assert!(
+            generated.contains(expected),
+            "explicit zero padding must be emitted for {target:?}: {generated}"
+        );
+    }
+}

@@ -170,8 +170,14 @@ impl ResolvedStyle {
         self.set_properties == 0
     }
 
-    pub(crate) fn has_non_padding_properties(&self) -> bool {
-        self.set_properties & !(0b1111 << 3) != 0
+    pub(crate) fn has_padding(&self) -> bool {
+        self.padding != [0; 4] || self.set_properties & (0b1111 << 3) != 0
+    }
+
+    pub(crate) fn has_non_button_properties(&self) -> bool {
+        // Padding, label typography, faces and focus-visible border.
+        let supported = (0b1111 << 3) | (0x7ff << 11) | (0b1111 << 23);
+        self.set_properties & !supported != 0
     }
 
     fn apply(&mut self, utility: &ResolvedUtility) {

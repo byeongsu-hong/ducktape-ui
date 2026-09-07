@@ -11,6 +11,9 @@ palette app for AppTheme
   fg #ffffff
   primary #333333
   danger #ff0000
+font ui family="Geist" default=true
+recipe focus_action for button
+  @px-4 py-2 font-semibold bg-primary text-fg rounded-8px hover:bg-primary disabled:opacity-50 focus-visible:border-danger
 state
   first = "abcd"
   second = "other"
@@ -81,6 +84,9 @@ view
         checked=focused
         expanded=focused
         description="Reports input focus"
+        w=160.0
+        h=40.0
+        @focus_action
     button "Select range" #select-range -> select_range
     button "Cursor front" #cursor-front -> cursor_front
     button "Cursor end" #cursor-end -> cursor_end
