@@ -1176,7 +1176,13 @@ view
 
 #[test]
 fn responsive_conditions_refuse_rules_beyond_the_wire_budget() {
-    let condition = vec!["width > 0.0"; 17].join(" && ");
+    // Exercise 67 wire operations without also stressing recursive expression
+    // lowering with a left-associated 17-clause chain on a test thread's stack.
+    let mut condition = "width > 0.0".to_owned();
+    for _ in 0..4 {
+        condition = format!("({condition}) && ({condition})");
+    }
+    let condition = format!("({condition}) && width > 0.0");
     let source = format!(
         "app Demo\n{PALETTE}view\n  responsive size=(width, height)\n    col\n      if {condition}\n        text \"wide\"\n"
     );

@@ -1371,3 +1371,9 @@ For the two bundled host tests, forcing all rules false fails the narrow-branch
 assertion, and forwarding empty input text fails the guest-echo assertion.
 Restoring behavior passes each test. Query evaluator/decoder/sanitizer mutations
 also fail the five wire rule tests at their intended assertions.
+
+Compiler robustness follow-up: CI run `34138362497` overflowed the core test
+thread's stack on the original left-associated 17-clause budget fixture; local
+Rust 1.98 full core tests with incremental compilation disabled did not reproduce
+it. The fixture now balances the same 67 operations to isolate the wire budget.
+This is not a fix or a support claim for stack-safe deep expression lowering.
