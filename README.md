@@ -457,3 +457,7 @@ Tree-target canvas sends bounded declarative geometry to the host, including
 solid paths, transforms, clips and guest-selected drawing branches. The
 [canvas fixture](examples/app-store/README.md#declarative-canvas-fixture) checks
 actual wasm pixels and local pointer routing.
+
+Tree `stack`, `hover`, and modal `overlay` use native host layout and input;
+the [layered fixture](examples/app-store/README.md#layered-layouts-fixture)
+checks wasm routes, sizing, hover, focus blocking, and modal resource cleanup.

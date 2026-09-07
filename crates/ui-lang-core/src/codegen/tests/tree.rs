@@ -684,17 +684,15 @@ const COVERAGE: &[Coverage] = &[
     emitted("component", "", "  Slotted\n    text \"a\" @text-fg\n"),
     emitted("slot", "", "  Slotted\n    text \"slotted\" @text-fg\n"),
     // The layouts the wire has no node for.
-    refused(
+    emitted(
         "layout: stack",
         "",
         "  stack w=fill h=24.0\n    text \"a\" @text-fg\n    text \"b\" @text-fg\n",
-        "`stack`",
     ),
-    refused(
+    emitted(
         "layout: hover",
         "",
         "  hover\n    text \"a\" @text-fg\n    text \"b\" @text-fg\n",
-        "`hover`",
     ),
     refused(
         "layout: flex",
@@ -703,11 +701,10 @@ const COVERAGE: &[Coverage] = &[
         "`flex`",
     ),
     // The widgets the wire has no node for.
-    refused(
+    emitted(
         "overlay",
         "",
         "  overlay when=busy dismiss=add\n    content\n      text \"a\" @text-fg\n    layer\n      text \"b\" @text-fg\n",
-        "`overlay`",
     ),
     refused(
         "pane grid",

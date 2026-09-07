@@ -724,6 +724,44 @@ pub enum Node {
         bar: Option<Rgba>,
         border: Option<Border>,
     },
+    /// Union-sized layers, or native base/under layering when `under` is nonzero.
+    Stack {
+        key: String,
+        width: Option<Length>,
+        height: Option<Length>,
+        padding: Option<Edges>,
+        background: Option<Rgba>,
+        border: Option<Border>,
+        clip: bool,
+        under: u32,
+        #[serde(deserialize_with = "decode_children")]
+        children: Vec<Node>,
+    },
+    /// The host's draw-time base/reveal pair; `open` can hold the reveal visible.
+    Hover {
+        key: String,
+        width: Option<Length>,
+        height: Option<Length>,
+        padding: Option<Edges>,
+        background: Option<Rgba>,
+        border: Option<Border>,
+        tint: Option<Rgba>,
+        radius: f32,
+        open: bool,
+        #[serde(deserialize_with = "decode_children")]
+        children: Vec<Node>,
+    },
+    /// A base plus an optional modal layer. Closing removes the second child.
+    Overlay {
+        key: String,
+        padding: f32,
+        backdrop: Rgba,
+        align_x: AlignX,
+        align_y: AlignY,
+        on_dismiss: Option<u32>,
+        #[serde(deserialize_with = "decode_children")]
+        children: Vec<Node>,
+    },
     /// Bounded geometry painted by the host, in widget-local coordinates.
     Canvas {
         key: String,
@@ -790,6 +828,9 @@ impl Node {
             | Self::Slider { key, .. }
             | Self::PickList { key, .. }
             | Self::Progress { key, .. }
+            | Self::Stack { key, .. }
+            | Self::Hover { key, .. }
+            | Self::Overlay { key, .. }
             | Self::Canvas { key, .. }
             | Self::Surface { key, .. } => Some(key),
             Self::Space { .. } => None,
@@ -809,7 +850,11 @@ impl Node {
             | Self::Scroll { content, .. } => std::slice::from_ref(content),
             Self::Linear { children, .. }
             | Self::Grid { children, .. }
+            | Self::Stack { children, .. }
+            | Self::Hover { children, .. }
+            | Self::Overlay { children, .. }
             | Self::When { children, .. } => children,
+
             Self::Button {
                 content: ButtonContent::Child(child),
                 ..
@@ -848,7 +893,11 @@ impl Node {
             | Self::Scroll { content, .. } => std::slice::from_mut(content),
             Self::Linear { children, .. }
             | Self::Grid { children, .. }
+            | Self::Stack { children, .. }
+            | Self::Hover { children, .. }
+            | Self::Overlay { children, .. }
             | Self::When { children, .. } => children,
+
             Self::Button {
                 content: ButtonContent::Child(child),
                 ..
@@ -877,7 +926,10 @@ impl Node {
         match self {
             Self::Linear { children, .. }
             | Self::Grid { children, .. }
-            | Self::When { children, .. } => Some(children),
+            | Self::Stack { children, .. }
+            | Self::When { children, .. }
+            | Self::Hover { children, .. }
+            | Self::Overlay { children, .. } => Some(children),
             Self::Container { .. }
             | Self::Responsive { .. }
             | Self::Sensor { .. }
@@ -1363,6 +1415,53 @@ fn sanitize_node(
             }
         }
         Node::MouseArea { key, .. } | Node::Responsive { key, .. } => claim(key, taken),
+        Node::Stack {
+            key,
+            padding,
+            background,
+            border,
+            under,
+            ..
+        } => {
+            claim(key, taken);
+            bound_edges(padding);
+            bound_color(background);
+            bound_border(border);
+            *under = (*under).min(MAX_NODES as u32);
+        }
+        Node::Hover {
+            key,
+            padding,
+            background,
+            border,
+            tint,
+            radius,
+            children,
+            ..
+        } => {
+            claim(key, taken);
+            bound_edges(padding);
+            bound_color(background);
+            bound_border(border);
+            bound_color(tint);
+            *radius = bounded(*radius);
+            children.truncate(2);
+        }
+        Node::Overlay {
+            key,
+            padding,
+            backdrop,
+            children,
+            ..
+        } => {
+            claim(key, taken);
+            *padding = bounded(*padding);
+            children.truncate(2);
+            for channel in &mut backdrop.0 {
+                *channel = finite(*channel).clamp(0.0, 1.0);
+            }
+        }
+
         Node::Canvas { key, commands, .. } => {
             claim(key, taken);
             canvas::sanitize(commands, &mut budgets.canvas_parts);
@@ -1667,6 +1766,7 @@ fn sanitize_node(
     // lay out, rather than ten thousand empty nodes it still has to walk.
     if let Node::Linear { children, .. }
     | Node::Grid { children, .. }
+    | Node::Stack { children, .. }
     | Node::When { children, .. } = node
     {
         let mut kept = 0;
@@ -1695,6 +1795,8 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Linear { width, height, .. }
         | Node::Grid { width, height, .. }
         | Node::Responsive { width, height, .. }
+        | Node::Stack { width, height, .. }
+        | Node::Hover { width, height, .. }
         | Node::Scroll { width, height, .. }
         | Node::Button { width, height, .. }
         | Node::Svg { width, height, .. }
@@ -1711,6 +1813,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         Node::Rule { .. }
         | Node::Sensor { .. }
         | Node::MouseArea { .. }
+        | Node::Overlay { .. }
         | Node::When { .. }
         | Node::Surface { .. } => Vec::new(),
     };

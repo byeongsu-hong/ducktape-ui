@@ -1002,3 +1002,14 @@ paths relative to the Cargo package manifest. Desktop bundles preserve each
 entry's basename and nested files beside the executable, before signing.
 See [tooling](docs/tooling.md#resources) for platform locations and validation.
 This packaging metadata does not alter the Ice language or wire protocol.
+
+### Tree layered layouts
+
+Tree `stack`, `hover`, and `overlay` lower copied dimensions, style values,
+children, and route slots to host-native widgets. Stack dimensions remain
+inferred unless explicitly set, and responsive structural conditions splice
+into the stack's child list. Hover uses native cursor presence and a copied
+`open` flag. An overlay carries its base and an optional modal child; the host
+blocks base keyboard/focus operations while the modal is present and forwards
+its native overlay events to the same guest. Native callback-based float
+positioning remains refused. Wire child, numeric, depth, and frame limits apply.

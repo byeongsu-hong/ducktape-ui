@@ -37,7 +37,12 @@ pub fn wasm_view(surface: Surface, dark: bool) -> Element<'static, String> {
             locked.frame_rev,
         )
     };
+    let overlay_guest = guest.clone();
     Element::new(GuestView {
+        overlay_output: Box::new(move |output| {
+            overlay_guest.lock().expect("guest lock").deliver(output);
+            "wake".to_owned()
+        }),
         guest,
         rev,
         dark,
@@ -63,6 +68,7 @@ fn fault_view(fault: &str) -> Element<'static, String> {
 }
 
 struct GuestView {
+    overlay_output: Box<dyn Fn(Output) -> String>,
     guest: Arc<Mutex<Guest>>,
     /// The frame this element was rendered from.
     rev: u64,
@@ -258,9 +264,9 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, String, iced::Theme, iced::Renderer>> {
-        // An overlay's messages would be the guest's too; the tree carries
-        // no widget that opens one.
-        let _ = (tree, layout, renderer, viewport, translation);
-        None
+        self.content
+            .as_widget_mut()
+            .overlay(tree, layout, renderer, viewport, translation)
+            .map(|overlay| overlay.map(self.overlay_output.as_ref()))
     }
 }
