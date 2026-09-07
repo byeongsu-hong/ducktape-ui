@@ -455,6 +455,17 @@ For module packaging requirements and the connected implementation phases, see
   The host provider fills that box and owns its rendering and redraws;
   an unknown shader name shows the usual placeholder. Native shader
   functions and GPU programs are not linked into the guest.
+- `markdown` uses the named `ice.markdown` host surface. A custom
+  `markdown-viewer` uses its declared name instead; its first argument is a
+  `MarkdownDocument` record containing source, resolved settings and guest
+  palette, followed by the declared wire arguments. Links return typed events.
+  The guest preserves source through replacement and append and supports
+  `markdown_images()`. The default host owns the parsed content and widgets,
+  retaining link/scroll state across unchanged frames and dropping them on
+  unmount. Source is limited to 64 KiB, native parsing to depth 32 and 4096
+  events, and layout metrics to 512 pixels. Default and monospace fonts cross;
+  named fonts and inline gradients remain E190. Custom providers and image
+  asset loading remain the embedding host's responsibility.
 - An `svg` is an embedded asset or a `memory` source, sized, fitted,
   rotated, faded and tinted with an idle and a hover colour; its bytes
   cross once under a content hash and the host keeps them for the guest's

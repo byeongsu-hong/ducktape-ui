@@ -17,7 +17,8 @@ default = ["full-runtime", "x11"]
 # `tiny-skia` here is load-bearing, not a renderer preference:
 # `rich_text_editor` names the concrete paragraph type that only exists once
 # a graphics backend is enabled.
-full-runtime = ["data-grid", "tiny-skia"]
+full-runtime = ["data-grid", "tiny-skia", "markdown"]
+markdown = ["iced/markdown", "iced/lazy", "dep:pulldown-cmark"]
 data-grid = []
 wgpu = ["iced/wgpu"]
 tiny-skia = ["iced/tiny-skia"]
@@ -43,6 +44,8 @@ accesskit = "=0.24.1"
 # helper generated sliders call converts through the same trait.
 num-traits = "0.2"
 ouroboros = "0.18"
+# Match Iced markdown parsing when bounding untrusted document structure.
+pulldown-cmark = { version = "0.12", optional = true }
 rustc-hash = "2.0"
 iced = { version = "=0.14.0", default-features = false, features = ["advanced", "canvas", "qr_code", "svg"] }
 stacker = "0.1"

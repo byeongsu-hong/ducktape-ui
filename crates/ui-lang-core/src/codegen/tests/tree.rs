@@ -782,11 +782,10 @@ const COVERAGE: &[Coverage] = &[
         "  table item in items\n    col\n      header\n        text \"h\" @text-fg\n      cell\n        text item @text-fg\n",
         "`table`",
     ),
-    refused(
+    emitted(
         "markdown",
         "on link_opened(_url)\n",
         "  markdown docs -> link_opened _\n",
-        "`markdown`",
     ),
     emitted(
         "editor",
@@ -1071,4 +1070,20 @@ fn every_view_kind_is_classified() {
             "`{name}` is not in the tree target's coverage table"
         );
     }
+}
+
+#[test]
+fn nested_markdown_state_uses_guest_content_types() {
+    let source = format!(
+        "app NestedMarkdown\n{PALETTE}state\n  docs:[markdown] = [markdown(\"# Docs\")]\n  selected:markdown? = none\nview\n  text \"Docs\"\n"
+    );
+    let generated = compile_for(&source, "nested.ice", Target::Tree).unwrap();
+    assert!(
+        generated.contains("::std::vec::Vec<::ui_lang_guest::Markdown>"),
+        "nested markdown list must use guest content"
+    );
+    assert!(
+        generated.contains("::std::option::Option<::ui_lang_guest::Markdown>"),
+        "optional markdown must use guest content"
+    );
 }

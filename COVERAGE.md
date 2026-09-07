@@ -1179,3 +1179,32 @@ Red: forwarding `Shrink` to the wrapper instead of zeroing its intrinsic
 size fails the bundled fixture's dimension assertion; restoring the shader
 lowering passes. Replacing the host container's height with `Fill` fails
 the headless region-size assertion; restoring it passes.
+
+### Tree-target markdown surfaces
+
+Markdown source survives guest append/replacement and `markdown_images()`;
+resolved native settings and the guest palette cross in `MarkdownDocument`.
+The default `ice.markdown` provider owns native parsed content and its rendered
+widgets. Its cache belongs to the mounted widget tree, retains unchanged link
+state, and updates on changed source/settings. Custom viewers receive the
+same document plus declared arguments and return typed surface events.
+Named fonts, inline gradients and host asset loading are outside this claim.
+
+Evidence: guest markdown tests cover appended source and image queries;
+`host/tests/surface_routes.rs` executes the bundled surface fixture, verifies
+settings, append/replacement, image queries and default/custom event routes.
+Runtime `view_tree::markdown::tests` checks stable pointer/redraw behavior,
+real mouse clicks before and after document replacement, rasterized guest text
+color and parser structure limits. Wire markdown tests reject malformed
+records/nonfinite settings and bound UTF-8 source, metrics and colors.
+
+Red/Green evidence: freezing the cache dependency fails the new URI assertion;
+using the host text style fails the red glyph assertion; removing depth checks
+or the constructor preflight fails the corresponding structural assertion.
+Removing record-name validation or source truncation fails the wire rejection
+or byte-limit assertion. All focused tests pass after restoration. Guest
+source append removal likewise fails its preserved-source assertion.
+
+Nested list/optional markdown state also appears in the real wasm fixture.
+The codegen assertion for guest list content failed before recursive target
+mapping and passes after the fix; the fixture then bundles successfully.

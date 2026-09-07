@@ -1488,7 +1488,9 @@ mod type_code;
 mod view;
 
 pub(crate) use expr::copy_expression_type;
-use type_code::{editor_message_payload_code, editor_type_code, rust_type_code};
+use type_code::{
+    editor_message_payload_code, editor_type_code, markdown_type_code, rust_type_code,
+};
 
 use application::*;
 use canvas::*;

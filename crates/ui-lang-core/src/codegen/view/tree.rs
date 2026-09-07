@@ -75,6 +75,9 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,
         ResolvedViewKind::TextEditor => editor(node, identity, document, message, env, scope)?,
+        ResolvedViewKind::Markdown => {
+            markdown_surface(node, identity, document, message, env, scope)?
+        }
         ResolvedViewKind::Button { content } => button(
             node,
             identity,
@@ -2443,4 +2446,87 @@ fn surface_value_code(
         }
         _ => Err(refused(program, origin, "a non-data extern widget value")),
     }
+}
+
+fn markdown_surface(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let markdown = program.resolved_markdown(id)?;
+    let origin = markdown.origin;
+    for font in [
+        &markdown.style.font,
+        &markdown.style.inline_code_font,
+        &markdown.style.code_block_font,
+    ] {
+        refuse_when(
+            program,
+            origin,
+            matches!(font, Some(ResolvedTextFont::Named(_))),
+            "a named markdown font",
+        )?;
+    }
+    refuse_when(
+        program,
+        origin,
+        matches!(
+            markdown.style.inline_code_background,
+            Some(ResolvedContainerBackground::Linear { .. })
+        ),
+        "a markdown gradient",
+    )?;
+    let content = resolved_markdown_content(markdown, env, program)?;
+    let settings = markdown_settings_code(markdown, program, env)?;
+    let mut arguments = vec![format!(
+        "({}).surface_value(__markdown_settings, self.__theme().palette())",
+        content.code
+    )];
+    let (name, output) = if let Some(viewer) = &markdown.viewer {
+        let function = program
+            .try_extern_function(viewer.function)
+            .ok_or_else(|| {
+                program.invariant_at_origin(origin, "markdown viewer extern is invalid")
+            })?;
+        if function.kind != ExternKind::MarkdownViewer
+            || function.params.len() != viewer.arguments.len()
+            || function.output != viewer.output
+            || function.borrowed != viewer.borrowed
+            || viewer.borrowed.len() != viewer.arguments.len()
+        {
+            return Err(program.invariant_at_origin(origin, "markdown viewer contract diverged"));
+        }
+        for (expression, (_, ty)) in viewer.arguments.iter().zip(&function.params) {
+            let value = resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?;
+            let encoded =
+                surface_value_code(ty, "__surface_arg", false, program, origin, &mut Vec::new())?;
+            arguments.push(format!("{{ let __surface_arg = &({value}); {encoded} }}"));
+        }
+        (function.name.as_str(), &viewer.output)
+    } else {
+        ("ice.markdown", &Type::Str)
+    };
+    let decoded = surface_value_code(output, "__sent", true, program, origin, &mut Vec::new())?;
+    let callback = snapshot_callback(
+        &markdown.link,
+        "__value",
+        &["__value"],
+        env,
+        program,
+        message,
+    )?;
+    let handler = handler_code(
+        &format!("{WIRE}::SurfaceValue"),
+        message,
+        &callback,
+        &format!("move |__sent| ({decoded}).map(&__route)"),
+    );
+    Ok(format!(
+        "{{ {settings} {WIRE}::Node::Surface {{ key: {}, name: ::std::string::String::from({name:?}), args: ::std::vec![{}], on_event: ::std::option::Option::Some({handler}) }} }}",
+        key_code(identity, "markdown", origin, scope, env, program)?,
+        arguments.join(", ")
+    ))
 }

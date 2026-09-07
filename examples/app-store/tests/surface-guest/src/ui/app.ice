@@ -9,6 +9,7 @@ extern crate::unused
   shader pulse(speed:f64, labels:[str]) -> bool
   shader passive() -> unit
   shader collapsed() -> unit
+  markdown-viewer docs_viewer(prefix:str, active:bool) -> str
 extern crate::data
   Details(enabled:bool, score:f64)
   Row(id:i64, label:str, note:str?, details:Details)
@@ -26,6 +27,10 @@ palette app for AppTheme
   primary #333333
   danger #ff0000
 state
+  document:markdown = "[Open](duck://docs/start)"
+  documents:[markdown] = [markdown("# Nested")]
+  selected_document:markdown? = none
+  images:[str] = []
   draft = "initial"
   dark = false
   count = 7
@@ -47,10 +52,27 @@ on counted(value)
   count = value
 on zoomed(value)
   zoom = value
+on append_docs
+  markdown document append "\n\n![More](asset:more)"
+  images = markdown_images(document)
+on reset_docs
+  document = markdown("Replacement")
+  images = markdown_images(document)
 on activated
   actions = actions + 1
 view
   col
+    button "Append docs" -> append_docs
+    button "Reset docs" -> reset_docs
+    markdown document -> opened(_, "default")
+      with
+        text-size=18.0
+        h1-size=30.0
+        gap=7.0
+      style inline-code-fg=fg link=primary inline-code-p=2.0 inline-code-border=primary inline-code-border-w=1.0 inline-code-r=3.0
+    markdown document viewer=docs_viewer("custom", dark) -> opened(_, "custom")
+    for image in images
+      text image @text-fg
     extern rows(rows, selected) #rows -> rows_changed _
     extern optional(selected) #optional -> selected_row _
     for label in ["first", "second"]
