@@ -56,8 +56,9 @@ that binary into an isolated view package.
   pointers. Surfaces need explicit resource identities and semantic events.
   Those identities must be scoped to the guest instance and released at
   unmount. Do not stringify arbitrary native state to claim support.
-- **Effects:** `ui-lang-guest` currently executes only task outputs and logs
-  dropped widget/clipboard/window/font/image/reload/exit actions. Focus,
+- **Effects:** `ui-lang-guest` executes task outputs and clipboard actions;
+  clipboard uses a manifest capability and the mounted host's platform interface.
+  Widget/window/font/image/reload/exit actions remain dropped and logged. Focus,
   scroll, keyboard handling and clipboard are functional requirements of the
   existing screens, not optional visual polish. Existing host request/stream
   transport can carry domain capabilities; ducktape must supply authorization,
@@ -83,7 +84,7 @@ that binary into an isolated view package.
 | 3c — declarative graphics and responsive layout | Canvas geometry data and host-evaluated container rules, with widget-local opt-in measurements only. | Geometry rendering and interaction; multiple container widths with correct branches and no guest layout callback; bounded sensor feedback. |
 | 4a — actual app layouts first | stack/hover/overlay/keyed/lazy/flex/pin/tooltip; preserve union sizing, hit routing, identity, virtualization and scroll behavior. | Representative chat list and menus, page overlay, file/forge list; reorder/edit/scroll assertions and frame measurements, not compile-only coverage. |
 | 4b — remaining content/layout/style | rich text/markdown/qr/image/combo, table/pane grid/theme/themer/float/resize handle and remaining supported surface shapes. | Per-feature native/wire behavior checks and real wasm bundle builds; preserve intentional rejection of native callbacks. |
-| Runtime alongside 3–4 | Guest widget/clipboard/window requests and input subscriptions, assets, mount/unmount and host context. | Focus/scroll/copy, keyboard and cancellation driven through a real host boundary; separate guest instances cannot affect one another. |
+| Runtime alongside 3–4 | Clipboard Tasks implemented through the mounted host; widget/window requests, input subscriptions, assets, mount/unmount and host context remain. | Focus/scroll/copy, keyboard and cancellation driven through a real host boundary; separate guest instances cannot affect one another. |
 | Hot reload after state/lifecycle boundary | Generated snapshot/restore exports and catalog watch in the example host. | Same window and UI draft survive replacement; failure retains usable old instance; no duplicated side effects, stale routes or leaked subscriptions. |
 | Ducktape integration — deferred | Extract per-module guest roots, bind real capabilities/surfaces, add view to module artifact and build/hydration/activation paths, mount from module packages. | Every existing module-owned screen builds and runs from its package; no wasm embedded in desktop binary; module+index+view hash/activation/removal agree; real workflows and permissions pass. |
 
@@ -92,3 +93,22 @@ of module portability. Completion requires view construction, interaction,
 effects, lifecycle and packaging together. Purely local visual state belongs
 in the guest; the host must not become a second implementation of module
 business logic. Ducktape integration remains deferred until authorized.
+
+### Retained editor/terminal/log detail
+
+The actual `ComposerEvent()` and `PageEvent()` declarations in
+`app/src/ui/extern/editor.ice` are opaque Rust types, not Ice enums.
+`app/src/editor.rs` carries `Submit`, rich editor actions and formatting
+marks; `app/src/pages/mod.rs` additionally carries todo, link, menu, gutter,
+drag/drop and comment events. A generic Ice enum codec alone does not make
+these native editor actions portable. Phase 3b needs semantic edit/selection
+commands and a retained host editor identity, preserving IME, undo and focus.
+`PageBlock` itself has scalar fields and can use the record/list boundary.
+`AgentTerminalSession` wraps a retained terminal session; log state holds a
+native virtual timeline and shared row buffers. Neither is a record to copy
+across the wire. Guest resource handles must be scoped to the mounted instance;
+the backing session can have a longer host-owned lifetime. In particular,
+`handlers/lifecycle.ice` keeps terminal event subscriptions active while the
+operator visits another pane. Releasing a view handle must not implicitly
+terminate that session. Phase 3b must distinguish view leases from session
+ownership and preserve background status updates.

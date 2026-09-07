@@ -128,6 +128,7 @@ pub fn filter_catalog(catalog: &[CatalogEntry], query: String) -> Vec<CatalogEnt
 /// What granting a capability lets the app do, in the user's terms.
 pub fn capability_hint(name: String) -> String {
     match name.as_str() {
+        "clipboard" => "Read and replace text in the standard and primary clipboards.",
         "clock" => "Read the host's clock, sleep, and be woken every so often.",
         "storage" => {
             "Keep up to 64 MB of its own data in the host's storage; it survives a reinstall."

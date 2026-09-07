@@ -865,3 +865,24 @@ and zero radii overwrite those fields. A partial border on a plain container
 is applied over the default container border. Sanitization bounds present
 values without creating absent ones. This matches the native emitter's
 field-by-field style updates.
+
+## Clipboard Tasks in wasm views
+
+`task clipboard read`, `read-primary`, `write` and `write-primary` use the
+host's `clipboard` capability on the tree target. Native declarations and
+handler syntax are unchanged. The guest sends `clipboard.read` with an
+encoded `ClipboardTarget`, or `clipboard.write` with an encoded
+`(ClipboardTarget, String)`. Read replies encode `Option<String>`; successful
+writes reply with empty bytes. `None` and an empty string remain distinct.
+
+The example host checks the installed manifest and queues permitted work
+until the mounted widget supplies its platform clipboard. Standard and
+primary clipboards remain distinct. Text is limited to the wire string limit
+on a UTF-8 boundary; malformed or oversized explicit write requests are
+refused. A denied/invalid read logs its error and completes the original Task
+with `None`; write errors are logged. Aborting a pending read cancels its
+host request. Canceled requests and faulted/unmounted instances do not retain
+queued clipboard work. Clipboard access remains host-owned and requires
+capability consent at installation. Platform clipboard time participates in
+the host redraw governor; the byte budget is checked before each queued
+operation so exhaustion suppresses subsequent platform access.

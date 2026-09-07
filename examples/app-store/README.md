@@ -510,8 +510,9 @@ For module packaging requirements and the connected implementation phases, see
 
 ### Tasks and runtime
 
-- Only `Action::Output` of a task is honoured. Widget operations (focus,
-  scroll-to), clipboard, window, font, image, reload and exit actions are
+- Task outputs and clipboard actions are executed. Clipboard access requires
+  the declared capability. Widget operations (focus, scroll-to), window,
+  font, image, reload and exit actions are
   dropped — each one with a `host::log` line naming what was dropped, so
   the store's stderr says so, but nothing runs them.
 - `every` carries no instant in a module and refuses a route that binds
@@ -636,4 +637,25 @@ cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
   --out examples/app-store/target/surface-fixture
 cargo test --manifest-path examples/app-store/Cargo.toml \
   -p app-store-host --test surface_routes -- --ignored
+```
+
+### Clipboard capability
+
+A guest declaring `clipboard` may execute Ice clipboard read/write Tasks for
+the standard or primary clipboard. The install hint describes both reading
+and replacing clipboard text. The host checks permission before queueing work
+and executes it only from the mounted window's clipboard interface. A denied
+read completes as `None` and logs the refusal; write refusals are logged.
+Read results preserve absent versus empty text and are bounded on UTF-8
+boundaries. Cancellation or instance failure discards queued work.
+
+The `tests/clipboard-guest` fixture is outside the app catalog. To run the
+actual wasm boundary check from the repository root:
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-clipboard-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/clipboard-fixture
+cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host \
+  bundled_clipboard_ -- --ignored
 ```

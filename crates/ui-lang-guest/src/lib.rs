@@ -28,6 +28,7 @@ use iced_runtime::futures::futures::channel::mpsc;
 use iced_runtime::futures::subscription::{self, Tracker};
 use iced_runtime::{Action, task};
 
+mod clipboard;
 pub mod host;
 pub mod testing;
 
@@ -357,10 +358,14 @@ impl Wake for Woken {
 /// by a task polled earlier in the pass — until nothing is or the pass
 /// budget is spent. Returns the messages the tasks output and whether the
 /// budget ran out with a task still woken.
-fn poll_tasks<M>(tasks: &mut Vec<Task<M>>, produced: &mut mpsc::Receiver<M>) -> (Vec<M>, bool) {
+fn poll_tasks<M: iced_runtime::futures::MaybeSend + 'static>(
+    tasks: &mut Vec<Task<M>>,
+    produced: &mut mpsc::Receiver<M>,
+) -> (Vec<M>, bool) {
     let mut messages = Vec::new();
     for _ in 0..MAX_POLLS {
         let mut polled = false;
+        let mut effects = Vec::new();
         tasks.retain_mut(|task| {
             if !task.woken.0.swap(false, Ordering::SeqCst) {
                 return true;
@@ -372,6 +377,7 @@ fn poll_tasks<M>(tasks: &mut Vec<Task<M>>, produced: &mut mpsc::Receiver<M>) -> 
                 Poll::Ready(Some(action)) => {
                     match action {
                         Action::Output(message) => messages.push(message),
+                        Action::Clipboard(action) => effects.push(clipboard::run(action)),
                         other => host::log(format!(
                             "dropped a {}: a guest has no toolkit to run it",
                             describe(&other)
@@ -387,6 +393,9 @@ fn poll_tasks<M>(tasks: &mut Vec<Task<M>>, produced: &mut mpsc::Receiver<M>) -> 
                 Poll::Pending => true,
             }
         });
+        for effect in effects {
+            spawn(tasks, effect);
+        }
         // What the subscriptions' streams put in the channel during the pass.
         while let Ok(message) = produced.try_recv() {
             messages.push(message);
