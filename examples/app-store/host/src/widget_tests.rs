@@ -486,6 +486,12 @@ fn bundled_widget_commands_preserve_siblings_and_host_focus_in_one_window() {
 #[ignore = "requires bundled widget-fixture wasm"]
 fn bundled_widget_recipe_ring_uses_keyboard_focus_only() {
     fn red_pixels(ui: &mut Ui, renderer: &mut iced::Renderer) -> usize {
+        let mut query = TextBounds {
+            label: "Query",
+            bounds: None,
+        };
+        ui.operate(renderer, &mut query);
+        let center_y = query.bounds.expect("Query label").center_y();
         ui.draw(
             renderer,
             &iced::Theme::Light,
@@ -499,7 +505,16 @@ fn bundled_widget_recipe_ring_uses_keyboard_focus_only() {
             .as_chunks::<4>()
             .0
             .iter()
-            .filter(|pixel| pixel[0] > 240 && pixel[1] < 20 && pixel[2] < 20)
+            .enumerate()
+            .filter(|(index, pixel)| {
+                let x = index % 600;
+                let y = (index / 600) as f32;
+                x < 160
+                    && (y - center_y).abs() <= 20.0
+                    && pixel[0] > 240
+                    && pixel[1] < 20
+                    && pixel[2] < 20
+            })
             .count()
     }
     let guest = guest();
@@ -528,4 +543,73 @@ fn bundled_widget_recipe_ring_uses_keyboard_focus_only() {
         red_pixels(&mut ui, &mut renderer) > 50,
         "keyboard focus draws the guest recipe's red ring"
     );
+}
+
+#[test]
+#[ignore = "requires bundled widget-fixture wasm"]
+fn bundled_widget_svg_inherits_final_button_ink() {
+    let guest = guest();
+    let mut renderer = renderer();
+    let mut ui = build(&guest, user_interface::Cache::default(), &mut renderer);
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now);
+    }
+    let point = iced::Point::new(4.0, 4.0); // Button padding, outside either SVG.
+    for (event, cursor, expected) in [
+        (None, mouse::Cursor::Unavailable, [255, 0, 0]),
+        (
+            Some(mouse::Event::CursorMoved { position: point }),
+            mouse::Cursor::Available(point),
+            [0, 255, 0],
+        ),
+        (
+            Some(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            mouse::Cursor::Available(point),
+            [0, 0, 255],
+        ),
+    ] {
+        if let Some(event) = event {
+            ui.update(
+                &[Event::Mouse(event)],
+                cursor,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut vec![],
+            );
+        }
+        ui.update(
+            &[Event::Window(window::Event::RedrawRequested(
+                std::time::Instant::now(),
+            ))],
+            cursor,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut vec![],
+        );
+        ui.draw(
+            &mut renderer,
+            &iced::Theme::Light,
+            &iced::advanced::renderer::Style {
+                text_color: iced::Color::BLACK,
+            },
+            cursor,
+        );
+        let pixels = renderer.screenshot(Size::new(600, 1000), 1.0, iced::Color::WHITE);
+        let pixel = |x: usize, y: usize| {
+            let offset = (y * 600 + x) * 4;
+            <[u8; 3]>::try_from(&pixels[offset..offset + 3]).unwrap()
+        };
+        assert_eq!(
+            pixel(28, 24),
+            expected,
+            "inherited SVG follows final button status at padding cursor"
+        );
+        assert_eq!(pixel(52, 24), [255, 0, 255], "explicit SVG keeps its tint");
+        assert_eq!(
+            pixel(104, 24),
+            [255, 255, 0],
+            "disabled SVG uses disabled button ink"
+        );
+    }
 }

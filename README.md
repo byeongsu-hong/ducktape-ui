@@ -507,3 +507,12 @@ content node's accessible description, preserving an explicit description.
 Tooltip children share tree limits, numeric style values are sanitized and
 delay is capped at 60 seconds. Rebuild hosts and guests together for the wire
 variant.
+
+### Tree SVG button colors
+
+Memory SVG children support `color=inherit` through the nearest host button's
+resolved text color, including hover on button padding, pressed and disabled
+states. Explicit SVG palette colors stay independent. The guest copies only
+the inheritance flag; the host owns the existing native button ink cell.
+Rust SVG style callbacks remain refused. Rebuild host and guests together
+for the SVG wire field.

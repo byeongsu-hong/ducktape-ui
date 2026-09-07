@@ -1491,3 +1491,20 @@ explicitly runs all text fixture host tests.
 Red evidence: removing the tooltip description wrapper fails the AccessKit
 description assertion. Forcing a 60-second delay fails the delayed-overlay
 pixel assertion. Restoring each implementation passes the host fixture tests.
+
+### Tree SVG inherited button ink
+
+The construct table emits memory SVG `color=inherit`; hostile frames include
+the flag. The actual widget wasm fixture checks solid SVG pixel colors for
+idle, hover on button padding outside the glyph, pressed and disabled states,
+and an explicitly tinted sibling. Native redraw events settle each status.
+The fixture's existing focus-ring oracle is scoped to the Query button so
+unrelated red icons cannot satisfy its assertion. CI runs `bundled_widget_`,
+including both tests.
+
+Red evidence: replacing final button ink with black fails the inherited SVG
+assertion (black instead of red). Restoring the implementation passes all six
+mounted widget tests. The raster fixture uses tiny-skia, Light theme, 600x1000,
+scale 1 and the existing Geist font registry.
+Removing focus-ring forwarding also fails the scoped keyboard-ring assertion;
+restoring it passes all six mounted widget tests.

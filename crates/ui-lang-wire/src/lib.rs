@@ -623,6 +623,8 @@ pub enum Node {
     /// seen draws as empty space of the node's size.
     Svg {
         key: String,
+        /// Use the nearest button's final status text color at draw time.
+        inherit_button_ink: bool,
         /// The guest's content hash of the picture: an opaque cache key,
         /// not something the host recomputes.
         hash: u64,
@@ -3126,6 +3128,7 @@ mod tests {
 
     fn picture(bytes: Option<Vec<u8>>) -> Node {
         Node::Svg {
+            inherit_button_ink: false,
             key: "App/icon".into(),
             hash: 7,
             bytes,

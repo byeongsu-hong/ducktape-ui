@@ -424,6 +424,7 @@ fn gen_svg(rng: &mut Rng) -> Node {
         vec![b'<'; len]
     });
     Node::Svg {
+        inherit_button_ink: true,
         key: gen_key(rng),
         hash: rng.next_u64(),
         bytes,

@@ -949,3 +949,12 @@ cargo test -p app-store-host bundled_layers_ -- --ignored
 
 Keyed/lazy lists, flex and pin/tooltip remain separate phase-4 prerequisites.
 Host and guests must be rebuilt together for the added wire node variants.
+
+### Tree SVG button colors
+
+Memory SVG children support `color=inherit` through the nearest host button's
+resolved text color, including hover on button padding, pressed and disabled
+states. Explicit SVG palette colors stay independent. The guest copies only
+the inheritance flag; the host owns the existing native button ink cell.
+Rust SVG style callbacks remain refused. Rebuild host and guests together
+for the SVG wire field.

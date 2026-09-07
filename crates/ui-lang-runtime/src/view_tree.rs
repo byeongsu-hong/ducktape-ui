@@ -928,6 +928,7 @@ pub fn render(
     render_node(
         root,
         &Kept {
+            button_ink: None,
             inputs,
             pictures,
             surfaces,
@@ -938,7 +939,9 @@ pub fn render(
 }
 
 /// What the host keeps across frames, as one borrow for the render walk.
+#[derive(Clone)]
 struct Kept<'a> {
+    button_ink: Option<crate::ButtonInk>,
     inputs: &'a Inputs,
     pictures: &'a Pictures,
     surfaces: &'a Surfaces,
@@ -960,6 +963,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             let surfaces = kept.surfaces.clone();
             let containers = kept.containers.clone();
             let canvas = kept.canvas.clone();
+            let button_ink = kept.button_ink.clone();
             let content = content.clone();
             let key = key.clone();
             let mut responsive = crate::responsive(move |size| {
@@ -968,6 +972,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 render_node(
                     &content,
                     &Kept {
+                        button_ink: button_ink.clone(),
                         inputs: &inputs,
                         pictures: &pictures,
                         surfaces: &surfaces,
@@ -1401,6 +1406,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         }
         wire::Node::Text { .. } => text::render(node),
         wire::Node::Svg {
+            inherit_button_ink,
             key,
             hash,
             label,
@@ -1449,13 +1455,16 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     if let Some(opacity) = opacity {
                         svg = svg.opacity(opacity.clamp(0.0, 1.0));
                     }
+                    let ink = inherit_button_ink
+                        .then(|| kept.button_ink.clone())
+                        .flatten();
                     let tint = tint.map(color);
                     let hover = hover.map(|hover| hover.map(color)).unwrap_or(tint);
                     svg.style(move |_theme, status| widget::svg::Style {
-                        color: match status {
+                        color: ink.as_ref().map(|ink| ink.get()).or(match status {
                             widget::svg::Status::Idle => tint,
                             widget::svg::Status::Hovered => hover,
-                        },
+                        }),
                     })
                     .into()
                 }
@@ -1574,6 +1583,12 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             padding: edges,
             style,
         } => {
+            let ink = match content {
+                wire::ButtonContent::Child(child) if uses_button_ink(child) => {
+                    Some(crate::button_ink())
+                }
+                _ => None,
+            };
             // The label fallback is only cloned into an owned `String` when
             // an explicit accessible `name` is absent — `name.clone()` wins
             // over it via `.or_else` whenever one is set, so a button that
@@ -1584,7 +1599,20 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     Some(label.as_str()),
                     button::label(label, style.recipe.as_ref()),
                 ),
-                wire::ButtonContent::Child(child) => (None, render_node(child, kept)),
+                wire::ButtonContent::Child(child) => {
+                    let inner = if let Some(ink) = &ink {
+                        render_node(
+                            child,
+                            &Kept {
+                                button_ink: Some(ink.clone()),
+                                ..kept.clone()
+                            },
+                        )
+                    } else {
+                        render_node(child, kept)
+                    };
+                    (None, inner)
+                }
             };
             let center_x = matches!(width, Some(wire::Length::Fixed(_)));
             let center_y = matches!(height, Some(wire::Length::Fixed(_)));
@@ -1617,7 +1645,13 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             });
             let mut button = widget::button(inner)
                 .on_press_maybe(activate.clone())
-                .style(move |theme, status| button_style(&style, theme, status));
+                .style(move |theme, status| {
+                    let resolved = button_style(&style, theme, status);
+                    if let Some(ink) = &ink {
+                        ink.set(resolved.text_color);
+                    }
+                    resolved
+                });
             if let Some(width) = width {
                 button = button.width(length(*width));
             }
@@ -1985,6 +2019,16 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .label(name.clone())
                 .into()
         }
+    }
+}
+
+fn uses_button_ink(node: &wire::Node) -> bool {
+    match node {
+        wire::Node::Svg {
+            inherit_button_ink, ..
+        } => *inherit_button_ink,
+        wire::Node::Button { .. } => false,
+        _ => node.children().iter().any(uses_button_ink),
     }
 }
 
@@ -3012,6 +3056,7 @@ mod tests {
                     picture(Some(b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec())),
                     // A hash the host never saw: empty space of the size.
                     wire::Node::Svg {
+                        inherit_button_ink: false,
                         key: "App/content/unseen".into(),
                         hash: 99,
                         bytes: None,
@@ -3065,6 +3110,7 @@ mod tests {
 
     fn picture(bytes: Option<Vec<u8>>) -> wire::Node {
         wire::Node::Svg {
+            inherit_button_ink: false,
             key: "App/content/icon".into(),
             hash: 7,
             bytes,
@@ -3110,6 +3156,7 @@ mod tests {
 
         let mut full = Pictures::default();
         full.adopt(&wire::Node::Svg {
+            inherit_button_ink: false,
             key: "App/content/big".into(),
             hash: 8,
             bytes: Some(vec![b' '; MAX_PICTURE_BYTES + 1]),
