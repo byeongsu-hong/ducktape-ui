@@ -75,3 +75,107 @@ fn surface_values_return_to_generated_handlers_with_owned_row_context() {
     }]);
     assert_eq!(surface(&unchanged, "number", 0).0, [V::F64(2.5)]);
 }
+
+fn row(label: &str) -> V {
+    V::Record {
+        name: "Row".into(),
+        fields: vec![
+            ("id".into(), V::I64(1)),
+            ("label".into(), V::Str(label.into())),
+            (
+                "note".into(),
+                V::Option(Some(Box::new(V::Str("note".into())))),
+            ),
+            (
+                "details".into(),
+                V::Record {
+                    name: "Details".into(),
+                    fields: vec![
+                        ("enabled".into(), V::Bool(true)),
+                        ("score".into(), V::F64(1.5)),
+                    ],
+                },
+            ),
+        ],
+    }
+}
+
+#[test]
+fn compound_surface_events_validate_every_nested_field() {
+    boot_native();
+    let mut frame = tick_native(vec![]);
+    assert_eq!(
+        surface(&frame, "rows", 0).0,
+        [V::List(vec![row("first")]), V::Option(None)]
+    );
+    let mut wrong_name = row("invalid-name");
+    let V::Record { name, .. } = &mut wrong_name else {
+        unreachable!()
+    };
+    *name = "Other".into();
+    let mut wrong_field = row("invalid-field");
+    let V::Record { fields, .. } = &mut wrong_field else {
+        unreachable!()
+    };
+    fields[1].0 = "id".into();
+    let mut wrong_nested = row("invalid-nested");
+    let V::Record { fields, .. } = &mut wrong_nested else {
+        unreachable!()
+    };
+    let V::Record { fields, .. } = &mut fields[3].1 else {
+        unreachable!()
+    };
+    fields[1].1 = V::F64(f64::NAN);
+    let mut wrong_type = row("invalid-type");
+    let V::Record { fields, .. } = &mut wrong_type else {
+        unreachable!()
+    };
+    let V::Record { fields, .. } = &mut fields[3].1 else {
+        unreachable!()
+    };
+    fields[1].1 = V::Bool(true);
+    for invalid in [
+        V::List(vec![wrong_type]),
+        V::List(vec![wrong_name]),
+        V::List(vec![wrong_field]),
+        V::List(vec![wrong_nested]),
+        V::List(vec![V::Str("wrong row".into())]),
+        V::List(vec![V::Record {
+            name: "Row".into(),
+            fields: vec![],
+        }]),
+        V::Option(None),
+    ] {
+        frame = tick_native(vec![Event::Surface {
+            handler: surface(&frame, "rows", 0).1.unwrap(),
+            value: invalid,
+        }]);
+        assert_eq!(surface(&frame, "rows", 0).0[0], V::List(vec![row("first")]));
+    }
+    frame = tick_native(vec![Event::Surface {
+        handler: surface(&frame, "rows", 0).1.unwrap(),
+        value: V::List(vec![row("edited")]),
+    }]);
+    assert_eq!(
+        surface(&frame, "rows", 0).0[0],
+        V::List(vec![row("edited")])
+    );
+    frame = tick_native(vec![Event::Surface {
+        handler: surface(&frame, "optional", 0).1.unwrap(),
+        value: V::Option(Some(Box::new(row("selected")))),
+    }]);
+    assert_eq!(
+        surface(&frame, "rows", 0).0[1],
+        V::Option(Some(Box::new(row("selected"))))
+    );
+    frame = tick_native(vec![Event::Surface {
+        handler: surface(&frame, "optional", 0).1.unwrap(),
+        value: V::Option(None),
+    }]);
+    assert_eq!(surface(&frame, "rows", 0).0[1], V::Option(None));
+    frame = tick_native(vec![Event::Surface {
+        handler: surface(&frame, "rows", 0).1.unwrap(),
+        value: V::List(vec![]),
+    }]);
+    assert_eq!(surface(&frame, "rows", 0).0[0], V::List(vec![]));
+}

@@ -1085,8 +1085,9 @@ or missing.
 
 The tree target carries extern widget scalar arguments (`unit`, `bool`,
 `i64`, `f64`, `str`) and typed return routes. The native declaration remains
-unchanged. Compound values and native resources remain refused, so this does
-not claim that every native extern can run as a wasm surface.
+unchanged. Lists, options and nonempty declared records now cross with
+nested type validation. Opaque/native resources, recursive record definitions
+and enums remain refused; this does not claim every native extern is portable.
 
 Evidence: `codegen::tests::tree::host_surfaces_carry_typed_arguments_and_snapshot_event_routes`
 checks the emitter; `view_tree::tests::a_rendered_surface_routes_its_value_and_an_unrouted_one_stays_quiet`
@@ -1100,6 +1101,23 @@ Red evidence: removing the renderer's route produced `left: []` instead of
 the expected `Surface` event after a real button click. Dropping the guest's
 surface message failed the generated fixture's expected link text assertion.
 Both tests pass again with the production paths restored.
+
+The compound fixture sends a list of records containing another record and
+an optional string, edits it through generated handlers, and checks optional
+selection values. It rejects wrong record/field names, missing fields and
+nested nonfinite values. The same bundled wasm fixture runs in the host CI
+job and asserts the resulting tree patches. Removing record-name validation
+makes the native fixture's unchanged-row assertion fail with `invalid-name`;
+restoring validation passes. Wire tests also cover shared decode depth/count,
+rejection before reading a hostile collection length, and preservation of
+structural identifiers. Before preserving names, the structural-name test
+fails because truncating `notex` silently accepts it as `note`.
+
+The renderer's button test also returns nested data through a real click.
+Replacing recursive input validation with scalar-only validation fails on a
+nested `NaN` event; restoration passes. A multi-surface frame test fails
+before enforcing the shared sanitizer value budget, then decodes successfully
+after the excess argument suffix is removed.
 
 ### Tree-target partial border styles
 

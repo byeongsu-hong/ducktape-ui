@@ -23,16 +23,8 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A copied value at a host surface boundary. Opaque native resources are
-/// deliberately absent: their handles and lifecycle belong to the host.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum SurfaceValue {
-    Unit,
-    Bool(bool),
-    I64(i64),
-    F64(f64),
-    Str(String),
-}
+mod surface;
+pub use surface::{MAX_SURFACE_DEPTH, MAX_SURFACE_VALUES, SurfaceValue, sanitize_surface_event};
 
 /// Something the host tells the guest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -957,6 +949,7 @@ fn sanitize_tree(root: &mut Node) {
     let mut budgets = Budgets {
         text: MAX_TEXT_BYTES_PER_FRAME,
         svg: MAX_SVG_BYTES_PER_FRAME,
+        surface_values: MAX_SURFACE_VALUES,
     };
     let mut taken = Taken::new();
     sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
@@ -1214,6 +1207,7 @@ fn claim(key: &mut String, taken: &mut Taken) {
 
 /// What is left of a frame's per-frame byte budgets while its tree is walked.
 struct Budgets {
+    surface_values: usize,
     text: usize,
     svg: usize,
 }
@@ -1580,13 +1574,17 @@ fn sanitize_node(
             claim(key, taken);
             spend_text(name, &mut budgets.text);
             args.truncate(MAX_SURFACE_ARGS);
-            for value in args {
-                match value {
-                    SurfaceValue::Str(text) => spend_text(text, &mut budgets.text),
-                    SurfaceValue::F64(number) if !number.is_finite() => *number = 0.0,
-                    _ => {}
+            let mut kept = 0;
+            for value in args.iter_mut() {
+                if budgets.surface_values == 0 {
+                    break;
                 }
+                if !value.bound(0, &mut budgets.surface_values, &mut budgets.text, false) {
+                    *value = SurfaceValue::Unit;
+                }
+                kept += 1;
             }
+            args.truncate(kept);
         }
     }
     for length in lengths_mut(node) {
@@ -1830,6 +1828,7 @@ pub fn encoded_size<T: Serialize>(value: &T) -> u64 {
 
 pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, String> {
     budget::reset();
+    surface::reset_decode_budget();
     bincode::deserialize(bytes).map_err(|error| error.to_string())
 }
 
@@ -1862,6 +1861,26 @@ mod tests {
             border: None,
             children,
         }
+    }
+
+    #[test]
+    fn sanitized_surfaces_share_the_decoders_value_budget() {
+        let mut frame = Frame {
+            root: Some(column(
+                (0..20)
+                    .map(|i| Node::Surface {
+                        key: format!("surface-{i}"),
+                        name: "many".into(),
+                        args: vec![SurfaceValue::Unit; MAX_SURFACE_ARGS],
+                        on_event: None,
+                    })
+                    .collect(),
+            )),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let decoded = decode::<Frame>(&encode(&frame));
+        assert!(decoded.is_ok(), "sanitized frame must decode: {decoded:?}");
     }
 
     #[test]

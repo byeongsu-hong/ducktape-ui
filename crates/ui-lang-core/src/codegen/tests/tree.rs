@@ -143,7 +143,7 @@ view
         "SurfaceValue::F64(",
         "on_event:",
         "let __route_arg_0 =",
-        "SurfaceValue::Str(__value)",
+        "SurfaceValue::Str(__item)",
     ] {
         assert!(
             generated.contains(expected),
@@ -163,6 +163,50 @@ fn omitted_border_fields_remain_absent_on_the_wire() {
             .contains("width: ::std::option::Option::None, radius: ::std::option::Option::None"),
         "{generated}"
     );
+}
+
+#[test]
+fn surface_records_lists_and_options_keep_their_declared_shape() {
+    let source = format!(
+        r#"app Demo
+extern crate::data
+  Row(id:i64, label:str, note:str?)
+  component rows(values:&[Row], selected:Row?) -> Row
+{PALETTE}state
+  rows:[Row] = []
+  selected:Row? = none
+on picked(value)
+  selected = some(value)
+view
+  extern rows(rows, selected) -> picked _
+"#
+    );
+    let generated = compile_for(&source, "records.ice", Target::Tree)
+        .unwrap_or_else(|error| panic!("{}", error.render("records.ice")));
+    for expected in [
+        "SurfaceValue::Record",
+        "SurfaceValue::List",
+        "SurfaceValue::Option",
+        "crate::data::Row",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected}: {generated}"
+        );
+    }
+}
+
+#[test]
+fn opaque_and_recursive_surface_data_remain_refused() {
+    for (fields, reason) in [("", "opaque"), ("children:[Data]", "recursive")] {
+        let source = format!(
+            "app Demo\nextern crate::data\n  Data({fields})\n  component panel(data:Data?) -> unit\n{PALETTE}state\n  data:Data? = none\nview\n  extern panel(data)\n"
+        );
+        let error = compile_for(&source, "data.ice", Target::Tree)
+            .unwrap_err()
+            .render("data.ice");
+        assert!(error.contains("E190") && error.contains(reason), "{error}");
+    }
 }
 
 #[test]
@@ -954,17 +998,15 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  extern host_pair(draft, draft)\n",
     ),
-    refused(
+    emitted(
         "extern widget: compound argument",
         "",
         "  extern host_list(items)\n",
-        "a non-scalar extern widget argument",
     ),
-    refused(
+    emitted(
         "extern widget: compound event",
         "on replied(value)\n  draft = value.value\n",
         "  extern host_reply() -> replied _\n",
-        "a non-scalar extern widget event",
     ),
 ];
 
