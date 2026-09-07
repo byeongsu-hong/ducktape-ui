@@ -364,6 +364,7 @@ fn gen_rule(rng: &mut Rng) -> Node {
 
 fn gen_text(rng: &mut Rng) -> Node {
     Node::Text {
+        options: Default::default(),
         key: gen_key(rng),
         content: gen_string(rng),
         size: gen_opt_f32(rng),
@@ -644,6 +645,9 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                 content: Box::new(node),
             },
             0 => Node::Container {
+                max_width: None,
+                max_height: None,
+                clip: false,
                 key: gen_key(rng),
                 width: gen_opt_length(rng),
                 height: gen_opt_length(rng),

@@ -461,3 +461,14 @@ actual wasm pixels and local pointer routing.
 Tree `stack`, `hover`, and modal `overlay` use native host layout and input;
 the [layered fixture](examples/app-store/README.md#layered-layouts-fixture)
 checks wasm routes, sizing, hover, focus blocking, and modal resource cleanup.
+
+## Wasm text presentation
+
+The tree target copies plain-text wrapping/shaping, named font descriptors,
+relative/absolute line height, height, vertical alignment and grapheme tracking
+to native host widgets. Hosts register trusted family names through
+`ui_lang_runtime::view_tree::register_font_family` and load the matching font
+bytes. Unregistered names use native sans-serif. Tracking uses a non-selectable
+grapheme row and shares the host node budget. Boxes support maximum dimensions
+and clipping; buttons support padding utilities. These wire fields require
+host and guest rebuilds together.

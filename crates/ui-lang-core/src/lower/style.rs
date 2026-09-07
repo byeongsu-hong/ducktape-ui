@@ -170,6 +170,10 @@ impl ResolvedStyle {
         self.set_properties == 0
     }
 
+    pub(crate) fn has_non_padding_properties(&self) -> bool {
+        self.set_properties & !(0b1111 << 3) != 0
+    }
+
     fn apply(&mut self, utility: &ResolvedUtility) {
         use ResolvedStyleProperty as Property;
         use ResolvedStyleVariantKind as Variant;

@@ -27,6 +27,7 @@ use ui_lang_wire as wire;
 
 fn text_node(nth: usize, content: String) -> wire::Node {
     wire::Node::Text {
+        options: Default::default(),
         key: format!("App/line/{nth}"),
         content,
         size: None,

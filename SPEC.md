@@ -1013,3 +1013,14 @@ into the stack's child list. Hover uses native cursor presence and a copied
 blocks base keyboard/focus operations while the modal is present and forwards
 its native overlay events to the same guest. Native callback-based float
 positioning remains refused. Wire child, numeric, depth, and frame limits apply.
+
+## Tree text presentation
+
+The tree target copies plain-text wrapping/shaping, named font descriptors,
+relative/absolute line height, height, vertical alignment and grapheme tracking
+to native host widgets. Hosts register trusted family names through
+`ui_lang_runtime::view_tree::register_font_family` and load the matching font
+bytes. Unregistered names use native sans-serif. Tracking uses a non-selectable
+grapheme row and shares the host node budget. Boxes support maximum dimensions
+and clipping; buttons support padding utilities. These wire fields require
+host and guest rebuilds together.

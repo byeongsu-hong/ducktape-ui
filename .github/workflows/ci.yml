@@ -618,6 +618,15 @@ jobs:
       - name: Verify layered layout and modal interactions through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_layers_ -- --ignored
+      - name: Bundle text layout fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-text-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/text-fixture
+      - name: Check wasm text layout and button routes
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host text_wasm_preserves_layout_and_padding_routes -- --ignored
+
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

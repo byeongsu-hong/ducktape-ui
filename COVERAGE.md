@@ -1420,3 +1420,18 @@ host bridge without overlay forwarding failed its backdrop-dismissal assertion.
 Random hostile frames now generate Stack/Hover/Overlay, including excessive
 children and nonfinite values. All six decode/sanitize/diff/patch checks pass;
 adding these vectors originally exposed and fixed missing Props attachment.
+
+### Tree text and kit presentation evidence
+
+`tree_text_keeps_named_faces_and_layout_options` covers copied face/layout
+emission; `tree_large_finite_tracking_emits_finite_rust_literal` guards overflow.
+Wire text tests bound line height, font-name UTF-8 budget and tracked grapheme
+expansion. `app-store-text-fixture` bundles real component text, wrapping,
+tracking, bounded/clipped boxes and a padded action button. The ignored host
+`text_wasm_preserves_layout_and_padding_routes` test is run explicitly in CI
+and loads that wasm in Wasmtime, checking native height, wrapping, padding,
+maximum width, clipped raster bounds and a native pointer click through the guest route. A temporary
+mutation dropping native text height made its intended assertion fail
+(actual 24, expected 44); restoration passes. The imported-component E190 test
+first failed on line 1 instead of 2, then passed after preventing double remap.
+Font assets remain host-owned; the host registers trusted names for resolution.

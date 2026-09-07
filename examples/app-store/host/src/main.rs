@@ -13,6 +13,8 @@ mod terminal;
 ui_lang::include_app!("src/ui/app.ice");
 
 fn main() -> iced::Result {
+    ui_lang_runtime::view_tree::register_font_family("Geist");
+    ui_lang_runtime::view_tree::register_font_family("Geist Mono");
     capabilities::clock::start();
     IceStore::run()
 }

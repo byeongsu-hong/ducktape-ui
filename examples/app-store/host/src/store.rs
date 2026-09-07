@@ -1320,6 +1320,7 @@ mod tests {
 
     fn label(key: &str, text: &str) -> wire::Node {
         wire::Node::Text {
+            options: Default::default(),
             key: key.into(),
             content: text.into(),
             size: None,
@@ -1418,6 +1419,9 @@ mod tests {
         let mut node = wire::Node::empty();
         for _ in 0..wire::MAX_DEPTH + 4 {
             node = wire::Node::Container {
+                max_width: None,
+                max_height: None,
+                clip: false,
                 key: String::new(),
                 width: None,
                 height: None,
@@ -1564,3 +1568,7 @@ mod responsive_tests;
 #[cfg(test)]
 #[path = "layers_tests.rs"]
 mod layers_tests;
+
+#[cfg(test)]
+#[path = "text_tests.rs"]
+mod text_tests;

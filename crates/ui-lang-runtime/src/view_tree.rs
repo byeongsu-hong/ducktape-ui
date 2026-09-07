@@ -28,6 +28,8 @@ use ui_lang_wire as wire;
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
+mod text;
+pub use text::register_font_family;
 mod canvas;
 mod editor;
 mod layers;
@@ -549,6 +551,11 @@ fn font(font: wire::Font) -> iced::Font {
             false => iced::font::Family::SansSerif,
         },
         weight: match font.weight {
+            wire::Weight::Thin => iced::font::Weight::Thin,
+            wire::Weight::ExtraLight => iced::font::Weight::ExtraLight,
+            wire::Weight::Light => iced::font::Weight::Light,
+            wire::Weight::ExtraBold => iced::font::Weight::ExtraBold,
+            wire::Weight::Black => iced::font::Weight::Black,
             wire::Weight::Normal => iced::font::Weight::Normal,
             wire::Weight::Medium => iced::font::Weight::Medium,
             wire::Weight::Semibold => iced::font::Weight::Semibold,
@@ -991,6 +998,9 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         }
 
         wire::Node::Container {
+            max_width,
+            max_height,
+            clip,
             key,
             width,
             height,
@@ -1006,6 +1016,13 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 widget::container(render_node(content, kept)).id(widget::Id::from(key.clone()));
             if let Some(edges) = edges {
                 container = container.padding(padding(*edges));
+            }
+            container = container.clip(*clip);
+            if let Some(value) = max_width {
+                container = container.max_width(*value);
+            }
+            if let Some(value) = max_height {
+                container = container.max_height(*value);
             }
             if let Some(width) = width {
                 container = container.width(length(*width));
@@ -1345,37 +1362,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
         }
-        wire::Node::Text {
-            key,
-            content,
-            size,
-            color: fg,
-            font: face,
-            width,
-            align_x,
-        } => {
-            let mut text = widget::text(content.clone()).font(font(*face));
-            if let Some(size) = size {
-                text = text.size(size.max(f32::EPSILON));
-            }
-            if let Some(fg) = fg {
-                text = text.color(color(*fg));
-            }
-            if let Some(width) = width {
-                text = text.width(length(*width));
-            }
-            if let Some(align) = align_x {
-                text = text.align_x(horizontal(*align));
-            }
-            accessible(
-                crate::selectable_text(text),
-                StableId::new(key),
-                Role::Label,
-            )
-            .logical_id_maybe(cfg!(test).then_some(key.as_str()))
-            .value(content.clone())
-            .into()
-        }
+        wire::Node::Text { .. } => text::render(node),
         wire::Node::Svg {
             key,
             hash,
@@ -2223,6 +2210,9 @@ mod tests {
                 (wire::Length::Fixed(0.0), 0.0, Size::ZERO),
             ] {
                 let node = wire::Node::Container {
+                    max_width: None,
+                    max_height: None,
+                    clip: false,
                     key: "shader/@bounds".into(),
                     width: Some(width),
                     height: Some(wire::Length::Fixed(height)),
@@ -2558,6 +2548,9 @@ mod tests {
     #[test]
     fn every_node_kind_renders() {
         let tree = wire::Node::Container {
+            max_width: None,
+            max_height: None,
+            clip: false,
             key: "App".into(),
             width: Some(wire::Length::Fill),
             height: Some(wire::Length::Fill),
@@ -2579,6 +2572,7 @@ mod tests {
                 border: None,
                 children: vec![
                     wire::Node::Text {
+                        options: Default::default(),
                         key: "App/content/title".into(),
                         content: "Todo".into(),
                         size: Some(28.0),

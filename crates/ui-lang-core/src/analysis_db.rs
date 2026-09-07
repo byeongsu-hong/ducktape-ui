@@ -824,7 +824,9 @@ impl AnalysisDb {
         let program = lower::lower(analysis.document)
             .map_err(|error| remap_origin(error, &source_origins))?;
         codegen::view_template(&program, &path.display().to_string()).map_err(|mut error| {
-            if let Some((origin, line)) = program.source_origin(error.line) {
+            if error.path.is_none()
+                && let Some((origin, line)) = program.source_origin(error.line)
+            {
                 error.path = Some(origin.display().to_string());
                 error.line = line;
             }
@@ -882,7 +884,9 @@ impl AnalysisDb {
         program.set_target(self.target);
         let mut rust =
             codegen::generate(&program, &path.display().to_string()).map_err(|mut error| {
-                if let Some((origin, line)) = program.source_origin(error.line) {
+                if error.path.is_none()
+                    && let Some((origin, line)) = program.source_origin(error.line)
+                {
                     error.path = Some(origin.display().to_string());
                     error.line = line;
                 }
@@ -1739,6 +1743,25 @@ mod tests {
             ),
             name, import, component
         )
+    }
+
+    #[test]
+    fn tree_refusal_preserves_imported_component_origin() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
+        fixture.write(
+            "part.ice",
+            "component Part()\n  tooltip delay=0\n    text \"a\"\n    text \"tip\"\n",
+        );
+        let mut db = AnalysisDb::default();
+        db.set_target(crate::Target::Tree);
+        let error = db.compile_root(fixture.path("app.ice")).unwrap_err();
+        assert_eq!(error.code, "E190");
+        assert_eq!(
+            error.path,
+            Some(fixture.path("part.ice").display().to_string())
+        );
+        assert_eq!(error.line, 2);
     }
 
     fn component(name: &str, text: &str) -> String {

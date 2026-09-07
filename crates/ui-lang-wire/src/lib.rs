@@ -23,6 +23,10 @@
 
 use serde::{Deserialize, Serialize};
 
+mod text;
+pub use text::{
+    FontFamily, FontStretch, FontStyle, LineHeight, NamedFont, Shaping, TextOptions, Wrapping,
+};
 mod canvas;
 pub use canvas::{
     CanvasCommand, CanvasLineCap, CanvasLineJoin, CanvasSegment, CanvasShape, CanvasStroke,
@@ -259,6 +263,11 @@ pub enum Weight {
     Medium,
     Semibold,
     Bold,
+    Thin,
+    ExtraLight,
+    Light,
+    ExtraBold,
+    Black,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -443,6 +452,9 @@ pub enum ButtonContent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Node {
     Container {
+        max_width: Option<f32>,
+        max_height: Option<f32>,
+        clip: bool,
         key: String,
         width: Option<Length>,
         height: Option<Length>,
@@ -569,6 +581,7 @@ pub enum Node {
         content: Box<Node>,
     },
     Text {
+        options: TextOptions,
         key: String,
         content: String,
         size: Option<f32>,
@@ -1359,6 +1372,8 @@ fn sanitize_node(
     }
     match node {
         Node::Container {
+            max_width,
+            max_height,
             key,
             padding,
             border,
@@ -1366,6 +1381,8 @@ fn sanitize_node(
             ..
         } => {
             claim(key, taken);
+            bound_optional(max_width);
+            bound_optional(max_height);
             bound_edges(padding);
             bound_border(border);
             bound_color(background);
@@ -1488,6 +1505,7 @@ fn sanitize_node(
             bound_border(border);
         }
         Node::Text {
+            options,
             key,
             content,
             size,
@@ -1495,7 +1513,16 @@ fn sanitize_node(
             ..
         } => {
             claim(key, taken);
+            options.sanitize(&mut budgets.text);
             spend_text(content, &mut budgets.text);
+            // Tracking expands graphemes into native widgets. Charge a conservative
+            // scalar count against the same host node budget before rendering.
+            if options.tracking > 0.0 {
+                if let Some((end, _)) = content.char_indices().nth(*budget) {
+                    content.truncate(end);
+                }
+                *budget = budget.saturating_sub(content.chars().count());
+            }
             if let Some(size) = size {
                 *size = bounded(*size).min(MAX_TEXT_PIXELS);
             }
@@ -2019,6 +2046,7 @@ mod tests {
 
     fn text(content: &str) -> Node {
         Node::Text {
+            options: Default::default(),
             key: "App/t".into(),
             content: content.into(),
             size: Some(16.0),
@@ -2264,6 +2292,9 @@ mod tests {
             keyed("b", "two"),
             keyed("c", "three"),
             Node::Container {
+                max_width: None,
+                max_height: None,
+                clip: false,
                 key: "box".into(),
                 width: None,
                 height: None,
@@ -2281,6 +2312,9 @@ mod tests {
             keyed("a", "one!"),
             keyed("d", "four"),
             Node::Container {
+                max_width: None,
+                max_height: None,
+                clip: false,
                 key: "box".into(),
                 width: None,
                 height: None,
@@ -2565,6 +2599,7 @@ mod tests {
         let mut frame = Frame {
             root: Some(column(vec![
                 Node::Text {
+                    options: Default::default(),
                     key: "k".repeat(MAX_STRING_BYTES + 3),
                     content: "é".repeat(MAX_STRING_BYTES),
                     size: Some(f32::NAN),
