@@ -14,7 +14,7 @@
 //!
 //! An extern widget is the one construct that reaches past that vocabulary:
 //! it becomes a `Surface` node the host paints itself, by the extern's name,
-//! with the call's typed scalar arguments copied across the wire. No Rust
+//! with the call's typed data arguments copied across the wire. No Rust
 //! function is called on the guest side; the declaration only types the call.
 //!
 //! An `svg` crosses as bytes the guest holds — an embedded asset or a
@@ -2230,7 +2230,66 @@ fn surface(
 ) -> Result<String, Error> {
     let component = program.resolved_extern_component(id)?;
     let origin = component.origin;
-    let variant = |ty: &Type| match ty {
+    let args = component
+        .arguments
+        .iter()
+        .map(|argument| {
+            let value =
+                resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned)?;
+            let encoded = surface_value_code(
+                &argument.ty,
+                "__surface_arg",
+                false,
+                program,
+                origin,
+                &mut Vec::new(),
+            )?;
+            Ok(format!("{{ let __surface_arg = &({value}); {encoded} }}"))
+        })
+        .collect::<Result<Vec<_>, Error>>()?
+        .join(", ");
+    let on_event = component
+        .route
+        .as_ref()
+        .map(|route| {
+            let decoded = surface_value_code(
+                &component.output,
+                "__sent",
+                true,
+                program,
+                origin,
+                &mut Vec::new(),
+            )?;
+            let callback =
+                snapshot_callback(route, "__value", &["__value"], env, program, message)?;
+            Ok(handler_code(
+                &format!("{WIRE}::SurfaceValue"),
+                message,
+                &callback,
+                &format!("move |__sent| ({decoded}).map(&__route)"),
+            ))
+        })
+        .transpose()?;
+    Ok(format!(
+        "{WIRE}::Node::Surface {{ key: {}, name: ::std::string::String::from({:?}), args: ::std::vec![{args}], on_event: {} }}",
+        key_code(identity, "extern", origin, scope, env, program)?,
+        component.function.name,
+        option_code(on_event),
+    ))
+}
+
+/// Encode a borrowed expression or decode an owned wire value. The generated
+/// decoder returns Option<T>, so one mismatched nested field drops the event.
+fn surface_value_code(
+    ty: &Type,
+    value: &str,
+    decode: bool,
+    program: &LoweredProgram,
+    origin: OriginId,
+    visiting: &mut Vec<String>,
+) -> Result<String, Error> {
+    let v = format!("{WIRE}::SurfaceValue");
+    let scalar = match ty {
         Type::Unit => Some("Unit"),
         Type::Bool => Some("Bool"),
         Type::I64 => Some("I64"),
@@ -2238,45 +2297,104 @@ fn surface(
         Type::Str => Some("Str"),
         _ => None,
     };
-    let args = component
-        .arguments
-        .iter()
-        .map(|argument| {
-            let tag = variant(&argument.ty)
-                .ok_or_else(|| refused(program, origin, "a non-scalar extern widget argument"))?;
-            let value =
-                resolved_expr_use_code(program, argument.expression, env, ValueMode::Owned)?;
-            Ok(if tag == "Unit" {
-                format!("{{ let _ = {value}; {WIRE}::SurfaceValue::Unit }}")
-            } else if tag == "Str" {
-                format!("{WIRE}::SurfaceValue::Str(::std::string::ToString::to_string(&({value})))")
+    if let Some(tag) = scalar {
+        return Ok(if decode {
+            let pattern = if tag == "Unit" {
+                format!("{v}::Unit")
             } else {
-                format!("{WIRE}::SurfaceValue::{tag}({value})")
-            })
-        })
-        .collect::<Result<Vec<_>, Error>>()?
-        .join(", ");
-    let on_event = component.route.as_ref().map(|route| {
-        let tag = variant(&component.output).ok_or_else(|| refused(
-            program, origin, "a non-scalar extern widget event",
-        ))?;
-        let callback = snapshot_callback(route, "__value", &["__value"], env, program, message)?;
-        let pattern = if tag == "Unit" {
-            format!("{WIRE}::SurfaceValue::Unit")
+                format!("{v}::{tag}(__item)")
+            };
+            let guard = if tag == "F64" {
+                " if __item.is_finite()"
+            } else {
+                ""
+            };
+            let result = if tag == "Unit" { "()" } else { "__item" };
+            format!(
+                "match {value} {{ {pattern}{guard} => ::std::option::Option::Some({result}), _ => ::std::option::Option::None }}"
+            )
         } else {
-            format!("{WIRE}::SurfaceValue::{tag}(__value)")
-        };
-        let guard = if tag == "F64" { " if __value.is_finite()" } else { "" };
-        let value = if tag == "Unit" { "()" } else { "__value" };
-        Ok(handler_code(
-            &format!("{WIRE}::SurfaceValue"), message, &callback,
-            &format!("move |__sent| match __sent {{ {pattern}{guard} => ::std::option::Option::Some(__route({value})), _ => ::std::option::Option::None }}"),
-        ))
-    }).transpose()?;
-    Ok(format!(
-        "{WIRE}::Node::Surface {{ key: {}, name: ::std::string::String::from({:?}), args: ::std::vec![{args}], on_event: {} }}",
-        key_code(identity, "extern", origin, scope, env, program)?,
-        component.function.name,
-        option_code(on_event),
-    ))
+            match tag {
+                "Unit" => format!("{{ let _ = {value}; {v}::Unit }}"),
+                "Str" => format!("{v}::Str(::std::string::ToString::to_string({value}))"),
+                _ => format!("{v}::{tag}(*({value}))"),
+            }
+        });
+    }
+    match ty {
+        Type::List(inner) => {
+            let item = surface_value_code(inner, "__item", decode, program, origin, visiting)?;
+            Ok(if decode {
+                format!(
+                    "match {value} {{ {v}::List(__items) => __items.into_iter().map(|__item| {item}).collect::<::std::option::Option<::std::vec::Vec<_>>>(), _ => ::std::option::Option::None }}"
+                )
+            } else {
+                format!("{v}::List(({value}).iter().map(|__item| {item}).collect())")
+            })
+        }
+        Type::Option(inner) => {
+            let item = surface_value_code(
+                inner,
+                if decode { "*__item" } else { "__item" },
+                decode,
+                program,
+                origin,
+                visiting,
+            )?;
+            Ok(if decode {
+                format!(
+                    "match {value} {{ {v}::Option(::std::option::Option::None) => ::std::option::Option::Some(::std::option::Option::None), {v}::Option(::std::option::Option::Some(__item)) => ({item}).map(::std::option::Option::Some), _ => ::std::option::Option::None }}"
+                )
+            } else {
+                format!(
+                    "{v}::Option(({value}).as_ref().map(|__item| ::std::boxed::Box::new({item})))"
+                )
+            })
+        }
+        Type::Named(name) => {
+            let declaration = program
+                .struct_declarations()
+                .iter()
+                .find(|item| &item.name == name)
+                .filter(|item| !item.fields.is_empty())
+                .ok_or_else(|| refused(program, origin, "an opaque extern widget value"))?;
+            if visiting.contains(name) {
+                return Err(refused(program, origin, "a recursive extern widget value"));
+            }
+            visiting.push(name.clone());
+            let mut fields = Vec::new();
+            for (index, field) in declaration.fields.iter().enumerate() {
+                let field_value = if decode {
+                    format!("__field_{index}")
+                } else {
+                    format!("&({value}).{}", field.name)
+                };
+                let item =
+                    surface_value_code(&field.ty, &field_value, decode, program, origin, visiting)?;
+                fields.push(if decode {
+                    format!("{}: ({item})?", field.name)
+                } else {
+                    format!("(::std::string::String::from({:?}), {item})", field.name)
+                });
+            }
+            visiting.pop();
+            if decode {
+                let extract = declaration.fields.iter().enumerate().map(|(index, field)| format!(
+                    "let (__name, __field_{index}) = __fields.next()?; if __name != {:?} {{ return ::std::option::Option::None; }}", field.name
+                )).collect::<Vec<_>>().join(" ");
+                Ok(format!(
+                    "(|| {{ let {v}::Record {{ name: __name, fields: __fields }} = {value} else {{ return ::std::option::Option::None; }}; if __name != {name:?} || __fields.len() != {} {{ return ::std::option::Option::None; }} let mut __fields = __fields.into_iter(); {extract} ::std::option::Option::Some({} {{ {} }}) }})()",
+                    declaration.fields.len(),
+                    declaration.rust_path,
+                    fields.join(", ")
+                ))
+            } else {
+                Ok(format!(
+                    "{v}::Record {{ name: ::std::string::String::from({name:?}), fields: ::std::vec![{}] }}",
+                    fields.join(", ")
+                ))
+            }
+        }
+        _ => Err(refused(program, origin, "a non-data extern widget value")),
+    }
 }

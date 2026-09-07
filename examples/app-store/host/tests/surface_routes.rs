@@ -1,4 +1,4 @@
-//! Executes the generated scalar surface fixture as a real wasm component.
+//! Executes the generated surface fixture as a real wasm component.
 //! CI bundles it separately from the user-facing catalog, then runs this test.
 
 use ui_lang_wire::{self as wire, Event, Node, SurfaceValue as V};
@@ -109,4 +109,43 @@ fn a_bundled_guest_receives_typed_surface_events_and_patches_its_view() {
     assert!(has_text(&changed, "duck://pages/example"));
     assert!(has_text(&changed, "first"));
     assert!(has_text(&changed, "1"));
+    let mut rows = surface(&changed, "rows").0[0].clone();
+    let V::List(values) = &mut rows else {
+        panic!("expected row list")
+    };
+    assert_eq!(values.len(), 1);
+    let V::Record { name, fields } = &mut values[0] else {
+        panic!("expected record")
+    };
+    assert_eq!(name, "Row");
+    assert_eq!(
+        fields[2],
+        (
+            "note".into(),
+            V::Option(Some(Box::new(V::Str("note".into()))))
+        )
+    );
+    fields[1].1 = V::Str("edited in wasm".into());
+    let changed = tick(vec![Event::Surface {
+        handler: surface(&changed, "rows").1,
+        value: rows.clone(),
+    }]);
+    assert_eq!(surface(&changed, "rows").0[0], rows);
+    let wrong = tick(vec![Event::Surface {
+        handler: surface(&changed, "rows").1,
+        value: V::List(vec![V::Record {
+            name: "Row".into(),
+            fields: vec![],
+        }]),
+    }]);
+    assert_eq!(surface(&wrong, "rows").0[0], rows);
+    let V::List(values) = rows else {
+        unreachable!()
+    };
+    let selected = V::Option(Some(Box::new(values[0].clone())));
+    let changed = tick(vec![Event::Surface {
+        handler: surface(&wrong, "optional").1,
+        value: selected.clone(),
+    }]);
+    assert_eq!(surface(&changed, "rows").0[1], selected);
 }

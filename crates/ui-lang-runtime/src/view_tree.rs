@@ -224,10 +224,8 @@ impl Inputs {
                 let Some(handler) = handler else {
                     return;
                 };
-                match &mut value {
-                    wire::SurfaceValue::Str(text) => wire::truncate_string(text),
-                    wire::SurfaceValue::F64(number) if !number.is_finite() => return,
-                    _ => {}
+                if !wire::sanitize_surface_event(&mut value) {
+                    return;
                 }
                 wire::Event::Surface { handler, value }
             }
@@ -2022,10 +2020,8 @@ mod tests {
             "link".into(),
             Box::new(|key, args| {
                 assert_eq!(key, "App/link");
-                assert_eq!(
-                    args,
-                    &[V::Str("duck://pages/example".into()), V::Bool(true)]
-                );
+                assert_eq!(args.len(), 2);
+                assert_eq!(args[1], V::Bool(true));
                 widget::button("Open")
                     .on_press(args[0].clone())
                     .width(100)
@@ -2034,42 +2030,53 @@ mod tests {
             }),
         );
         for handler in [Some(27), None] {
-            let node = wire::Node::Surface {
-                key: "App/link".into(),
-                name: "link".into(),
-                args: vec![V::Str("duck://pages/example".into()), V::Bool(true)],
-                on_event: handler,
-            };
-            let mut inputs = Inputs::default();
-            let element = render(&node, &inputs, &Pictures::default(), &surfaces);
-            let mut ui = UserInterface::build(
-                element,
-                Size::new(200.0, 100.0),
-                user_interface::Cache::default(),
-                &mut renderer,
-            );
-            let mut messages = vec![];
-            let _ = ui.update(
-                &[
-                    Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
-                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
-                ],
-                mouse::Cursor::Available(Point::new(20.0, 20.0)),
-                &mut renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut messages,
-            );
-            assert_eq!(messages.len(), 1, "the provider button was clicked");
-            let mut pending = vec![];
-            inputs.apply(messages.remove(0), &mut pending);
-            let expected: Vec<_> = handler
-                .into_iter()
-                .map(|handler| wire::Event::Surface {
-                    handler,
-                    value: V::Str("duck://pages/example".into()),
-                })
-                .collect();
-            assert_eq!(pending, expected);
+            for value in [
+                V::Str("duck://pages/example".into()),
+                V::List(vec![V::Record {
+                    name: "Link".into(),
+                    fields: vec![(
+                        "target".into(),
+                        V::Option(Some(Box::new(V::Str("duck://pages/example".into())))),
+                    )],
+                }]),
+            ] {
+                let node = wire::Node::Surface {
+                    key: "App/link".into(),
+                    name: "link".into(),
+                    args: vec![value.clone(), V::Bool(true)],
+                    on_event: handler,
+                };
+                let mut inputs = Inputs::default();
+                let element = render(&node, &inputs, &Pictures::default(), &surfaces);
+                let mut ui = UserInterface::build(
+                    element,
+                    Size::new(200.0, 100.0),
+                    user_interface::Cache::default(),
+                    &mut renderer,
+                );
+                let mut messages = vec![];
+                let _ = ui.update(
+                    &[
+                        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                        Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                    ],
+                    mouse::Cursor::Available(Point::new(20.0, 20.0)),
+                    &mut renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut messages,
+                );
+                assert_eq!(messages.len(), 1, "the provider button was clicked");
+                let mut pending = vec![];
+                inputs.apply(messages.remove(0), &mut pending);
+                let expected: Vec<_> = handler
+                    .into_iter()
+                    .map(|handler| wire::Event::Surface {
+                        handler,
+                        value: value.clone(),
+                    })
+                    .collect();
+                assert_eq!(pending, expected);
+            }
         }
     }
 
@@ -2097,6 +2104,16 @@ mod tests {
                 Output::Surface {
                     handler: Some(4),
                     value: V::F64(f64::INFINITY)
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            applied(
+                &mut inputs,
+                Output::Surface {
+                    handler: Some(4),
+                    value: V::List(vec![V::Option(Some(Box::new(V::F64(f64::NAN))))]),
                 }
             ),
             None

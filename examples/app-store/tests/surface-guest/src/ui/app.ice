@@ -6,6 +6,12 @@ extern crate::unused
   component number(value:f64) -> f64
   component action() -> unit
   component quiet() -> unit
+extern crate::data
+  Details(enabled:bool, score:f64)
+  Row(id:i64, label:str, note:str?, details:Details)
+  pure initial_rows() -> [Row]
+  component rows(values:&[Row], selected:&Row?) -> [Row]
+  component optional(value:&Row?) -> Row?
 theme contract AppTheme
   bg
   fg
@@ -23,6 +29,12 @@ state
   zoom = 1.5
   context = ""
   actions = 0
+  rows:[Row] = initial_rows()
+  selected:Row? = none
+on rows_changed(values)
+  rows = values
+on selected_row(value)
+  selected = value
 on opened(link, old)
   draft = link
   context = old
@@ -36,6 +48,8 @@ on activated
   actions = actions + 1
 view
   col
+    extern rows(rows, selected) #rows -> rows_changed _
+    extern optional(selected) #optional -> selected_row _
     for label in ["first", "second"]
       extern preview(label, dark, count, zoom) #preview(label) -> opened(_, label)
     extern toggle(dark) #toggle -> toggled _

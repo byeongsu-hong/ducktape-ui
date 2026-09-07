@@ -830,18 +830,31 @@ kinds, and the per-widget `*-style` kinds).
 For the `tree` target, an `extern` widget names a surface registered by the
 embedding host; it does not call the declaration's native Rust function.
 Positional `unit`, `bool`, `i64`, `f64`, and `str` arguments cross as owned,
-tagged values, including borrowed scalar parameters. A route accepts the
-same scalar result types, with non-payload arguments snapshotted while the
+tagged values. Lists, options and nonempty declared records of those types
+also cross by value, including borrowed parameters. A route accepts the
+same result types, with non-payload arguments snapshotted while the
 view is built. The guest ignores a result tagged with a different type and
 nonfinite floating-point events. No route means no guest event.
 
 A provider receives the node key and arguments and returns an element whose
-messages are scalar values. The renderer attaches the node's route. Unknown
+messages are tagged values. The renderer attaches the node's route. Unknown
 surface names render a visible placeholder. Surface arguments are bounded to
 256 values; text shares the frame text budget and nonfinite argument numbers
 sanitize to zero. Returned strings are truncated on a UTF-8 boundary to the
-wire string limit before entering the guest. Compound and opaque native
-arguments/events fail with E190 until their wire representation exists.
+wire string limit before entering the guest. Each wire decode permits at most
+4096 surface values in total and nesting depth 32, rejecting the whole
+message on overflow before building excessive nested values. Event values
+share one text budget; nonfinite numbers anywhere reject the event. Record
+names and field names are never truncated: an identifier that cannot fit
+rejects the value. Frame sanitization replaces an argument that exceeds its
+structural budget with `Unit`, preserving argument positions up to that
+point; remaining arguments are omitted when the total value budget is spent.
+
+Records carry the Ice declaration name and field names in declaration order.
+A returned record must match that name, order, field count and every nested
+type exactly. Native resource types, empty opaque declarations, recursive
+record definitions, enums and other non-data types remain E190. No Rust
+pointer or resource is serialized by treating it as an empty record.
 
 ## Partial border styles on the tree target
 
