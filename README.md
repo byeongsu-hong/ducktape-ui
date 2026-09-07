@@ -441,3 +441,7 @@ lifetime; see the [retained session fixture](examples/app-store/README.md#retain
 The example's [rich composer fixture](examples/app-store/README.md#rich-composer-fixture)
 keeps native editing, IME and per-view history in the host while a wasm guest
 receives semantic text/selection/submission notices and retains its draft.
+
+The [native terminal fixture](examples/app-store/README.md#native-terminal-fixture)
+binds a host-selected PTY to a wasm guest, retaining output while its view is
+hidden and delivering bounded title/running/attention notices.

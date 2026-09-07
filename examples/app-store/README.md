@@ -452,8 +452,9 @@ For module packaging requirements and the connected implementation phases, see
   `session_log` provider binds a host-owned log session and retains each native
   view independently. The `rich_composer` provider now keeps native input,
   IME and per-view history behind typed semantic notices (see its fixture
-  below). Application highlighting, page-specific events and terminal
-  providers remain work for module-owned views.
+  below). A host-configured `terminal` provider retains a real PTY while its
+  view is hidden. Application highlighting, page-specific events and module
+  process/session adapters remain work for module-owned views.
 - A `shader` call uses that same named surface registry and typed routes.
   Its `w=`/`h=` cross in a containing box, with Iced's 100×100 defaults
   and zero intrinsic size for `shrink`.
@@ -788,3 +789,49 @@ integration work. Native `Content` and editor `Action` are still not wire values
 Native fixture capture (600×1000, dark theme, scale 1, after editing both views):
 
 ![Two native composers driven by a wasm guest](docs/rich-composer.png)
+
+
+## Native terminal fixture
+
+The host registers `terminal() -> unit` for a guest declaring the `terminal`
+capability. Set `ICE_TERMINAL_PROGRAM` to an absolute executable path before
+starting the host. The host starts one process per installed guest with no
+arguments in its own working directory; the guest cannot choose a program,
+arguments, directory or send synthetic terminal input. With no configured
+program, the provider is idle and reports that configuration is missing.
+The existing capability consent applies before installation.
+
+The native terminal handles keyboard, selection, clipboard and ANSI rendering.
+A guest can subscribe to `terminal.events` with an empty payload. Each response
+is a wire-encoded `SurfaceValue::Record` named `TerminalNotice`, with ordered
+`running: bool`, `title: str`, `attention: bool` fields. Titles are capped at 512
+characters. There are at most 32 subscriptions and one coalesced pending update
+per guest; attention survives coalescing. Cancellation removes the subscription,
+while the host retains the session. Removing the native view clears its focus
+and pending clipboard work without ending the process. Dropping both guest and
+view releases the session.
+
+A host frame polls at most 256 native events every 16 ms, including while the node
+is hidden or the wasm guest rests. Native output does not itself require a wasm
+tick; subscribed metadata does. Exit stops polling after the engine drains its
+last output. This workspace patches alacritty_terminal 0.26.0 to preserve buffered
+PTY bytes and unfinished synchronized updates at exit; embedding workspaces
+must also select that Cargo patch.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-terminal-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/terminal-fixture
+cargo test --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-host terminal_tests -- --ignored
+cargo test -p ui-lang-components --features terminal --lib ui::terminal::tests
+```
+
+The fixture proves native keyboard-to-PTY input using an OSC title response,
+paints explicit ANSI RGB output, and receives output/exit while hidden before
+remounting the final display. It also checks a full pending-reply queue during
+wasm rest, capability refusal, cancellation and separate instance ownership.
+These are host boundary prerequisites. Ducktape's module-selected agent/SSH
+processes, session routing and application policy remain separate integration.
+
+![A native PTY driven by a wasm guest](docs/native-terminal.png)

@@ -10,6 +10,7 @@ iced = { workspace = true, features = ["smol"] }
 ui-lang.workspace = true
 ui-lang-runtime = { workspace = true, features = ["full-runtime"] }
 ui-lang-wire.workspace = true
+ui-lang-components = { path = "../../../crates/ui-lang-components", features = ["terminal"] }
 wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "cache", "parallel-compilation", "component-model"] }
 wasmparser = "0.251"
 sha2 = "0.10"

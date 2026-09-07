@@ -8,6 +8,7 @@ mod library;
 mod limits;
 mod store;
 mod surfaces;
+mod terminal;
 
 ui_lang::include_app!("src/ui/app.ice");
 
