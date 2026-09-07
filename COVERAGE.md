@@ -1390,3 +1390,15 @@ results must be inspected separately from the portable authoring tests.
 
 Removing the ancestor symlink guard and destination-prefix collision guard
 makes their two regression assertions fail; restoring them passes both.
+
+### Tree components in state loops
+
+`component_in_a_state_loop_does_not_emit_native_layout_memo` reproduces a
+component taking a loop row from guest state. It fails its no-native-wrapper
+assertion before the fix and passes after it. Tree component lowering disables
+native layout memoization before choosing the component scope binding.
+The app-store `app-store-component-fixture` copies the reported imported-palette
+reproduction; CI runs `cargo ice bundle --manifest-path examples/app-store/Cargo.toml
+-p app-store-component-fixture --target wasm32-unknown-unknown` so missing Rust
+scope bindings and native-widget/wire-node type mismatches cannot hide behind
+successful code generation.

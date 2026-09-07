@@ -404,19 +404,18 @@ pub(in crate::codegen) fn render_content(
                     },
                 );
             }
-            let memo_reads = match memo::component_use_memo_reads(
-                document,
-                call,
-                component,
-                &component_env,
-                env,
-            ) {
-                Ok(reads) => Some(reads),
-                Err(reason) => {
-                    if std::env::var_os("ICE_MEMO_DEBUG").is_some() {
-                        eprintln!("memo refused: `{name}` use: {reason}");
+            let memo_reads = if document.target() == crate::Target::Tree {
+                None
+            } else {
+                match memo::component_use_memo_reads(document, call, component, &component_env, env)
+                {
+                    Ok(reads) => Some(reads),
+                    Err(reason) => {
+                        if std::env::var_os("ICE_MEMO_DEBUG").is_some() {
+                            eprintln!("memo refused: `{name}` use: {reason}");
+                        }
+                        None
                     }
-                    None
                 }
             };
             let render_scope = format!("{scope_binding}.clone()");
@@ -590,6 +589,8 @@ pub(in crate::codegen) fn render_content(
             // The layout memo the compiler inserts at a component use whose
             // every read is keyed (`memo`): the element is still built on
             // every pass, the walk below it is skipped while the key holds.
+            // Tree components return wire nodes; native layout memo widgets
+            // belong only to the native target.
             Ok(match memo_reads {
                 Some(reads) => {
                     let revisions = reads

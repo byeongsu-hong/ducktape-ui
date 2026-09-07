@@ -889,3 +889,10 @@ reads, literals and comparisons/Boolean combinations of those values. Independen
 calls, arithmetic and lazy `derived` reads are E190: native short-circuit evaluation could skip them,
 whereas copying would execute them before layout. Precompute such thresholds
 explicitly in guest state. Arithmetic involving a measurement runs in the host.
+
+The component regression fixture is built separately from the catalog:
+`cargo ice bundle --manifest-path examples/app-store/Cargo.toml -p
+app-store-component-fixture --target wasm32-unknown-unknown --out
+examples/app-store/target/component-fixture` from the repository root. It checks
+that a component invoked in a state loop compiles all the way to wasm, including
+an imported palette and its generated scope bindings.
