@@ -252,7 +252,7 @@ view
                     size=15.0
                     @text-fg
                     @font-bold
-                text "A guest is ticked only when the store has something to deliver or its widgets asked for a frame. A frame that changed nothing crosses as a flag, and a module loaded once is kept. Fuel / s is the last ten seconds averaged; past 600M/s a guest is throttled until it is back under."
+                text "A guest is ticked only when the store has something to deliver or its widgets asked for a frame. A frame that changed nothing crosses as a flag, one that changed as patches, and a module loaded once is kept. Fuel / s is the last ten seconds averaged; past 600M/s a guest is throttled until it is back under."
                   with
                     size=12.5
                     @text-muted
@@ -302,9 +302,9 @@ view
                           size=11.0
                           @text-muted
                           @font-bold
-                      text "Frame · unchanged"
+                      text "Frame full · patch · unchanged"
                         with
-                          w=130.0
+                          w=210.0
                           size=11.0
                           @text-muted
                           @font-bold

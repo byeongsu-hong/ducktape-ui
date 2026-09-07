@@ -106,9 +106,10 @@ its own, titled with the app's name, resizable and movable like any other.
   stays.
 - **Monitor** is the dogfooding page: one row per running guest with fuel
   per tick, fuel per second over the last ten seconds (and whether that is
-  being throttled), tick time, ticks per second, frame bytes and how many of the
-  last frames crossed as "unchanged", ticks run against redraws skipped, and
-  whether the module came from the cache or through cranelift.
+  being throttled), tick time, ticks per second, the bytes of the last whole
+  frame and of the last patch frame with how many frames crossed as
+  "unchanged", ticks run against redraws skipped, and whether the module came
+  from the cache or through cranelift.
 
 Closing a guest's window quits the app — the wasmtime store, its memory and
 its compiled code go with the last handle. Closing the store window ends the
@@ -218,7 +219,15 @@ through the same table and answer from its own subscriptions.
    requests they dropped.
 3. A tree identical to the last one crosses as `unchanged` with no tree:
    a few bytes instead of every node again. The host keeps the tree it
-   already has and takes only the requests and the cancels.
+   already has and takes only the requests and the cancels. A tree that
+   changed crosses as patches against the last one — the driver keeps the
+   tree it sent and diffs the new one against it: a changed field is a
+   `Props` patch that keeps the node's children, a list of children is
+   matched by key so a row that moved is a `Move`, a new one an `Insert`,
+   a gone one a `Remove`, and a node of another kind a `Replace`, each at
+   a path of child indices from the root. The tree crosses whole only when
+   there is no last tree (the first frame, or the one after the host asked
+   to `Resync`) or the patches would encode bigger than it.
 4. The host sanitizes the tree, renders it with iced's own widgets
    (`ui_lang_runtime::view_tree`) — layout, fonts, IME, caret, selection,
    scrolling and focus are all the host's — and keeps every input's live
@@ -259,11 +268,27 @@ says which it was.
 A guest is ticked only when something is due for it, so Counter sits at
 0/s and Clock at 1/s; a press or a keystroke reaches the window it
 happened in, so one guest ticks instead of five; a tree that changed
-nothing crosses as a flag. Pointer movement never reaches a guest at all —
-hover is the host's widgets' — so a window with the pointer moving over it
-costs what any native iced window does. The Monitor page keeps the
-counters per app: ticks against the redraws it slept through, and how many
-of its frames crossed without their tree.
+nothing crosses as a flag, and one that changed crosses as patches.
+Pointer movement never reaches a guest at all — hover is the host's
+widgets' — so a window with the pointer moving over it costs what any
+native iced window does. The Monitor page keeps the counters per app:
+ticks against the redraws it slept through, how many of its frames crossed
+without their tree, and the bytes of the last whole frame beside the bytes
+of the last patch frame.
+
+What the patches save, on Todo with two hundred items and one of them
+toggled (`cargo test -p app-store-todo --test delta -- --nocapture` from
+`examples/app-store`, the same numbers on every run since the tree is
+deterministic):
+
+| frame | bytes |
+|---|---|
+| the list, whole (the frame before this change, and the first frame after it) | 133,358 (tree 133,332) |
+| the toggle, as patches | 7,984 — three `Props` patches at 344 bytes (the checkbox, the progress bar, the "left" count); the rest is the `storage.set` request whose payload is the list itself |
+
+Nearly four hundred times less tree on the wire, and on the host the
+patches are applied to the tree it holds and that tree sanitized again
+instead of a hundred kilobytes decoded; the render is the same either way.
 
 ## The sandbox
 
@@ -292,6 +317,7 @@ Fuel and memory bound what a module does to itself. What it can make the
 | limit | value | what a guest past it gets |
 |---|---|---|
 | `MAX_FRAME_BYTES` | 8 MiB | the instance ends, "frame too large" |
+| `MAX_PATCHES` (the wire's) | 1024 per frame | the patch frame is refused like any patch the held tree cannot take — a path to no node, an index past a list, a list edit on a fixed-arity node, `Props` of another arity: the window is blank for a tick, the guest hears `Event::Resync` and sends the tree whole |
 | `TICK_DEADLINE` | 100 ms of wall clock per call into the guest, in 10 ms epochs | the instance ends, "tick exceeded 100 ms". Fuel counts wasm instructions, and time inside a host import is not fuel — this is what bounds a tick that spends its time on the host's side of an import |
 | `TICK_BUDGET` / `MAX_REST` | 8 ms per redraw, 250 ms of waiting | its next redraw waits as long as this one overran: an expensive guest runs at a few frames a second instead of at the window's rate, and the windows sharing that thread keep theirs |
 | `FUEL_PER_SECOND` / `FUEL_WINDOW` | 600M fuel a second, averaged over 10 s | its next redraw waits a share of `MAX_REST` that grows with the overspend — all of it at double the budget — until the window has drained back under. This is the one that notices a guest that is merely busy every tick, forever; the Monitor's Fuel / s column shows the figure and says "throttled" |
@@ -348,7 +374,11 @@ sharing one share all of that.
 Every frame passes through it, tree or no tree — an `unchanged` one still
 carries request kinds the host formats into refusals and shows. A
 well-behaved tree comes out untouched; a hostile one is cut, not refused,
-so a guest that overshoots by one node still shows.
+so a guest that overshoots by one node still shows. A patch frame is
+bounded by `apply`: the patches are applied to the tree the host holds and
+the result goes through the same walk, since an inserted subtree can push
+the whole past `MAX_NODES` or `MAX_DEPTH` or reuse a key the tree already
+has, and only the whole can be checked for that.
 
 ## What is not here yet
 
@@ -381,8 +411,6 @@ An honest inventory, grouped by where the work would land. Items marked
   radio, slider, pick list or progress bar in its own theme, and a status
   style on one (`active checked bg=…`) is refused with E190 like a widget
   the wire does not carry. A slider carries `f64` values only.
-- A changed tree re-encodes and re-sends every node; there is no delta,
-  only the whole-frame "unchanged" short-circuit.
 - No scale factor or locale reaches the guest. The colour mode does, as a
   `host.theme` stream the app has to subscribe to and act on itself.
 - The host's accessibility tree names every node by its key, but nothing

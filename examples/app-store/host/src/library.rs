@@ -82,7 +82,11 @@ pub fn gauge(surface: &Surface, _generation: i64) -> Gauge {
         fuel: format!("{} fuel", thousands(guest.fuel_used)),
         tick: millis(guest.tick_time),
         rate: format!("{}/s", guest.rate(now)),
-        frame: format!("{} · {unchanged}%", bytes(guest.frame_bytes)),
+        frame: format!(
+            "{} full · {} patch · {unchanged}%",
+            bytes(guest.frame_bytes),
+            bytes(guest.patch_bytes)
+        ),
         idle: format!("{} · {}", guest.ticks, guest.skipped),
         load,
         dropped: match guest.dropped() {

@@ -491,6 +491,122 @@ fn gen_frame_with(rng: &mut Rng, depth: usize, width: usize) -> Frame {
         cancels,
         unchanged: rng.next_bool(),
         busy: rng.next_bool(),
+        patches: Vec::new(),
+    }
+}
+
+// ------------------------------------------------------------ patch generator
+
+/// A path into `root`: a real one (a random walk down the tree that stops
+/// at a random depth) or, from a `hostile` sender, sometimes one step past
+/// a real one or a random vector, so `apply` sees both the paths a guest
+/// sends and the ones a hostile one does.
+fn gen_path(rng: &mut Rng, root: &Node, hostile: bool) -> Vec<u32> {
+    let mut path = Vec::new();
+    let mut node = root;
+    while !node.children().is_empty() && rng.next_range(4) != 0 {
+        let index = rng.next_range(node.children().len());
+        path.push(index as u32);
+        node = &node.children()[index];
+    }
+    match rng.next_range(12) {
+        0 if hostile => path.push(rng.next_range(4) as u32),
+        1 if hostile => {
+            path = (0..rng.next_range(4))
+                .map(|_| rng.next_range(8) as u32)
+                .collect()
+        }
+        _ => {}
+    }
+    path
+}
+
+/// A subtree for a patch to carry: usually small and cheap, occasionally
+/// as hostile as [`gen_tree`] goes, so an inserted subtree can push the
+/// tree past every ceiling on its own.
+fn gen_patch_tree(rng: &mut Rng) -> Node {
+    let (depth, width) = match rng.next_range(40) {
+        0 => (MAX_DEPTH + 4, MAX_NODES / 4),
+        _ => (rng.skewed(4, 2), rng.skewed(6, 2)),
+    };
+    gen_tree(rng, depth, width)
+}
+
+/// One random patch against `root` as it stands. A `hostile` sender's
+/// indices are sometimes past the list, its list edits sometimes aimed at
+/// a node with no list, and its `Props` sometimes a whole subtree; the
+/// other kind of sender is what a real diff emits, so a whole sequence of
+/// its patches applies and the invariant is checked on the result.
+fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
+    let path = gen_path(rng, root, hostile);
+    let mut node = Some(root);
+    for index in &path {
+        node = node.and_then(|node| node.children().get(*index as usize));
+    }
+    let is_list = node.is_some_and(|node| matches!(node, Node::Linear { .. } | Node::Grid { .. }));
+    let len = node.map_or(0, |node| node.children().len());
+    let index = |rng: &mut Rng, bound: usize| match rng.next_range(8) {
+        0 if hostile => rng.next_range(bound + 3) as u32,
+        _ => rng.next_range(bound.max(1)) as u32,
+    };
+    let kind = match (is_list || hostile, rng.next_range(5)) {
+        (false, kind) => kind % 2,
+        // Nothing to remove or move in an empty list.
+        (true, kind) if kind >= 3 && len == 0 && !hostile => 2,
+        (true, kind) => kind,
+    };
+    match kind {
+        0 => Patch::Replace {
+            path,
+            node: gen_patch_tree(rng),
+        },
+        1 => {
+            // A node with its children set aside, as a guest sends it, of
+            // the arity the node at the path has — or, from a hostile
+            // sender, any node at all.
+            let mut fresh = gen_patch_tree(rng);
+            let same_arity = |fresh: &Node| match (node, fresh) {
+                (
+                    Some(Node::Linear { .. } | Node::Grid { .. }),
+                    Node::Linear { .. } | Node::Grid { .. },
+                ) => true,
+                (Some(at), fresh) => {
+                    !matches!(at, Node::Linear { .. } | Node::Grid { .. })
+                        && !matches!(fresh, Node::Linear { .. } | Node::Grid { .. })
+                        && at.children().len() == fresh.children().len()
+                }
+                (None, _) => false,
+            };
+            if !hostile {
+                while !same_arity(&fresh) {
+                    fresh = gen_patch_tree(rng);
+                }
+            }
+            if hostile && rng.next_range(4) == 0 {
+                return Patch::Props { path, node: fresh };
+            }
+            for child in fresh.children_mut() {
+                *child = Node::empty();
+            }
+            if let Node::Linear { children, .. } = &mut fresh {
+                children.clear();
+            }
+            Patch::Props { path, node: fresh }
+        }
+        2 => Patch::Insert {
+            path,
+            index: index(rng, len + 1),
+            node: gen_patch_tree(rng),
+        },
+        3 => Patch::Remove {
+            path,
+            index: index(rng, len),
+        },
+        _ => Patch::Move {
+            path,
+            from: index(rng, len),
+            to: index(rng, len),
+        },
     }
 }
 
@@ -1081,6 +1197,149 @@ fn mutated_bytes_never_panic() {
                 Err(payload) => panic!("{ctx}: decode panicked: {}", payload_message(&payload)),
             }
         }
+    }
+}
+
+// --------------------------------------------------------------- test 2b
+
+/// A sanitized tree, patched by any sequence the wire decodes, is a
+/// sanitized tree or a refusal: every bound `check_bounds` covers holds of
+/// what `apply` returns `Ok` on, whatever the patches inserted, replaced or
+/// shuffled — including subtrees over every ceiling on their own, and keys
+/// the tree already holds. A refusal names one of the doors `apply` has.
+#[test]
+fn a_patched_sanitized_tree_is_a_sanitized_tree() {
+    const SEED: u64 = 0x9A7C_4E5D_0B1A_2F3E;
+    const NUM_TREES: usize = 60;
+    const PATCHES_PER_TREE: usize = 24;
+
+    for i in 0..NUM_TREES {
+        let seed = SEED ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let ctx = format!("seed={seed:#x} tree={i}");
+        on_big_stack(move || {
+            let mut rng = Rng::new(seed);
+            let (depth, width) = (rng.skewed(MAX_DEPTH, 3), rng.skewed(64, 2));
+            let mut frame = gen_frame_with(&mut rng, depth, width);
+            sanitize(&mut frame);
+            let mut root = frame
+                .root
+                .take()
+                .expect("gen_frame_with always sets a root");
+            let hostile = rng.next_range(3) == 0;
+            let mut patches = Vec::new();
+            let mut staged = root.clone();
+            for _ in 0..rng.next_range(PATCHES_PER_TREE + 1) {
+                let patch = gen_patch(&mut rng, &staged, hostile);
+                // Paths are drawn against the tree as the patches so far
+                // leave it, so a well-behaved sequence applies whole and
+                // a hostile one is refused somewhere along it.
+                let applied = ui_lang_wire::apply(&mut staged, vec![patch.clone()]);
+                assert!(
+                    hostile || applied.is_ok(),
+                    "{ctx}: a well-behaved patch was refused: {applied:?}\n{patch:#?}"
+                );
+                patches.push(patch);
+            }
+            let patched = Frame {
+                patches,
+                ..Frame::default()
+            };
+            // A patch's subtree meets the same door a root does: one nested
+            // past what the host walks is refused before it is built.
+            let decoded: Frame = match decode(&encode(&patched)) {
+                Ok(decoded) => decoded,
+                Err(message) => {
+                    assert!(
+                        message.contains("deeper than the host renders")
+                            || message.contains("more nodes than the host holds"),
+                        "{ctx}: unexpected refusal: {message}"
+                    );
+                    return;
+                }
+            };
+            let outcome = ui_lang_wire::apply(&mut root, decoded.patches);
+            assert!(
+                hostile || outcome.is_ok(),
+                "{ctx}: a well-behaved sequence was refused: {outcome:?}"
+            );
+            match outcome {
+                Ok(()) => {
+                    let checked = Frame {
+                        root: Some(root),
+                        ..Frame::default()
+                    };
+                    check_frame(&checked, &ctx);
+                }
+                Err(refused) => {
+                    let named = [
+                        "a path to no node",
+                        "an index past the list",
+                        "a list edit on no list",
+                        "props of another arity",
+                        "more patches than the host applies",
+                    ]
+                    .contains(&refused);
+                    assert!(named, "{ctx}: unexpected refusal: {refused}");
+                }
+            }
+        });
+    }
+}
+
+// --------------------------------------------------------------- test 2c
+
+/// `diff` then `apply` is the identity on the new tree, and leaves both
+/// inputs as they were. The new tree is the old one with a handful of
+/// well-behaved edits applied — so the pair shares most of its structure
+/// and the diff has to find moves, inserts, removes and field changes
+/// inside lists whose keys come from a five-entry pool — and, one time in
+/// eight, an unrelated tree, which is a `Replace` at the root. A pair whose
+/// diff runs past `MAX_PATCHES` is the guest's cue to send the tree whole,
+/// so it is only checked for that refusal.
+#[test]
+fn a_diff_applied_to_the_old_tree_is_the_new_tree_for_random_pairs() {
+    const SEED: u64 = 0xD1FF_0000_A99B_1E5A;
+    const NUM_PAIRS: usize = 150;
+    const EDITS_PER_PAIR: usize = 8;
+
+    for i in 0..NUM_PAIRS {
+        let seed = SEED ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let ctx = format!("seed={seed:#x} pair={i}");
+        on_big_stack(move || {
+            let mut rng = Rng::new(seed);
+            let tree = |rng: &mut Rng| {
+                let (depth, width) = (rng.skewed(MAX_DEPTH / 2, 3), rng.skewed(48, 2));
+                let mut frame = gen_frame_with(rng, depth, width);
+                sanitize(&mut frame);
+                frame.root.take().expect("a root")
+            };
+            let mut old = tree(&mut rng);
+            let mut new = match rng.next_range(8) {
+                0 => tree(&mut rng),
+                _ => {
+                    let mut edited = old.clone();
+                    for _ in 0..1 + rng.next_range(EDITS_PER_PAIR) {
+                        let patch = gen_patch(&mut rng, &edited, false);
+                        ui_lang_wire::apply(&mut edited, vec![patch])
+                            .unwrap_or_else(|refused| panic!("{ctx}: {refused}"));
+                    }
+                    edited
+                }
+            };
+            let (old_before, new_before) = (old.clone(), new.clone());
+            let patches = diff(&mut old, &mut new);
+            assert_eq!(old, old_before, "{ctx}: diff moved the old tree");
+            assert_eq!(new, new_before, "{ctx}: diff moved the new tree");
+            let count = patches.len();
+            let mut applied = old;
+            match ui_lang_wire::apply(&mut applied, patches) {
+                Ok(()) => assert_eq!(applied, new, "{ctx}: {count} patches"),
+                Err(refused) => assert!(
+                    count > MAX_PATCHES && refused == "more patches than the host applies",
+                    "{ctx}: {count} patches refused: {refused}"
+                ),
+            }
+        });
     }
 }
 
