@@ -267,6 +267,27 @@ fn gen_text(rng: &mut Rng) -> Node {
     }
 }
 
+/// A picture whose bytes cross about half the time, and about one time in
+/// sixteen run past `MAX_SVG_BYTES_PER_FRAME` on their own.
+fn gen_svg(rng: &mut Rng) -> Node {
+    let bytes = rng.next_bool().then(|| {
+        let len = match rng.next_range(16) {
+            0 => MAX_SVG_BYTES_PER_FRAME + 1 + rng.next_range(64),
+            _ => rng.skewed(4096, 2),
+        };
+        vec![b'<'; len]
+    });
+    Node::Svg {
+        key: gen_key(rng),
+        hash: rng.next_u64(),
+        bytes,
+        label: rng.next_bool().then(|| gen_string(rng)),
+        color: gen_opt_color(rng),
+        width: gen_opt_length(rng),
+        height: gen_opt_length(rng),
+    }
+}
+
 fn gen_toggle(rng: &mut Rng) -> Node {
     Node::Toggle {
         key: gen_key(rng),
@@ -348,6 +369,7 @@ fn gen_surface(rng: &mut Rng) -> Node {
 fn gen_leaf(rng: &mut Rng) -> Node {
     match rng.next_range(11) {
         0 => gen_text(rng),
+        10 => gen_svg(rng),
         1 => Node::Space {
             width: gen_opt_length(rng),
             height: gen_opt_length(rng),
@@ -640,8 +662,15 @@ fn check_string(text: &str, ctx: &str, field: &str) {
 /// Walks a sanitized tree asserting every post-condition `sanitize_node`
 /// promises: depth within `MAX_DEPTH`, every string within
 /// `MAX_STRING_BYTES` and on a char boundary, every key unique across the
-/// whole tree, and every size/colour/border field inside its own bound.
-fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str) {
+/// whole tree, every size/colour/border field inside its own bound, and the
+/// picture bytes the tree carries summed into `svg_bytes`.
+fn check_bounds(
+    node: &Node,
+    depth: usize,
+    keys: &mut HashSet<String>,
+    svg_bytes: &mut usize,
+    ctx: &str,
+) {
     assert!(
         depth <= MAX_DEPTH,
         "{ctx}: a node sits at depth {depth}, over MAX_DEPTH"
@@ -668,7 +697,7 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
             check_edges(padding, ctx);
             check_color(background, ctx);
             check_border(border, ctx);
-            check_bounds(content, depth + 1, keys, ctx);
+            check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
         Node::Linear {
             spacing,
@@ -688,7 +717,7 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
             check_length(width, ctx);
             check_length(height, ctx);
             for child in children {
-                check_bounds(child, depth + 1, keys, ctx);
+                check_bounds(child, depth + 1, keys, svg_bytes, ctx);
             }
         }
         Node::Grid {
@@ -713,7 +742,7 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
             check_length(width, ctx);
             check_length(height, ctx);
             for child in children {
-                check_bounds(child, depth + 1, keys, ctx);
+                check_bounds(child, depth + 1, keys, svg_bytes, ctx);
             }
         }
         Node::Scroll {
@@ -724,7 +753,7 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
         } => {
             check_length(width, ctx);
             check_length(height, ctx);
-            check_bounds(content, depth + 1, keys, ctx);
+            check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
         Node::Text {
             content,
@@ -742,6 +771,22 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
             }
             check_color(color, ctx);
             check_length(width, ctx);
+        }
+        Node::Svg {
+            bytes,
+            label,
+            color,
+            width,
+            height,
+            ..
+        } => {
+            *svg_bytes += bytes.as_ref().map_or(0, Vec::len);
+            if let Some(label) = label {
+                check_string(label, ctx, "picture label");
+            }
+            check_color(color, ctx);
+            check_length(width, ctx);
+            check_length(height, ctx);
         }
         Node::Input {
             placeholder,
@@ -780,7 +825,7 @@ fn check_bounds(node: &Node, depth: usize, keys: &mut HashSet<String>, ctx: &str
         } => {
             match content {
                 ButtonContent::Label(text) => check_string(text, ctx, "button label"),
-                ButtonContent::Child(child) => check_bounds(child, depth + 1, keys, ctx),
+                ButtonContent::Child(child) => check_bounds(child, depth + 1, keys, svg_bytes, ctx),
             }
             if let Some(label) = label {
                 check_string(label, ctx, "accessible label");
@@ -893,7 +938,12 @@ fn check_frame(frame: &Frame, ctx: &str) {
             root.count()
         );
         let mut keys = HashSet::new();
-        check_bounds(root, 0, &mut keys, ctx);
+        let mut svg_bytes = 0;
+        check_bounds(root, 0, &mut keys, &mut svg_bytes, ctx);
+        assert!(
+            svg_bytes <= MAX_SVG_BYTES_PER_FRAME,
+            "{ctx}: {svg_bytes} picture bytes, over MAX_SVG_BYTES_PER_FRAME"
+        );
     }
     for request in &frame.requests {
         check_string(&request.kind, ctx, "request kind");

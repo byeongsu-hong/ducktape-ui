@@ -11,6 +11,10 @@
 //!
 //! The rendered element speaks [`Output`]; the host turns each one into the
 //! wire event with [`Inputs::apply`] and hands it to the guest.
+//!
+//! A picture's bytes cross once (see [`wire::Node::Svg`]): [`Pictures`]
+//! keeps every one a guest has sent, by its hash, for as long as the host
+//! keeps the guest.
 
 use std::collections::HashMap;
 
@@ -155,6 +159,74 @@ fn collect_inputs(node: &wire::Node, into: &mut HashMap<String, String>) {
         } => collect_inputs(child, into),
         wire::Node::Button { .. }
         | wire::Node::Text { .. }
+        | wire::Node::Svg { .. }
+        | wire::Node::Space { .. }
+        | wire::Node::Rule { .. }
+        | wire::Node::Toggle { .. }
+        | wire::Node::Radio { .. }
+        | wire::Node::Slider { .. }
+        | wire::Node::PickList { .. }
+        | wire::Node::Progress { .. }
+        | wire::Node::Surface { .. } => {}
+    }
+}
+
+/// The most picture bytes one guest may leave with the host over its life.
+/// A guest sends each picture once and never again, so nothing here is
+/// evicted: past the cap a new picture is not kept and draws as empty
+/// space, which is deterministic where an eviction would lose a picture the
+/// guest believes the host has.
+// ponytail: a hard cap, no eviction; an app that shows more than this in
+// distinct pictures needs a re-ask protocol (host says "miss", guest resends).
+pub const MAX_PICTURE_BYTES: usize = 8 * wire::MAX_SVG_BYTES_PER_FRAME;
+
+/// Every picture a guest has sent, by the hash its nodes name it with.
+#[derive(Debug, Default)]
+pub struct Pictures {
+    handles: HashMap<u64, widget::svg::Handle>,
+    bytes: usize,
+}
+
+impl Pictures {
+    /// Keeps every picture whose bytes this tree carries. Run on a frame
+    /// that has passed [`wire::sanitize`], which bounds the bytes per frame.
+    pub fn adopt(&mut self, root: &wire::Node) {
+        collect_pictures(root, self);
+    }
+
+    fn keep(&mut self, hash: u64, bytes: &[u8]) {
+        if self.handles.contains_key(&hash) || self.bytes + bytes.len() > MAX_PICTURE_BYTES {
+            return;
+        }
+        self.bytes += bytes.len();
+        self.handles
+            .insert(hash, widget::svg::Handle::from_memory(bytes.to_vec()));
+    }
+}
+
+fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
+    match node {
+        wire::Node::Svg {
+            hash,
+            bytes: Some(bytes),
+            ..
+        } => into.keep(*hash, bytes),
+        wire::Node::Container { content, .. } | wire::Node::Scroll { content, .. } => {
+            collect_pictures(content, into);
+        }
+        wire::Node::Linear { children, .. } | wire::Node::Grid { children, .. } => {
+            for child in children {
+                collect_pictures(child, into);
+            }
+        }
+        wire::Node::Button {
+            content: wire::ButtonContent::Child(child),
+            ..
+        } => collect_pictures(child, into),
+        wire::Node::Button { .. }
+        | wire::Node::Svg { .. }
+        | wire::Node::Text { .. }
+        | wire::Node::Input { .. }
         | wire::Node::Space { .. }
         | wire::Node::Rule { .. }
         | wire::Node::Toggle { .. }
@@ -332,16 +404,28 @@ impl std::fmt::Display for Choice {
 pub fn render(
     root: &wire::Node,
     inputs: &Inputs,
+    pictures: &Pictures,
     surfaces: &Surfaces,
 ) -> IceElement<'static, Output> {
-    render_node(root, inputs, surfaces)
+    render_node(
+        root,
+        &Kept {
+            inputs,
+            pictures,
+            surfaces,
+        },
+    )
 }
 
-fn render_node(
-    node: &wire::Node,
-    inputs: &Inputs,
-    surfaces: &Surfaces,
-) -> IceElement<'static, Output> {
+/// What the host keeps across frames, as one borrow for the render walk.
+struct Kept<'a> {
+    inputs: &'a Inputs,
+    pictures: &'a Pictures,
+    surfaces: &'a Surfaces,
+}
+
+fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output> {
+    let inputs = kept.inputs;
     match node {
         wire::Node::Container {
             key,
@@ -354,8 +438,8 @@ fn render_node(
             border: edge,
             content,
         } => {
-            let mut container = widget::container(render_node(content, inputs, surfaces))
-                .id(widget::Id::from(key.clone()));
+            let mut container =
+                widget::container(render_node(content, kept)).id(widget::Id::from(key.clone()));
             if let Some(edges) = edges {
                 container = container.padding(padding(*edges));
             }
@@ -396,9 +480,7 @@ fn render_node(
             let count = children.len();
             let rendered = children
                 .iter()
-                .map(|child| {
-                    bounded_fill_element(render_node(child, inputs, surfaces), count, is_row)
-                })
+                .map(|child| bounded_fill_element(render_node(child, kept), count, is_row))
                 .collect::<Vec<_>>();
             let spacing = bounded_spacing(f64::from(spacing.unwrap_or(0.0)), count);
             let layout: IceElement<'static, Output> = match axis {
@@ -457,7 +539,7 @@ fn render_node(
             let columns = columns.map(|columns| columns.max(1) as usize);
             let rendered = children
                 .iter()
-                .map(|child| render_node(child, inputs, surfaces))
+                .map(|child| render_node(child, kept))
                 .collect::<Vec<_>>();
             let mut grid = widget::grid(rendered).spacing(bounded_spacing(
                 f64::from(spacing.unwrap_or(0.0)),
@@ -512,7 +594,7 @@ fn render_node(
                     horizontal: scrollbar,
                 },
             };
-            let mut scroll = widget::scrollable(render_node(content, inputs, surfaces))
+            let mut scroll = widget::scrollable(render_node(content, kept))
                 .id(widget::Id::from(key.clone()))
                 .direction(direction);
             if let Some(width) = width {
@@ -555,6 +637,46 @@ fn render_node(
             .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .value(content.clone())
             .into()
+        }
+        wire::Node::Svg {
+            key,
+            hash,
+            label,
+            color: tint,
+            width,
+            height,
+            ..
+        } => {
+            // A picture the host does not hold — never sent, or sent past
+            // the cap — is the space it would take.
+            let picture: IceElement<'static, Output> = match kept.pictures.handles.get(hash) {
+                Some(handle) => {
+                    let mut svg = widget::svg(handle.clone());
+                    if let Some(width) = width {
+                        svg = svg.width(length(*width));
+                    }
+                    if let Some(height) = height {
+                        svg = svg.height(length(*height));
+                    }
+                    let tint = tint.map(color);
+                    svg.style(move |_theme, _status| widget::svg::Style { color: tint })
+                        .into()
+                }
+                None => {
+                    let mut space = widget::Space::new();
+                    if let Some(width) = width {
+                        space = space.width(length(*width));
+                    }
+                    if let Some(height) = height {
+                        space = space.height(length(*height));
+                    }
+                    space.into()
+                }
+            };
+            accessible(picture, StableId::new(key), Role::Image)
+                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+                .label(label.clone().unwrap_or_default())
+                .into()
         }
         wire::Node::Input {
             key,
@@ -622,7 +744,7 @@ fn render_node(
                 wire::ButtonContent::Label(label) => {
                     (Some(label.as_str()), widget::text(label.clone()).into())
                 }
-                wire::ButtonContent::Child(child) => (None, render_node(child, inputs, surfaces)),
+                wire::ButtonContent::Child(child) => (None, render_node(child, kept)),
             };
             let label = name.clone().or_else(|| label_fallback.map(str::to_owned));
             let activate = on_press.map(Output::Activate);
@@ -876,7 +998,7 @@ fn render_node(
                 .into()
         }
         wire::Node::Surface { key, name, arg } => {
-            let content = match surfaces.get(name) {
+            let content = match kept.surfaces.get(name) {
                 Some(surface) => surface(arg),
                 // Loud, not silent: a guest built against a surface this
                 // host does not paint shows the gap where it would be.
@@ -1138,6 +1260,17 @@ mod tests {
                         length: Some(wire::Length::Fill),
                         girth: Some(wire::Length::Fixed(6.0)),
                     },
+                    picture(Some(b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec())),
+                    // A hash the host never saw: empty space of the size.
+                    wire::Node::Svg {
+                        key: "App/content/unseen".into(),
+                        hash: 99,
+                        bytes: None,
+                        label: None,
+                        color: None,
+                        width: None,
+                        height: None,
+                    },
                     wire::Node::Surface {
                         key: "App/content/tile".into(),
                         name: "tile".into(),
@@ -1155,6 +1288,8 @@ mod tests {
         };
         let mut inputs = Inputs::default();
         inputs.adopt(&tree);
+        let mut pictures = Pictures::default();
+        pictures.adopt(&tree);
         let painted = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = painted.clone();
         let mut surfaces = Surfaces::new();
@@ -1165,7 +1300,49 @@ mod tests {
                 widget::text(arg.to_owned()).into()
             }),
         );
-        let _element: IceElement<'static, Output> = render(&tree, &inputs, &surfaces);
+        let _element: IceElement<'static, Output> = render(&tree, &inputs, &pictures, &surfaces);
         assert_eq!(*painted.lock().unwrap(), ["camera 1"]);
+    }
+
+    fn picture(bytes: Option<Vec<u8>>) -> wire::Node {
+        wire::Node::Svg {
+            key: "App/content/icon".into(),
+            hash: 7,
+            bytes,
+            label: Some("Icon".into()),
+            color: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
+            width: Some(wire::Length::Fixed(24.0)),
+            height: Some(wire::Length::Fixed(24.0)),
+        }
+    }
+
+    /// The bytes cross once: a later frame naming the hash alone still
+    /// finds the picture, and a picture past the cap is not kept.
+    #[test]
+    fn a_picture_is_kept_by_hash_after_the_frame_that_carried_it() {
+        let mut pictures = Pictures::default();
+        pictures.adopt(&picture(None));
+        assert!(
+            pictures.handles.is_empty(),
+            "a hash alone is nothing to keep"
+        );
+        pictures.adopt(&picture(Some(b"<svg/>".to_vec())));
+        assert!(pictures.handles.contains_key(&7));
+        pictures.adopt(&picture(None));
+        assert!(pictures.handles.contains_key(&7));
+        assert_eq!(pictures.bytes, 6);
+
+        let mut full = Pictures::default();
+        full.adopt(&wire::Node::Svg {
+            key: "App/content/big".into(),
+            hash: 8,
+            bytes: Some(vec![b' '; MAX_PICTURE_BYTES + 1]),
+            label: None,
+            color: None,
+            width: None,
+            height: None,
+        });
+        assert!(full.handles.is_empty());
+        assert_eq!(full.bytes, 0);
     }
 }

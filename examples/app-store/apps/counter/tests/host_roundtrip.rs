@@ -2,7 +2,7 @@
 //! frame, the matching response completes the task, and the view shows it.
 
 use app_store_counter::{boot_native, tick_native};
-use ui_lang_guest::testing::{answer, has_text, item, press, texts};
+use ui_lang_guest::testing::{answer, find, has_text, item, press, texts};
 use ui_lang_guest::wire::{Frame, Request};
 
 fn boot() -> Frame {
@@ -120,4 +120,33 @@ fn an_idle_tick_is_unchanged() {
     let frame = tick_native(Vec::new());
     assert!(frame.unchanged);
     assert!(has_text(&frame, "Counter"), "{:?}", texts(&frame));
+}
+
+/// The icon's bytes cross once: the first frame carries them under their
+/// hash, and a later frame that rebuilds the tree names the hash alone.
+#[test]
+fn a_picture_crosses_once_and_its_hash_stands_for_it_after() {
+    use ui_lang_guest::wire::Node;
+
+    let frame = boot();
+    let Some(Node::Svg {
+        hash: first_hash,
+        bytes: Some(bytes),
+        ..
+    }) = find(&frame, "Counter/app/content/icon")
+    else {
+        panic!("the first frame carries the icon: {:?}", frame.root);
+    };
+    assert!(bytes.starts_with(b"<svg"), "{:?}", &bytes[..8]);
+
+    let frame = tick_native(press(&frame, "+"));
+    let Some(Node::Svg {
+        hash: second_hash,
+        bytes: None,
+        ..
+    }) = find(&frame, "Counter/app/content/icon")
+    else {
+        panic!("the second frame names the hash alone: {:?}", frame.root);
+    };
+    assert_eq!(first_hash, second_hash);
 }

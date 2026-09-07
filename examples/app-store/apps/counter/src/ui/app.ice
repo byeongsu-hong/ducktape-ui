@@ -85,11 +85,18 @@ view
       align-x=center
       align-y=center
     col #content gap=12.0 align=center
-      text "Counter"
-        with
-          size=28.0
-          @text-fg
-          @font-bold
+      row gap=8.0 align=center
+        svg "counter.svg" #icon
+          with
+            w=28.0
+            h=28.0
+            color=primary
+            label="Counter"
+        text "Counter"
+          with
+            size=28.0
+            @text-fg
+            @font-bold
       box #card
         with
           bg=surface

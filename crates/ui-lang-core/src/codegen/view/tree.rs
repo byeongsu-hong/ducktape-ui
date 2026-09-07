@@ -17,6 +17,11 @@
 //! with the call's single `str` argument crossing as text. No Rust function
 //! is called on the guest side; the declaration only types the call.
 //!
+//! An `svg` crosses as bytes the guest holds — an embedded asset or a
+//! `memory` source — under a content hash, and only the first frame that
+//! shows it carries the bytes (`ui_lang_guest::slots::picture`). A path the
+//! guest would read at runtime is refused: a module has no filesystem.
+//!
 //! Interaction: a button's message goes into the guest's per-frame table
 //! (`ui_lang_guest::slots::message`) and the node carries the index; an
 //! input's `String -> Message` constructor likewise (`slots::handler`), as
@@ -57,6 +62,7 @@ pub(in crate::codegen) fn render_tree_node(
             node, identity, *content, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::Text => text(node, identity, document, env, scope)?,
+        ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,
         ResolvedViewKind::Button { content } => button(
             node,
@@ -821,6 +827,99 @@ fn text(
             origin
         )?,
         option_code(align_x),
+    ))
+}
+
+fn svg(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let media = program.resolved_media(id)?;
+    let origin = media.origin;
+    if media.kind != ResolvedMediaKind::Svg {
+        return Err(refused(program, origin, "media"));
+    }
+    let options = &media.options;
+    refuse_when(
+        program,
+        origin,
+        options.accessibility_description.is_some(),
+        "an accessibility description on an svg",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        options.fit.is_some() || options.rotation.is_some() || options.opacity.is_some(),
+        "this svg option",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        options.svg_style.is_some() || options.svg_inherits_button_ink,
+        "an svg style",
+    )?;
+    // `hover=` defaults to the idle colour; only a hover that differs paints
+    // a state the wire does not carry.
+    refuse_when(
+        program,
+        origin,
+        options
+            .svg_colors
+            .as_ref()
+            .is_some_and(|colors| colors.hovered.as_ref() != Some(&colors.idle)),
+        "an svg hover colour",
+    )?;
+    let bytes = if options.svg_memory {
+        match media.source_type {
+            Type::Bytes => resolved_expr_use_code(program, media.source, env, ValueMode::Owned)?,
+            _ => format!(
+                "({}).as_bytes()",
+                resolved_expr_use_code(program, media.source, env, ValueMode::Borrowed)?
+            ),
+        }
+    } else {
+        embedded_asset_bytes_code(program, media.source)
+            .ok_or_else(|| refused(program, origin, "an svg read from a path (use `memory`)"))?
+    };
+    let dimension = |length: Option<&ResolvedMediaLength>| -> Result<String, Error> {
+        Ok(option_code(match length {
+            None => None,
+            Some(ResolvedMediaLength::Fill) => Some(format!("{WIRE}::Length::Fill")),
+            Some(ResolvedMediaLength::FillPortion(portion)) => {
+                Some(format!("{WIRE}::Length::FillPortion({portion})"))
+            }
+            Some(ResolvedMediaLength::Shrink) => Some(format!("{WIRE}::Length::Shrink")),
+            Some(ResolvedMediaLength::Fixed { source, .. }) if *source == Type::Length => {
+                return Err(refused(program, origin, "a `length` value"));
+            }
+            Some(ResolvedMediaLength::Fixed { expression, .. }) => Some(format!(
+                "{WIRE}::Length::Fixed(({}) as f32)",
+                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?
+            )),
+        }))
+    };
+    let label = options
+        .accessibility_label
+        .map(|label| {
+            resolved_expr_use_code(program, label, env, ValueMode::Owned)
+                .map(|code| format!("::std::string::String::from({code})"))
+        })
+        .transpose()?;
+    let color = options
+        .svg_colors
+        .as_ref()
+        .and_then(|colors| colors.idle.as_ref())
+        .map(rgba_code);
+    Ok(format!(
+        "{{ let (__hash, __bytes) = {SLOTS}::picture({bytes}); {WIRE}::Node::Svg {{ key: {}, hash: __hash, bytes: __bytes, label: {}, color: {}, width: {}, height: {} }} }}",
+        key_code(identity, "media", origin, scope, env, program)?,
+        option_code(label),
+        option_code(color),
+        dimension(options.width.as_ref())?,
+        dimension(options.height.as_ref())?,
     ))
 }
 

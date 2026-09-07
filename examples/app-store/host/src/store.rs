@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use iced::time::Instant;
-use ui_lang_runtime::view_tree::{Inputs, Output};
+use ui_lang_runtime::view_tree::{Inputs, Output, Pictures};
 use ui_lang_wire as wire;
 use wasmtime::component::{Component, Linker};
 use wasmtime::{
@@ -193,6 +193,8 @@ pub struct Guest {
     /// The live text of every input in the tree — the host's, not the
     /// guest's.
     pub(crate) inputs: Inputs,
+    /// Every picture the guest has sent, by hash: the bytes cross once.
+    pub(crate) pictures: Pictures,
     /// One-shot answers, each with the moment it becomes due.
     due: Vec<(Instant, wire::Event)>,
     tickers: Vec<Ticker>,
@@ -403,6 +405,7 @@ impl Guest {
             frame: wire::Frame::default(),
             frame_rev: 0,
             inputs: Inputs::default(),
+            pictures: Pictures::default(),
             due: Vec::new(),
             tickers: Vec::new(),
             inbox: Inbox::default(),
@@ -816,6 +819,7 @@ impl Guest {
                     self.frame_rev += 1;
                     if let Some(root) = &frame.root {
                         self.inputs.adopt(root);
+                        self.pictures.adopt(root);
                     }
                 }
                 self.frame = frame;

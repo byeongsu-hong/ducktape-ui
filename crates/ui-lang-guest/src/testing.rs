@@ -45,6 +45,7 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
         }),
         Node::Space { .. }
         | Node::Rule { .. }
+        | Node::Svg { .. }
         | Node::Slider { .. }
         | Node::Progress { .. }
         | Node::Surface { .. } => {}
@@ -77,6 +78,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         } => find_by(child, matches),
         Node::Button { .. }
         | Node::Text { .. }
+        | Node::Svg { .. }
         | Node::Input { .. }
         | Node::Space { .. }
         | Node::Rule { .. }
@@ -246,6 +248,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         } => collect_keys(child, out),
         Node::Button { .. }
         | Node::Text { .. }
+        | Node::Svg { .. }
         | Node::Input { .. }
         | Node::Space { .. }
         | Node::Rule { .. }
