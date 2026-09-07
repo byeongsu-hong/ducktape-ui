@@ -1556,3 +1556,7 @@ mod terminal_tests;
 #[cfg(test)]
 #[path = "canvas_tests.rs"]
 mod canvas_tests;
+
+#[cfg(test)]
+#[path = "responsive_tests.rs"]
+mod responsive_tests;

@@ -98,7 +98,7 @@ pub enum Output {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Field {
     /// What the host shows and edits.
     text: String,
@@ -109,7 +109,7 @@ struct Field {
 /// What a [`wire::Node::Surface`] renders as: the host's own element for
 /// the node's key and copied argument values. The host owns its state, clock
 /// and redraws; the guest never sees inside.
-pub type Surface = Box<
+pub type Surface = Arc<
     dyn Fn(&str, &[wire::SurfaceValue]) -> IceElement<'static, wire::SurfaceValue> + Send + Sync,
 >;
 
@@ -120,7 +120,7 @@ pub type Surfaces = HashMap<String, Surface>;
 /// The live content of every editor in a tree, by node key. The widget
 /// shares it (`editor::Shared`) because the tree it sits in outlives the
 /// lock on the guest that owns this.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct EditorField {
     content: editor::Shared,
     /// What the guest said the text was, last frame.
@@ -128,7 +128,7 @@ struct EditorField {
 }
 
 /// The live text of every input and editor in a tree, by node key.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Inputs {
     fields: HashMap<String, Field>,
     editors: HashMap<String, EditorField>,
@@ -348,11 +348,14 @@ fn collect_inputs(
         }
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
+        | wire::Node::Responsive { content, .. }
         | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
             collect_inputs(content, into, editors);
         }
-        wire::Node::Linear { children, .. } | wire::Node::Grid { children, .. } => {
+        wire::Node::Linear { children, .. }
+        | wire::Node::Grid { children, .. }
+        | wire::Node::When { children, .. } => {
             for child in children {
                 collect_inputs(child, into, editors);
             }
@@ -386,7 +389,7 @@ fn collect_inputs(
 pub const MAX_PICTURE_BYTES: usize = 8 * wire::MAX_SVG_BYTES_PER_FRAME;
 
 /// Every picture a guest has sent, by the hash its nodes name it with.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Pictures {
     handles: HashMap<u64, widget::svg::Handle>,
     bytes: usize,
@@ -418,11 +421,14 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         } => into.keep(*hash, bytes),
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
+        | wire::Node::Responsive { content, .. }
         | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
             collect_pictures(content, into);
         }
-        wire::Node::Linear { children, .. } | wire::Node::Grid { children, .. } => {
+        wire::Node::Linear { children, .. }
+        | wire::Node::Grid { children, .. }
+        | wire::Node::When { children, .. } => {
             for child in children {
                 collect_pictures(child, into);
             }
@@ -915,7 +921,8 @@ pub fn render(
             inputs,
             pictures,
             surfaces,
-            canvas_budget: std::cell::Cell::new(canvas::MAX_EXPANDED_PARTS),
+            canvas: std::rc::Rc::new(canvas::Cache::new(root)),
+            containers: &HashMap::new(),
         },
     )
 }
@@ -925,12 +932,50 @@ struct Kept<'a> {
     inputs: &'a Inputs,
     pictures: &'a Pictures,
     surfaces: &'a Surfaces,
-    canvas_budget: std::cell::Cell<usize>,
+    canvas: std::rc::Rc<canvas::Cache>,
+    containers: &'a HashMap<String, [f64; 2]>,
 }
 
 fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output> {
     let inputs = kept.inputs;
     match node {
+        wire::Node::Responsive {
+            key,
+            width,
+            height,
+            content,
+        } => {
+            let inputs = inputs.clone();
+            let pictures = kept.pictures.clone();
+            let surfaces = kept.surfaces.clone();
+            let containers = kept.containers.clone();
+            let canvas = kept.canvas.clone();
+            let content = content.clone();
+            let key = key.clone();
+            let mut responsive = crate::responsive(move |size| {
+                let mut containers = containers.clone();
+                containers.insert(key.clone(), [size.width as f64, size.height as f64]);
+                render_node(
+                    &content,
+                    &Kept {
+                        inputs: &inputs,
+                        pictures: &pictures,
+                        surfaces: &surfaces,
+                        containers: &containers,
+                        canvas: canvas.clone(),
+                    },
+                )
+            });
+            if let Some(width) = width {
+                responsive = responsive.width(length(*width));
+            }
+            if let Some(height) = height {
+                responsive = responsive.height(length(*height));
+            }
+            responsive.into()
+        }
+        // Structural conditions are expanded by the surrounding layout.
+        wire::Node::When { .. } => widget::Space::new().into(),
         wire::Node::Container {
             key,
             width,
@@ -1079,6 +1124,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             border: edge,
             children,
         } => {
+            let children = selected_children(children, kept);
             let is_row = matches!(axis, wire::Axis::Row);
             let count = children.len();
             let rendered = children
@@ -1141,6 +1187,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             border: edge,
             children,
         } => {
+            let children = selected_children(children, kept);
             let columns = columns.map(|columns| columns.max(1) as usize);
             let rendered = children
                 .iter()
@@ -1812,13 +1859,9 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .into()
         }
         wire::Node::Canvas {
-            key,
-            width,
-            height,
-            commands,
+            key, width, height, ..
         } => {
-            let mut canvas =
-                widget::canvas(canvas::Geometry::new(commands.clone(), &kept.canvas_budget));
+            let mut canvas = widget::canvas(kept.canvas.get(key));
             if let Some(width) = width {
                 canvas = canvas.width(length(*width));
             }
@@ -1863,6 +1906,32 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .into()
         }
     }
+}
+
+fn selected_children<'a>(children: &'a [wire::Node], kept: &Kept<'_>) -> Vec<&'a wire::Node> {
+    fn append<'a>(
+        children: &'a [wire::Node],
+        containers: &HashMap<String, [f64; 2]>,
+        selected: &mut Vec<&'a wire::Node>,
+    ) {
+        for child in children {
+            match child {
+                wire::Node::When {
+                    condition,
+                    children,
+                    ..
+                } => {
+                    if condition.matches(containers) {
+                        append(children, containers, selected);
+                    }
+                }
+                _ => selected.push(child),
+            }
+        }
+    }
+    let mut selected = Vec::new();
+    append(children, kept.containers, &mut selected);
+    selected
 }
 
 #[cfg(test)]
@@ -2048,7 +2117,7 @@ mod tests {
         let mut surfaces = Surfaces::new();
         surfaces.insert(
             "link".into(),
-            Box::new(|key, args| {
+            Arc::new(|key, args| {
                 assert_eq!(key, "App/link");
                 assert_eq!(args.len(), 2);
                 assert_eq!(args[1], V::Bool(true));
@@ -2123,7 +2192,7 @@ mod tests {
         let mut surfaces = Surfaces::new();
         surfaces.insert(
             "shader".into(),
-            Box::new(|_, _| {
+            Arc::new(|_, _| {
                 widget::button("Host shader region")
                     .width(Length::Fill)
                     .height(Length::Fill)
@@ -2763,7 +2832,7 @@ mod tests {
         let mut surfaces = Surfaces::new();
         surfaces.insert(
             "tile".into(),
-            Box::new(move |key: &str, args: &[wire::SurfaceValue]| {
+            Arc::new(move |key: &str, args: &[wire::SurfaceValue]| {
                 assert_eq!(key, "App/content/tile");
                 seen.lock().unwrap().extend_from_slice(args);
                 widget::text("camera 1").into()

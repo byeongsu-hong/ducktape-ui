@@ -1344,3 +1344,30 @@ starts. The software renderer's native clip test covers translated live and
 cached geometry and restoration of the following sibling's clip mask. Removing
 the guards and restoring the previous clip renderer reproduces assertion
 failures; restoration passes the corresponding tests.
+
+### Tree responsive boundary
+
+The bundled `app-store-responsive-fixture` exercises native relayout at 240 and
+640 pixels, nested own/ancestor measurements, state-dependent thresholds, exact
+painted color area, native button routes and selected-only surface mounting and
+release. Its second host test checks input focus across resizing, editing through
+wasm and independent drafts/focus for two guests. Same-size content reuse and an
+unchanged guest tick counter distinguish host rules from guest layout callbacks.
+Wire tests reject oversized/malformed/nonfinite conditions and unknown container
+keys. Runtime canvas tests allocate near-limit alternate branches in fixed wire
+order and compare both resize histories. These claims cover numeric/Boolean
+container conditions; arbitrary measured layout properties remain E190.
+
+Within a measured condition, copied independent operands are restricted to data
+reads, literals and comparisons/Boolean combinations of those values. Independent
+calls, arithmetic and lazy `derived` reads are E190: native short-circuit evaluation could skip them,
+whereas copying would execute them before layout. Precompute such thresholds
+explicitly in guest state. Arithmetic involving a measurement runs in the host.
+
+Red evidence: removing the condition budget/snapshot guards makes both codegen
+refusal tests fail their expected-error assertions; reinstating lazy canvas
+budget allocation fails the initial-narrow versus wide-then-narrow assertion.
+For the two bundled host tests, forcing all rules false fails the narrow-branch
+assertion, and forwarding empty input text fails the guest-echo assertion.
+Restoring behavior passes each test. Query evaluator/decoder/sanitizer mutations
+also fail the five wire rule tests at their intended assertions.

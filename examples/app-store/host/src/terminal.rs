@@ -81,7 +81,7 @@ impl Terminal {
 }
 
 pub(crate) fn provider(terminal: Arc<Mutex<Terminal>>) -> ui_lang_runtime::view_tree::Surface {
-    Box::new(move |_key, args| {
+    Arc::new(move |_key, args| {
         if !args.is_empty() {
             return widget::text("invalid terminal arguments").into();
         }

@@ -1386,6 +1386,16 @@ fn check_bounds(
             check_color(bar, ctx);
             check_border(border, ctx);
         }
+        Node::Responsive { width, height, .. } => {
+            check_length(width, ctx);
+            check_length(height, ctx);
+        }
+        Node::When { condition, .. } => {
+            assert!(
+                condition.ops.len() <= ui_lang_wire::MAX_QUERY_OPS,
+                "{ctx}: condition budget"
+            );
+        }
         Node::Canvas {
             width,
             height,

@@ -970,3 +970,27 @@ Canvas preparation also shares a 16,384-part host budget across the tree for
 flattened segments and estimated dash expansion. Curves are flattened once
 and those line paths are painted; excess draws and unstable arc-to tangents
 are omitted before native tessellation. This bounds work beyond wire size.
+
+## Container rules on the tree target
+
+`responsive size=(width, height)` retains its native length bounds. Measured
+locals may appear in child `if` conditions as numeric arithmetic, comparisons
+and Boolean combinations. Independent subexpressions, including state-derived
+thresholds, are evaluated by the guest and copied into the rule. Measured
+operands name their responsive node; nested rules can read their own container
+and ancestors. The host evaluates the rule during layout, with no guest call or
+window-coordinate exposure. Selected children splice into the surrounding
+row/column/grid without introducing another layout widget.
+
+Each condition is bounded to 64 postfix operations. Unknown container keys,
+malformed stacks and nonfinite copied constants select no branch. Native calls
+of measurements and measurements in ordinary widget properties remain E190.
+Size-independent control flow stays in the guest. Hidden branches retain copied
+wire data but do not instantiate native surface providers. Provider closures are
+shared `Arc`s so deferred layout can own its rendering context safely.
+
+Within a measured condition, copied independent operands are restricted to data
+reads, literals and comparisons/Boolean combinations of those values. Independent
+calls, arithmetic and lazy `derived` reads are E190: native short-circuit evaluation could skip them,
+whereas copying would execute them before layout. Precompute such thresholds
+explicitly in guest state. Arithmetic involving a measurement runs in the host.

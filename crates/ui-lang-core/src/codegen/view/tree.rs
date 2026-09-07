@@ -38,6 +38,8 @@
 
 use super::*;
 mod canvas;
+mod responsive;
+pub(in crate::codegen) use responsive::render_container_condition;
 
 // Reached through the guest crate, which is the app's one dependency: it
 // re-exports the wire so a module never names `ui_lang_wire` itself.
@@ -73,6 +75,9 @@ pub(in crate::codegen) fn render_tree_node(
             node, identity, *content, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::Canvas => canvas::render(node, identity, document, env, scope)?,
+        ResolvedViewKind::ResponsiveSize { content } => responsive::render(
+            node, identity, *content, document, message, env, scope, slot,
+        )?,
         ResolvedViewKind::Text => text(node, identity, document, env, scope)?,
         ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,

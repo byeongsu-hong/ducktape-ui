@@ -346,6 +346,7 @@ mod table;
 mod text;
 mod themer_shader;
 mod tree;
+pub(in crate::codegen) use tree::render_container_condition;
 
 pub(super) use boolean::*;
 pub(super) use button::*;

@@ -28,6 +28,9 @@ pub use canvas::{
     CanvasCommand, CanvasLineCap, CanvasLineJoin, CanvasSegment, CanvasShape, CanvasStroke,
     MAX_CANVAS_PARTS,
 };
+mod query;
+pub use query::{ContainerQuery, MAX_QUERY_OPS, QueryOp};
+
 mod markdown;
 pub use markdown::MarkdownDocument;
 mod widget;
@@ -514,6 +517,21 @@ pub enum Node {
         #[serde(deserialize_with = "decode_children")]
         children: Vec<Node>,
     },
+    /// Supplies widget-local dimensions to descendant container conditions.
+    Responsive {
+        key: String,
+        width: Option<Length>,
+        height: Option<Length>,
+        #[serde(deserialize_with = "decode_child")]
+        content: Box<Node>,
+    },
+    /// Splices selected children into the surrounding layout. It adds no box.
+    When {
+        key: String,
+        condition: ContainerQuery,
+        #[serde(deserialize_with = "decode_children")]
+        children: Vec<Node>,
+    },
     /// Watches its child's laid-out size. `on_show` hears the size when the
     /// child first comes into view (within `anticipate` pixels of it),
     /// `on_resize` every change after, both as [`Event::Size`]; `on_hide`
@@ -757,6 +775,8 @@ impl Node {
             | Self::MouseArea { key, .. }
             | Self::Linear { key, .. }
             | Self::Grid { key, .. }
+            | Self::Responsive { key, .. }
+            | Self::When { key, .. }
             | Self::Sensor { key, .. }
             | Self::Scroll { key, .. }
             | Self::Text { key, .. }
@@ -783,10 +803,13 @@ impl Node {
     pub fn children(&self) -> &[Node] {
         match self {
             Self::Container { content, .. }
+            | Self::Responsive { content, .. }
             | Self::Sensor { child: content, .. }
             | Self::MouseArea { content, .. }
             | Self::Scroll { content, .. } => std::slice::from_ref(content),
-            Self::Linear { children, .. } | Self::Grid { children, .. } => children,
+            Self::Linear { children, .. }
+            | Self::Grid { children, .. }
+            | Self::When { children, .. } => children,
             Self::Button {
                 content: ButtonContent::Child(child),
                 ..
@@ -819,10 +842,13 @@ impl Node {
     pub fn children_mut(&mut self) -> &mut [Node] {
         match self {
             Self::Container { content, .. }
+            | Self::Responsive { content, .. }
             | Self::Sensor { child: content, .. }
             | Self::MouseArea { content, .. }
             | Self::Scroll { content, .. } => std::slice::from_mut(content),
-            Self::Linear { children, .. } | Self::Grid { children, .. } => children,
+            Self::Linear { children, .. }
+            | Self::Grid { children, .. }
+            | Self::When { children, .. } => children,
             Self::Button {
                 content: ButtonContent::Child(child),
                 ..
@@ -849,8 +875,11 @@ impl Node {
     /// none, and no patch may insert into, remove from or move within it.
     pub fn child_list_mut(&mut self) -> Option<&mut Vec<Node>> {
         match self {
-            Self::Linear { children, .. } | Self::Grid { children, .. } => Some(children),
+            Self::Linear { children, .. }
+            | Self::Grid { children, .. }
+            | Self::When { children, .. } => Some(children),
             Self::Container { .. }
+            | Self::Responsive { .. }
             | Self::Sensor { .. }
             | Self::MouseArea { .. }
             | Self::Scroll { .. }
@@ -1333,10 +1362,14 @@ fn sanitize_node(
                 *delay = finite(*delay).max(0.0);
             }
         }
-        Node::MouseArea { key, .. } => claim(key, taken),
+        Node::MouseArea { key, .. } | Node::Responsive { key, .. } => claim(key, taken),
         Node::Canvas { key, commands, .. } => {
             claim(key, taken);
             canvas::sanitize(commands, &mut budgets.canvas_parts);
+        }
+        Node::When { key, condition, .. } => {
+            claim(key, taken);
+            condition.sanitize();
         }
         Node::Scroll {
             key,
@@ -1632,7 +1665,10 @@ fn sanitize_node(
     // Children past the budget are dropped, not stood in for: a layout of
     // ten thousand rows becomes its first rows, which is what a host can
     // lay out, rather than ten thousand empty nodes it still has to walk.
-    if let Node::Linear { children, .. } | Node::Grid { children, .. } = node {
+    if let Node::Linear { children, .. }
+    | Node::Grid { children, .. }
+    | Node::When { children, .. } = node
+    {
         let mut kept = 0;
         for child in children.iter_mut() {
             if *budget == 0 {
@@ -1658,6 +1694,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         Node::Container { width, height, .. }
         | Node::Linear { width, height, .. }
         | Node::Grid { width, height, .. }
+        | Node::Responsive { width, height, .. }
         | Node::Scroll { width, height, .. }
         | Node::Button { width, height, .. }
         | Node::Svg { width, height, .. }
@@ -1671,9 +1708,11 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Toggle { width, .. }
         | Node::Radio { width, .. }
         | Node::PickList { width, .. } => vec![width],
-        Node::Rule { .. } | Node::Sensor { .. } | Node::MouseArea { .. } | Node::Surface { .. } => {
-            Vec::new()
-        }
+        Node::Rule { .. }
+        | Node::Sensor { .. }
+        | Node::MouseArea { .. }
+        | Node::When { .. }
+        | Node::Surface { .. } => Vec::new(),
     };
     slots.into_iter().flatten().collect()
 }

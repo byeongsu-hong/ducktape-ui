@@ -169,6 +169,7 @@ impl RecordingSink {
             Some(BindingOwner::Value(
                 ResolvedValueRef::AppState(_) | ResolvedValueRef::Derived(_),
             )) => {}
+            Some(BindingOwner::ContainerSize(..)) => self.hard_capture.set(true),
             Some(BindingOwner::Local(_)) => {
                 // A render-site local VALUE (loop item, window id): an
                 // argument built from it can become a by-value parameter of
@@ -2416,6 +2417,14 @@ fn resolved_path_code(
                     ),
                 )
             })?;
+            if matches!(binding.owner, Some(BindingOwner::ContainerSize(local, _)) if local == *id)
+            {
+                return Err(Error::new(
+                    "E190",
+                    &span,
+                    "responsive measurements are only supported in host container conditions on the tree target",
+                ));
+            }
             if binding.owner != Some(BindingOwner::Local(*id)) {
                 return Err(Error::new(
                     "E196",
