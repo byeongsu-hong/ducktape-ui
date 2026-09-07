@@ -578,6 +578,11 @@ const MOVED: &str = "on moved(_x, _y)\n";
 /// `ResolvedViewKind` variant, that match must name it, and this table must
 /// then classify the name.
 const COVERAGE: &[Coverage] = &[
+    emitted(
+        "input: presentation",
+        "font code family=\"Geist\"\nrecipe control for input\n  @w-full px-13px py-11px bg-primary border border-danger rounded-10px focus:border-fg\n",
+        "  input \"Name\" <-> draft hint=\"Type a name\" label=\"Search name\" description=\"Filters rows\" disabled=busy p=6.2 text-size=13.0 line-h=1.2 align=center font=code @control\n    focused-hovered border=fg\n",
+    ),
     // The wire's nodes.
     emitted(
         "layout: col",

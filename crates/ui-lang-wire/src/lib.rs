@@ -316,10 +316,26 @@ pub struct InputFace {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct InputStyle {
+    pub utility: InputFace,
+    pub focus_border: Option<Rgba>,
+    pub focused_hovered: Option<InputFace>,
     pub active: InputFace,
     pub hovered: Option<InputFace>,
     pub focused: Option<InputFace>,
     pub disabled: Option<InputFace>,
+}
+
+/// Copied input accessibility and native layout options.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct InputOptions {
+    pub label: String,
+    pub description: Option<String>,
+    pub disabled: bool,
+    pub padding: Option<Edges>,
+    pub text_size: Option<f32>,
+    pub line_height: Option<f32>,
+    pub align: Option<AlignX>,
+    pub font: Option<NamedFont>,
 }
 
 /// One state of a checkbox, toggler or radio: the box, track or ring; the
@@ -645,6 +661,7 @@ pub enum Node {
         height: Option<Length>,
     },
     Input {
+        options: InputOptions,
         key: String,
         placeholder: String,
         /// The guest's copy of the text. The host owns the live value and
@@ -655,7 +672,7 @@ pub enum Node {
         on_submit: Option<u32>,
         width: Option<Length>,
         secure: bool,
-        style: InputStyle,
+        style: Box<InputStyle>,
     },
     /// A multiline text editor. The host owns the `text_editor::Content` —
     /// caret, selection, undo — and the guest sees the text alone, as with
@@ -1613,16 +1630,35 @@ fn sanitize_node(
             key,
             placeholder,
             value,
+            options,
             style,
             ..
         } => {
             claim(key, taken);
             spend_text(placeholder, &mut budgets.text);
             spend_text(value, &mut budgets.text);
+            spend_text(&mut options.label, &mut budgets.text);
+            if let Some(description) = &mut options.description {
+                spend_text(description, &mut budgets.text);
+            }
+            bound_edges(&mut options.padding);
+            if let Some(size) = &mut options.text_size {
+                *size = bounded(*size).clamp(f32::EPSILON, MAX_TEXT_PIXELS);
+            }
+            if let Some(height) = &mut options.line_height {
+                *height = bounded(*height).clamp(f32::EPSILON, MAX_PIXELS / MAX_TEXT_PIXELS);
+            }
+            if let Some(font) = &mut options.font {
+                font.sanitize(&mut budgets.text);
+            }
+
+            bound_color(&mut style.focus_border);
             for face in [
+                Some(&mut style.utility),
                 Some(&mut style.active),
                 style.hovered.as_mut(),
                 style.focused.as_mut(),
+                style.focused_hovered.as_mut(),
                 style.disabled.as_mut(),
             ]
             .into_iter()
@@ -2262,6 +2298,7 @@ mod tests {
                     style: ButtonStyle::default(),
                 },
                 Node::Input {
+                    options: Default::default(),
                     key: "App/i".into(),
                     placeholder: "Name".into(),
                     value: "x".into(),
@@ -2269,7 +2306,7 @@ mod tests {
                     on_submit: Some(4),
                     width: Some(Length::Fixed(200.0)),
                     secure: false,
-                    style: InputStyle::default(),
+                    style: Box::default(),
                 },
                 Node::Editor {
                     key: "App/e".into(),
@@ -2610,6 +2647,7 @@ mod tests {
         let mut frame = Frame {
             root: Some(column(vec![
                 Node::Input {
+                    options: Default::default(),
                     key: "App/i".into(),
                     placeholder: long.clone(),
                     value: long.clone(),
@@ -2617,7 +2655,7 @@ mod tests {
                     on_submit: None,
                     width: None,
                     secure: false,
-                    style: InputStyle::default(),
+                    style: Box::default(),
                 },
                 Node::Button {
                     checked: None,

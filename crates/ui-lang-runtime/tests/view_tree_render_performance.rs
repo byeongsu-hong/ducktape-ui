@@ -35,6 +35,7 @@ fn text_node(nth: usize) -> wire::Node {
 
 fn input_node(nth: usize) -> wire::Node {
     wire::Node::Input {
+        options: Default::default(),
         key: format!("App/field/{nth}"),
         placeholder: String::new(),
         value: String::new(),
@@ -42,7 +43,7 @@ fn input_node(nth: usize) -> wire::Node {
         on_submit: None,
         width: None,
         secure: false,
-        style: wire::InputStyle::default(),
+        style: Box::default(),
     }
 }
 

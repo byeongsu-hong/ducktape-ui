@@ -193,3 +193,9 @@ host/guest builds remain host integration work. The reported Tree component
 `rev_memo` compilation failure is fixed and covered by an actual wasm fixture.
 The layered fixture also exercises component composition. Text options, utility
 styles, diagnostic origins, and the remaining layouts stay in the phase backlog.
+
+The actual typed NodeScreen root now reaches only its opaque activity-log
+extern value after input presentation lowering. Use a data-only extern
+component declaration and the existing host Surface registry for that slot.
+Its retained native state stays host-owned; opaque event types also need a
+wire data contract. This is the concrete next host task in phase 3b.
