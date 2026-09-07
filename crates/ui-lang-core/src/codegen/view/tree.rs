@@ -37,6 +37,7 @@
 //! (`style=some_fn(…)`) is refused, since no Rust runs on the host's side.
 
 use super::*;
+mod canvas;
 
 // Reached through the guest crate, which is the app's one dependency: it
 // re-exports the wire so a module never names `ui_lang_wire` itself.
@@ -71,6 +72,7 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::MouseArea { content } => mouse_area(
             node, identity, *content, document, message, env, scope, slot,
         )?,
+        ResolvedViewKind::Canvas => canvas::render(node, identity, document, env, scope)?,
         ResolvedViewKind::Text => text(node, identity, document, env, scope)?,
         ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,

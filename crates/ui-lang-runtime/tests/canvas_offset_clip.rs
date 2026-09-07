@@ -58,3 +58,66 @@ fn canvas_geometry_under_a_translation_paints_at_that_translation() {
         "nothing was laid out here"
     );
 }
+
+fn clipped_geometry(frame: &mut canvas::Frame) {
+    frame.with_clip(
+        iced::Rectangle::new(Point::new(10.0, 10.0), Size::new(10.0, 10.0)),
+        |frame| {
+            frame.fill_rectangle(Point::ORIGIN, Size::new(60.0, 60.0), Color::WHITE);
+        },
+    );
+    // The next primitive must restore the parent mask after a clipped child.
+    frame.fill_rectangle(
+        Point::new(40.0, 40.0),
+        Size::new(10.0, 10.0),
+        Color::from_rgb(1.0, 0.0, 0.0),
+    );
+}
+
+#[test]
+fn clipped_child_and_following_sibling_survive_live_and_cached_geometry() {
+    for cached in [false, true] {
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let cache = canvas::Cache::new();
+        for pass in 0..2 {
+            renderer.reset(iced::Rectangle::with_size(Size::new(
+                SCREEN as f32,
+                SCREEN as f32,
+            )));
+            let geometry = if cached {
+                cache.draw(&renderer, Size::new(CANVAS, CANVAS), |frame| {
+                    assert_eq!(pass, 0, "second draw must use the cached geometry");
+                    clipped_geometry(frame);
+                })
+            } else {
+                let mut frame = canvas::Frame::new(&renderer, Size::new(CANVAS, CANVAS));
+                clipped_geometry(&mut frame);
+                frame.into_geometry()
+            };
+            renderer.with_translation(Vector::new(OFFSET, OFFSET), |renderer| {
+                renderer.draw_geometry(geometry);
+            });
+            let rgba = renderer.screenshot(Size::new(SCREEN, SCREEN), 1.0, Color::BLACK);
+            assert_eq!(
+                pixel(&rgba, 165, 165),
+                [255; 3],
+                "clip interior, cached={cached}, pass={pass}"
+            );
+            assert_eq!(
+                pixel(&rgba, 175, 175),
+                [0; 3],
+                "clip exterior, cached={cached}, pass={pass}"
+            );
+            assert_eq!(
+                pixel(&rgba, 195, 195),
+                [255, 0, 0],
+                "sibling mask, cached={cached}, pass={pass}"
+            );
+        }
+    }
+}

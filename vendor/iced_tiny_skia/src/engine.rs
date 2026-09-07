@@ -540,7 +540,7 @@ impl Engine {
         clip_bounds: Rectangle,
     ) {
         match primitive {
-            Primitive::Fill { path, paint, rule } => {
+            Primitive::Fill { path, paint, rule, .. } => {
                 let physical_bounds = {
                     let bounds = path.bounds();
 
@@ -574,6 +574,7 @@ impl Engine {
                 path,
                 paint,
                 stroke,
+                ..
             } => {
                 let physical_bounds = {
                     let bounds = path.bounds();

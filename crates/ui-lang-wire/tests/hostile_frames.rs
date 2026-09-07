@@ -1386,6 +1386,19 @@ fn check_bounds(
             check_color(bar, ctx);
             check_border(border, ctx);
         }
+        Node::Canvas {
+            width,
+            height,
+            commands,
+            ..
+        } => {
+            check_length(width, ctx);
+            check_length(height, ctx);
+            assert!(
+                commands.len() <= ui_lang_wire::MAX_CANVAS_PARTS,
+                "{ctx}: canvas command budget"
+            );
+        }
         Node::Surface { name, args, .. } => {
             check_string(name, ctx, "surface name");
             for value in args {
