@@ -190,5 +190,6 @@ The installed `views/` directory is beside the executable on macOS, Windows,
 and Linux; macOS copies it before signing. This closes the installer payload
 gap reported by the Ducktape port. Module manifests, discovery, and coordinated
 host/guest builds remain host integration work. The reported Tree component
-`rev_memo` compilation failure is the next prerequisite; text options, utility
+`rev_memo` compilation failure is fixed and covered by an actual wasm fixture.
+The layered fixture also exercises component composition. Text options, utility
 styles, diagnostic origins, and the remaining layouts stay in the phase backlog.
