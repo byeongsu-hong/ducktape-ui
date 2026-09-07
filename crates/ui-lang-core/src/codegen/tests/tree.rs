@@ -1223,3 +1223,42 @@ fn component_in_a_state_loop_does_not_emit_native_layout_memo() {
         "Tree components must return wire nodes, not native layout memo widgets"
     );
 }
+
+#[test]
+fn tree_text_keeps_named_faces_and_layout_options() {
+    let source = format!(
+        "app Demo\n{PALETTE}font display family=\"Geist\" weight=semibold\nfont code_medium family=\"Geist Mono\" weight=medium\nstate\n  hit = false\non clicked\n  hit = true\nview\n  box w=fill max-w=620.0 clip=true @px-4 py-2\n    col\n      text \"Label\" font=display wrap=none line-h=1.5 h=44.0 align-y=center\n      text \"Tracking\" font=code_medium tracking=2.0\n      button \"Apply\" @px-4 py-2 -> clicked\n"
+    );
+    let generated = compile_for(&source, "text.ice", Target::Tree)
+        .unwrap_or_else(|error| panic!("{}", error.render("text.ice")));
+    for expected in [
+        "FontFamily::Named(\"Geist\"",
+        "Weight::Semibold",
+        "FontFamily::Named(\"Geist Mono\"",
+        "Weight::Medium",
+        "Wrapping::None",
+        "LineHeight::Relative",
+        "AlignY::Center",
+        "tracking: 2.0f32",
+        "max_width:",
+        "clip: true",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected} in {generated}"
+        );
+    }
+}
+
+#[test]
+fn tree_large_finite_tracking_emits_finite_rust_literal() {
+    let source = format!(
+        "app Demo\n{PALETTE}view\n  text \"Track\" tracking=1000000000000000000000000000000000000000.0\n"
+    );
+    let generated = compile_for(&source, "tracking.ice", Target::Tree).unwrap();
+    assert!(
+        !generated.contains("inff32"),
+        "finite Ice values must emit valid Rust"
+    );
+    assert!(generated.contains("tracking: 3.4028235e38f32"));
+}

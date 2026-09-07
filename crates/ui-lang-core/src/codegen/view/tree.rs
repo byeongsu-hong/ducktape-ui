@@ -39,6 +39,7 @@
 use super::*;
 mod canvas;
 mod responsive;
+mod text;
 pub(in crate::codegen) use responsive::render_container_condition;
 
 // Reached through the guest crate, which is the app's one dependency: it
@@ -822,14 +823,10 @@ fn container(
     let container = program.resolved_container(id)?;
     let origin = container.origin;
     let style = &container.utility_style;
-    refuse_box_utilities(style, program, origin)?;
-    refuse_when(
-        program,
-        origin,
-        container.max_width.is_some() || container.max_height.is_some(),
-        "`max-w`/`max-h`",
-    )?;
-    refuse_when(program, origin, container.clip.is_some(), "`clip`")?;
+    let mut allowed = style.clone();
+    allowed.clip = false;
+    allowed.max_width = None;
+    refuse_box_utilities(&allowed, program, origin)?;
     refuse_when(
         program,
         origin,
@@ -852,8 +849,23 @@ fn container(
     let key = key_code(identity, "container", origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     let content = render_node(content, program, message, env, &child_scope, slot)?;
+    let pixels = |value: Option<CheckedExprUseId>| {
+        value
+            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
+            .transpose()
+    };
+    let max_width = option_code(
+        pixels(container.max_width)?
+            .or_else(|| style.max_width.map(|value| format!("{value:?}f32"))),
+    );
+    let max_height = option_code(pixels(container.max_height)?);
+    let clip = container
+        .clip
+        .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+        .transpose()?
+        .unwrap_or_else(|| style.clip.to_string());
     Ok(format!(
-        "{WIRE}::Node::Container {{ key: {key}, width: {}, height: {}, padding: {}, align_x: {}, align_y: {}, background: {}, border: {}, snap: {}, content: ::std::boxed::Box::new({content}) }}",
+        "{WIRE}::Node::Container {{ max_width: {max_width}, max_height: {max_height}, clip: {clip}, key: {key}, width: {}, height: {}, padding: {}, align_x: {}, align_y: {}, background: {}, border: {}, snap: {}, content: ::std::boxed::Box::new({content}) }}",
         dimension_code(
             container.width.as_ref(),
             style.width_fill,
@@ -978,31 +990,6 @@ fn text(
     let ResolvedTextContent::Plain { value } = &text.content else {
         return Err(refused(program, origin, "rich text"));
     };
-    refuse_when(program, origin, options.height.is_some(), "`h=` on text")?;
-    refuse_when(
-        program,
-        origin,
-        options.line_height.is_some() || style.text_line_height.is_some(),
-        "a line height",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        options.align_y.is_some(),
-        "`align-y` on text",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        options.shaping.is_some() || options.wrapping.is_some(),
-        "shaping or wrapping",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        options.tracking.is_some_and(|tracking| tracking != 0.0),
-        "tracking",
-    )?;
     refuse_when(program, origin, options.live.is_some(), "a live region")?;
     refuse_when(program, origin, options.heading.is_some(), "a heading")?;
     refuse_when(
@@ -1029,8 +1016,7 @@ fn text(
             || style.max_width.is_some()
             || style.items_center
             || style.self_center
-            || style.clip
-            || style.height_fill,
+            || style.clip,
         "this utility style on text",
     )?;
     let key = key_code(identity, "text", origin, scope, env, program)?;
@@ -1046,14 +1032,20 @@ fn text(
             program,
             env,
         )?),
-        None => style.text_size.map(|size| format!("{size:?}f32")),
+        None => style
+            .text_size
+            .map(|size| format!("{size:?}f32"))
+            .or_else(|| {
+                program
+                    .settings()
+                    .default_text_size
+                    .map(|size| format!("{size:?}f32"))
+            }),
     };
     let monospace = match &options.font {
         Some(ResolvedTextFont::Monospace) => true,
         Some(ResolvedTextFont::Default) => false,
-        Some(ResolvedTextFont::Named(_)) => {
-            return Err(refused(program, origin, "a named font"));
-        }
+        Some(ResolvedTextFont::Named(_)) => false,
         None => style.font_monospace,
     };
     let weight = match style.font_weight {
@@ -1071,8 +1063,9 @@ fn text(
             return Err(refused(program, origin, "justified text"));
         }
     };
+    let text_options = text::options(text, program, env)?;
     Ok(format!(
-        "{WIRE}::Node::Text {{ key: {key}, content: {content}, size: {}, color: {}, font: {WIRE}::Font {{ monospace: {monospace}, weight: {WIRE}::Weight::{weight} }}, width: {}, align_x: {} }}",
+        "{WIRE}::Node::Text {{ options: {text_options}, key: {key}, content: {content}, size: {}, color: {}, font: {WIRE}::Font {{ monospace: {monospace}, weight: {WIRE}::Weight::{weight} }}, width: {}, align_x: {} }}",
         option_code(size),
         option_code(style.text_color.as_ref().map(rgba_code)),
         dimension_code(
@@ -1556,7 +1549,7 @@ fn button(
     refuse_when(
         program,
         origin,
-        !button.utility_style.is_empty(),
+        button.utility_style.has_non_padding_properties(),
         "a utility style on a button",
     )?;
     let key = key_code(identity, "button", origin, scope, env, program)?;
@@ -1587,7 +1580,19 @@ fn button(
             "{WIRE}::Edges::all(({}) as f32)",
             resolved_expr_use_code(program, padding, env, ValueMode::Owned)?
         )),
-        None => None,
+        None => {
+            if button.utility_style.padding == [0; 4] {
+                None
+            } else {
+                Some(format!(
+                    "{WIRE}::Edges {{ top: {}f32, right: {}f32, bottom: {}f32, left: {}f32 }}",
+                    button.utility_style.padding[0],
+                    button.utility_style.padding[1],
+                    button.utility_style.padding[2],
+                    button.utility_style.padding[3]
+                ))
+            }
+        }
     };
     let active = button_face_code(button.styles.active.as_ref(), program, env, origin)?
         .unwrap_or_else(|| format!("{WIRE}::Face::default()"));
@@ -2338,7 +2343,7 @@ fn surface(
         // Iced Shader defaults to 100x100. The host element is constrained
         // by the same dimensions, including when its provider is missing.
         format!(
-            "{WIRE}::Node::Container {{ key: ::std::format!(\"{{}}/@bounds\", __surface_key), width: ::std::option::Option::Some({}), height: ::std::option::Option::Some({}), padding: ::std::option::Option::None, align_x: ::std::option::Option::None, align_y: ::std::option::Option::None, background: ::std::option::Option::None, border: ::std::option::Option::None, snap: ::std::option::Option::None, content: ::std::boxed::Box::new({surface}) }}",
+            "{WIRE}::Node::Container {{ max_width: None, max_height: None, clip: false, key: ::std::format!(\"{{}}/@bounds\", __surface_key), width: ::std::option::Option::Some({}), height: ::std::option::Option::Some({}), padding: ::std::option::Option::None, align_x: ::std::option::Option::None, align_y: ::std::option::Option::None, background: ::std::option::Option::None, border: ::std::option::Option::None, snap: ::std::option::Option::None, content: ::std::boxed::Box::new({surface}) }}",
             dimension(width)?,
             dimension(height)?,
         )

@@ -416,6 +416,17 @@ For module packaging requirements and the connected implementation phases, see
 
 ### Wire and rendering
 
+- Plain text carries `wrap=`, `shape=`, named font family/weight/stretch/style,
+  `line-h=`, `h=`, `align-y=` and grapheme tracking. Hosts load font bytes and
+  call `view_tree::register_font_family` with trusted static family names;
+  unregistered names use the native sans-serif fallback. Untracked text remains
+  selectable. Tracked graphemes consume the frame node budget. Boxes carry
+  `max-w=`, `max-h=`, clipping and padding; buttons accept padding utilities.
+  Host and guests must be rebuilt together for these wire fields.
+  The real Ducktape typed node root now reaches button `checked=`/`expanded=`;
+  button accessibility/recipes, tooltip and its opaque activity-log surface slot
+  remain prerequisites for mounting that screen unchanged.
+
 - The wire carries `box`, `mouse`, `col`/`row`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
   `text`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
@@ -425,7 +436,7 @@ For module packaging requirements and the connected implementation phases, see
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
   the host lacks renders a placeholder. Every other Ice
   construct — combo box, images,
-  mounted components, gradients, the text and interaction utility styles —
+  mounted components, gradients, and unsupported interaction utility styles —
   fails the app's build at its `.ice` line with E190. Each is a node kind
   to add to the wire, an emitter arm and a renderer arm. A layout's surface
   utilities (`@bg-…`, `@border-…`, `@r-…`) and a box's `px-snap` do cross.
