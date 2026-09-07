@@ -1141,6 +1141,8 @@ mod tests {
             width: None,
             height: None,
             align: None,
+            background: None,
+            border: None,
             children,
         }
     }
@@ -1226,6 +1228,7 @@ mod tests {
                 align_y: None,
                 background: None,
                 border: None,
+                snap: None,
                 content: Box::new(node),
             };
         }

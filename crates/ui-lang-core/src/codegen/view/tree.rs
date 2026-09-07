@@ -29,9 +29,9 @@
 //! mouse area's pointer position and scroll delta. Colours are resolved
 //! through the app's palette here and cross as RGBA.
 //!
-//! The form controls cross unstyled: the host paints them in its own theme,
-//! and a status style on one is refused like any other construct the wire
-//! has no room for.
+//! A per-state style given as literal colours crosses as a set of faces the
+//! host paints over its own theme; a style given as a Rust callback
+//! (`style=some_fn(…)`) is refused, since no Rust runs on the host's side.
 
 use super::*;
 
@@ -305,9 +305,29 @@ fn radius_code(
     )))
 }
 
+/// A border from its parts, any of which may be absent. A radius alone still
+/// needs a border (the host rounds the background through it), drawn
+/// transparent and zero wide.
+fn border_parts_code(
+    color: Option<&ResolvedThemeColor>,
+    width: Option<String>,
+    radius: Option<String>,
+) -> String {
+    if color.is_none() && width.is_none() && radius.is_none() {
+        return option_code(None);
+    }
+    let color = color
+        .map(rgba_code)
+        .unwrap_or_else(|| format!("{WIRE}::Rgba([0.0, 0.0, 0.0, 0.0])"));
+    let width = width.unwrap_or_else(|| "0.0".into());
+    let radius = radius.unwrap_or_else(|| "[0.0; 4]".into());
+    option_code(Some(format!(
+        "{WIRE}::Border {{ color: {color}, width: {width}, radius: {radius} }}"
+    )))
+}
+
 /// A border from a surface's border colour, width and radius, plus the
-/// utility equivalents. A radius alone still needs a border (the host rounds
-/// the background through it), drawn transparent and zero wide.
+/// utility equivalents.
 fn border_code(
     surface: &ResolvedContainerSurface,
     style: &ResolvedStyle,
@@ -323,17 +343,52 @@ fn border_code(
         None => (style.border_width != 0).then(|| format!("{}.0", style.border_width)),
     };
     let radius = radius_code(&surface.radius, style.radius, program, env)?;
-    if color.is_none() && width.is_none() && radius.is_none() {
-        return Ok(option_code(None));
-    }
-    let color = color
-        .map(rgba_code)
-        .unwrap_or_else(|| format!("{WIRE}::Rgba([0.0, 0.0, 0.0, 0.0])"));
-    let width = width.unwrap_or_else(|| "0.0".into());
-    let radius = radius.unwrap_or_else(|| "[0.0; 4]".into());
-    Ok(option_code(Some(format!(
-        "{WIRE}::Border {{ color: {color}, width: {width}, radius: {radius} }}"
-    ))))
+    Ok(border_parts_code(color, width, radius))
+}
+
+/// A border from a control's colour, width and radius options.
+fn control_border_code(
+    color: Option<&ResolvedThemeColor>,
+    width: Option<CheckedExprUseId>,
+    radius: &ResolvedContainerRadius,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let width = width
+        .map(|width| clamped_f32_code(width, "0.0", "f32::MAX", program, env))
+        .transpose()?;
+    Ok(border_parts_code(
+        color,
+        width,
+        radius_code(radius, 0, program, env)?,
+    ))
+}
+
+/// A background that is one colour; a gradient is refused.
+fn plain_background_code(
+    background: Option<&ResolvedContainerBackground>,
+    program: &LoweredProgram,
+    origin: OriginId,
+) -> Result<String, Error> {
+    Ok(option_code(match background {
+        Some(ResolvedContainerBackground::Color(color)) => Some(rgba_code(color)),
+        Some(ResolvedContainerBackground::Linear { .. }) => {
+            return Err(refused(program, origin, "a gradient background"));
+        }
+        None => None,
+    }))
+}
+
+fn bool_option_code(
+    value: Option<CheckedExprUseId>,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    Ok(option_code(
+        value
+            .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+            .transpose()?,
+    ))
 }
 
 fn background_code(
@@ -360,7 +415,7 @@ fn background_code(
     ))
 }
 
-fn refuse_surface_extras(
+fn refuse_shadow(
     surface: &ResolvedContainerSurface,
     program: &LoweredProgram,
     origin: OriginId,
@@ -373,7 +428,17 @@ fn refuse_surface_extras(
             || surface.shadow_y.is_some()
             || surface.shadow_blur.is_some(),
         "a shadow",
-    )?;
+    )
+}
+
+/// A box carries `px-snap`; every other surface (a button's or input's
+/// face, a pick list's) has no room for it.
+fn refuse_surface_extras(
+    surface: &ResolvedContainerSurface,
+    program: &LoweredProgram,
+    origin: OriginId,
+) -> Result<(), Error> {
+    refuse_shadow(surface, program, origin)?;
     refuse_when(
         program,
         origin,
@@ -429,25 +494,17 @@ fn refuse_box_utilities(
     )
 }
 
-/// A layout carries geometry only. Natively a surface utility (`@bg-…`,
-/// `@border-…`, `@r-…`) wraps the row or column in a styled container, and
-/// the wire has no node for that wrapper: a `Linear` paints nothing. Wrap the
-/// layout in a `box` to paint it.
-fn refuse_layout_utilities(
-    style: &ResolvedStyle,
-    program: &LoweredProgram,
-    origin: OriginId,
-) -> Result<(), Error> {
-    refuse_box_utilities(style, program, origin)?;
-    refuse_when(
-        program,
-        origin,
-        style.background.is_some()
-            || style.border_color.is_some()
-            || style.border_width != 0
-            || style.radius != 0,
-        "a surface utility style on a layout",
-    )
+/// The surface a layout's utilities paint (`@bg-…`, `@border-…`, `@r-…`):
+/// natively a styled container around the row or column, here the layout
+/// node's own `background` and `border`, which the host draws around it.
+fn layout_surface_code(style: &ResolvedStyle) -> (String, String) {
+    let background = option_code(style.background.as_ref().map(rgba_code));
+    let border = border_parts_code(
+        style.border_color.as_ref(),
+        (style.border_width != 0).then(|| format!("{}.0", style.border_width)),
+        (style.radius != 0).then(|| format!("[{}.0; 4]", style.radius)),
+    );
+    (background, border)
 }
 
 // ---- nodes --------------------------------------------------------------
@@ -466,7 +523,8 @@ fn layout(
     let layout = program.resolved_layout(id)?;
     let origin = layout.origin;
     let style = &layout.utility_style;
-    refuse_layout_utilities(style, program, origin)?;
+    refuse_box_utilities(style, program, origin)?;
+    let (background, border) = layout_surface_code(style);
     let key = key_code(identity, "layout", origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     match &layout.mode {
@@ -511,7 +569,7 @@ fn layout(
             )?;
             write!(
                 body,
-                " {WIRE}::Node::Linear {{ key: {key}, axis: {WIRE}::Axis::{axis}, spacing: {}, padding: {}, width: {}, height: {}, align: {}, children: __children }} }}",
+                " {WIRE}::Node::Linear {{ key: {key}, axis: {WIRE}::Axis::{axis}, spacing: {}, padding: {}, width: {}, height: {}, align: {}, background: {background}, border: {border}, children: __children }} }}",
                 option_code(spacing),
                 edges_code(&linear.padding, style.padding, program, env)?,
                 dimension_code(linear.width.as_ref(), style.width_fill, program, env, origin)?,
@@ -525,27 +583,8 @@ fn layout(
             refuse_when(
                 program,
                 origin,
-                scroll.route.is_some()
-                    || scroll.viewport_route.is_some()
-                    || scroll.auto_scroll.is_some(),
+                scroll.route.is_some() || scroll.viewport_route.is_some(),
                 "a scroll route",
-            )?;
-            refuse_when(
-                program,
-                origin,
-                scroll.hidden_bar
-                    || scroll.bar_width.is_some()
-                    || scroll.bar_margin.is_some()
-                    || scroll.scroller_width.is_some()
-                    || scroll.bar_spacing.is_some(),
-                "a scroll bar option",
-            )?;
-            refuse_when(
-                program,
-                origin,
-                scroll.anchor_x != ResolvedScrollAnchor::Start
-                    || scroll.anchor_y != ResolvedScrollAnchor::Start,
-                "a scroll anchor",
             )?;
             refuse_when(
                 program,
@@ -558,9 +597,27 @@ fn layout(
                 ResolvedScrollDirection::Horizontal => "Horizontal",
                 ResolvedScrollDirection::Both => "Both",
             };
+            let pixels = |value: Option<CheckedExprUseId>| {
+                value
+                    .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
+                    .transpose()
+                    .map(option_code)
+            };
+            let anchor = |anchor| {
+                let name = match anchor {
+                    ResolvedScrollAnchor::Start => "Start",
+                    ResolvedScrollAnchor::End => "End",
+                    ResolvedScrollAnchor::Keep => "Keep",
+                };
+                format!("{WIRE}::ScrollAnchor::{name}")
+            };
+            let auto_scroll = match scroll.auto_scroll {
+                Some(value) => resolved_expr_use_code(program, value, env, ValueMode::Owned)?,
+                None => "false".into(),
+            };
             let content = render_node(children[0], program, message, env, &child_scope, slot)?;
             Ok(format!(
-                "{WIRE}::Node::Scroll {{ key: {key}, direction: {WIRE}::ScrollDirection::{direction}, width: {}, height: {}, content: ::std::boxed::Box::new({content}) }}",
+                "{WIRE}::Node::Scroll {{ key: {key}, direction: {WIRE}::ScrollDirection::{direction}, width: {}, height: {}, bar_hidden: {}, bar_width: {}, bar_margin: {}, scroller_width: {}, bar_spacing: {}, anchor_x: {}, anchor_y: {}, auto_scroll: ({auto_scroll}), background: {background}, border: {border}, content: ::std::boxed::Box::new({content}) }}",
                 dimension_code(
                     scroll.width.as_ref(),
                     style.width_fill,
@@ -575,6 +632,13 @@ fn layout(
                     env,
                     origin
                 )?,
+                scroll.hidden_bar,
+                pixels(scroll.bar_width)?,
+                pixels(scroll.bar_margin)?,
+                pixels(scroll.scroller_width)?,
+                pixels(scroll.bar_spacing)?,
+                anchor(scroll.anchor_x),
+                anchor(scroll.anchor_y),
             ))
         }
         ResolvedLayoutMode::Grid(grid) => {
@@ -624,7 +688,7 @@ fn layout(
             )?;
             write!(
                 body,
-                " {WIRE}::Node::Grid {{ key: {key}, columns: {}, fluid: {}, spacing: {}, padding: {}, width: {}, height: {}, aspect: {}, children: __children }} }}",
+                " {WIRE}::Node::Grid {{ key: {key}, columns: {}, fluid: {}, spacing: {}, padding: {}, width: {}, height: {}, aspect: {}, background: {background}, border: {border}, children: __children }} }}",
                 option_code(columns),
                 option_code(grid.max_cell.map(number).transpose()?),
                 option_code(spacing),
@@ -756,12 +820,12 @@ fn container(
         container.surface.text_color.is_some(),
         "`text=` on a box",
     )?;
-    refuse_surface_extras(&container.surface, program, origin)?;
+    refuse_shadow(&container.surface, program, origin)?;
     let key = key_code(identity, "container", origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     let content = render_node(content, program, message, env, &child_scope, slot)?;
     Ok(format!(
-        "{WIRE}::Node::Container {{ key: {key}, width: {}, height: {}, padding: {}, align_x: {}, align_y: {}, background: {}, border: {}, content: ::std::boxed::Box::new({content}) }}",
+        "{WIRE}::Node::Container {{ key: {key}, width: {}, height: {}, padding: {}, align_x: {}, align_y: {}, background: {}, border: {}, snap: {}, content: ::std::boxed::Box::new({content}) }}",
         dimension_code(
             container.width.as_ref(),
             style.width_fill,
@@ -781,6 +845,7 @@ fn container(
         option_code(container.align_y.map(align_y_code)),
         background_code(&container.surface, style, program, origin)?,
         border_code(&container.surface, style, program, env)?,
+        bool_option_code(container.surface.pixel_snap, program, env)?,
     ))
 }
 
@@ -1015,25 +1080,14 @@ fn svg(
     refuse_when(
         program,
         origin,
-        options.fit.is_some() || options.rotation.is_some() || options.opacity.is_some(),
-        "this svg option",
+        options.svg_style.is_some(),
+        "an svg style callback",
     )?;
     refuse_when(
         program,
         origin,
-        options.svg_style.is_some() || options.svg_inherits_button_ink,
-        "an svg style",
-    )?;
-    // `hover=` defaults to the idle colour; only a hover that differs paints
-    // a state the wire does not carry.
-    refuse_when(
-        program,
-        origin,
-        options
-            .svg_colors
-            .as_ref()
-            .is_some_and(|colors| colors.hovered.as_ref() != Some(&colors.idle)),
-        "an svg hover colour",
+        options.svg_inherits_button_ink,
+        "`color=inherit` on an svg",
     )?;
     let bytes = if options.svg_memory {
         match media.source_type {
@@ -1076,11 +1130,52 @@ fn svg(
         .as_ref()
         .and_then(|colors| colors.idle.as_ref())
         .map(rgba_code);
+    // `hover=` defaults to the idle colour; only one that differs crosses.
+    let hover = options
+        .svg_colors
+        .as_ref()
+        .and_then(|colors| colors.hovered.as_ref())
+        .filter(|hovered| {
+            hovered.as_ref()
+                != options
+                    .svg_colors
+                    .as_ref()
+                    .and_then(|colors| colors.idle.as_ref())
+        })
+        .map(|hovered| option_code(hovered.as_ref().map(rgba_code)));
+    let fit = options
+        .fit
+        .map(|fit| {
+            resolved_expr_use_code(program, fit, env, ValueMode::Owned).map(|code| {
+                format!(
+                    "match ({code}) {{ ::iced::ContentFit::Contain => {WIRE}::ContentFit::Contain, ::iced::ContentFit::Cover => {WIRE}::ContentFit::Cover, ::iced::ContentFit::Fill => {WIRE}::ContentFit::Fill, ::iced::ContentFit::None => {WIRE}::ContentFit::None, ::iced::ContentFit::ScaleDown => {WIRE}::ContentFit::ScaleDown }}"
+                )
+            })
+        })
+        .transpose()?;
+    let rotation = options
+        .rotation
+        .map(|rotation| {
+            resolved_expr_use_code(program, rotation, env, ValueMode::Owned).map(|code| {
+                format!(
+                    "match ({code}) {{ ::iced::Rotation::Floating(__radians) => {WIRE}::Rotation::Floating(__radians.0), ::iced::Rotation::Solid(__radians) => {WIRE}::Rotation::Solid(__radians.0) }}"
+                )
+            })
+        })
+        .transpose()?;
+    let opacity = options
+        .opacity
+        .map(|opacity| clamped_f32_code(opacity, "0.0", "1.0", program, env))
+        .transpose()?;
     Ok(format!(
-        "{{ let (__hash, __bytes) = {SLOTS}::picture({bytes}); {WIRE}::Node::Svg {{ key: {}, hash: __hash, bytes: __bytes, label: {}, color: {}, width: {}, height: {} }} }}",
+        "{{ let (__hash, __bytes) = {SLOTS}::picture({bytes}); {WIRE}::Node::Svg {{ key: {}, hash: __hash, bytes: __bytes, label: {}, color: {}, hover: {}, fit: {}, rotation: {}, opacity: {}, width: {}, height: {} }} }}",
         key_code(identity, "media", origin, scope, env, program)?,
         option_code(label),
         option_code(color),
+        option_code(hover),
+        option_code(fit),
+        option_code(rotation),
+        option_code(opacity),
         dimension(options.width.as_ref())?,
         dimension(options.height.as_ref())?,
     ))
@@ -1410,28 +1505,18 @@ fn rule(
     let rule = program.resolved_rule(id)?;
     let origin = rule.origin;
     refuse_when(program, origin, rule.fill.is_some(), "a rule fill")?;
-    refuse_when(
-        program,
-        origin,
-        rule.preset != ResolvedRulePreset::Default,
-        "a rule style preset",
-    )?;
-    refuse_when(program, origin, rule.snap.is_some(), "`snap` on a rule")?;
-    refuse_when(
-        program,
-        origin,
-        radius_explicit(&rule.radius),
-        "a rule radius",
-    )?;
     let axis = match rule.axis {
         ResolvedRuleAxis::Horizontal => "Row",
         ResolvedRuleAxis::Vertical => "Column",
     };
     Ok(format!(
-        "{WIRE}::Node::Rule {{ key: {}, axis: {WIRE}::Axis::{axis}, thickness: ({}) as f32, color: {} }}",
+        "{WIRE}::Node::Rule {{ key: {}, axis: {WIRE}::Axis::{axis}, thickness: ({}) as f32, color: {}, weak: {}, radius: {}, snap: {} }}",
         key_code(identity, "rule", origin, scope, env, program)?,
         resolved_expr_use_code(program, rule.thickness, env, ValueMode::Owned)?,
         option_code(rule.color.as_ref().map(rgba_code)),
+        rule.preset == ResolvedRulePreset::Weak,
+        option_code(radius_code(&rule.radius, 0, program, env)?),
+        bool_option_code(rule.snap, program, env)?,
     ))
 }
 
@@ -1500,38 +1585,17 @@ fn boolean(
 ) -> Result<String, Error> {
     let control = program.resolved_boolean_control(id)?;
     let origin = control.origin;
-    let (name, styled) = match &control.style {
-        ResolvedBooleanStyle::Checkbox(style) => (
-            "checkbox",
-            style.preset != Some(ResolvedCheckboxPreset::Primary)
-                || style.custom.is_some()
-                || style.active_checked.is_some()
-                || style.active_unchecked.is_some()
-                || style.hovered_checked.is_some()
-                || style.hovered_unchecked.is_some()
-                || style.disabled_checked.is_some()
-                || style.disabled_unchecked.is_some(),
-        ),
-        ResolvedBooleanStyle::Toggler(style) => (
-            "toggler",
-            style.custom.is_some()
-                || style.active_checked.is_some()
-                || style.active_unchecked.is_some()
-                || style.hovered_checked.is_some()
-                || style.hovered_unchecked.is_some()
-                || style.disabled_checked.is_some()
-                || style.disabled_unchecked.is_some(),
-        ),
-        ResolvedBooleanStyle::Radio(style) => (
-            "radio",
-            style.custom.is_some()
-                || style.active_selected.is_some()
-                || style.active_unselected.is_some()
-                || style.hovered_selected.is_some()
-                || style.hovered_unselected.is_some(),
-        ),
+    let (name, callback) = match &control.style {
+        ResolvedBooleanStyle::Checkbox(style) => ("checkbox", style.custom.is_some()),
+        ResolvedBooleanStyle::Toggler(style) => ("toggler", style.custom.is_some()),
+        ResolvedBooleanStyle::Radio(style) => ("radio", style.custom.is_some()),
     };
-    refuse_when(program, origin, styled, &format!("a {name} style"))?;
+    refuse_when(
+        program,
+        origin,
+        callback,
+        &format!("a {name} style callback"),
+    )?;
     let options = &control.options;
     refuse_when(
         program,
@@ -1567,14 +1631,52 @@ fn boolean(
         let value = resolved_expr_use_code(program, value, env, ValueMode::Owned)?;
         let activate =
             resolved_interaction_route_code(&control.route, &[&value], env, program, message)?;
+        let ResolvedBooleanStyle::Radio(style) = &control.style else {
+            return Err(program.invariant_at_origin(origin, "radio style HIR diverged"));
+        };
+        let face = |style: Option<&ResolvedRadioStatusStyle>| -> Result<String, Error> {
+            let Some(style) = style else {
+                return Ok(option_code(None));
+            };
+            Ok(option_code(Some(control_face_code(
+                style
+                    .background
+                    .as_ref()
+                    .map(|background| &background.value),
+                style.dot_color.as_ref().map(|color| &color.value),
+                style.text_color.as_ref().map(|color| &color.value),
+                control_border_code(
+                    style.border_color.as_ref().map(|color| &color.value),
+                    style.border_width,
+                    &ResolvedContainerRadius::default(),
+                    program,
+                    env,
+                )?,
+                program,
+                origin,
+            )?)))
+        };
         return Ok(format!(
-            "{WIRE}::Node::Radio {{ key: {key}, label: {label}, selected: ({checked}), on_select: {SLOTS}::message({activate}), width: {width} }}"
+            "{WIRE}::Node::Radio {{ key: {key}, label: {label}, selected: ({checked}), on_select: {SLOTS}::message({activate}), width: {width}, style: {WIRE}::RadioStyle {{ active_on: {}, active_off: {}, hovered_on: {}, hovered_off: {} }} }}",
+            face(style.active_selected.as_ref())?,
+            face(style.active_unselected.as_ref())?,
+            face(style.hovered_selected.as_ref())?,
+            face(style.hovered_unselected.as_ref())?,
         ));
     }
-    let kind = match control.kind {
-        ResolvedBooleanKind::Checkbox => "Checkbox",
-        ResolvedBooleanKind::Toggler => "Switch",
-        ResolvedBooleanKind::Radio => unreachable!("returned above"),
+    let (kind, style) = match (control.kind, &control.style) {
+        (ResolvedBooleanKind::Checkbox, ResolvedBooleanStyle::Checkbox(style)) => (
+            "Checkbox",
+            checkbox_style_code(style, program, env, origin)?,
+        ),
+        (ResolvedBooleanKind::Toggler, ResolvedBooleanStyle::Toggler(style)) => {
+            ("Switch", toggler_style_code(style, program, env, origin)?)
+        }
+        _ => {
+            return Err(
+                program.invariant_at_origin(origin, "boolean control kind and style HIR diverged")
+            );
+        }
     };
     let callback = resolved_interaction_route_callback_code(
         &control.route,
@@ -1598,7 +1700,135 @@ fn boolean(
         None => format!("::std::option::Option::Some({handler})"),
     };
     Ok(format!(
-        "{WIRE}::Node::Toggle {{ key: {key}, kind: {WIRE}::ToggleKind::{kind}, label: {label}, checked: ({checked}), on_toggle: {on_toggle}, width: {width} }}"
+        "{WIRE}::Node::Toggle {{ key: {key}, kind: {WIRE}::ToggleKind::{kind}, label: {label}, checked: ({checked}), on_toggle: {on_toggle}, width: {width}, style: {style} }}"
+    ))
+}
+
+/// One face of a checkbox, toggler or radio: its box, mark, label colour and
+/// border.
+fn control_face_code(
+    background: Option<&ResolvedContainerBackground>,
+    mark: Option<&ResolvedThemeColor>,
+    text: Option<&ResolvedThemeColor>,
+    border: String,
+    program: &LoweredProgram,
+    origin: OriginId,
+) -> Result<String, Error> {
+    Ok(format!(
+        "{WIRE}::ControlFace {{ background: {}, mark: {}, text: {}, border: {border} }}",
+        plain_background_code(background, program, origin)?,
+        option_code(mark.map(rgba_code)),
+        option_code(text.map(rgba_code)),
+    ))
+}
+
+fn tone_code(tone: &str) -> String {
+    format!("::std::option::Option::Some({WIRE}::Tone::{tone})")
+}
+
+fn checkbox_style_code(
+    styles: &ResolvedCheckboxStyleSet,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    origin: OriginId,
+) -> Result<String, Error> {
+    let tone = match styles.preset {
+        None | Some(ResolvedCheckboxPreset::Primary) => option_code(None),
+        Some(ResolvedCheckboxPreset::Secondary) => tone_code("Secondary"),
+        Some(ResolvedCheckboxPreset::Success) => tone_code("Success"),
+        Some(ResolvedCheckboxPreset::Danger) => tone_code("Danger"),
+    };
+    let face = |style: Option<&ResolvedCheckboxStatusStyle>| -> Result<String, Error> {
+        let Some(style) = style else {
+            return Ok(option_code(None));
+        };
+        Ok(option_code(Some(control_face_code(
+            style
+                .background
+                .as_ref()
+                .map(|background| &background.value),
+            style.icon_color.as_ref().map(|color| &color.value),
+            style.text_color.as_ref().map(|color| &color.value),
+            control_border_code(
+                style.border_color.as_ref().map(|color| &color.value),
+                style.border_width,
+                &style.radius,
+                program,
+                env,
+            )?,
+            program,
+            origin,
+        )?)))
+    };
+    Ok(format!(
+        "{WIRE}::ToggleStyle {{ tone: {tone}, active_on: {}, active_off: {}, hovered_on: {}, hovered_off: {}, disabled_on: {}, disabled_off: {} }}",
+        face(styles.active_checked.as_ref())?,
+        face(styles.active_unchecked.as_ref())?,
+        face(styles.hovered_checked.as_ref())?,
+        face(styles.hovered_unchecked.as_ref())?,
+        face(styles.disabled_checked.as_ref())?,
+        face(styles.disabled_unchecked.as_ref())?,
+    ))
+}
+
+/// A toggler's track is the face's background and border, its knob the
+/// mark. The knob's own border and the padding ratio have no room.
+fn toggler_style_code(
+    styles: &ResolvedTogglerStyleSet,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    origin: OriginId,
+) -> Result<String, Error> {
+    let face = |style: Option<&ResolvedTogglerStatusStyle>| -> Result<String, Error> {
+        let Some(style) = style else {
+            return Ok(option_code(None));
+        };
+        refuse_when(
+            program,
+            origin,
+            style.foreground_border_color.is_some()
+                || style.foreground_border_width.is_some()
+                || style.padding_ratio.is_some(),
+            "a toggler knob border or padding ratio",
+        )?;
+        let mark = match &style.foreground {
+            Some(foreground) => match &foreground.value {
+                ResolvedContainerBackground::Color(color) => Some(color),
+                ResolvedContainerBackground::Linear { .. } => {
+                    return Err(refused(program, origin, "a gradient background"));
+                }
+            },
+            None => None,
+        };
+        Ok(option_code(Some(control_face_code(
+            style
+                .background
+                .as_ref()
+                .map(|background| &background.value),
+            mark,
+            style.text_color.as_ref().map(|color| &color.value),
+            control_border_code(
+                style
+                    .background_border_color
+                    .as_ref()
+                    .map(|color| &color.value),
+                style.background_border_width,
+                &style.radius,
+                program,
+                env,
+            )?,
+            program,
+            origin,
+        )?)))
+    };
+    Ok(format!(
+        "{WIRE}::ToggleStyle {{ tone: ::std::option::Option::None, active_on: {}, active_off: {}, hovered_on: {}, hovered_off: {}, disabled_on: {}, disabled_off: {} }}",
+        face(styles.active_checked.as_ref())?,
+        face(styles.active_unchecked.as_ref())?,
+        face(styles.hovered_checked.as_ref())?,
+        face(styles.hovered_unchecked.as_ref())?,
+        face(styles.disabled_checked.as_ref())?,
+        face(styles.disabled_unchecked.as_ref())?,
     ))
 }
 
@@ -1627,12 +1857,51 @@ fn slider(
     refuse_when(
         program,
         origin,
-        slider.custom_style.is_some()
-            || slider.styles.active.is_some()
-            || slider.styles.hovered.is_some()
-            || slider.styles.dragged.is_some(),
-        "a slider style",
+        slider.custom_style.is_some(),
+        "a slider style callback",
     )?;
+    let face = |style: Option<&ResolvedSliderStatusStyle>| -> Result<String, Error> {
+        let Some(style) = style else {
+            return Ok(option_code(None));
+        };
+        refuse_when(
+            program,
+            origin,
+            style.handle_shape.is_some(),
+            "a slider handle shape",
+        )?;
+        let rail_width = style
+            .rail_width
+            .map(|width| clamped_f32_code(width, "0.0", "f32::MAX", program, env))
+            .transpose()?;
+        Ok(option_code(Some(format!(
+            "{WIRE}::SliderFace {{ rail_start: {}, rail_end: {}, rail_width: {}, rail_border: {}, handle: {}, handle_border: {} }}",
+            plain_background_code(style.rail_start.as_ref(), program, origin)?,
+            plain_background_code(style.rail_end.as_ref(), program, origin)?,
+            option_code(rail_width),
+            control_border_code(
+                style.rail_border_color.as_ref(),
+                style.rail_border_width,
+                &style.rail_radius,
+                program,
+                env,
+            )?,
+            plain_background_code(style.handle_color.as_ref(), program, origin)?,
+            control_border_code(
+                style.handle_border_color.as_ref(),
+                style.handle_border_width,
+                &ResolvedContainerRadius::default(),
+                program,
+                env,
+            )?,
+        ))))
+    };
+    let style = format!(
+        "{WIRE}::SliderStyle {{ active: {}, hovered: {}, dragged: {} }}",
+        face(slider.styles.active.as_ref())?,
+        face(slider.styles.hovered.as_ref())?,
+        face(slider.styles.dragged.as_ref())?,
+    );
     let number = |expression: CheckedExprUseId| {
         resolved_expr_use_code(program, expression, env, ValueMode::Owned)
             .map(|code| format!("({code}) as f32"))
@@ -1656,7 +1925,7 @@ fn slider(
         ResolvedRangeAxis::Vertical => "Column",
     };
     Ok(format!(
-        "{WIRE}::Node::Slider {{ key: {}, value: {}, min: {}, max: {}, step: {}, on_change: {}, on_release: {}, axis: {WIRE}::Axis::{axis}, width: {}, height: {} }}",
+        "{WIRE}::Node::Slider {{ key: {}, value: {}, min: {}, max: {}, step: {}, on_change: {}, on_release: {}, axis: {WIRE}::Axis::{axis}, width: {}, height: {}, style: {style} }}",
         key_code(identity, "slider", origin, scope, env, program)?,
         number(slider.value)?,
         number(slider.min)?,
@@ -1705,17 +1974,54 @@ fn pick_list(
     refuse_when(
         program,
         origin,
-        pick.custom_style.is_some()
-            || pick.styles.active.is_some()
-            || pick.styles.hovered.is_some()
-            || pick.styles.opened.is_some()
-            || pick.styles.opened_hovered.is_some()
-            || pick.menu.custom.is_some()
-            || pick.menu.surface.is_some()
-            || pick.menu.selected_text_color.is_some()
-            || pick.menu.selected_background.is_some(),
-        "a pick list style",
+        pick.custom_style.is_some() || pick.menu.custom.is_some(),
+        "a pick list style callback",
     )?;
+    let plain = ResolvedStyle::default();
+    let face = |style: Option<&ResolvedPickListStatusStyle>| -> Result<String, Error> {
+        let Some(style) = style else {
+            return Ok(option_code(None));
+        };
+        refuse_surface_extras(&style.surface, program, origin)?;
+        Ok(option_code(Some(format!(
+            "{WIRE}::PickFace {{ background: {}, text: {}, placeholder: {}, handle: {}, border: {} }}",
+            background_code(&style.surface, &plain, program, origin)?,
+            option_code(style.surface.text_color.as_ref().map(rgba_code)),
+            option_code(style.placeholder_color.as_ref().map(rgba_code)),
+            option_code(style.handle_color.as_ref().map(rgba_code)),
+            border_code(&style.surface, &plain, program, env)?,
+        ))))
+    };
+    let menu = if pick.menu.surface.is_none()
+        && pick.menu.selected_text_color.is_none()
+        && pick.menu.selected_background.is_none()
+    {
+        option_code(None)
+    } else {
+        let (background, text, border) = match &pick.menu.surface {
+            Some(surface) => {
+                refuse_surface_extras(surface, program, origin)?;
+                (
+                    background_code(surface, &plain, program, origin)?,
+                    option_code(surface.text_color.as_ref().map(rgba_code)),
+                    border_code(surface, &plain, program, env)?,
+                )
+            }
+            None => (option_code(None), option_code(None), option_code(None)),
+        };
+        option_code(Some(format!(
+            "{WIRE}::MenuFace {{ background: {background}, text: {text}, border: {border}, selected_text: {}, selected_background: {} }}",
+            option_code(pick.menu.selected_text_color.as_ref().map(rgba_code)),
+            plain_background_code(pick.menu.selected_background.as_ref(), program, origin)?,
+        )))
+    };
+    let style = format!(
+        "{WIRE}::PickListStyle {{ active: {}, hovered: {}, opened: {}, opened_hovered: {}, menu: {menu} }}",
+        face(pick.styles.active.as_ref())?,
+        face(pick.styles.hovered.as_ref())?,
+        face(pick.styles.opened.as_ref())?,
+        face(pick.styles.opened_hovered.as_ref())?,
+    );
     let options = resolved_expr_use_code(program, pick.options, env, ValueMode::Owned)?;
     let selected = resolved_expr_use_code(program, pick.selected, env, ValueMode::Owned)?;
     let placeholder = pick
@@ -1742,7 +2048,7 @@ fn pick_list(
         ),
     );
     Ok(format!(
-        "{{ let __options = {options}; let __selected = {selected}; {WIRE}::Node::PickList {{ key: {}, options: __options.iter().map(|__option| __option.to_string()).collect(), selected: __selected.as_ref().and_then(|__chosen| __options.iter().position(|__option| __option == __chosen)).map(|__index| __index as u32), placeholder: {}, on_select: {handler}, width: {} }} }}",
+        "{{ let __options = {options}; let __selected = {selected}; {WIRE}::Node::PickList {{ key: {}, options: __options.iter().map(|__option| __option.to_string()).collect(), selected: __selected.as_ref().and_then(|__chosen| __options.iter().position(|__option| __option == __chosen)).map(|__index| __index as u32), placeholder: {}, on_select: {handler}, width: {}, style: {style} }} }}",
         key_code(identity, "pick-list", origin, scope, env, program)?,
         option_code(placeholder),
         dimension_code(pick.width.as_ref(), false, program, env, origin)?,
@@ -1761,15 +2067,17 @@ fn progress(
     refuse_when(
         program,
         origin,
-        progress.style.is_some()
-            || progress.custom_style.is_some()
-            || progress.background.is_some()
-            || progress.bar.is_some()
-            || progress.border_color.is_some()
-            || progress.border_width.is_some()
-            || radius_explicit(&progress.radius),
-        "a progress style",
+        progress.custom_style.is_some(),
+        "a progress style callback",
     )?;
+    let tone = match progress.style {
+        None => option_code(None),
+        Some(ResolvedProgressStyle::Primary) => tone_code("Primary"),
+        Some(ResolvedProgressStyle::Secondary) => tone_code("Secondary"),
+        Some(ResolvedProgressStyle::Success) => tone_code("Success"),
+        Some(ResolvedProgressStyle::Warning) => tone_code("Warning"),
+        Some(ResolvedProgressStyle::Danger) => tone_code("Danger"),
+    };
     let number = |expression: CheckedExprUseId| {
         resolved_expr_use_code(program, expression, env, ValueMode::Owned)
             .map(|code| format!("({code}) as f32"))
@@ -1779,13 +2087,22 @@ fn progress(
         ResolvedRangeAxis::Vertical => "Column",
     };
     Ok(format!(
-        "{WIRE}::Node::Progress {{ key: {}, value: {}, min: {}, max: {}, axis: {WIRE}::Axis::{axis}, length: {}, girth: {} }}",
+        "{WIRE}::Node::Progress {{ key: {}, value: {}, min: {}, max: {}, axis: {WIRE}::Axis::{axis}, length: {}, girth: {}, tone: {tone}, background: {}, bar: {}, border: {} }}",
         key_code(identity, "progress", origin, scope, env, program)?,
         number(progress.value)?,
         number(progress.min)?,
         number(progress.max)?,
         dimension_code(progress.length.as_ref(), false, program, env, origin)?,
         dimension_code(progress.girth.as_ref(), false, program, env, origin)?,
+        plain_background_code(progress.background.as_ref(), program, origin)?,
+        plain_background_code(progress.bar.as_ref(), program, origin)?,
+        control_border_code(
+            progress.border_color.as_ref(),
+            progress.border_width,
+            &progress.radius,
+            program,
+            env,
+        )?,
     ))
 }
 

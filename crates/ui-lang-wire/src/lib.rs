@@ -266,6 +266,129 @@ pub struct InputStyle {
     pub disabled: Option<InputFace>,
 }
 
+/// One state of a checkbox, toggler or radio: the box, track or ring; the
+/// mark inside it (the check, the knob, the dot); the label; and the border
+/// around the box or track. `None` leaves the host's theme.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ControlFace {
+    pub background: Option<Rgba>,
+    pub mark: Option<Rgba>,
+    pub text: Option<Rgba>,
+    pub border: Option<Border>,
+}
+
+/// A theme role a preset paints a control in.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Tone {
+    Primary,
+    Secondary,
+    Success,
+    Warning,
+    Danger,
+}
+
+/// A checkbox's or toggler's faces, per state and per value. A hovered or
+/// disabled face paints over the active face of the same value, so a state
+/// that names only its difference inherits the rest.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ToggleStyle {
+    /// A checkbox's preset; a switch has none and ignores it.
+    pub tone: Option<Tone>,
+    pub active_on: Option<ControlFace>,
+    pub active_off: Option<ControlFace>,
+    pub hovered_on: Option<ControlFace>,
+    pub hovered_off: Option<ControlFace>,
+    pub disabled_on: Option<ControlFace>,
+    pub disabled_off: Option<ControlFace>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RadioStyle {
+    pub active_on: Option<ControlFace>,
+    pub active_off: Option<ControlFace>,
+    pub hovered_on: Option<ControlFace>,
+    pub hovered_off: Option<ControlFace>,
+}
+
+/// One state of a slider: the rail's two halves and its border, and the
+/// handle's colour and border. A handle's border has no radius: its shape
+/// is the host's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SliderFace {
+    pub rail_start: Option<Rgba>,
+    pub rail_end: Option<Rgba>,
+    pub rail_width: Option<f32>,
+    pub rail_border: Option<Border>,
+    pub handle: Option<Rgba>,
+    pub handle_border: Option<Border>,
+}
+
+/// A hovered or dragged face paints over the active one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct SliderStyle {
+    pub active: Option<SliderFace>,
+    pub hovered: Option<SliderFace>,
+    pub dragged: Option<SliderFace>,
+}
+
+/// One state of a pick list's closed face.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PickFace {
+    pub background: Option<Rgba>,
+    pub text: Option<Rgba>,
+    pub placeholder: Option<Rgba>,
+    pub handle: Option<Rgba>,
+    pub border: Option<Border>,
+}
+
+/// The menu a pick list opens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct MenuFace {
+    pub background: Option<Rgba>,
+    pub text: Option<Rgba>,
+    pub border: Option<Border>,
+    pub selected_text: Option<Rgba>,
+    pub selected_background: Option<Rgba>,
+}
+
+/// Each state paints over the host's theme on its own; nothing inherits
+/// across states.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PickListStyle {
+    pub active: Option<PickFace>,
+    pub hovered: Option<PickFace>,
+    pub opened: Option<PickFace>,
+    pub opened_hovered: Option<PickFace>,
+    pub menu: Option<MenuFace>,
+}
+
+/// Where a scroll's offset is measured from. `Keep` rests at the start and
+/// holds the visible rows still when content lands above them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum ScrollAnchor {
+    #[default]
+    Start,
+    End,
+    Keep,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ContentFit {
+    Contain,
+    Cover,
+    Fill,
+    None,
+    ScaleDown,
+}
+
+/// A rotation in radians: `Floating` keeps the layout the picture had
+/// before it turned, `Solid` lays out the turned bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Rotation {
+    Floating(f32),
+    Solid(f32),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ToggleKind {
     Checkbox,
@@ -294,6 +417,8 @@ pub enum Node {
         align_y: Option<AlignY>,
         background: Option<Rgba>,
         border: Option<Border>,
+        /// Round the box to whole pixels; `None` is the host's default.
+        snap: Option<bool>,
         #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
@@ -330,6 +455,10 @@ pub enum Node {
         height: Option<Length>,
         /// Cross-axis alignment of the children.
         align: Option<AlignX>,
+        /// The surface behind the children: a layout paints nothing of its
+        /// own, so this is a box drawn around it.
+        background: Option<Rgba>,
+        border: Option<Border>,
         #[serde(deserialize_with = "decode_children")]
         children: Vec<Node>,
     },
@@ -349,6 +478,8 @@ pub enum Node {
         height: Option<Length>,
         /// Horizontal pixels per vertical pixel of a cell.
         aspect: Option<f32>,
+        background: Option<Rgba>,
+        border: Option<Border>,
         #[serde(deserialize_with = "decode_children")]
         children: Vec<Node>,
     },
@@ -372,6 +503,19 @@ pub enum Node {
         direction: ScrollDirection,
         width: Option<Length>,
         height: Option<Length>,
+        /// No scroll bar is drawn; the content still scrolls.
+        bar_hidden: bool,
+        bar_width: Option<f32>,
+        bar_margin: Option<f32>,
+        scroller_width: Option<f32>,
+        /// Space between the bar and the content, which shrinks the content.
+        bar_spacing: Option<f32>,
+        anchor_x: ScrollAnchor,
+        anchor_y: ScrollAnchor,
+        /// Follow content that grows while the reader sits at the end.
+        auto_scroll: bool,
+        background: Option<Rgba>,
+        border: Option<Border>,
         #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
@@ -400,6 +544,13 @@ pub enum Node {
         label: Option<String>,
         /// A tint for the whole picture, over its own colours.
         color: Option<Rgba>,
+        /// The tint while hovered: `None` keeps `color`, `Some(None)` drops
+        /// the tint, `Some(Some(_))` is another one.
+        hover: Option<Option<Rgba>>,
+        fit: Option<ContentFit>,
+        rotation: Option<Rotation>,
+        /// `0.0..=1.0`; `None` is opaque.
+        opacity: Option<f32>,
         width: Option<Length>,
         height: Option<Length>,
     },
@@ -438,6 +589,13 @@ pub enum Node {
         axis: Axis,
         thickness: f32,
         color: Option<Rgba>,
+        /// The theme's weak rule colour instead of its strong one, under
+        /// `color` when both are given.
+        weak: bool,
+        /// top-left, top-right, bottom-right, bottom-left.
+        radius: Option<[f32; 4]>,
+        /// Round the rule to whole pixels; `None` is the host's default.
+        snap: Option<bool>,
     },
     /// A checkbox or a toggler: a labelled bool.
     Toggle {
@@ -448,6 +606,7 @@ pub enum Node {
         /// `None` is a disabled control.
         on_toggle: Option<u32>,
         width: Option<Length>,
+        style: ToggleStyle,
     },
     /// One radio button. Its value is the guest's business: selecting it
     /// sends the message the guest queued for it.
@@ -457,6 +616,7 @@ pub enum Node {
         selected: bool,
         on_select: u32,
         width: Option<Length>,
+        style: RadioStyle,
     },
     Slider {
         key: String,
@@ -469,6 +629,7 @@ pub enum Node {
         axis: Axis,
         width: Option<Length>,
         height: Option<Length>,
+        style: SliderStyle,
     },
     PickList {
         key: String,
@@ -479,6 +640,7 @@ pub enum Node {
         placeholder: Option<String>,
         on_select: u32,
         width: Option<Length>,
+        style: PickListStyle,
     },
     Progress {
         key: String,
@@ -488,6 +650,12 @@ pub enum Node {
         axis: Axis,
         length: Option<Length>,
         girth: Option<Length>,
+        /// The theme role the bar is painted in; `background`, `bar` and
+        /// `border` paint over it.
+        tone: Option<Tone>,
+        background: Option<Rgba>,
+        bar: Option<Rgba>,
+        border: Option<Border>,
     },
     /// A region the host paints itself: `name` picks a surface the
     /// embedding host registered, `arg` is the one text argument the guest
@@ -1051,11 +1219,15 @@ fn sanitize_node(
             key,
             spacing,
             padding,
+            background,
+            border,
             ..
         } => {
             claim(key, taken);
             bound_optional(spacing);
             bound_edges(padding);
+            bound_color(background);
+            bound_border(border);
         }
         Node::Grid {
             key,
@@ -1063,6 +1235,8 @@ fn sanitize_node(
             spacing,
             padding,
             aspect,
+            background,
+            border,
             ..
         } => {
             claim(key, taken);
@@ -1070,6 +1244,8 @@ fn sanitize_node(
             bound_optional(spacing);
             bound_edges(padding);
             bound_optional(aspect);
+            bound_color(background);
+            bound_border(border);
         }
         Node::Sensor {
             key,
@@ -1083,7 +1259,24 @@ fn sanitize_node(
                 *delay = finite(*delay).max(0.0);
             }
         }
-        Node::Scroll { key, .. } | Node::MouseArea { key, .. } => claim(key, taken),
+        Node::MouseArea { key, .. } => claim(key, taken),
+        Node::Scroll {
+            key,
+            bar_width,
+            bar_margin,
+            scroller_width,
+            bar_spacing,
+            background,
+            border,
+            ..
+        } => {
+            claim(key, taken);
+            for number in [bar_width, bar_margin, scroller_width, bar_spacing] {
+                bound_optional(number);
+            }
+            bound_color(background);
+            bound_border(border);
+        }
         Node::Text {
             key,
             content,
@@ -1103,6 +1296,9 @@ fn sanitize_node(
             bytes,
             label,
             color,
+            hover,
+            rotation,
+            opacity,
             ..
         } => {
             claim(key, taken);
@@ -1111,6 +1307,15 @@ fn sanitize_node(
                 truncate_string(label);
             }
             bound_color(color);
+            if let Some(hover) = hover {
+                bound_color(hover);
+            }
+            if let Some(Rotation::Floating(radians) | Rotation::Solid(radians)) = rotation {
+                *radians = finite(*radians);
+            }
+            if let Some(opacity) = opacity {
+                *opacity = bounded(*opacity).min(1.0);
+            }
         }
         Node::Input {
             key,
@@ -1173,15 +1378,53 @@ fn sanitize_node(
             key,
             thickness,
             color,
+            radius,
             ..
         } => {
             claim(key, taken);
             *thickness = bounded(*thickness);
             bound_color(color);
+            if let Some(radius) = radius {
+                for corner in radius {
+                    *corner = bounded(*corner);
+                }
+            }
         }
-        Node::Toggle { key, label, .. } | Node::Radio { key, label, .. } => {
+        Node::Toggle {
+            key, label, style, ..
+        } => {
             claim(key, taken);
             spend_text(label, &mut budgets.text);
+            for face in [
+                &mut style.active_on,
+                &mut style.active_off,
+                &mut style.hovered_on,
+                &mut style.hovered_off,
+                &mut style.disabled_on,
+                &mut style.disabled_off,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                bound_control_face(face);
+            }
+        }
+        Node::Radio {
+            key, label, style, ..
+        } => {
+            claim(key, taken);
+            spend_text(label, &mut budgets.text);
+            for face in [
+                &mut style.active_on,
+                &mut style.active_off,
+                &mut style.hovered_on,
+                &mut style.hovered_off,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                bound_control_face(face);
+            }
         }
         Node::Slider {
             key,
@@ -1189,11 +1432,23 @@ fn sanitize_node(
             min,
             max,
             step,
+            style,
             ..
         } => {
             claim(key, taken);
             for number in [value, min, max, step] {
                 *number = finite(*number);
+            }
+            for face in [&mut style.active, &mut style.hovered, &mut style.dragged]
+                .into_iter()
+                .flatten()
+            {
+                bound_color(&mut face.rail_start);
+                bound_color(&mut face.rail_end);
+                bound_optional(&mut face.rail_width);
+                bound_border(&mut face.rail_border);
+                bound_color(&mut face.handle);
+                bound_border(&mut face.handle_border);
             }
         }
         Node::PickList {
@@ -1201,9 +1456,32 @@ fn sanitize_node(
             options,
             selected,
             placeholder,
+            style,
             ..
         } => {
             claim(key, taken);
+            for face in [
+                &mut style.active,
+                &mut style.hovered,
+                &mut style.opened,
+                &mut style.opened_hovered,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                bound_color(&mut face.background);
+                bound_color(&mut face.text);
+                bound_color(&mut face.placeholder);
+                bound_color(&mut face.handle);
+                bound_border(&mut face.border);
+            }
+            if let Some(menu) = &mut style.menu {
+                bound_color(&mut menu.background);
+                bound_color(&mut menu.text);
+                bound_border(&mut menu.border);
+                bound_color(&mut menu.selected_text);
+                bound_color(&mut menu.selected_background);
+            }
             options.truncate(MAX_OPTIONS);
             for option in options.iter_mut() {
                 spend_text(option, &mut budgets.text);
@@ -1220,12 +1498,18 @@ fn sanitize_node(
             value,
             min,
             max,
+            background,
+            bar,
+            border,
             ..
         } => {
             claim(key, taken);
             for number in [value, min, max] {
                 *number = finite(*number);
             }
+            bound_color(background);
+            bound_color(bar);
+            bound_border(border);
         }
         Node::Surface { key, name, arg } => {
             claim(key, taken);
@@ -1345,6 +1629,13 @@ fn bound_color(color: &mut Option<Rgba>) {
             };
         }
     }
+}
+
+fn bound_control_face(face: &mut ControlFace) {
+    bound_color(&mut face.background);
+    bound_color(&mut face.mark);
+    bound_color(&mut face.text);
+    bound_border(&mut face.border);
 }
 
 fn bound_border(border: &mut Option<Border>) {
@@ -1494,6 +1785,8 @@ mod tests {
             width: Some(Length::Fill),
             height: None,
             align: None,
+            background: None,
+            border: None,
             children,
         }
     }
@@ -1605,6 +1898,7 @@ mod tests {
                 align_y: None,
                 background: None,
                 border: None,
+                snap: None,
                 content: Box::new(keyed("inner", "deep")),
             },
         ]);
@@ -1621,6 +1915,7 @@ mod tests {
                 align_y: None,
                 background: None,
                 border: None,
+                snap: None,
                 content: Box::new(Node::empty()),
             },
         ]);
@@ -2189,6 +2484,7 @@ mod tests {
                     placeholder: Some("é".repeat(MAX_STRING_BYTES)),
                     on_select: 0,
                     width: Some(Length::Fixed(f32::INFINITY)),
+                    style: PickListStyle::default(),
                 },
                 Node::Slider {
                     key: "App/slide".into(),
@@ -2201,6 +2497,7 @@ mod tests {
                     axis: Axis::Row,
                     width: None,
                     height: None,
+                    style: SliderStyle::default(),
                 },
                 Node::Toggle {
                     key: "App/pick".into(),
@@ -2209,6 +2506,7 @@ mod tests {
                     checked: true,
                     on_toggle: None,
                     width: None,
+                    style: ToggleStyle::default(),
                 },
             ])),
             ..Frame::default()
@@ -2267,6 +2565,8 @@ mod tests {
                 width: Some(Length::Fixed(f32::MAX)),
                 height: None,
                 aspect: Some(f32::NEG_INFINITY),
+                background: None,
+                border: None,
                 children: (0..MAX_NODES + 5).map(|_| text("x")).collect(),
             }),
             ..Frame::default()
@@ -2302,6 +2602,10 @@ mod tests {
             bytes,
             label: None,
             color: None,
+            hover: None,
+            fit: None,
+            rotation: None,
+            opacity: None,
             width: Some(Length::Fixed(24.0)),
             height: Some(Length::Fixed(24.0)),
         }

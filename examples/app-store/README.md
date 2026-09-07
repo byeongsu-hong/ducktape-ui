@@ -419,9 +419,10 @@ An honest inventory, grouped by where the work would land. Items marked
   second hand the guest never ticks), given the call's one `str` argument
   as text; a name the host lacks renders a placeholder. Every other Ice
   construct — combo box, images, canvas, stacks, overlays,
-  mounted components, gradients, utility styles — fails the app's build at
-  its `.ice` line with E190. Each is a node kind to add to the wire, an
-  emitter arm and a renderer arm.
+  mounted components, gradients, the text and interaction utility styles —
+  fails the app's build at its `.ice` line with E190. Each is a node kind
+  to add to the wire, an emitter arm and a renderer arm. A layout's surface
+  utilities (`@bg-…`, `@border-…`, `@r-…`) and a box's `px-snap` do cross.
 - A `sensor` crosses with its show, resize and hide routes, `anticipate`
   and `delay`; the host measures the child after layout and answers with
   its local size, never a window position (the activity feed turns its
@@ -435,15 +436,23 @@ An honest inventory, grouped by where the work would land. Items marked
   argument or another argument type is refused with E190. Its size is its
   parent's; a `box w= h=` around the call sets it. Nothing crosses back
   from the surface — a video tile's clicks are the host's to route.
-- An `svg` is an embedded asset or a `memory` source, sized and tinted
-  with one colour; its bytes cross once under a content hash and the host
-  keeps them for the guest's life, up to a fixed cap. Fit, rotation,
-  opacity, a hover colour, `color=inherit`, a style callback and a path
+- An `svg` is an embedded asset or a `memory` source, sized, fitted,
+  rotated, faded and tinted with an idle and a hover colour; its bytes
+  cross once under a content hash and the host keeps them for the guest's
+  life, up to a fixed cap. `color=inherit`, a style callback and a path
   read at runtime are refused with E190.
-- The form controls cross unstyled: the host paints a checkbox, toggler,
-  radio, slider, pick list or progress bar in its own theme, and a status
-  style on one (`active checked bg=…`) is refused with E190 like a widget
-  the wire does not carry. A slider carries `f64` values only.
+- A form control's per-state style given as literal colours (`active
+  checked bg=…`, `active rail-start=…`, `progress … style=success bar=…`,
+  a pick list's states and `menu`, a rule's `style=weak`, `r=` and
+  `snap=`) crosses as faces the host paints over its own theme. A style
+  given as a Rust callback (`style=some_fn(…)`) is refused with E190, as
+  are the shapes the faces have no room for: a toggler's knob border and
+  padding ratio, a slider's handle shape, a rule's `fill=`. A slider
+  carries `f64` values only.
+- A `scroll` carries its bar options (`bar=hidden`, `bar-w=`, `bar-m=`,
+  `scroller-w=`, `bar-gap=`), anchors (`anchor-y=end`, `anchor-y=keep`)
+  and `auto=`; its `scroll=` and `viewport=` routes and its status styles
+  are refused with E190.
 - A `mouse` area carries every route — press, release, double, right and
   middle buttons, enter, exit, `move=`, `press-at=`, `scroll=` — but not
   `cursor=`: the pointer's shape over it is the host's, and the option is
