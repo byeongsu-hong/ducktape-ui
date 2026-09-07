@@ -1,0 +1,23 @@
+[package]
+name = "app-store-clipboard-fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# An ordinary Ice application, exported as an `ice:view` component by
+# `export_app!`. `unsafe_code` is not forbidden only because the component
+# exports need `#[unsafe(export_name)]`.
+[lib]
+crate-type = ["cdylib", "rlib"]
+# The generated `#[cfg(test)]` glue needs the runtime's test driver, which
+# pulls wgpu into the graph; boundary tests live in the host crate instead.
+test = false
+
+[dependencies]
+iced.workspace = true
+ui-lang.workspace = true
+ui-lang-runtime.workspace = true
+ui-lang-guest.workspace = true
+
+[build-dependencies]
+ui-lang-build.workspace = true

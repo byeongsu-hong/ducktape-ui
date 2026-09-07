@@ -176,7 +176,7 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
         guest.set_theme(*now, self.dark);
         // Not every redraw of the window is a tick of the guest: one with
         // nothing to deliver is left alone.
-        let wake = guest.redraw(*now);
+        let wake = guest.redraw(*now, clipboard);
         if let Some(at) = wake.at {
             shell.request_redraw_at(at);
         }

@@ -26,6 +26,15 @@ use serde::{Deserialize, Serialize};
 mod surface;
 pub use surface::{MAX_SURFACE_DEPTH, MAX_SURFACE_VALUES, SurfaceValue, sanitize_surface_event};
 
+/// Clipboard addressed by `clipboard.read` (this value as payload) and
+/// `clipboard.write` (`(ClipboardTarget, String)` as payload). Reads return
+/// an encoded `Option<String>`; writes return an empty successful response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ClipboardTarget {
+    Standard,
+    Primary,
+}
+
 /// Something the host tells the guest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {

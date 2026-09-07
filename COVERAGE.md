@@ -1137,3 +1137,28 @@ Pick lists apply active before hovered/opened, and opened before
 opened-hovered, matching native state inheritance. Before that ordering fix,
 `pick_list_border_faces_follow_native_state_inheritance` fails its expected
 active radius (7); the same test passes after the ordered overlay is restored.
+
+### Wasm clipboard Tasks
+
+`ui-lang-guest` bridges standard/primary clipboard Tasks to capability
+requests and resumes their original read continuations. Guest tests prove
+request emission, response delivery and cancellation without waiting for a
+host response. Red: the previous driver emits only dropped-action logs,
+failing the expected clipboard request assertion.
+
+The generated `tests/clipboard-guest` fixture is bundled as wasm in app-store
+CI. `bundled_clipboard_tasks_use_the_platform_and_enforce_instance_permissions`
+uses the real loader, request permission check, queue, redraw and guest Task
+continuation with an in-memory implementation of Iced's `Clipboard` trait.
+It checks standard/primary copy/read, denied access, cancellation and fault
+cleanup. Production `GuestView::update` supplies its actual platform clipboard.
+A separate host test covers absent/empty contents, malformed requests and
+UTF-8 text limits. This is boundary evidence, not a claim that the test
+accesses the operating system clipboard.
+
+`bundled_clipboard_work_obeys_time_and_byte_governors` counts a slow platform
+read toward redraw throttling and suppresses a queued write after read replies
+exhaust the byte budget. The latter injects requests into a loaded guest's
+host queue. Red: moving platform execution after elapsed-time accounting fails
+the rest-duration assertion; removing the per-operation budget check fails the
+no-write assertion. Both bundled tests pass with the guards restored.

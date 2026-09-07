@@ -380,3 +380,50 @@ pub mod clock {
             .clamp(16, 60 * 60 * 1000) as u64
     }
 }
+
+/// Clipboard work must run in the mounted widget, where the platform's
+/// clipboard is available. Request validation happens before queueing it.
+pub mod clipboard {
+    use iced::advanced::Clipboard;
+    use iced::advanced::clipboard::Kind;
+    use ui_lang_wire::{self as wire, ClipboardTarget};
+
+    pub enum Command {
+        Read(ClipboardTarget),
+        Write(ClipboardTarget, String),
+    }
+
+    pub fn decode(operation: &str, payload: &[u8]) -> Result<Command, String> {
+        match operation {
+            "read" => wire::decode(payload).map(Command::Read),
+            "write" => {
+                let (target, text): (ClipboardTarget, String) = wire::decode(payload)?;
+                if text.len() > wire::MAX_STRING_BYTES {
+                    return Err("clipboard text exceeds the string limit".into());
+                }
+                Ok(Command::Write(target, text))
+            }
+            _ => Err(format!("unknown clipboard operation `{operation}`")),
+        }
+    }
+
+    pub fn execute(command: Command, clipboard: &mut dyn Clipboard) -> Vec<u8> {
+        let kind = |target| match target {
+            ClipboardTarget::Standard => Kind::Standard,
+            ClipboardTarget::Primary => Kind::Primary,
+        };
+        match command {
+            Command::Read(target) => {
+                let mut value = clipboard.read(kind(target));
+                if let Some(text) = &mut value {
+                    wire::truncate_string(text);
+                }
+                wire::encode(&value)
+            }
+            Command::Write(target, text) => {
+                clipboard.write(kind(target), text);
+                Vec::new()
+            }
+        }
+    }
+}

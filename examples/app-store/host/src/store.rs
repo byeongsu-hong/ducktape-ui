@@ -71,7 +71,7 @@ pub use crate::library::{
     window_of, window_title,
 };
 
-use crate::capabilities::{Inbox, bus, clock, host, storage};
+use crate::capabilities::{Inbox, bus, clipboard, clock, host, storage};
 use crate::library::{FAULTED, LIVE_INSTANCES};
 use crate::limits::{
     BUS_WAKE_INTERVAL, EPOCH_TICK, FUEL_PER_SECOND, FUEL_PER_TICK, FUEL_WINDOW, MAX_BUS_BYTES,
@@ -198,6 +198,7 @@ pub struct Guest {
     pub(crate) pictures: Pictures,
     /// One-shot answers, each with the moment it becomes due.
     due: Vec<(Instant, wire::Event)>,
+    clipboard: Vec<(u64, clipboard::Command)>,
     tickers: Vec<Ticker>,
     inbox: Inbox,
     /// How many entries this guest has in the process-wide subscriber list.
@@ -461,6 +462,7 @@ impl Guest {
             inputs: Inputs::default(),
             pictures: Pictures::default(),
             due: Vec::new(),
+            clipboard: Vec::new(),
             tickers: Vec::new(),
             inbox: Inbox::default(),
             subscriptions: 0,
@@ -522,7 +524,11 @@ impl Guest {
     /// say when the widget must be woken next. A guest with nothing to
     /// deliver is not ticked at all — the tree the host has is the tree it
     /// would send — but it still says when it next wants to run.
-    pub(crate) fn redraw(&mut self, now: Instant) -> Wake {
+    pub(crate) fn redraw(
+        &mut self,
+        now: Instant,
+        platform: &mut dyn iced::advanced::Clipboard,
+    ) -> Wake {
         if self.fault.is_some() {
             return Wake::default();
         }
@@ -574,6 +580,7 @@ impl Guest {
         if std::mem::take(&mut self.published) {
             self.wake_pending = true;
         }
+        self.execute_clipboard(now, platform);
         // What the whole redraw cost the window thread, not only the call
         // into the module: answering a tick's requests is the host's work,
         // and the guest chose how much of it there would be.
@@ -670,6 +677,7 @@ impl Guest {
 
     /// The guest stopped waiting for `id`: drop whatever the host kept for it.
     fn cancel(&mut self, id: u64) {
+        self.clipboard.retain(|(pending, _)| *pending != id);
         self.due.retain(
             |(_, event)| !matches!(event, wire::Event::Response { id: due, .. } if *due == id),
         );
@@ -679,6 +687,23 @@ impl Guest {
         // address, which a dropped instance can leave behind for the next one.
         if bus::cancel(id, &self.inbox) {
             self.subscriptions = self.subscriptions.saturating_sub(1);
+        }
+    }
+
+    /// Runs only for this live instance, using its mounted window's clipboard.
+    /// Answers require another redraw to resume the guest's waiting Task.
+    fn execute_clipboard(&mut self, now: Instant, platform: &mut dyn iced::advanced::Clipboard) {
+        let requests = std::mem::take(&mut self.clipboard);
+        if self.fault.is_some() {
+            return;
+        }
+        for (id, command) in requests {
+            if let Some(error) = self.over_budget() {
+                self.reply(now, id, Err(error));
+                continue;
+            }
+            let result = clipboard::execute(command, platform);
+            self.reply(now, id, Ok(result));
         }
     }
 
@@ -744,6 +769,16 @@ impl Guest {
             return;
         }
         match (capability, operation) {
+            ("clipboard", operation) => {
+                if self.clipboard.len() + self.due.len() >= MAX_DUE {
+                    self.reply(now, id, Err("too many pending clipboard requests".into()));
+                } else {
+                    match clipboard::decode(operation, &payload) {
+                        Ok(command) => self.clipboard.push((id, command)),
+                        Err(error) => self.reply(now, id, Err(error)),
+                    }
+                }
+            }
             ("host", "echo") => {
                 let text = format!("The store says: {}", String::from_utf8_lossy(&payload));
                 self.reply(now, id, Ok(text.into_bytes()));
@@ -1334,3 +1369,7 @@ mod tests {
         assert_eq!(rest_after(Duration::from_secs(9)), Some(MAX_REST));
     }
 }
+
+#[cfg(test)]
+#[path = "clipboard_tests.rs"]
+mod clipboard_tests;

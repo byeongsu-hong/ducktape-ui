@@ -413,3 +413,7 @@ runtime gaps identified from Ducktape's existing screens.
 The wasm tree target preserves omitted border style fields: setting a border
 colour does not square a checkbox or reset its native border width. See the
 [app-store wire rendering notes](examples/app-store/README.md#wire-and-rendering).
+
+Wasm views can execute clipboard read/write Tasks through a declared
+`clipboard` capability, including the primary clipboard; the embedding host
+performs the platform operation and returns reads to the guest's handler.
