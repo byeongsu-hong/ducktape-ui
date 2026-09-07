@@ -4,9 +4,46 @@ use iced::{Point, Rectangle, Renderer, Size, Theme, Vector, mouse};
 use ui_lang_wire::{CanvasCommand as Command, CanvasSegment as Segment, CanvasShape as Shape};
 
 pub(super) const MAX_EXPANDED_PARTS: usize = 16_384;
+#[derive(Clone)]
 pub(super) struct Geometry {
     commands: Vec<Command>,
     paths: Vec<Option<canvas::Path>>,
+}
+/// A wire frame's prepared paths share one budget, even when a responsive
+/// subtree is rebuilt repeatedly during host layout.
+pub(super) struct Cache {
+    geometries: std::collections::HashMap<String, Geometry>,
+}
+impl Cache {
+    pub(super) fn new(root: &ui_lang_wire::Node) -> Self {
+        fn prepare(
+            node: &ui_lang_wire::Node,
+            budget: &std::cell::Cell<usize>,
+            geometries: &mut std::collections::HashMap<String, Geometry>,
+        ) {
+            if let ui_lang_wire::Node::Canvas { key, commands, .. } = node {
+                geometries.insert(key.clone(), Geometry::new(commands.clone(), budget));
+            }
+            for child in node.children() {
+                prepare(child, budget, geometries);
+            }
+        }
+        // Allocate in wire order, including hidden branches. Layout history must
+        // never change which paths fit the shared frame budget.
+        let mut geometries = Default::default();
+        prepare(
+            root,
+            &std::cell::Cell::new(MAX_EXPANDED_PARTS),
+            &mut geometries,
+        );
+        Self { geometries }
+    }
+    pub(super) fn get(&self, key: &str) -> Geometry {
+        self.geometries
+            .get(key)
+            .expect("prepared wire canvas")
+            .clone()
+    }
 }
 impl Geometry {
     pub(super) fn new(commands: Vec<Command>, budget: &std::cell::Cell<usize>) -> Self {
@@ -400,6 +437,65 @@ fn validate_arc_tangents(segments: &[Segment]) -> Option<Vec<Option<Point>>> {
 mod tests {
     use super::*;
     use ui_lang_wire::{CanvasLineCap, CanvasLineJoin, CanvasStroke, Rgba};
+    #[test]
+    fn alternate_canvases_have_the_same_budget_after_either_resize_history() {
+        use ui_lang_wire::{ContainerQuery, Node, QueryOp};
+        let branch = |key: &str| Node::When {
+            key: format!("when-{key}"),
+            condition: ContainerQuery {
+                ops: vec![QueryOp::Bool(true)],
+            },
+            children: vec![Node::Canvas {
+                key: key.into(),
+                width: None,
+                height: None,
+                commands: vec![Command::Draw {
+                    shape: Shape::Line {
+                        from: [0.0, 0.0],
+                        to: [8192.0, 0.0],
+                    },
+                    even_odd: false,
+                    fill: None,
+                    stroke: Some(CanvasStroke {
+                        color: Rgba([1.0; 4]),
+                        width: 1.0,
+                        cap: CanvasLineCap::Butt,
+                        join: CanvasLineJoin::Miter,
+                        dash: vec![1.0, 1.0],
+                        dash_offset: 0,
+                    }),
+                }],
+            }],
+        };
+        let root = Node::When {
+            key: "root".into(),
+            condition: ContainerQuery {
+                ops: vec![QueryOp::Bool(true)],
+            },
+            children: vec![branch("wide"), branch("narrow")],
+        };
+        let wide_first = Cache::new(&root);
+        let narrow_first = Cache::new(&root);
+        let wide = wide_first.get("wide").paths[0].is_some();
+        let narrow = wide_first.get("narrow").paths[0].is_some();
+        assert!(wide, "first wire canvas fits its near-limit path");
+        assert!(!narrow, "combined paths exceed the shared frame budget");
+        assert_eq!(
+            narrow_first.get("narrow").paths[0].is_some(),
+            narrow,
+            "initial narrow layout must match wide then narrow"
+        );
+        assert_eq!(
+            narrow_first.get("wide").paths[0].is_some(),
+            wide,
+            "narrow then wide must match initial wide layout"
+        );
+        assert_eq!(
+            wide_first.get("wide").paths[0].is_some(),
+            wide,
+            "wide then narrow then wide must reuse its preparation"
+        );
+    }
     #[test]
     fn tiny_dashes_on_a_long_line_are_refused_before_native_expansion() {
         let line = canvas::Path::line(Point::ORIGIN, Point::new(8192.0, 0.0));

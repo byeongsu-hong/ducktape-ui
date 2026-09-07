@@ -770,11 +770,16 @@ const COVERAGE: &[Coverage] = &[
         "  tooltip delay=0\n    text \"a\" @text-fg\n    text \"tip\" @text-fg\n",
         "`tooltip`",
     ),
+    emitted(
+        "responsive size: container rules",
+        "",
+        "  responsive size=(w, h)\n    col\n      if w >= 300.0 && h > 100.0\n        text \"wide\"\n",
+    ),
     refused(
         "responsive size",
         "",
         "  responsive size=(available_width, available_height)\n    text available_width @text-fg\n",
-        "`responsive size`",
+        "responsive measurements",
     ),
     refused(
         "table",
@@ -1167,4 +1172,45 @@ view
     assert!(generated.contains("::ui_lang_guest::widget::is_focused"));
     assert!(generated.contains("Operations/field"));
     assert!(!generated.contains("::iced::widget::operation::focus"));
+}
+
+#[test]
+fn responsive_conditions_refuse_rules_beyond_the_wire_budget() {
+    // Exercise 67 wire operations without also stressing recursive expression
+    // lowering with a left-associated 17-clause chain on a test thread's stack.
+    let mut condition = "width > 0.0".to_owned();
+    for _ in 0..4 {
+        condition = format!("({condition}) && ({condition})");
+    }
+    let condition = format!("({condition}) && width > 0.0");
+    let source = format!(
+        "app Demo\n{PALETTE}view\n  responsive size=(width, height)\n    col\n      if {condition}\n        text \"wide\"\n"
+    );
+    let error = compile_for(&source, "demo.ice", Target::Tree).unwrap_err();
+    let diagnostic = error.render("demo.ice");
+    assert!(diagnostic.contains("E190"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("more than 64 operations"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn responsive_conditions_refuse_short_circuit_sensitive_snapshots() {
+    for condition in [
+        "width > 300.0 && 1 / divisor > 0",
+        "width > 300.0 || threshold()",
+        "width > 300.0 && risky > 0",
+    ] {
+        let source = format!(
+            "app Demo\nextern crate::backend\n  pure threshold() -> bool\n{PALETTE}state\n  divisor = 0\nderived\n  risky = 1 / divisor\nview\n  responsive size=(width, height)\n    col\n      if {condition}\n        text \"wide\"\n"
+        );
+        let error = compile_for(&source, "demo.ice", Target::Tree).unwrap_err();
+        let diagnostic = error.render("demo.ice");
+        assert!(diagnostic.contains("E190"), "{diagnostic}");
+        assert!(
+            diagnostic.contains("cannot eagerly copy calls or arithmetic"),
+            "{diagnostic}"
+        );
+    }
 }

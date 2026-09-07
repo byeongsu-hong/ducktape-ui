@@ -26,6 +26,13 @@ impl Clone for Binding {
 pub(in crate::codegen) enum BindingOwner {
     Value(ResolvedValueRef),
     Local(ResolvedLocalId),
+    ContainerSize(ResolvedLocalId, ContainerAxis),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::codegen) enum ContainerAxis {
+    Width,
+    Height,
 }
 
 #[derive(Clone)]

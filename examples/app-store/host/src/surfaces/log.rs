@@ -43,7 +43,7 @@ pub(super) fn provider(session: Arc<Session>) -> ui_lang_runtime::view_tree::Sur
     // backing session. This identity never crosses to the guest.
     static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
     let scope = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
-    Box::new(move |key, args| {
+    Arc::new(move |key, args| {
         if !args.is_empty() {
             return widget::text("invalid session_log arguments").into();
         }

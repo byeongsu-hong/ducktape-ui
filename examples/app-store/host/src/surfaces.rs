@@ -22,11 +22,11 @@ pub fn registry(session: Arc<log::Session>) -> Surfaces {
     surfaces.insert("rich_composer".into(), composer::provider());
     surfaces.insert(
         "ice.markdown".into(),
-        Box::new(ui_lang_runtime::view_tree::markdown_surface),
+        Arc::new(ui_lang_runtime::view_tree::markdown_surface),
     );
     surfaces.insert(
         "clock_face".into(),
-        Box::new(|_key: &str, args: &[SurfaceValue]| {
+        Arc::new(|_key: &str, args: &[SurfaceValue]| {
             let [SurfaceValue::Str(caption)] = args else {
                 return text("invalid clock_face arguments").into();
             };

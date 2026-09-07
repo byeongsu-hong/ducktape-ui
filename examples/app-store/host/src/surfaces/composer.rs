@@ -43,7 +43,7 @@ struct Composer {
 pub(super) fn provider() -> ui_lang_runtime::view_tree::Surface {
     static NEXT_DOCUMENT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let documents = Mutex::new(HashMap::<String, Weak<Mutex<Document>>>::new());
-    Box::new(move |key, args| {
+    Arc::new(move |key, args| {
         let [
             Value::Str(text),
             Value::I64(reset),

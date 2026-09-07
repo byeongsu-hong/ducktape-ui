@@ -13,6 +13,11 @@ pub(in crate::codegen) fn render_children(
         let view = document.resolved_view(*child)?;
         match &view.kind {
             ResolvedViewKind::If { children } => {
+                if render_container_condition(
+                    out, *child, children, document, message, env, scope, slot,
+                )? {
+                    continue;
+                }
                 let program = document;
                 let conditional = program.resolved_conditional(*child)?;
                 let condition =

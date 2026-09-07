@@ -416,7 +416,7 @@ For module packaging requirements and the connected implementation phases, see
 
 ### Wire and rendering
 
-- The wire carries `box`, `mouse`, `col`/`row`, `grid`, `scroll`, `sensor`,
+- The wire carries `box`, `mouse`, `col`/`row`, `grid`, `scroll`, `sensor`, `responsive`,
   `text`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
@@ -858,3 +858,34 @@ Canvas preparation also shares a 16,384-part host budget across the tree for
 flattened segments and estimated dash expansion. Curves are flattened once
 and those line paths are painted; excess draws and unstable arc-to tangents
 are omitted before native tessellation. This bounds work beyond wire size.
+
+## Responsive rules fixture
+
+![Actual wasm responsive capture](docs/responsive-rules.png)
+
+`tests/responsive-guest` lowers measured-size `if` conditions to bounded host
+rules. Resizing selects row/column/grid children during native layout without a
+guest tick. Rules can combine width/height arithmetic, comparisons and Boolean
+operators with copied guest thresholds; nested containers can read named
+ancestors. Measurements in ordinary widget arguments or native callbacks remain
+E190. Each condition has at most 64 postfix operations.
+
+Only the selected branch mounts native surface widgets. Same-size relayout
+reuses its content; switching size releases old view leases. Shared inputs keep
+their native focus and guest draft across branch changes, independently for each
+guest instance. Canvas geometry budgets are assigned in wire-tree order,
+including hidden branches, so resize history cannot change accepted paths.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-responsive-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/responsive-fixture
+cd examples/app-store
+cargo test -p app-store-host bundled_responsive_ -- --ignored
+```
+
+Within a measured condition, copied independent operands are restricted to data
+reads, literals and comparisons/Boolean combinations of those values. Independent
+calls, arithmetic and lazy `derived` reads are E190: native short-circuit evaluation could skip them,
+whereas copying would execute them before layout. Precompute such thresholds
+explicitly in guest state. Arithmetic involving a measurement runs in the host.
