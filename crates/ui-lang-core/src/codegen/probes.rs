@@ -135,7 +135,9 @@ pub(in crate::codegen) fn generate_extern_probes(
         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
     }
     for item in program.extern_functions() {
-        if component_ids.contains(&item.declaration.id) {
+        if component_ids.contains(&item.declaration.id)
+            || (program.target() == Target::Tree && item.kind == ExternKind::Shader)
+        {
             continue;
         }
         writeln!(

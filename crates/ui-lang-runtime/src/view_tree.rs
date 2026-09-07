@@ -2081,6 +2081,65 @@ mod tests {
     }
 
     #[test]
+    fn bounded_host_surfaces_keep_shader_region_dimensions() {
+        use iced::advanced::{layout, renderer::Headless, widget::Tree};
+        use iced::{Font, Pixels, Size};
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut surfaces = Surfaces::new();
+        surfaces.insert(
+            "shader".into(),
+            Box::new(|_, _| {
+                widget::button("Host shader region")
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            }),
+        );
+        let missing = Surfaces::new();
+        // Providers fill the region. Missing providers retain the same
+        // bounds; their diagnostic label must not supply intrinsic size.
+        for registry in [&surfaces, &missing] {
+            for (width, height, expected) in [
+                (wire::Length::Fill, 24.0, Size::new(300.0, 24.0)),
+                (wire::Length::Fixed(100.0), 100.0, Size::new(100.0, 100.0)),
+                (wire::Length::Fixed(0.0), 0.0, Size::ZERO),
+            ] {
+                let node = wire::Node::Container {
+                    key: "shader/@bounds".into(),
+                    width: Some(width),
+                    height: Some(wire::Length::Fixed(height)),
+                    padding: None,
+                    align_x: None,
+                    align_y: None,
+                    background: None,
+                    border: None,
+                    snap: None,
+                    content: Box::new(wire::Node::Surface {
+                        key: "shader".into(),
+                        name: "shader".into(),
+                        args: vec![],
+                        on_event: None,
+                    }),
+                };
+                let inputs = Inputs::default();
+                let mut element = render(&node, &inputs, &Pictures::default(), registry);
+                let mut tree = Tree::new(&element);
+                let layout = element.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(300.0, 200.0)),
+                );
+                assert_eq!(layout.size(), expected, "shader surface region dimensions");
+            }
+        }
+    }
+
+    #[test]
     fn surface_events_bound_strings_and_drop_nonfinite_numbers() {
         use wire::SurfaceValue as V;
         let mut inputs = Inputs::default();

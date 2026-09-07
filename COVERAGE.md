@@ -1162,3 +1162,20 @@ exhaust the byte budget. The latter injects requests into a loaded guest's
 host queue. Red: moving platform execution after elapsed-time accounting fails
 the rest-duration assertion; removing the per-operation budget check fails the
 no-write assertion. Both bundled tests pass with the guards restored.
+
+### Wasm shader surfaces
+
+The tree coverage table emits shader calls through the named surface boundary.
+The real bundled surface fixture declares shader functions in a Rust module
+that does not exist, proving that guest generation needs no native program.
+Its host test asserts mixed scalar/list arguments, a rejected wrong event
+type, a valid returned bool, explicit fill/24-pixel dimensions and omitted
+100×100 defaults and zero intrinsic `shrink` dimensions. A headless renderer
+test measures these regions with registered and missing providers. Existing
+renderer tests exercise provider event routing and unknown-name placeholders. These checks prove the data/layout contract;
+they do not claim a shader GPU pixel comparison or retained editor parity.
+
+Red: forwarding `Shrink` to the wrapper instead of zeroing its intrinsic
+size fails the bundled fixture's dimension assertion; restoring the shader
+lowering passes. Replacing the host container's height with `Fill` fails
+the headless region-size assertion; restoring it passes.

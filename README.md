@@ -417,3 +417,7 @@ colour does not square a checkbox or reset its native border width. See the
 Wasm views can execute clipboard read/write Tasks through a declared
 `clipboard` capability, including the primary clipboard; the embedding host
 performs the platform operation and returns reads to the guest's handler.
+
+Tree-target `shader` calls use named host surfaces with typed data arguments
+and event routes. The guest's dimensions bound the region; rendering remains
+in the host. See [the wire rendering contract](examples/app-store/README.md#wire-and-rendering).

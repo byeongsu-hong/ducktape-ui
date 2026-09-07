@@ -6,6 +6,9 @@ extern crate::unused
   component number(value:f64) -> f64
   component action() -> unit
   component quiet() -> unit
+  shader pulse(speed:f64, labels:[str]) -> bool
+  shader passive() -> unit
+  shader collapsed() -> unit
 extern crate::data
   Details(enabled:bool, score:f64)
   Row(id:i64, label:str, note:str?, details:Details)
@@ -57,6 +60,9 @@ view
     extern number(zoom) #number -> zoomed _
     extern action() #action -> activated
     extern quiet() #quiet
+    shader pulse(zoom, ["host", "shader"]) w=fill h=24.0 -> toggled _
+    shader passive()
+    shader collapsed() w=shrink h=shrink
     text draft #draft @text-fg
     text context #context @text-fg
     text actions #actions @text-fg

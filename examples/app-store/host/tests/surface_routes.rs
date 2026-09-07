@@ -78,6 +78,55 @@ fn a_bundled_guest_receives_typed_surface_events_and_patches_its_view() {
             V::F64(1.5)
         ]
     );
+    fn shader_bounds(node: &Node, name: &str) -> Option<(wire::Length, wire::Length)> {
+        if let Node::Container {
+            width: Some(width),
+            height: Some(height),
+            content,
+            ..
+        } = node
+            && matches!(content.as_ref(), Node::Surface { name: found, .. } if found == name)
+        {
+            return Some((*width, *height));
+        }
+        node.children()
+            .iter()
+            .find_map(|child| shader_bounds(child, name))
+    }
+    assert_eq!(
+        shader_bounds(&boot, "pulse"),
+        Some((wire::Length::Fill, wire::Length::Fixed(24.0)))
+    );
+    assert_eq!(
+        shader_bounds(&boot, "passive"),
+        Some((wire::Length::Fixed(100.0), wire::Length::Fixed(100.0)))
+    );
+    assert_eq!(
+        shader_bounds(&boot, "collapsed"),
+        Some((wire::Length::Fixed(0.0), wire::Length::Fixed(0.0))),
+        "shader shrink must preserve its zero intrinsic size"
+    );
+    assert_eq!(
+        surface(&boot, "pulse").0,
+        [
+            V::F64(1.5),
+            V::List(vec![V::Str("host".into()), V::Str("shader".into())])
+        ]
+    );
+    let shader_wrong = tick(vec![Event::Surface {
+        handler: surface(&boot, "pulse").1,
+        value: V::Str("bad".into()),
+    }]);
+    assert_eq!(surface(&shader_wrong, "toggle").0, [V::Bool(false)]);
+    let shader_changed = tick(vec![Event::Surface {
+        handler: surface(&shader_wrong, "pulse").1,
+        value: V::Bool(true),
+    }]);
+    assert_eq!(surface(&shader_changed, "toggle").0, [V::Bool(true)]);
+    let boot = tick(vec![Event::Surface {
+        handler: surface(&shader_changed, "pulse").1,
+        value: V::Bool(false),
+    }]);
     let wrong = tick(vec![Event::Surface {
         handler: surface(&boot, "preview").1,
         value: V::Bool(true),
