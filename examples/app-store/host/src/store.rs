@@ -202,6 +202,8 @@ pub struct Guest {
     pub(crate) inputs: Inputs,
     /// Every picture the guest has sent, by hash: the bytes cross once.
     pub(crate) pictures: Pictures,
+    pub(crate) surfaces: ui_lang_runtime::view_tree::Surfaces,
+    pub(crate) log_session: Arc<crate::surfaces::log::Session>,
     /// One-shot answers, each with the moment it becomes due.
     due: Vec<(Instant, wire::Event)>,
     clipboard: Vec<(u64, clipboard::Command)>,
@@ -458,7 +460,10 @@ impl Guest {
             return Err(panic_message(&mut store).unwrap_or(trap));
         }
         LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
+        let log_session = Arc::new(crate::surfaces::log::Session::default());
         Ok(Self {
+            surfaces: crate::surfaces::registry(log_session.clone()),
+            log_session,
             entry: entry.clone(),
             store,
             view,
@@ -794,6 +799,7 @@ impl Guest {
     /// declared it. A refusal is an ordinary `Err` answer.
     fn answer(&mut self, now: Instant, request: wire::Request) {
         let wire::Request { id, kind, payload } = request;
+        self.log_session.append(&kind);
         if payload.len() > MAX_PAYLOAD_BYTES {
             let message = format!("`{kind}` carries more than {MAX_PAYLOAD_BYTES} bytes");
             self.reply(now, id, Err(message));
@@ -1445,3 +1451,7 @@ mod clipboard_tests;
 #[cfg(test)]
 #[path = "widget_tests.rs"]
 mod widget_tests;
+
+#[cfg(test)]
+#[path = "retained_tests.rs"]
+mod retained_tests;

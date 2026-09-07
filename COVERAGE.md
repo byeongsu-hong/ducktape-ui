@@ -1250,3 +1250,31 @@ Commands: `cargo test -p ui-lang-wire -p ui-lang-guest -p ui-lang-runtime
 --out examples/app-store/target/widget-fixture`; and
 `cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host
 bundled_widget_ -- --ignored`.
+
+### Retained host sessions and rolling log windows
+
+The app-store retained fixture exercises Guest-owned surface registries with
+an actual native LogTimelineState view. A host-owned session can outlive its
+mounted view; registry identity prevents replacement at an identical node
+key from reusing another instance's native state. The host applies native
+interactions locally and sends a typed LogNotice record back through the wasm
+route. Rich editor/terminal adapter parity is outside this claim.
+
+`LogTimelineState::reconcile_trimmed` validates an explicit removed prefix and
+append-only remainder atomically, retaining surviving selection, paused
+viewport rows and unread counts. Existing `reconcile` remains append-only;
+`replace` intentionally resets tail-follow for a different stream.
+
+Commands: `cargo test -p ui-lang-runtime trimmed_log_window` and the actual
+bundle/`bundled_retained_` commands in the app-store README. The host tests
+observe native pointer and wheel events, typed wasm notice state, same-window
+instances, replacement, lease release and session survival, button hover
+pixels, relayout-before-notice delivery and paused full-ring appends.
+
+Red/Green evidence: removing registry identity reuses the old selected row in
+the replacement guest (96 instead of -1). Dropping the pending layout notice
+leaves unread at 0 instead of 1 in a paused full ring. Rebuilding the native
+Element just for draw makes enabled/hovered button pixels identical. Before
+native anchor synchronization, a surviving row moved from y=109.3999 to
+y=85.3999 after one eviction; the restored native revision preserves its
+screen coordinate. These are reached assertion failures, not build failures.

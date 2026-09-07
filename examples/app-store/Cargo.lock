@@ -249,6 +249,7 @@ dependencies = [
  "getrandom 0.3.4",
  "iced",
  "iced_test",
+ "ouroboros",
  "sha2 0.10.9",
  "ui-lang",
  "ui-lang-build",
@@ -256,6 +257,17 @@ dependencies = [
  "ui-lang-wire",
  "wasmparser 0.251.0",
  "wasmtime",
+]
+
+[[package]]
+name = "app-store-retained-fixture"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
 ]
 
 [[package]]

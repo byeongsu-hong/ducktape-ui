@@ -213,8 +213,26 @@ where
         key: impl Fn(&T) -> Key,
         config: VirtualListConfig,
     ) -> Result<(), LogTimelineReconcileError<Key>> {
+        self.reconcile_trimmed(rows, key, 0, config)
+    }
+
+    /// Reconciles an append-only window after explicitly dropping `removed`
+    /// rows from its front. Remaining old keys must prefix the new window.
+    /// Paused views keep their surviving visible rows and selection; eviction
+    /// does not resume tail follow or clear unread counts. Invalid updates are
+    /// atomic. Use `replace` for a different stream, not front eviction.
+    pub fn reconcile_trimmed<T>(
+        &mut self,
+        rows: &[T],
+        key: impl Fn(&T) -> Key,
+        removed: usize,
+        config: VirtualListConfig,
+    ) -> Result<(), LogTimelineReconcileError<Key>> {
         let keys: Vec<Key> = rows.iter().map(key).collect();
-        if let Some(first_changed_index) = first_history_change(&self.keys, &keys) {
+        let remaining = self.keys.get(removed..);
+        if let Some(first_changed_index) =
+            remaining.map_or(Some(0), |old| first_history_change(old, &keys))
+        {
             return Err(LogTimelineReconcileError::HistoryChanged {
                 first_changed_index,
                 previous_count: self.keys.len(),
@@ -222,7 +240,8 @@ where
             });
         }
 
-        let appended = keys.len().saturating_sub(self.keys.len());
+        let appended = keys.len().saturating_sub(self.keys.len() - removed);
+        let offset = (self.list.scroll_offset() - removed as f32 * config.row_height()).max(0.0);
         self.list
             .reconcile(&keys, Clone::clone, config)
             .map_err(LogTimelineReconcileError::from)?;
@@ -230,6 +249,10 @@ where
         if self.following_tail {
             self.list.scroll_to_end(self.keys.len(), config);
         } else {
+            if removed > 0 {
+                self.list
+                    .restore_scroll_offset(offset, self.keys.len(), config);
+            }
             self.unread_count = self.unread_count.saturating_add(appended);
         }
         Ok(())
@@ -417,6 +440,74 @@ mod tests {
             outcome.following_tail,
             outcome.tail_follow_changed,
         )
+    }
+
+    #[test]
+    fn trimmed_log_window_preserves_paused_rows_selection_and_unread() {
+        let mut state = measured_state(&(0..20).collect::<Vec<_>>());
+        state.apply(
+            LogTimelineEvent::List(VirtualListEvent::Select { index: 10, key: 10 }),
+            config(),
+        );
+        state.apply(
+            LogTimelineEvent::List(VirtualListEvent::Scrolled { offset_y: 80.0 }),
+            config(),
+        );
+        assert!(!state.is_following_tail());
+        state
+            .reconcile_trimmed(&(2..24).collect::<Vec<_>>(), |row| *row, 2, config())
+            .unwrap();
+        assert_eq!(state.selected(), Some(&10));
+        assert_eq!(state.selected_index(), Some(8));
+        assert_eq!(
+            state.scroll_offset(),
+            40.0,
+            "the same surviving first row must stay visible"
+        );
+        assert!(
+            !state.is_following_tail(),
+            "front eviction must not resume a paused view"
+        );
+        assert_eq!(state.unread_count(), 4);
+        state
+            .reconcile_trimmed(&(12..26).collect::<Vec<_>>(), |row| *row, 10, config())
+            .unwrap();
+        assert_eq!(
+            state.selected(),
+            None,
+            "an evicted selection must not transfer to a different row"
+        );
+        assert_eq!(state.scroll_offset(), 0.0);
+        assert!(!state.is_following_tail());
+        assert_eq!(state.unread_count(), 6);
+    }
+
+    #[test]
+    fn trimmed_log_window_validates_atomically_and_keeps_live_edge() {
+        let mut state = measured_state(&(0..20).collect::<Vec<_>>());
+        state
+            .reconcile_trimmed(&(3..25).collect::<Vec<_>>(), |row| *row, 3, config())
+            .unwrap();
+        assert!(state.is_following_tail());
+        assert_eq!(state.scroll_offset(), 340.0);
+        assert_eq!(state.unread_count(), 0);
+        let before = state.inspect(config());
+        for (rows, removed) in [
+            (vec![4, 5, 99], 1),
+            (vec![7], 100),
+            ((4..25).chain([24]).collect(), 1),
+        ] {
+            assert!(
+                state
+                    .reconcile_trimmed(&rows, |row| *row, removed, config())
+                    .is_err()
+            );
+            assert_eq!(
+                state.inspect(config()),
+                before,
+                "an invalid window must not partially change retained state"
+            );
+        }
     }
 
     #[test]

@@ -563,6 +563,14 @@ jobs:
       - name: Run widget Tasks through mounted guest views
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_widget_ -- --ignored
+      - name: Bundle the retained session fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-retained-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/retained-fixture
+      - name: Verify retained host session views
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_retained_ -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

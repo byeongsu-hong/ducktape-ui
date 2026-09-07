@@ -431,3 +431,8 @@ Checked Ice widget statements also cross to a wasm view's mounted host:
 focus/query, input cursor/selection and scroll/snap operations stay confined
 to that view. Arbitrary native widget Tasks and host window actions still
 need separate boundaries. See the [app-store fixture](examples/app-store/README.md#mounted-widget-operation-fixture).
+
+
+The example host also binds retained surfaces per guest instance. Its native
+log timeline keeps view selection/scroll separate from the host session's
+lifetime; see the [retained session fixture](examples/app-store/README.md#retained-host-session-fixture).

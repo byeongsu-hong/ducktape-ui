@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+ouroboros = "0.18"
 iced = { workspace = true, features = ["smol"] }
 ui-lang.workspace = true
 ui-lang-runtime = { workspace = true, features = ["full-runtime"] }

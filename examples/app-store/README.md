@@ -448,7 +448,10 @@ For module packaging requirements and the connected implementation phases, see
   limits during decoding; returned records must match the declaration name,
   ordered field names and all nested types. Identifier text is never truncated.
   Recursive records, enums and opaque native editor/terminal/log state remain
-  unsupported. Resource and lifecycle contracts remain work for module-owned views.
+  unsupported as copied arguments. Registries are now owned per guest; the
+  `session_log` provider binds a host-owned log session and retains each native
+  view independently. Rich editor events and terminal providers remain work
+  for module-owned views.
 - A `shader` call uses that same named surface registry and typed routes.
   Its `w=`/`h=` cross in a containing box, with Iced's 100×100 defaults
   and zero intrinsic size for `shrink`.
@@ -696,3 +699,37 @@ cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
 cargo test --manifest-path examples/app-store/Cargo.toml \
   -p app-store-host bundled_widget_ -- --ignored
 ```
+
+## Retained host session fixture
+
+Each guest owns its surface registry. Providers close over sessions the host
+has authorized for that instance; a guest node key never selects another
+instance's native resource. The `session_log` provider renders the runtime's
+real virtualized log timeline. Native selection, scrolling, tail-follow and
+unread counts remain in the mounted view; a typed `LogNotice` record reports
+semantic changes to the guest. The session itself is an independently owned
+`Arc`, so removing a view does not end host activity.
+
+The example records this guest's host request names in a bounded ring of 256
+rows, each at most 512 characters. Prefix eviction preserves surviving
+selection and paused history via `LogTimelineState::reconcile_trimmed`.
+The retained log provider includes registry identity in its cache key: replacing
+a guest at the same tree position cannot inherit the previous view's state,
+even when the host deliberately binds both registries to the same session.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-retained-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/retained-fixture
+cargo test --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-host bundled_retained_ -- --ignored
+```
+
+The fixture exercises same-window instances, replacement, native row selection,
+wheel scrolling, hover paint, relayout notifications, ring eviction and
+unmount/remount with host updates in between. This establishes session/view
+ownership; it does not serialize native editor actions or terminal sessions.
+
+Fixture capture (600×1000, dark theme, scale 1, pointer over Resume tail):
+
+![Retained native session log](docs/retained-session-log.png)
