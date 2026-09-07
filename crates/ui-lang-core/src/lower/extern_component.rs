@@ -47,7 +47,6 @@ pub(crate) struct ResolvedExternComponent {
     pub(crate) id: ViewId,
     pub(crate) function: ResolvedExternComponentFunction,
     pub(crate) arguments: Vec<ResolvedExternComponentArgument>,
-    #[cfg(test)]
     pub(crate) output: Type,
     pub(crate) route: Option<ResolvedInteractionRoute>,
     pub(crate) origin: OriginId,
@@ -241,7 +240,6 @@ impl Lowerer {
                 declaration_origin: declaration.declaration.origin,
             },
             arguments,
-            #[cfg(test)]
             output: checked.output,
             route: resolved_route,
             origin,

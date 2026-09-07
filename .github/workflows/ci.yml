@@ -525,6 +525,11 @@ jobs:
             -p app-store-todo -p app-store-counter -p app-store-clock \
             -p app-store-activity -p app-store-chaos \
             --target wasm32-unknown-unknown
+      - name: Bundle the surface boundary fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-surface-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/surface-fixture
       - name: Prove the catalog is real
         working-directory: examples/app-store
         run: |
@@ -542,3 +547,6 @@ jobs:
       - name: Test the app-store workspace
         working-directory: examples/app-store
         run: cargo test --locked --workspace
+      - name: Run the surface boundary in wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

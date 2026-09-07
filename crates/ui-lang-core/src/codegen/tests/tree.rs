@@ -115,6 +115,44 @@ fn a_view_compiles_to_wire_nodes_with_values_inlined() {
 }
 
 #[test]
+fn host_surfaces_carry_typed_arguments_and_snapshot_event_routes() {
+    let source = r#"app Demo
+extern crate::backend
+  component markdown(source:&str, dark:bool, count:i64, zoom:f64) -> str
+state
+  draft = "hello"
+  dark = false
+on opened(link, context)
+  draft = link
+  dark = link == context
+view
+  extern markdown(draft, dark, 7, 1.5) #preview -> opened(_, draft)
+"#;
+    let source = source.replace("state\n", &format!("{PALETTE}state\n"));
+    let result = compile_for(&source, "surface.ice", Target::Tree);
+    assert!(
+        result.is_ok(),
+        "{}",
+        result.unwrap_err().render("surface.ice")
+    );
+    let generated = result.unwrap();
+    for expected in [
+        "SurfaceValue::Str(",
+        "SurfaceValue::Bool(",
+        "SurfaceValue::I64(",
+        "SurfaceValue::F64(",
+        "on_event:",
+        "let __route_arg_0 =",
+        "SurfaceValue::Str(__value)",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected}:\n{generated}"
+        );
+    }
+}
+
+#[test]
 fn form_controls_compile_to_wire_nodes_with_handler_slots() {
     let generated = tree_with(
         "on flip(value)\n  busy = value\non slide(value)\n  amount = value\non choose(value)\n  choice = some(value)\n",
@@ -429,6 +467,9 @@ const HEAD: &str = concat!(
     "  component host_tile(caption:str) -> unit\n",
     "  component host_gauge(level:f64) -> unit\n",
     "  component host_pair(a:str, b:str) -> unit\n",
+    "  component host_list(values:[str]) -> unit\n",
+    "  SurfaceReply(value:str)\n",
+    "  component host_reply() -> SurfaceReply\n",
     "  shader status_shader(speed:f64) -> bool\n",
     "  themer alternate_panel(active:bool) -> unit\n",
     "  checkbox-style checkbox_look(active:bool)\n",
@@ -884,27 +925,33 @@ const COVERAGE: &[Coverage] = &[
         CHOOSE,
         "  pick [\"One\", \"Two\"] choice -> choose _\n    active bg=primary text=fg placeholder=fg handle=fg border=danger border-w=1.0 r=4.0\n    opened bg=bg\n    menu bg=bg text=fg selected-bg=primary selected-text=fg\n",
     ),
-    // An extern widget is a host surface: the host paints the region by the
-    // extern's name, given its one `str` argument as text. A route, a second
-    // argument or an argument of another type has no room on the node.
     emitted("extern widget", "", "  extern host_tile(draft) #tile\n"),
-    refused(
+    emitted(
         "extern widget: route",
         FLIP,
         "  extern native_help(busy) -> flip _\n",
-        "a route on an extern widget",
     ),
-    refused(
+    emitted(
         "extern widget: argument type",
         "",
         "  extern host_gauge(amount)\n",
-        "an extern widget argument that is not `str`",
     ),
-    refused(
+    emitted(
         "extern widget: two arguments",
         "",
         "  extern host_pair(draft, draft)\n",
-        "more than one argument on an extern widget",
+    ),
+    refused(
+        "extern widget: compound argument",
+        "",
+        "  extern host_list(items)\n",
+        "a non-scalar extern widget argument",
+    ),
+    refused(
+        "extern widget: compound event",
+        "on replied(value)\n  draft = value.value\n",
+        "  extern host_reply() -> replied _\n",
+        "a non-scalar extern widget event",
     ),
 ];
 

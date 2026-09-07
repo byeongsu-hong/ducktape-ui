@@ -1080,3 +1080,23 @@ came from one mutation making `increment` add two.
 
 The repository does not claim complete iced coverage while any row is partial
 or missing.
+
+### Wasm host surface boundary
+
+The tree target carries extern widget scalar arguments (`unit`, `bool`,
+`i64`, `f64`, `str`) and typed return routes. The native declaration remains
+unchanged. Compound values and native resources remain refused, so this does
+not claim that every native extern can run as a wasm surface.
+
+Evidence: `codegen::tests::tree::host_surfaces_carry_typed_arguments_and_snapshot_event_routes`
+checks the emitter; `view_tree::tests::a_rendered_surface_routes_its_value_and_an_unrouted_one_stays_quiet`
+clicks a provider button through the renderer; `tests/surface-guest/tests/routes.rs`
+in app-store checks generated handlers and owned repeated-row context;
+`host/tests/surface_routes.rs` executes the bundled guest and applies its
+patches. Wire tests cover encoding, patch application, text budgets and
+nonfinite values. The app-store CI job bundles and executes the wasm fixture.
+
+Red evidence: removing the renderer's route produced `left: []` instead of
+the expected `Surface` event after a real button click. Dropping the guest's
+surface message failed the generated fixture's expected link text assertion.
+Both tests pass again with the production paths restored.

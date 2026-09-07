@@ -38,6 +38,11 @@ pub enum Output {
     /// A button was pressed or an input submitted: the guest's message
     /// table index the node carried.
     Activate(u32),
+    /// A provider result; the renderer supplies the guest route, not the provider.
+    Surface {
+        handler: Option<u32>,
+        value: wire::SurfaceValue,
+    },
     /// An input's text changed. `key` is the node's key, `handler` the
     /// guest's input-handler table index, `text` the whole new value.
     Edit {
@@ -95,9 +100,11 @@ struct Field {
 }
 
 /// What a [`wire::Node::Surface`] renders as: the host's own element for
-/// the node's text argument. The host owns everything about it — its
-/// state, its clock, its redraws — and the guest never sees inside.
-pub type Surface = Box<dyn Fn(&str) -> IceElement<'static, Output> + Send + Sync>;
+/// the node's key and copied argument values. The host owns its state, clock
+/// and redraws; the guest never sees inside.
+pub type Surface = Box<
+    dyn Fn(&str, &[wire::SurfaceValue]) -> IceElement<'static, wire::SurfaceValue> + Send + Sync,
+>;
 
 /// The surfaces the embedding host paints, by the name a guest asks for.
 /// A name not in here renders as a visible placeholder naming it.
@@ -213,6 +220,17 @@ impl Inputs {
     pub fn apply(&mut self, output: Output, pending: &mut Vec<wire::Event>) {
         let event = match output {
             Output::Activate(index) => wire::Event::Message(index),
+            Output::Surface { handler, mut value } => {
+                let Some(handler) = handler else {
+                    return;
+                };
+                match &mut value {
+                    wire::SurfaceValue::Str(text) => wire::truncate_string(text),
+                    wire::SurfaceValue::F64(number) if !number.is_finite() => return,
+                    _ => {}
+                }
+                wire::Event::Surface { handler, value }
+            }
             Output::Edit {
                 key,
                 handler,
@@ -1757,9 +1775,17 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .numeric(value.into(), min.into(), max.into(), None)
                 .into()
         }
-        wire::Node::Surface { key, name, arg } => {
+        wire::Node::Surface {
+            key,
+            name,
+            args,
+            on_event,
+        } => {
             let content = match kept.surfaces.get(name) {
-                Some(surface) => surface(arg),
+                Some(surface) => {
+                    let handler = *on_event;
+                    surface(key, args).map(move |value| Output::Surface { handler, value })
+                }
                 // Loud, not silent: a guest built against a surface this
                 // host does not paint shows the gap where it would be.
                 None => widget::container(
@@ -1799,6 +1825,105 @@ mod tests {
             secure: false,
             style: wire::InputStyle::default(),
         }
+    }
+
+    #[test]
+    fn a_rendered_surface_routes_its_value_and_an_unrouted_one_stays_quiet() {
+        use iced::advanced::renderer::Headless;
+        use iced::{Event, Font, Pixels, Point, Size, mouse};
+        use iced_test::runtime::{UserInterface, user_interface};
+        use wire::SurfaceValue as V;
+
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut surfaces = Surfaces::new();
+        surfaces.insert(
+            "link".into(),
+            Box::new(|key, args| {
+                assert_eq!(key, "App/link");
+                assert_eq!(
+                    args,
+                    &[V::Str("duck://pages/example".into()), V::Bool(true)]
+                );
+                widget::button("Open")
+                    .on_press(args[0].clone())
+                    .width(100)
+                    .height(40)
+                    .into()
+            }),
+        );
+        for handler in [Some(27), None] {
+            let node = wire::Node::Surface {
+                key: "App/link".into(),
+                name: "link".into(),
+                args: vec![V::Str("duck://pages/example".into()), V::Bool(true)],
+                on_event: handler,
+            };
+            let mut inputs = Inputs::default();
+            let element = render(&node, &inputs, &Pictures::default(), &surfaces);
+            let mut ui = UserInterface::build(
+                element,
+                Size::new(200.0, 100.0),
+                user_interface::Cache::default(),
+                &mut renderer,
+            );
+            let mut messages = vec![];
+            let _ = ui.update(
+                &[
+                    Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                ],
+                mouse::Cursor::Available(Point::new(20.0, 20.0)),
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+            assert_eq!(messages.len(), 1, "the provider button was clicked");
+            let mut pending = vec![];
+            inputs.apply(messages.remove(0), &mut pending);
+            let expected: Vec<_> = handler
+                .into_iter()
+                .map(|handler| wire::Event::Surface {
+                    handler,
+                    value: V::Str("duck://pages/example".into()),
+                })
+                .collect();
+            assert_eq!(pending, expected);
+        }
+    }
+
+    #[test]
+    fn surface_events_bound_strings_and_drop_nonfinite_numbers() {
+        use wire::SurfaceValue as V;
+        let mut inputs = Inputs::default();
+        let prefix = "a".repeat(wire::MAX_STRING_BYTES - 1);
+        assert_eq!(
+            applied(
+                &mut inputs,
+                Output::Surface {
+                    handler: Some(4),
+                    value: V::Str(format!("{prefix}€€")),
+                }
+            ),
+            Some(wire::Event::Surface {
+                handler: 4,
+                value: V::Str(prefix)
+            })
+        );
+        assert_eq!(
+            applied(
+                &mut inputs,
+                Output::Surface {
+                    handler: Some(4),
+                    value: V::F64(f64::INFINITY)
+                }
+            ),
+            None
+        );
     }
 
     #[test]
@@ -2332,14 +2457,16 @@ mod tests {
                     wire::Node::Surface {
                         key: "App/content/tile".into(),
                         name: "tile".into(),
-                        arg: "camera 1".into(),
+                        args: vec![wire::SurfaceValue::Str("camera 1".into())],
+                        on_event: None,
                     },
                     // A surface this host does not paint: a placeholder,
                     // not a panic.
                     wire::Node::Surface {
                         key: "App/content/missing".into(),
                         name: "nobody".into(),
-                        arg: String::new(),
+                        args: vec![],
+                        on_event: None,
                     },
                 ],
             }),
@@ -2353,13 +2480,17 @@ mod tests {
         let mut surfaces = Surfaces::new();
         surfaces.insert(
             "tile".into(),
-            Box::new(move |arg: &str| {
-                seen.lock().unwrap().push(arg.to_owned());
-                widget::text(arg.to_owned()).into()
+            Box::new(move |key: &str, args: &[wire::SurfaceValue]| {
+                assert_eq!(key, "App/content/tile");
+                seen.lock().unwrap().extend_from_slice(args);
+                widget::text("camera 1").into()
             }),
         );
         let _element: IceElement<'static, Output> = render(&tree, &inputs, &pictures, &surfaces);
-        assert_eq!(*painted.lock().unwrap(), ["camera 1"]);
+        assert_eq!(
+            *painted.lock().unwrap(),
+            [wire::SurfaceValue::Str("camera 1".into())]
+        );
     }
 
     fn picture(bytes: Option<Vec<u8>>) -> wire::Node {

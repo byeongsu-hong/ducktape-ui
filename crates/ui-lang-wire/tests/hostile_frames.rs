@@ -498,7 +498,11 @@ fn gen_surface(rng: &mut Rng) -> Node {
     Node::Surface {
         key: gen_key(rng),
         name: gen_string(rng),
-        arg: gen_string(rng),
+        args: vec![
+            ui_lang_wire::SurfaceValue::Str(gen_string(rng)),
+            ui_lang_wire::SurfaceValue::F64(f64::NAN),
+        ],
+        on_event: Some(0),
     }
 }
 
@@ -1379,9 +1383,15 @@ fn check_bounds(
             check_color(bar, ctx);
             check_border(border, ctx);
         }
-        Node::Surface { name, arg, .. } => {
+        Node::Surface { name, args, .. } => {
             check_string(name, ctx, "surface name");
-            check_string(arg, ctx, "surface arg");
+            for value in args {
+                match value {
+                    ui_lang_wire::SurfaceValue::Str(text) => check_string(text, ctx, "surface arg"),
+                    ui_lang_wire::SurfaceValue::F64(number) => assert!(number.is_finite()),
+                    _ => {}
+                }
+            }
         }
         Node::Editor {
             placeholder,
