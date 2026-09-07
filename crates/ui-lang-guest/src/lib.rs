@@ -43,7 +43,8 @@ pub trait App: Sized + 'static {
 /// The per-frame tables a view fills as it builds: a button's `on_press`
 /// is the index its message took here, an input's `on_input` the index of
 /// its `String -> Message` constructor, a checkbox's `on_toggle` that of a
-/// `bool -> Message` one, a slider's `f32`, a pick list's `u32`. The host
+/// `bool -> Message` one, a slider's `f32`, a pick list's `u32`, a
+/// sensor's `(f32, f32)` size. The host
 /// echoes an index back with the value; the driver looks the handler up in
 /// the table of the frame it echoed and runs it.
 ///
@@ -215,6 +216,11 @@ impl<A: App> Driver<A> {
                 wire::Event::Select { handler, index } => {
                     slots::run_handler::<u32, A::Message>(handler, index)
                 }
+                wire::Event::Size {
+                    handler,
+                    width,
+                    height,
+                } => slots::run_handler::<(f32, f32), A::Message>(handler, (width, height)),
                 wire::Event::Response { id, result, done } => {
                     host::fulfill(id, result, done);
                     None

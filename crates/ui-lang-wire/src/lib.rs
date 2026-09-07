@@ -41,6 +41,22 @@ pub enum Event {
     Slide { handler: u32, value: f32 },
     /// A pick list chose the option at `index` in the node's `options`.
     Select { handler: u32, index: u32 },
+    /// A [`Node::Sensor`]'s child was measured: shown at, or resized to,
+    /// `width` by `height` — the child's own laid-out size in logical
+    /// pixels, never where it sits in the window. `handler` is the node's
+    /// `on_show` or `on_resize`.
+    ///
+    /// Delivered after layout, like a DOM `ResizeObserver`: the host lays
+    /// the tree out, the sensor reads its child's size, and the event goes
+    /// to the guest on the next tick. A guest whose answer changes the
+    /// tree so the child measures differently again is measured again;
+    /// a host bounds how many times in a row that may drive a tick before
+    /// it stops delivering and logs `sensor loop limit exceeded`.
+    Size {
+        handler: u32,
+        width: f32,
+        height: f32,
+    },
     /// One answer to a [`Request`]. A one-shot request gets exactly one with
     /// `done`; a subscription gets many, the last one `done`.
     Response {
@@ -295,6 +311,21 @@ pub enum Node {
         #[serde(deserialize_with = "decode_children")]
         children: Vec<Node>,
     },
+    /// Watches its child's laid-out size. `on_show` hears the size when the
+    /// child first comes into view (within `anticipate` pixels of it),
+    /// `on_resize` every change after, both as [`Event::Size`]; `on_hide`
+    /// is the message for leaving view. `delay` is milliseconds a size
+    /// must hold before it is reported.
+    Sensor {
+        key: String,
+        on_show: Option<u32>,
+        on_resize: Option<u32>,
+        on_hide: Option<u32>,
+        anticipate: Option<f32>,
+        delay: Option<f32>,
+        #[serde(deserialize_with = "decode_child")]
+        child: Box<Node>,
+    },
     Scroll {
         key: String,
         direction: ScrollDirection,
@@ -458,6 +489,7 @@ impl Node {
             Self::Container { key, .. }
             | Self::Linear { key, .. }
             | Self::Grid { key, .. }
+            | Self::Sensor { key, .. }
             | Self::Scroll { key, .. }
             | Self::Text { key, .. }
             | Self::Svg { key, .. }
@@ -480,9 +512,9 @@ impl Node {
     /// variant is a new arm in each and nothing else.
     pub fn children(&self) -> &[Node] {
         match self {
-            Self::Container { content, .. } | Self::Scroll { content, .. } => {
-                std::slice::from_ref(content)
-            }
+            Self::Container { content, .. }
+            | Self::Sensor { child: content, .. }
+            | Self::Scroll { content, .. } => std::slice::from_ref(content),
             Self::Linear { children, .. } | Self::Grid { children, .. } => children,
             Self::Button {
                 content: ButtonContent::Child(child),
@@ -513,9 +545,9 @@ impl Node {
 
     pub fn children_mut(&mut self) -> &mut [Node] {
         match self {
-            Self::Container { content, .. } | Self::Scroll { content, .. } => {
-                std::slice::from_mut(content)
-            }
+            Self::Container { content, .. }
+            | Self::Sensor { child: content, .. }
+            | Self::Scroll { content, .. } => std::slice::from_mut(content),
             Self::Linear { children, .. } | Self::Grid { children, .. } => children,
             Self::Button {
                 content: ButtonContent::Child(child),
@@ -543,6 +575,7 @@ impl Node {
         match self {
             Self::Linear { children, .. } | Self::Grid { children, .. } => Some(children),
             Self::Container { .. }
+            | Self::Sensor { .. }
             | Self::Scroll { .. }
             | Self::Button { .. }
             | Self::Text { .. }
@@ -993,6 +1026,18 @@ fn sanitize_node(
             bound_edges(padding);
             bound_optional(aspect);
         }
+        Node::Sensor {
+            key,
+            anticipate,
+            delay,
+            ..
+        } => {
+            claim(key, taken);
+            bound_optional(anticipate);
+            if let Some(delay) = delay {
+                *delay = finite(*delay).max(0.0);
+            }
+        }
         Node::Scroll { key, .. } => claim(key, taken),
         Node::Text {
             key,
@@ -1188,7 +1233,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Toggle { width, .. }
         | Node::Radio { width, .. }
         | Node::PickList { width, .. } => vec![width],
-        Node::Rule { .. } | Node::Surface { .. } => Vec::new(),
+        Node::Rule { .. } | Node::Sensor { .. } | Node::Surface { .. } => Vec::new(),
     };
     slots.into_iter().flatten().collect()
 }
@@ -1988,6 +2033,36 @@ mod tests {
     /// The form controls: a menu is cut to `MAX_OPTIONS` with a selection
     /// past the cut dropped, and a slider's numbers are made finite but not
     /// clamped like a size — a value of a million is the app's to send.
+    #[test]
+    fn a_sensor_is_pulled_into_range_and_keeps_its_child() {
+        let mut frame = Frame {
+            root: Some(Node::Sensor {
+                key: "App/watch".into(),
+                on_show: Some(0),
+                on_resize: Some(0),
+                on_hide: Some(1),
+                anticipate: Some(f32::INFINITY),
+                delay: Some(-5.0),
+                child: Box::new(text("a")),
+            }),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Sensor {
+            anticipate,
+            delay,
+            child,
+            ..
+        }) = &frame.root
+        else {
+            panic!("{:?}", frame.root)
+        };
+        assert_eq!(*anticipate, Some(MAX_PIXELS));
+        assert_eq!(*delay, Some(0.0));
+        assert_eq!(**child, text("a"));
+        assert_eq!(frame.root.as_ref().unwrap().count(), 2);
+    }
+
     #[test]
     fn form_controls_are_pulled_into_range() {
         let mut frame = Frame {

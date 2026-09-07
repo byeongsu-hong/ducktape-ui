@@ -2,7 +2,7 @@
 //! first, each with who published it and under what topic.
 
 use app_store_activity::{boot_native, tick_native};
-use ui_lang_guest::testing::{has_text, item, texts};
+use ui_lang_guest::testing::{has_text, item, keys, measure, texts};
 
 #[test]
 fn bus_messages_become_rows_newest_first() {
@@ -31,4 +31,33 @@ fn bus_messages_become_rows_newest_first() {
         .expect("todo row");
     let counter = rows.iter().position(|t| t == "3").expect("counter row");
     assert!(todo < counter, "newest first: {rows:?}");
+}
+
+/// The host measures the feed after layout and the guest turns the height
+/// into a row count; a re-measure with more room shows more rows.
+#[test]
+fn the_measured_feed_height_becomes_a_visible_row_count() {
+    boot_native();
+    let frame = tick_native(Vec::new());
+    let subscribe = frame.requests[0].id;
+    let frame = tick_native(
+        (0..6)
+            .map(|n| {
+                item(
+                    subscribe,
+                    format!("app_store_counter\ncounter\n{n}").as_bytes(),
+                )
+            })
+            .collect(),
+    );
+    assert!(has_text(&frame, "0 rows visible"), "{:?}", texts(&frame));
+    let watch = keys(&frame)
+        .into_iter()
+        .find(|key| key.ends_with("/watch"))
+        .expect("the feed sensor");
+
+    let frame = tick_native(measure(&frame, &watch, 432.0, 200.0));
+    assert!(has_text(&frame, "4 rows visible"), "{:?}", texts(&frame));
+    let frame = tick_native(measure(&frame, &watch, 432.0, 1000.0));
+    assert!(has_text(&frame, "6 rows visible"), "{:?}", texts(&frame));
 }

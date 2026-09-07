@@ -16,12 +16,14 @@ extern crate::host
   pure push_entry(log:[Entry], entry:Entry) -> [Entry]
   pure origin_label(entry:Entry) -> str
   pure count_label(log:&[Entry]) -> str
+  pure visible_label(height:f64, log:&[Entry]) -> str
 
 state
   log:[Entry] = []
   status = "Listening on every topic of the host's bus."
   active_palette:palette[ActivityTheme] = ActivityTheme.light
   dark = false
+  feed_height = 0.0
 
 // Whatever any other app publishes shows up here, newest first. The host's
 // colour mode arrives the same way, on its own subscription.
@@ -41,6 +43,11 @@ on theme_failed(error)
 
 on arrived(entry)
   log = push_entry(log, entry)
+
+// The host lays the feed out and reports its height; the guest never
+// measures anything itself.
+on feed_measured(_width, height)
+  feed_height = height
 
 on bus_failed(error)
   status = error.message
@@ -69,30 +76,32 @@ view
             @text-fg
             @font-bold
         text count_label(log) #count size=12.0 @text-muted
+        text visible_label(feed_height, log) #visible size=12.0 @text-muted
       text status #status size=12.0 @text-muted
-      scroll #feed w=fill h=fill
-        col w=fill gap=8.0
-          for entry in log
-            box
-              with
-                w=fill
-                bg=surface
-                border=border
-                border-w=1.0
-                r=10.0
-                p=12.0
-              row
+      sensor #watch show=feed_measured resize=feed_measured
+        scroll #feed w=fill h=fill
+          col w=fill gap=8.0
+            for entry in log
+              box
                 with
                   w=fill
-                  gap=12.0
-                  align=center
-                text origin_label(entry)
-                  with
-                    w=170.0
-                    size=12.0
-                    @text-muted
-                text entry.text
+                  bg=surface
+                  border=border
+                  border-w=1.0
+                  r=10.0
+                  p=12.0
+                row
                   with
                     w=fill
-                    size=14.0
-                    @text-fg
+                    gap=12.0
+                    align=center
+                  text origin_label(entry)
+                    with
+                      w=170.0
+                      size=12.0
+                      @text-muted
+                  text entry.text
+                    with
+                      w=fill
+                      size=14.0
+                      @text-fg

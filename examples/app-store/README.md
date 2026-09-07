@@ -387,9 +387,9 @@ An honest inventory, grouped by where the work would land. Items marked
 
 ### Wire and rendering
 
-- The wire carries `box`, `col`/`row`, `grid`, `scroll`, `text`, `svg`,
-  `input`, `button`, `space`, `rule`, `checkbox`, `toggler`, `radio`, `slider`,
-  `pick` and `progress`, with `if`/`for`/`match` around them, and an
+- The wire carries `box`, `col`/`row`, `grid`, `scroll`, `sensor`, `text`,
+  `svg`, `input`, `button`, `space`, `rule`, `checkbox`, `toggler`, `radio`,
+  `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
   extern's name (`clock_face` is the one this store paints, with a sweeping
   second hand the guest never ticks), given the call's one `str` argument
@@ -398,6 +398,15 @@ An honest inventory, grouped by where the work would land. Items marked
   mounted components, gradients, utility styles — fails the app's build at
   its `.ice` line with E190. Each is a node kind to add to the wire, an
   emitter arm and a renderer arm.
+- A `sensor` crosses with its show, resize and hide routes, `anticipate`
+  and `delay`; the host measures the child after layout and answers with
+  its local size, never a window position (the activity feed turns its
+  height into a row count). A guest whose answer re-sizes the child is
+  measured again on the next redraw, four times in a row at most: past
+  that the host drops the size events and logs `sensor loop limit
+  exceeded` until a user event, timer or window resize drives a tick.
+  `key=` is refused with E190: the wire's node key is the identity, and
+  a second key that resets the sensor has no field to cross in.
 - A host surface takes one `str` and answers nothing: a route, a second
   argument or another argument type is refused with E190. Its size is its
   parent's; a `box w= h=` around the call sets it. Nothing crosses back
