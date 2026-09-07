@@ -157,6 +157,28 @@ fn value(guest: &Arc<Mutex<Guest>>, key: &str) -> String {
     find(guest.lock().unwrap().frame.root.as_ref().unwrap(), key).unwrap()
 }
 
+fn accessible_query_state(guest: &Arc<Mutex<Guest>>, expected: bool) {
+    fn find(node: &wire::Node) -> Option<&wire::Node> {
+        if node.key() == Some("WidgetFixture/query") {
+            return Some(node);
+        }
+        node.children().iter().find_map(find)
+    }
+    let guest = guest.lock().unwrap();
+    let wire::Node::Button {
+        checked,
+        expanded,
+        description,
+        ..
+    } = find(guest.frame.root.as_ref().unwrap()).unwrap()
+    else {
+        panic!("query button")
+    };
+    assert_eq!(*checked, Some(expected));
+    assert_eq!(*expanded, Some(expected));
+    assert_eq!(description.as_deref(), Some("Reports input focus"));
+}
+
 #[test]
 #[ignore = "requires bundled widget-fixture wasm"]
 fn bundled_widget_tasks_focus_after_mount_and_edit_only_the_requesting_guest() {
@@ -182,6 +204,7 @@ fn bundled_widget_tasks_focus_after_mount_and_edit_only_the_requesting_guest() {
             > 0,
         "the timer must actually change frames during boot focus"
     );
+    accessible_query_state(&first, false);
     click(&mut a, &mut renderer, "Focus second");
     for _ in 0..3 {
         a = redraw(a, &first, &mut renderer, &mut now);
@@ -204,6 +227,7 @@ fn bundled_widget_tasks_focus_after_mount_and_edit_only_the_requesting_guest() {
         "focused",
         "focused query must resume its wasm handler"
     );
+    accessible_query_state(&first, true);
     click(&mut a, &mut renderer, "Select range");
     for _ in 0..4 {
         a = redraw(a, &first, &mut renderer, &mut now);

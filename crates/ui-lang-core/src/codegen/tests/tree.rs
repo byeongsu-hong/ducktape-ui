@@ -1262,3 +1262,20 @@ fn tree_large_finite_tracking_emits_finite_rust_literal() {
     );
     assert!(generated.contains("tracking: 3.4028235e38f32"));
 }
+
+#[test]
+fn tree_button_carries_accessible_state_and_description() {
+    let generated = tree(
+        "  button \"Toggle\" checked=true expanded=false description=\"Details\" -> remove 0\n",
+    );
+    for expected in [
+        "checked: ::std::option::Option::Some(true)",
+        "expanded: ::std::option::Option::Some(false)",
+        "String::from(\"Details\".to_owned())",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected} in {generated}"
+        );
+    }
+}

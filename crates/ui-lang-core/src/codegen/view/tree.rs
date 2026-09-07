@@ -1514,18 +1514,24 @@ fn button(
 ) -> Result<String, Error> {
     let button = program.resolved_button(id)?;
     let origin = button.origin;
-    refuse_when(
-        program,
-        origin,
-        button.checked.is_some() || button.expanded.is_some(),
-        "`checked=`/`expanded=` on a button",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        button.accessibility_description.is_some(),
-        "an accessibility description on a button",
-    )?;
+    let boolean = |value: Option<CheckedExprUseId>| -> Result<String, Error> {
+        Ok(option_code(
+            value
+                .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+                .transpose()?,
+        ))
+    };
+    let checked = boolean(button.checked)?;
+    let expanded = boolean(button.expanded)?;
+    let description = option_code(
+        button
+            .accessibility_description
+            .map(|value| {
+                resolved_expr_use_code(program, value, env, ValueMode::Owned)
+                    .map(|value| format!("::std::string::String::from({value})"))
+            })
+            .transpose()?,
+    );
     let label = match button.accessibility_label {
         Some(label) => Some(format!(
             "::std::string::String::from({})",
@@ -1597,7 +1603,7 @@ fn button(
     let active = button_face_code(button.styles.active.as_ref(), program, env, origin)?
         .unwrap_or_else(|| format!("{WIRE}::Face::default()"));
     Ok(format!(
-        "{WIRE}::Node::Button {{ key: {key}, content: {content}, label: {}, on_press: {on_press}, width: {}, height: {}, padding: {}, style: {WIRE}::ButtonStyle {{ active: {active}, hovered: {}, pressed: {}, disabled: {} }} }}",
+        "{WIRE}::Node::Button {{ checked: {checked}, expanded: {expanded}, description: {description}, key: {key}, content: {content}, label: {}, on_press: {on_press}, width: {}, height: {}, padding: {}, style: {WIRE}::ButtonStyle {{ active: {active}, hovered: {}, pressed: {}, disabled: {} }} }}",
         option_code(label),
         dimension_code(button.width.as_ref(), false, program, env, origin)?,
         dimension_code(button.height.as_ref(), false, program, env, origin)?,

@@ -679,6 +679,9 @@ mod tests {
                 border: None,
                 children: (0..40)
                     .map(|row| wire::Node::Button {
+                        checked: None,
+                        expanded: None,
+                        description: None,
                         key: format!("App/list/{row}"),
                         content: wire::ButtonContent::Label(match row == self.0 {
                             true => format!("row {row} *"),

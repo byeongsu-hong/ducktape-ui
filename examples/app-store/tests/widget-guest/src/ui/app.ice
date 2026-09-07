@@ -77,6 +77,10 @@ view
     button "Next" #next -> next
     button "Previous" #previous -> previous
     button "Query" #query -> query
+      with
+        checked=focused
+        expanded=focused
+        description="Reports input focus"
     button "Select range" #select-range -> select_range
     button "Cursor front" #cursor-front -> cursor_front
     button "Cursor end" #cursor-end -> cursor_end

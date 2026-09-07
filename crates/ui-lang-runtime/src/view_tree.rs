@@ -1528,6 +1528,9 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             key,
             content,
             label: name,
+            checked,
+            expanded,
+            description,
             on_press,
             width,
             height,
@@ -1560,13 +1563,22 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             if let Some(edges) = edges {
                 button = button.padding(padding(*edges));
             }
-            accessible(button, StableId::new(key), Role::Button)
+            let mut accessible = accessible(button, StableId::new(key), Role::Button)
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .focus_id(widget::Id::from(key.clone()))
                 .label(label.unwrap_or_default())
                 .disabled(on_press.is_none())
-                .on_activate_maybe(activate)
-                .into()
+                .on_activate_maybe(activate);
+            if let Some(value) = checked {
+                accessible = accessible.checked(*value);
+            }
+            if let Some(value) = expanded {
+                accessible = accessible.expanded(*value);
+            }
+            if let Some(value) = description {
+                accessible = accessible.description(value.clone());
+            }
+            accessible.into()
         }
         wire::Node::Space { width, height } => {
             let mut space = widget::Space::new();
@@ -1938,6 +1950,68 @@ fn selected_children<'a>(children: &'a [wire::Node], kept: &Kept<'_>) -> Vec<&'a
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wire_button_accessibility_distinguishes_false_from_absence() {
+        use iced::advanced::renderer::Headless;
+        use iced::advanced::widget::operation::{Operation, Outcome};
+        use iced_test::runtime::{UserInterface, user_interface};
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut cache = user_interface::Cache::default();
+        for state in [Some(true), Some(false), None] {
+            let node = wire::Node::Button {
+                key: "toggle".into(),
+                content: wire::ButtonContent::Label("Toggle".into()),
+                label: None,
+                checked: state,
+                expanded: state,
+                description: Some("Details".into()),
+                on_press: Some(0),
+                width: None,
+                height: None,
+                padding: None,
+                style: wire::ButtonStyle::default(),
+            };
+            let root = render(
+                &node,
+                &Inputs::default(),
+                &Pictures::default(),
+                &Surfaces::new(),
+            );
+            let mut ui =
+                UserInterface::build(root, iced::Size::new(400.0, 240.0), cache, &mut renderer);
+            let mut operation = crate::SnapshotOperation::<Output>::named("Test");
+            ui.operate(
+                &renderer,
+                &mut iced::advanced::widget::operation::black_box(&mut operation),
+            );
+            let Outcome::Some(snapshot) = operation.finish() else {
+                panic!("snapshot")
+            };
+            let (_, node) = snapshot
+                .update
+                .nodes
+                .iter()
+                .find(|(id, _)| *id == StableId::new("toggle").node_id())
+                .unwrap();
+            assert_eq!(
+                node.toggled(),
+                state.map(|value| if value {
+                    accesskit::Toggled::True
+                } else {
+                    accesskit::Toggled::False
+                })
+            );
+            assert_eq!(node.is_expanded(), state);
+            assert_eq!(node.description(), Some("Details"));
+            cache = ui.into_cache();
+        }
+    }
 
     fn input(value: &str) -> wire::Node {
         wire::Node::Input {
@@ -2606,6 +2680,9 @@ mod tests {
                     },
                     editor_node("notes"),
                     wire::Node::Button {
+                        checked: None,
+                        expanded: None,
+                        description: None,
                         key: "App/content/add".into(),
                         content: wire::ButtonContent::Label("Add".into()),
                         label: None,
