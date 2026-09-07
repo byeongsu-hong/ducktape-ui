@@ -48,6 +48,9 @@ pub enum Event {
         result: Result<Vec<u8>, String>,
         done: bool,
     },
+    /// The host no longer holds the tree the guest is patching — a patch it
+    /// could not apply, a tree it dropped — and wants the next frame whole.
+    Resync,
 }
 
 /// Something the guest asked the host for. The guest never blocks on it: a
@@ -64,10 +67,18 @@ pub struct Request {
 }
 
 /// What one tick of the guest produced.
+///
+/// The tree crosses one of three ways: whole in `root`; not at all, with
+/// `unchanged` set; or as `patches` against the tree the host holds, with
+/// `root` empty and `unchanged` clear.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
-    /// The tree to show. `None` with `unchanged` set means "what you have".
+    /// The tree to show. `None` with `unchanged` set means "what you have";
+    /// `None` otherwise means "what you have, with `patches` applied".
     pub root: Option<Node>,
+    /// Edits to the tree the host holds, in order, when `root` is `None`
+    /// and `unchanged` is clear. The host applies them with [`apply`].
+    pub patches: Vec<Patch>,
     /// What the guest asked for while producing this frame.
     pub requests: Vec<Request>,
     /// Requests the guest stopped waiting on — a dropped future or stream.
@@ -81,6 +92,30 @@ pub struct Frame {
     /// yields more than one tick runs, a handler chain longer than one
     /// round — and wants the next tick now, not at the next event or answer.
     pub busy: bool,
+}
+
+/// One edit to the tree the host holds. `path` is the child index at every
+/// level from the root down (`[]` is the root itself); children are
+/// addressed by index at the moment the patch is applied, so a sequence
+/// reads like edits to a live document. The vocabulary is a virtual DOM's
+/// mutation list: replace, re-prop, insert, remove, move.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Patch {
+    /// The subtree at `path` becomes `node`.
+    Replace { path: Vec<u32>, node: Node },
+    /// The node at `path` takes `node`'s own fields and keeps its children:
+    /// `node` carries none (an empty list, or an empty stand-in per slot).
+    Props { path: Vec<u32>, node: Node },
+    /// `node` becomes child `index` of the list at `path`.
+    Insert {
+        path: Vec<u32>,
+        index: u32,
+        node: Node,
+    },
+    /// Child `index` of the list at `path` goes away.
+    Remove { path: Vec<u32>, index: u32 },
+    /// Child `from` of the list at `path` is taken out and put back at `to`.
+    Move { path: Vec<u32>, from: u32, to: u32 },
 }
 
 /// Red, green, blue, alpha in `0.0..=1.0`. The guest resolves its own
@@ -439,16 +474,20 @@ impl Node {
         }
     }
 
-    fn children_mut(&mut self) -> Vec<&mut Node> {
+    /// The node's children in order. One arm per variant, here and in
+    /// [`Node::children_mut`] and [`Node::child_list_mut`]: everything that
+    /// walks, diffs or patches a tree goes through these three, so a new
+    /// variant is a new arm in each and nothing else.
+    pub fn children(&self) -> &[Node] {
         match self {
-            Self::Container { content, .. } | Self::Scroll { content, .. } => vec![content],
-            Self::Linear { children, .. } | Self::Grid { children, .. } => {
-                children.iter_mut().collect()
+            Self::Container { content, .. } | Self::Scroll { content, .. } => {
+                std::slice::from_ref(content)
             }
+            Self::Linear { children, .. } | Self::Grid { children, .. } => children,
             Self::Button {
                 content: ButtonContent::Child(child),
                 ..
-            } => vec![child],
+            } => std::slice::from_ref(child),
             Self::Button { .. }
             | Self::Text { .. }
             | Self::Svg { .. }
@@ -460,7 +499,7 @@ impl Node {
             | Self::Slider { .. }
             | Self::PickList { .. }
             | Self::Progress { .. }
-            | Self::Surface { .. } => Vec::new(),
+            | Self::Surface { .. } => &[],
         }
     }
 
@@ -472,20 +511,18 @@ impl Node {
         }
     }
 
-    /// Every node in the tree, depth first, this one included.
-    pub fn count(&self) -> usize {
-        1 + match self {
-            Self::Container { content, .. } | Self::Scroll { content, .. } => content.count(),
-            Self::Linear { children, .. } | Self::Grid { children, .. } => {
-                children.iter().map(Node::count).sum()
+    pub fn children_mut(&mut self) -> &mut [Node] {
+        match self {
+            Self::Container { content, .. } | Self::Scroll { content, .. } => {
+                std::slice::from_mut(content)
             }
+            Self::Linear { children, .. } | Self::Grid { children, .. } => children,
             Self::Button {
                 content: ButtonContent::Child(child),
                 ..
-            } => child.count(),
+            } => std::slice::from_mut(child),
             Self::Button { .. }
             | Self::Text { .. }
-            | Self::Svg { .. }
             | Self::Input { .. }
             | Self::Space { .. }
             | Self::Rule { .. }
@@ -494,8 +531,68 @@ impl Node {
             | Self::Slider { .. }
             | Self::PickList { .. }
             | Self::Progress { .. }
-            | Self::Surface { .. } => 0,
+            | Self::Svg { .. }
+            | Self::Surface { .. } => &mut [],
         }
+    }
+
+    /// The children as a list that can grow and shrink, for the variants
+    /// that hold one; a fixed-arity node (a container's one content) has
+    /// none, and no patch may insert into, remove from or move within it.
+    pub fn child_list_mut(&mut self) -> Option<&mut Vec<Node>> {
+        match self {
+            Self::Linear { children, .. } | Self::Grid { children, .. } => Some(children),
+            Self::Container { .. }
+            | Self::Scroll { .. }
+            | Self::Button { .. }
+            | Self::Text { .. }
+            | Self::Input { .. }
+            | Self::Space { .. }
+            | Self::Rule { .. }
+            | Self::Toggle { .. }
+            | Self::Radio { .. }
+            | Self::Slider { .. }
+            | Self::PickList { .. }
+            | Self::Progress { .. }
+            | Self::Svg { .. }
+            | Self::Surface { .. } => None,
+        }
+    }
+
+    /// Takes the children out, leaving an empty list or an empty stand-in
+    /// per slot: what is left is the node's own fields, which is what a
+    /// [`Patch::Props`] carries and what two nodes are compared by.
+    fn detach(&mut self) -> Vec<Node> {
+        match self.child_list_mut() {
+            Some(list) => std::mem::take(list),
+            None => self
+                .children_mut()
+                .iter_mut()
+                .map(|slot| std::mem::replace(slot, Node::empty()))
+                .collect(),
+        }
+    }
+
+    /// Puts [`Node::detach`]ed children back. `None` when the arity does
+    /// not fit, in which case nothing was moved.
+    fn attach(&mut self, children: Vec<Node>) -> Option<()> {
+        if let Some(list) = self.child_list_mut() {
+            *list = children;
+            return Some(());
+        }
+        let slots = self.children_mut();
+        if slots.len() != children.len() {
+            return None;
+        }
+        for (slot, child) in slots.iter_mut().zip(children) {
+            *slot = child;
+        }
+        Some(())
+    }
+
+    /// Every node in the tree, depth first, this one included.
+    pub fn count(&self) -> usize {
+        1 + self.children().iter().map(Node::count).sum::<usize>()
     }
 }
 
@@ -550,19 +647,246 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 /// guest passes through unchanged.
 ///
 /// A frame that arrived as bytes has passed [`decode`] first, which refuses
-/// one nested deeper than this walk goes.
+/// one nested deeper than this walk goes. A frame that carries `patches`
+/// instead of a tree is bounded by [`apply`], since every bound is on the
+/// tree the patches make and only the host holds it.
 pub fn sanitize(frame: &mut Frame) {
+    if let Some(root) = &mut frame.root {
+        sanitize_tree(root);
+    }
+    for request in &mut frame.requests {
+        truncate_string(&mut request.kind);
+    }
+}
+
+fn sanitize_tree(root: &mut Node) {
     let mut budget = MAX_NODES;
     let mut budgets = Budgets {
         text: MAX_TEXT_BYTES_PER_FRAME,
         svg: MAX_SVG_BYTES_PER_FRAME,
     };
     let mut taken = Taken::new();
-    if let Some(root) = &mut frame.root {
-        sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
+    sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
+}
+
+/// The most patches one frame may carry. A diff of a tree the host holds
+/// needs at most one patch per node it keeps, and a guest past that sends
+/// the tree whole; a host applying more would spend, per patch, a walk of
+/// a path and a shift of a child list, which is a frame's worth of work at
+/// this count already.
+pub const MAX_PATCHES: usize = 1024;
+
+/// Applies a patch frame to the tree the host holds, then pulls the result
+/// inside every bound [`sanitize`] promises — a patch is the guest's, so an
+/// inserted subtree can push the tree past [`MAX_NODES`] or [`MAX_DEPTH`]
+/// or reuse a key the tree already has, and the bounds are on the whole.
+///
+/// `Err` names a patch the tree cannot take: a path to no node, an index
+/// past a list, a list operation on a node with no list, a [`Patch::Props`]
+/// whose arity is not the node's, or more patches than [`MAX_PATCHES`]. The
+/// tree is then part-way through the sequence and not one the guest ever
+/// sent: the host drops it and asks for a whole one with [`Event::Resync`].
+pub fn apply(root: &mut Node, patches: Vec<Patch>) -> Result<(), &'static str> {
+    if patches.len() > MAX_PATCHES {
+        return Err("more patches than the host applies");
     }
-    for request in &mut frame.requests {
-        truncate_string(&mut request.kind);
+    for patch in patches {
+        apply_one(root, patch)?;
+    }
+    sanitize_tree(root);
+    Ok(())
+}
+
+fn apply_one(root: &mut Node, patch: Patch) -> Result<(), &'static str> {
+    let (path, edit) = match patch {
+        Patch::Replace { path, node } => (path, Edit::Replace(node)),
+        Patch::Props { path, node } => (path, Edit::Props(node)),
+        Patch::Insert { path, index, node } => (path, Edit::Insert(index, node)),
+        Patch::Remove { path, index } => (path, Edit::Remove(index)),
+        Patch::Move { path, from, to } => (path, Edit::Move(from, to)),
+    };
+    let mut target = root;
+    for index in path {
+        target = target
+            .children_mut()
+            .get_mut(index as usize)
+            .ok_or("a path to no node")?;
+    }
+    match edit {
+        Edit::Replace(node) => *target = node,
+        Edit::Props(mut node) => {
+            let children = target.detach();
+            node.attach(children).ok_or("props of another arity")?;
+            *target = node;
+        }
+        Edit::Insert(index, node) => {
+            let list = target.child_list_mut().ok_or("a list edit on no list")?;
+            if index as usize > list.len() {
+                return Err("an index past the list");
+            }
+            list.insert(index as usize, node);
+        }
+        Edit::Remove(index) => {
+            let list = target.child_list_mut().ok_or("a list edit on no list")?;
+            if index as usize >= list.len() {
+                return Err("an index past the list");
+            }
+            list.remove(index as usize);
+        }
+        Edit::Move(from, to) => {
+            let list = target.child_list_mut().ok_or("a list edit on no list")?;
+            if from as usize >= list.len() || to as usize >= list.len() {
+                return Err("an index past the list");
+            }
+            let node = list.remove(from as usize);
+            list.insert(to as usize, node);
+        }
+    }
+    Ok(())
+}
+
+/// A [`Patch`] with its path taken off.
+enum Edit {
+    Replace(Node),
+    Props(Node),
+    Insert(u32, Node),
+    Remove(u32),
+    Move(u32, u32),
+}
+
+/// The patches that turn `old` into `new`: `apply(old, diff(old, new))`
+/// leaves `old == new`. Both are borrowed mutably only to compare a node's
+/// own fields with its children set aside; each is put back as it was.
+///
+/// A list of children is matched by key — a keyed child that moved is a
+/// [`Patch::Move`], one that left a [`Patch::Remove`], a new one a
+/// [`Patch::Insert`] — and two lists of the same shape are matched by
+/// position. Keys are what [`sanitize`] already makes unique on the host.
+pub fn diff(old: &mut Node, new: &mut Node) -> Vec<Patch> {
+    let mut patches = Vec::new();
+    diff_node(old, new, &mut Vec::new(), &mut patches);
+    patches
+}
+
+fn diff_node(old: &mut Node, new: &mut Node, path: &mut Vec<u32>, out: &mut Vec<Patch>) {
+    if old == new {
+        return;
+    }
+    let same_kind = std::mem::discriminant(old) == std::mem::discriminant(new);
+    let same_arity = new.child_list_mut().is_some() || old.children().len() == new.children().len();
+    if !(same_kind && same_arity) {
+        out.push(Patch::Replace {
+            path: path.clone(),
+            node: new.clone(),
+        });
+        return;
+    }
+    let old_children = old.detach();
+    let new_children = new.detach();
+    if old != new {
+        out.push(Patch::Props {
+            path: path.clone(),
+            node: new.clone(),
+        });
+    }
+    let mut old_children = old_children;
+    let mut new_children = new_children;
+    match old.child_list_mut().is_some() {
+        true => diff_list(&mut old_children, &mut new_children, path, out),
+        false => {
+            for (index, (old_child, new_child)) in
+                old_children.iter_mut().zip(&mut new_children).enumerate()
+            {
+                path.push(index as u32);
+                diff_node(old_child, new_child, path, out);
+                path.pop();
+            }
+        }
+    }
+    old.attach(old_children).expect("its own children");
+    new.attach(new_children).expect("its own children");
+}
+
+fn diff_list(old: &mut [Node], new: &mut [Node], path: &mut Vec<u32>, out: &mut Vec<Patch>) {
+    let positional = old.len() == new.len()
+        && old
+            .iter()
+            .zip(new.iter())
+            .all(|(a, b)| match (a.key(), b.key()) {
+                (Some(a), Some(b)) => a == b,
+                (None, None) => std::mem::discriminant(a) == std::mem::discriminant(b),
+                _ => false,
+            });
+    if positional {
+        for (index, (old_child, new_child)) in old.iter_mut().zip(new.iter_mut()).enumerate() {
+            path.push(index as u32);
+            diff_node(old_child, new_child, path, out);
+            path.pop();
+        }
+        return;
+    }
+    // A key that appears once on each side is a child that survives; every
+    // other child — unkeyed, or a duplicate the host would rename — is
+    // removed and inserted afresh.
+    let unique = |nodes: &[Node]| -> std::collections::HashMap<String, usize> {
+        let mut seen = std::collections::HashMap::new();
+        for (index, node) in nodes.iter().enumerate() {
+            if let Some(key) = node.key() {
+                seen.entry(key.to_owned())
+                    .and_modify(|at| *at = usize::MAX)
+                    .or_insert(index);
+            }
+        }
+        seen.retain(|_, at| *at != usize::MAX);
+        seen
+    };
+    let old_keys = unique(old);
+    let new_keys = unique(new);
+    // The list as the host has it after the patches so far: old indices.
+    let mut live: Vec<usize> = Vec::with_capacity(new.len());
+    for (index, node) in old.iter().enumerate() {
+        let survives = node
+            .key()
+            .is_some_and(|key| old_keys.contains_key(key) && new_keys.contains_key(key));
+        match survives {
+            true => live.push(index),
+            false => out.push(Patch::Remove {
+                path: path.clone(),
+                index: live.len() as u32,
+            }),
+        }
+    }
+    for (index, new_child) in new.iter_mut().enumerate() {
+        let wanted = new_child
+            .key()
+            .filter(|key| new_keys.contains_key(*key))
+            .and_then(|key| old_keys.get(key).copied());
+        let Some(wanted) = wanted else {
+            out.push(Patch::Insert {
+                path: path.clone(),
+                index: index as u32,
+                node: new_child.clone(),
+            });
+            live.insert(index, usize::MAX);
+            continue;
+        };
+        let at = live[index..]
+            .iter()
+            .position(|old_index| *old_index == wanted)
+            .expect("a surviving child is still live")
+            + index;
+        if at != index {
+            out.push(Patch::Move {
+                path: path.clone(),
+                from: at as u32,
+                to: index as u32,
+            });
+            live.remove(at);
+            live.insert(index, wanted);
+        }
+        path.push(index as u32);
+        diff_node(&mut old[wanted], new_child, path, out);
+        path.pop();
     }
 }
 
@@ -1043,6 +1367,11 @@ pub fn encode<T: Serialize>(value: &T) -> Vec<u8> {
     bincode::serialize(value).expect("wire types are plain data")
 }
 
+/// How many bytes [`encode`] would write, without writing them.
+pub fn encoded_size<T: Serialize>(value: &T) -> u64 {
+    bincode::serialized_size(value).expect("wire types are plain data")
+}
+
 pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, String> {
     budget::reset();
     bincode::deserialize(bytes).map_err(|error| error.to_string())
@@ -1103,6 +1432,10 @@ mod tests {
                     style: InputStyle::default(),
                 },
             ])),
+            patches: vec![Patch::Remove {
+                path: vec![0, 1],
+                index: 2,
+            }],
             requests: vec![Request {
                 id: 1,
                 kind: "host.echo".into(),
@@ -1136,8 +1469,186 @@ mod tests {
                 result: Err("nope".into()),
                 done: true,
             },
+            Event::Resync,
         ];
         assert_eq!(decode::<Vec<Event>>(&encode(&events)).unwrap(), events);
+    }
+
+    fn keyed(key: &str, content: &str) -> Node {
+        let mut node = text(content);
+        let Node::Text { key: slot, .. } = &mut node else {
+            panic!()
+        };
+        *slot = key.into();
+        node
+    }
+
+    /// `diff` then `apply` is the identity on the new tree, and the patches
+    /// are the ones a reader expects: a changed field is `Props`, a moved
+    /// key is `Move`, a new key `Insert`, a gone key `Remove`, and a node
+    /// of another kind `Replace`.
+    #[test]
+    fn a_diff_applied_to_the_old_tree_is_the_new_tree() {
+        let old = column(vec![
+            keyed("a", "one"),
+            keyed("b", "two"),
+            keyed("c", "three"),
+            Node::Container {
+                key: "box".into(),
+                width: None,
+                height: None,
+                padding: None,
+                align_x: None,
+                align_y: None,
+                background: None,
+                border: None,
+                content: Box::new(keyed("inner", "deep")),
+            },
+        ]);
+        let mut new = column(vec![
+            keyed("c", "three"),
+            keyed("a", "one!"),
+            keyed("d", "four"),
+            Node::Container {
+                key: "box".into(),
+                width: None,
+                height: None,
+                padding: Some(Edges::all(4.0)),
+                align_x: None,
+                align_y: None,
+                background: None,
+                border: None,
+                content: Box::new(Node::empty()),
+            },
+        ]);
+        let mut applied = old.clone();
+        let patches = diff(&mut applied.clone(), &mut new.clone());
+        let kinds: Vec<&str> = patches
+            .iter()
+            .map(|patch| match patch {
+                Patch::Replace { .. } => "replace",
+                Patch::Props { .. } => "props",
+                Patch::Insert { .. } => "insert",
+                Patch::Remove { .. } => "remove",
+                Patch::Move { .. } => "move",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            ["remove", "move", "props", "insert", "props", "replace"],
+            "{patches:#?}"
+        );
+        // A container's props cross without its content.
+        let Patch::Props { path, node } = &patches[4] else {
+            panic!()
+        };
+        assert_eq!(path, &[3]);
+        assert_eq!(node.children(), &[Node::empty()]);
+        apply(&mut applied, patches).unwrap();
+        assert_eq!(applied, new);
+        // Nothing changed hands: both inputs of the diff are as they were.
+        let mut untouched = old.clone();
+        diff(&mut untouched, &mut new);
+        assert_eq!(untouched, old);
+        assert!(diff(&mut new.clone(), &mut new).is_empty());
+    }
+
+    #[test]
+    fn a_patch_the_tree_cannot_take_is_refused() {
+        let tree = column(vec![keyed("a", "one")]);
+        let refused = |patch: Patch| apply(&mut tree.clone(), vec![patch]).unwrap_err();
+        assert_eq!(
+            refused(Patch::Remove {
+                path: vec![7],
+                index: 0
+            }),
+            "a path to no node"
+        );
+        assert_eq!(
+            refused(Patch::Remove {
+                path: vec![],
+                index: 1
+            }),
+            "an index past the list"
+        );
+        assert_eq!(
+            refused(Patch::Insert {
+                path: vec![0],
+                index: 0,
+                node: Node::empty()
+            }),
+            "a list edit on no list"
+        );
+        assert_eq!(
+            refused(Patch::Props {
+                path: vec![0],
+                node: button(ButtonContent::Child(Box::new(Node::empty())))
+            }),
+            "props of another arity"
+        );
+        let many = vec![
+            Patch::Move {
+                path: vec![],
+                from: 0,
+                to: 0
+            };
+            MAX_PATCHES + 1
+        ];
+        assert_eq!(
+            apply(&mut tree.clone(), many).unwrap_err(),
+            "more patches than the host applies"
+        );
+    }
+
+    /// A patch is bounded like a tree: the result of applying it is inside
+    /// every limit, however the patches were shaped.
+    #[test]
+    fn an_applied_patch_frame_is_a_sanitized_tree() {
+        let mut tree = column(
+            (0..MAX_NODES - 1)
+                .map(|i| keyed(&i.to_string(), "x"))
+                .collect(),
+        );
+        sanitize_tree(&mut tree);
+        assert_eq!(tree.count(), MAX_NODES);
+        let mut deep = keyed("0", "leaf");
+        for _ in 0..MAX_DEPTH {
+            deep = column(vec![deep]);
+        }
+        apply(
+            &mut tree,
+            vec![
+                Patch::Insert {
+                    path: vec![],
+                    index: 0,
+                    node: keyed("1", &"y".repeat(MAX_STRING_BYTES + 1)),
+                },
+                Patch::Replace {
+                    path: vec![1],
+                    node: deep,
+                },
+            ],
+        )
+        .unwrap();
+        assert!(tree.count() <= MAX_NODES, "{}", tree.count());
+        let Node::Linear { children, .. } = &tree else {
+            panic!()
+        };
+        // The inserted key was already in the tree: walked first now, it
+        // keeps the key and the one that had it moves off.
+        assert_eq!(children[0].key(), Some("1"));
+        assert_eq!(children[2].key(), Some("1#2"));
+        let Node::Text { content, .. } = &children[0] else {
+            panic!()
+        };
+        assert_eq!(content.len(), MAX_STRING_BYTES);
+        let mut depth = 0;
+        let mut node = &children[1];
+        while let Node::Linear { children, .. } = node {
+            depth += 1;
+            node = &children[0];
+        }
+        assert!(depth <= MAX_DEPTH, "{depth}");
     }
 
     #[test]
@@ -1407,6 +1918,7 @@ mod tests {
             cancels: vec![1, 2],
             unchanged: false,
             busy: false,
+            patches: Vec::new(),
         });
         for cut in 0..sound.len() {
             let _ = decode::<Frame>(&sound[..cut]);

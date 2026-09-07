@@ -492,7 +492,7 @@ component MonitorRow(name:str, gauge:Gauge)
           @text-fg
       text gauge.frame
         with
-          w=130.0
+          w=210.0
           size=12.0
           font=figures
           @text-fg
@@ -563,7 +563,7 @@ component LiveCard(gauge:Gauge)
       Meter gauge=gauge
       row w=fill gap=16.0 wrap
         Figure label="Fuel / s" value=gauge.sustained
-        Figure label="Frame · unchanged" value=gauge.frame
+        Figure label="Frame full · patch · unchanged" value=gauge.frame
         Figure label="Ticks · skipped" value=gauge.idle
         Figure label="Load" value=gauge.load
       if !empty(gauge.fault)

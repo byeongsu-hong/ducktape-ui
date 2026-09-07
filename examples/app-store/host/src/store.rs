@@ -185,7 +185,8 @@ pub struct Guest {
     /// bus subscriptions without locking the guest from inside a publish.
     alive: Arc<AtomicBool>,
     pub(crate) pending: Vec<wire::Event>,
-    /// The last frame, its `root` kept across `unchanged` ticks.
+    /// The last frame, its `root` kept across `unchanged` ticks and patched
+    /// in place by a frame that carries patches instead of a tree.
     pub(crate) frame: wire::Frame,
     /// Bumped when `frame.root` changes: the widget rebuilds when it sees a
     /// number it has not rendered.
@@ -232,11 +233,14 @@ pub struct Guest {
     pub(crate) load: Load,
     /// What the guest has cost since it was loaded: ticks run, redraws it was
     /// quiet for and therefore skipped, frames that crossed without their
-    /// layers, and the bytes of the last frame that did cross.
+    /// tree, frames that crossed as patches, and the bytes of the last whole
+    /// tree and of the last patch frame.
     pub(crate) ticks: u64,
     pub(crate) skipped: u64,
     pub(crate) unchanged: u64,
+    pub(crate) patched: u64,
     pub(crate) frame_bytes: usize,
+    pub(crate) patch_bytes: usize,
     /// When the recent ticks ran and what each burned, for the ticks-per-
     /// second figure and the sustained fuel the throttle watches.
     recent: VecDeque<(Instant, u64)>,
@@ -429,7 +433,9 @@ impl Guest {
             ticks: 0,
             skipped: 0,
             unchanged: 0,
+            patched: 0,
             frame_bytes: 0,
+            patch_bytes: 0,
             recent: VecDeque::new(),
         })
     }
@@ -810,16 +816,34 @@ impl Guest {
         self.fuel_used = FUEL_PER_TICK.saturating_sub(self.store.get_fuel().unwrap_or(0));
         match outcome {
             Ok(mut frame) => {
-                // The guest built the tree the host already holds: keep it
-                // and take only what is new — requests and cancels.
                 if frame.unchanged {
                     self.unchanged += 1;
-                    frame.root = self.frame.root.take();
-                } else {
-                    self.frame_rev += 1;
-                    if let Some(root) = &frame.root {
-                        self.inputs.adopt(root);
-                        self.pictures.adopt(root);
+                } else if frame.root.is_none() {
+                    self.patched += 1;
+                }
+                match merge(&mut self.frame.root, &mut frame) {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        self.frame_rev += 1;
+                        if let Some(root) = &mut frame.root {
+                            self.inputs.adopt(root);
+                            self.pictures.adopt(root);
+                            // The guest remembers its tree without the
+                            // picture bytes; the tree its patches build on
+                            // has to be that one.
+                            root.for_each_mut(&mut |node| {
+                                if let wire::Node::Svg { bytes, .. } = node {
+                                    *bytes = None;
+                                }
+                            });
+                        }
+                    }
+                    // The window is blank for a tick and the guest hears
+                    // that it must send the tree whole.
+                    Err(refused) => {
+                        eprintln!("[{}] patch refused: {refused}", self.entry.id);
+                        self.frame_rev += 1;
+                        self.pending.push(wire::Event::Resync);
                     }
                 }
                 self.frame = frame;
@@ -840,11 +864,33 @@ impl Guest {
         let frame = self.view.call_tick(&mut self.store, bytes)?;
         let len = frame.len();
         let frame = shape(&frame).map_err(wasmtime::Error::msg)?;
-        if !frame.unchanged {
+        if frame.root.is_some() {
             self.frame_bytes = len;
+        } else if !frame.unchanged {
+            self.patch_bytes = len;
         }
         Ok(frame)
     }
+}
+
+/// Brings the tree the host holds into `frame`: an `unchanged` frame takes
+/// it as is, a frame without a tree patches it, a frame with one replaces
+/// it. `Ok(true)` is a tree the window has to rebuild for. `Err` is a
+/// patch the held tree cannot take, or no held tree to patch — `frame` is
+/// then left with no tree, and the guest has to be asked for a whole one.
+fn merge(held: &mut Option<wire::Node>, frame: &mut wire::Frame) -> Result<bool, &'static str> {
+    if frame.unchanged {
+        frame.root = held.take();
+        return Ok(false);
+    }
+    if frame.root.is_some() {
+        return Ok(true);
+    }
+    let patches = std::mem::take(&mut frame.patches);
+    let mut root = held.take().ok_or("no tree to patch")?;
+    wire::apply(&mut root, patches)?;
+    frame.root = Some(root);
+    Ok(true)
 }
 
 /// How long a guest waits after a redraw that cost `spent`. A tick inside
@@ -885,9 +931,13 @@ fn shape(bytes: &[u8]) -> Result<wire::Frame, String> {
     // host keeps enough to say so and drops the rest unanswered.
     frame.requests.truncate(2 * MAX_REQUESTS_PER_TICK);
     // A frame that says it changed nothing must not carry a tree the host
-    // would then lay out unsanitized; it is treated as what it claims.
+    // would then lay out unsanitized; it is treated as what it claims. A
+    // frame that carries a whole tree has nothing to patch.
     if frame.unchanged {
         frame.root = None;
+    }
+    if frame.unchanged || frame.root.is_some() {
+        frame.patches = Vec::new();
     }
     // Every frame, tree or no tree: an unchanged one still carries request
     // kinds the host formats into refusals and shows.
@@ -969,10 +1019,104 @@ mod tests {
             cancels: Vec::new(),
             unchanged: true,
             busy: false,
+            patches: Vec::new(),
         }))
         .expect("shaped");
         assert!(frame.root.is_none());
         assert_eq!(frame.requests[0].kind.len(), wire::MAX_STRING_BYTES);
+    }
+
+    fn label(key: &str, text: &str) -> wire::Node {
+        wire::Node::Text {
+            key: key.into(),
+            content: text.into(),
+            size: None,
+            color: None,
+            font: wire::Font::default(),
+            width: None,
+            align_x: None,
+        }
+    }
+
+    fn column(children: Vec<wire::Node>) -> wire::Node {
+        wire::Node::Linear {
+            key: "App/col".into(),
+            axis: wire::Axis::Column,
+            spacing: None,
+            padding: None,
+            width: None,
+            height: None,
+            align: None,
+            children,
+        }
+    }
+
+    /// A frame that carries a whole tree drops its patches; one that carries
+    /// patches keeps them for the merge.
+    #[test]
+    fn a_whole_tree_has_nothing_to_patch() {
+        let patch = wire::Patch::Remove {
+            path: Vec::new(),
+            index: 0,
+        };
+        let whole = shape(&wire::encode(&wire::Frame {
+            root: Some(wire::Node::empty()),
+            patches: vec![patch.clone()],
+            ..wire::Frame::default()
+        }))
+        .expect("shaped");
+        assert!(whole.patches.is_empty());
+        let patched = shape(&wire::encode(&wire::Frame {
+            patches: vec![patch.clone()],
+            ..wire::Frame::default()
+        }))
+        .expect("shaped");
+        assert_eq!(patched.patches, [patch]);
+    }
+
+    #[test]
+    fn a_patch_frame_edits_the_tree_the_host_holds_and_a_bad_one_empties_it() {
+        let mut held = Some(column(vec![label("a", "one"), label("b", "two")]));
+        let mut frame = wire::Frame {
+            patches: vec![
+                wire::Patch::Remove {
+                    path: Vec::new(),
+                    index: 0,
+                },
+                wire::Patch::Props {
+                    path: vec![0],
+                    node: label("b", "two!"),
+                },
+            ],
+            ..wire::Frame::default()
+        };
+        assert_eq!(merge(&mut held, &mut frame), Ok(true));
+        assert_eq!(frame.root, Some(column(vec![label("b", "two!")])));
+        assert!(frame.patches.is_empty());
+
+        let mut held = frame.root.take();
+        let mut unchanged = wire::Frame {
+            unchanged: true,
+            ..wire::Frame::default()
+        };
+        assert_eq!(merge(&mut held, &mut unchanged), Ok(false));
+        assert_eq!(unchanged.root, Some(column(vec![label("b", "two!")])));
+
+        let mut held = unchanged.root.take();
+        let mut bad = wire::Frame {
+            patches: vec![wire::Patch::Remove {
+                path: vec![4],
+                index: 0,
+            }],
+            ..wire::Frame::default()
+        };
+        assert_eq!(merge(&mut held, &mut bad), Err("a path to no node"));
+        assert!(bad.root.is_none() && held.is_none());
+        // With nothing held, patches have nothing to build on.
+        assert_eq!(
+            merge(&mut None, &mut wire::Frame::default()),
+            Err("no tree to patch")
+        );
     }
 
     #[test]

@@ -134,7 +134,7 @@ struct Task<M> {
 
 /// One running app: its state, its in-flight tasks, the streams its
 /// `subscribe` block keeps alive, and the last tree it sent so an identical
-/// one crosses as `unchanged`.
+/// one crosses as `unchanged` and a changed one as patches against it.
 pub struct Driver<A: App> {
     app: A,
     tasks: Vec<Task<A::Message>>,
@@ -195,9 +195,9 @@ impl<A: App> Driver<A> {
     /// dispatched before the tables are reset for this view. An index the
     /// last frame did not hand out (the host raced a rebuild) is dropped.
     ///
-    /// The frame always carries the tree, `unchanged` or not, so a test can
-    /// read it; the component export drops an unchanged tree before it
-    /// crosses to the host.
+    /// The frame always carries the tree, `unchanged` or patched or not, so
+    /// a test can read it; the component export drops a tree the host can
+    /// rebuild before it crosses.
     pub fn tick(&mut self, events: Vec<wire::Event>) -> wire::Frame {
         self.settle();
         for event in events {
@@ -219,6 +219,11 @@ impl<A: App> Driver<A> {
                     host::fulfill(id, result, done);
                     None
                 }
+                // The host dropped the tree the patches build on.
+                wire::Event::Resync => {
+                    self.last_root = None;
+                    None
+                }
             };
             if let Some(message) = message {
                 spawn(&mut self.tasks, self.app.update(message));
@@ -229,12 +234,25 @@ impl<A: App> Driver<A> {
         // once more so what it produced reaches `update` before the view.
         self.settle();
         slots::reset();
-        let root = self.app.view();
+        let mut root = self.app.view();
         let unchanged = self.last_root.as_ref() == Some(&root);
+        let mut patches = Vec::new();
         if !unchanged {
+            // Patches against the last tree, unless there is none — a first
+            // frame, or one after the host asked to resync — or the patches
+            // would cross bigger than the tree itself.
+            if let Some(last) = &mut self.last_root {
+                patches = wire::diff(last, &mut root);
+                if patches.len() > wire::MAX_PATCHES
+                    || wire::encoded_size(&patches) >= wire::encoded_size(&root)
+                {
+                    patches.clear();
+                }
+            }
             // Remembered without the picture bytes this frame carried: the
             // next view names those pictures by hash alone, and that is
-            // the same tree.
+            // the same tree — and the tree the host keeps, which drops the
+            // bytes the same way once it has the pictures.
             let mut kept = root.clone();
             kept.for_each_mut(&mut |node| {
                 if let wire::Node::Svg { bytes, .. } = node {
@@ -245,6 +263,7 @@ impl<A: App> Driver<A> {
         }
         wire::Frame {
             root: Some(root),
+            patches,
             requests: host::drain_outbox(),
             cancels: host::drain_cancels(),
             unchanged,
@@ -551,8 +570,9 @@ world view {
                     let events: Vec<$crate::wire::Event> =
                         $crate::wire::decode(&events).unwrap_or_default();
                     let mut frame = super::tick_native(events);
-                    // The host keeps the tree it has; only the rest crosses.
-                    if frame.unchanged {
+                    // The host keeps the tree it has, or patches it; the
+                    // whole tree crosses only when neither will do.
+                    if frame.unchanged || !frame.patches.is_empty() {
                         frame.root = None;
                     }
                     $crate::wire::encode(&frame)
@@ -599,6 +619,83 @@ mod tests {
         fn subscription(&self) -> iced::Subscription<u32> {
             iced::Subscription::none()
         }
+    }
+
+    /// A list of labelled rows, one of them marked; the message for a row
+    /// marks it.
+    struct Marked(u32);
+
+    impl App for Marked {
+        type Message = u32;
+
+        fn boot() -> (Self, iced::Task<u32>) {
+            (Self(0), iced::Task::none())
+        }
+
+        fn view(&self) -> wire::Node {
+            wire::Node::Linear {
+                key: "App/list".into(),
+                axis: wire::Axis::Column,
+                spacing: None,
+                padding: None,
+                width: None,
+                height: None,
+                align: None,
+                children: (0..40)
+                    .map(|row| wire::Node::Button {
+                        key: format!("App/list/{row}"),
+                        content: wire::ButtonContent::Label(match row == self.0 {
+                            true => format!("row {row} *"),
+                            false => format!("row {row}"),
+                        }),
+                        label: None,
+                        on_press: Some(slots::message::<u32>(row)),
+                        width: None,
+                        height: None,
+                        padding: None,
+                        style: wire::ButtonStyle::default(),
+                    })
+                    .collect(),
+            }
+        }
+
+        fn update(&mut self, row: u32) -> iced::Task<u32> {
+            self.0 = row;
+            iced::Task::none()
+        }
+
+        fn subscription(&self) -> iced::Subscription<u32> {
+            iced::Subscription::none()
+        }
+    }
+
+    /// The first frame is whole; a change is patches that turn the last
+    /// tree into the new one and cross smaller than it; the same tree again
+    /// is `unchanged`; and after the host asks to resync, the next frame is
+    /// whole again.
+    #[test]
+    fn a_changed_tree_crosses_as_patches_until_the_host_asks_for_it_whole() {
+        let mut driver = Driver::<Marked>::new();
+        let first = driver.tick(Vec::new());
+        assert!(first.patches.is_empty() && !first.unchanged);
+        let mut held = first.root.clone().unwrap();
+
+        let second = driver.tick(vec![wire::Event::Message(7)]);
+        assert!(!second.unchanged);
+        assert_eq!(second.patches.len(), 2, "{:?}", second.patches);
+        assert!(
+            wire::encoded_size(&second.patches) < wire::encoded_size(&second.root),
+            "the patches are the smaller encoding"
+        );
+        wire::apply(&mut held, second.patches.clone()).unwrap();
+        assert_eq!(Some(held), second.root);
+
+        let third = driver.tick(Vec::new());
+        assert!(third.unchanged && third.patches.is_empty());
+
+        let fourth = driver.tick(vec![wire::Event::Resync]);
+        assert!(!fourth.unchanged && fourth.patches.is_empty());
+        assert!(fourth.root.is_some());
     }
 
     #[test]
