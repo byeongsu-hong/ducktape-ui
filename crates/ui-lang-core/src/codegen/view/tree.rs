@@ -7,7 +7,7 @@
 //! the parent's child list; so a `for` over a list of rows compiles to the
 //! same loop for both targets and only the row inside changes.
 //!
-//! A construct the tree does not model (`flex`, `markdown`, a gradient
+//! A construct the tree does not model (`pin`, rich text, a gradient
 //! background...) fails the build, naming the construct and its `.ice`
 //! line, rather than rendering as something else. The host has a fixed
 //! vocabulary; a view module is written to it.

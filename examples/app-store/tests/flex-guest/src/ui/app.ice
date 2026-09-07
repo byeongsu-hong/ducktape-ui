@@ -29,22 +29,23 @@ component Chip(number:i64)
 view
   col w=fill gap=8.0
     text chosen #chosen
-    flex #reactions
-      with
-        w=fill
-        wrap=wrap
-        gap-x=7.0
-        gap-y=5.0
-        items=start
-      for value in values
-        if value > 0
-          button #reaction -> choose value
-            with
-              label="Reaction"
-              w=60.0
-              h=30.0
-              p=0.0
-            Chip number=value
+    lazy values as cached
+      flex #reactions
+        with
+          w=fill
+          wrap=wrap
+          gap-x=7.0
+          gap-y=5.0
+          items=start
+        for value in cached
+          if value > 0
+            button #reaction -> choose value
+              with
+                label="Reaction"
+                w=60.0
+                h=30.0
+                p=0.0
+              Chip number=value
     flex #composer
       with
         w=fill

@@ -30,7 +30,7 @@ fn guest() -> Arc<Mutex<Guest>> {
         description: String::new(),
         capabilities: vec![],
         path: path.to_string_lossy().into_owned(),
-        mark: "L".into(),
+        mark: "F".into(),
         hash,
     })
     .unwrap();
@@ -176,7 +176,7 @@ fn bundled_flex_reflows_reaction_routes_and_preserves_composer_input() {
         }
     }
     let mut op = InputBounds(None);
-    ui.operate(&mut renderer, &mut op);
+    ui.operate(&renderer, &mut op);
     let input = op.0.expect("native composer input");
     let send = bounds(&mut ui, &mut renderer, "Send").unwrap();
     assert!(

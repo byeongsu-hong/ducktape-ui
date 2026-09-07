@@ -1011,7 +1011,7 @@ native UI cache. A second test clicks component-local routes inside virtual keye
 lazy rows before and after reordering, preserving sibling state and generations.
 Native tests separately count layout hits/reflows and verify
 resource release and shared text/image budgets. Other Tree refusals, including
-flex, pin, rich text and retained components, still block larger application
+pin, rich text and retained components, still block larger application
 graphs.
 
 ```sh
@@ -1020,4 +1020,26 @@ cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
   --out examples/app-store/target/lazy-fixture
 cd examples/app-store
 cargo test -p app-store-host store::lazy_tests -- --ignored
+```
+
+
+### Flex module views
+
+Tree flex delegates wrapping, directions, alignment, gaps, sizing, clipping and
+per-item order/grow/shrink/basis/margins to the host's existing native engine.
+The guest copies rules and children, including loop/component children, without
+measuring pixels. Utility sizing of the outer painted container is preserved
+separately from explicit inner dimensions. Host and guest must be rebuilt together.
+
+The bundled fixture models wrapping reaction buttons inside lazy, an expanding
+input beside Send, and the full checked flex option set. Native pointer and
+keyboard events verify guest state before/after narrowing the view. Native tests
+separately check geometry and wire tests check hostile numeric/metadata bounds.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-flex-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/flex-fixture
+cd examples/app-store
+cargo test -p app-store-host store::flex_tests -- --ignored
 ```

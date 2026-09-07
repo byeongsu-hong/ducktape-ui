@@ -646,6 +646,14 @@ jobs:
       - name: Verify lazy native routes through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host store::lazy_tests -- --ignored
+      - name: Bundle flex module views
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-flex-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/flex-fixture
+      - name: Verify flex wrapping and native input through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host store::flex_tests -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored
