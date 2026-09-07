@@ -216,7 +216,7 @@ pub(in crate::codegen) fn render_text_editor(
     }
 }
 
-fn resolved_editor_state<'a>(
+pub(in crate::codegen) fn resolved_editor_state<'a>(
     editor: &ResolvedTextEditor,
     env: &'a dyn BindingEnvironment,
     program: &LoweredProgram,

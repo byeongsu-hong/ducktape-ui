@@ -2169,9 +2169,20 @@ fn expr_builtin_group_6(
             "({}).images().iter().cloned().collect::<::std::vec::Vec<_>>()",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
+        // On the tree target an editor is its text (`editor_type_code`):
+        // the guest never sees a caret, so the cursor builtins are refused
+        // and the rest read the string.
+        "editor" if context.program.target() == Target::Tree => format!(
+            "::std::string::String::from({})",
+            expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
+        ),
         "editor" => format!(
             "::iced::widget::text_editor::Content::with_text(&{})",
             expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
+        ),
+        "editor_text" | "editor_copy" if context.program.target() == Target::Tree => format!(
+            "({}).clone()",
+            expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
         "editor_text" => format!(
             "({}).text()",
@@ -2183,6 +2194,19 @@ fn expr_builtin_group_6(
                 "{{ let __source = &{source}; let mut __copy = ::iced::widget::text_editor::Content::with_text(&__source.text()); __copy.move_to(__source.cursor()); __copy }}"
             )
         }
+        "editor_cursor_line" | "editor_cursor_column" | "editor_has_selection"
+            if context.program.target() == Target::Tree =>
+        {
+            // An expression node carries no origin: the refusal names the
+            // builtin, not its line.
+            return Err(Error::new(
+                "E190",
+                &Span::line(1),
+                format!(
+                    "`{name}` is not available in a view module: the tree wire does not carry the caret"
+                ),
+            ));
+        }
         "editor_cursor_line" => format!(
             "(({}).cursor().position.line.min(i64::MAX as usize) as i64)",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
@@ -2191,12 +2215,21 @@ fn expr_builtin_group_6(
             "(({}).cursor().position.column.min(i64::MAX as usize) as i64)",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
+        "editor_line_count" if context.program.target() == Target::Tree => format!(
+            "(({}).split('\\n').count().min(i64::MAX as usize) as i64)",
+            expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
+        ),
         "editor_line_count" => format!(
             "(({}).line_count().min(i64::MAX as usize) as i64)",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
         "editor_has_selection" => format!(
             "({}).cursor().selection.is_some()",
+            expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
+        ),
+        "editor_line" if context.program.target() == Target::Tree => format!(
+            "::std::convert::TryFrom::try_from({}).ok().and_then(|__line: usize| ({}).split('\\n').nth(__line)).map(str::to_owned)",
+            expr_node_code(args.value(1)?, env, context, ValueMode::Owned)?,
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
         "editor_line" => format!(
@@ -2688,6 +2721,9 @@ fn resolved_expr_use_code_in(
                 ),
                 _ => format!("::iced::widget::markdown::Content::parse(&({code}))"),
             }
+        }
+        ResolvedInitializerCoercion::StrToEditor if context.program.target() == Target::Tree => {
+            format!("::std::string::String::from({code})")
         }
         ResolvedInitializerCoercion::StrToEditor => {
             match &expressions.expression(expression_use.root).kind {

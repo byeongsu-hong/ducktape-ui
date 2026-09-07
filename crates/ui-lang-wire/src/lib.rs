@@ -10,7 +10,8 @@
 //! the message the guest queued for it this frame ([`Node::Button`]'s
 //! `on_press`); the host sends [`Event::Message`] with that index and the
 //! guest runs its own handler. A text field carries a handler index; the host
-//! owns the text and sends [`Event::Input`] with what it now reads. A
+//! owns the text and sends [`Event::Input`] with what it now reads; a
+//! multiline editor the same, with [`Event::Edit`]. A
 //! checkbox, slider or pick list likewise carries a handler index and the
 //! host sends the new value ([`Event::Toggle`], [`Event::Slide`],
 //! [`Event::Select`]).
@@ -34,6 +35,10 @@ pub enum Event {
     /// per-frame input-handler table; `text` is the whole value the host now
     /// holds.
     Input { handler: u32, text: String },
+    /// An editor's text changed. `handler` indexes the guest's per-frame
+    /// handler table; `text` is the whole value the host now holds. A caret
+    /// move alone sends nothing: the guest holds the text, not the cursor.
+    Edit { handler: u32, text: String },
     /// A checkbox or toggler flipped. `handler` indexes the guest's
     /// per-frame handler table; `on` is the state it now shows.
     Toggle { handler: u32, on: bool },
@@ -567,6 +572,24 @@ pub enum Node {
         secure: bool,
         style: InputStyle,
     },
+    /// A multiline text editor. The host owns the `text_editor::Content` —
+    /// caret, selection, undo — and the guest sees the text alone, as with
+    /// [`Node::Input`]. It crosses unstyled.
+    Editor {
+        key: String,
+        placeholder: String,
+        /// The guest's copy of the text. The host owns the live value and
+        /// adopts this only when it differs from what the guest reported
+        /// last frame.
+        text: String,
+        /// `None` is a disabled editor.
+        on_edit: Option<u32>,
+        /// Pixels; the editor fills its parent otherwise.
+        width: Option<f32>,
+        height: Option<Length>,
+        min_height: Option<f32>,
+        max_height: Option<f32>,
+    },
     Button {
         key: String,
         content: ButtonContent,
@@ -704,6 +727,7 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Svg { key, .. }
             | Self::Input { key, .. }
+            | Self::Editor { key, .. }
             | Self::Button { key, .. }
             | Self::Rule { key, .. }
             | Self::Toggle { key, .. }
@@ -735,6 +759,7 @@ impl Node {
             | Self::Text { .. }
             | Self::Svg { .. }
             | Self::Input { .. }
+            | Self::Editor { .. }
             | Self::Space { .. }
             | Self::Rule { .. }
             | Self::Toggle { .. }
@@ -768,6 +793,7 @@ impl Node {
             Self::Button { .. }
             | Self::Text { .. }
             | Self::Input { .. }
+            | Self::Editor { .. }
             | Self::Space { .. }
             | Self::Rule { .. }
             | Self::Toggle { .. }
@@ -793,6 +819,7 @@ impl Node {
             | Self::Button { .. }
             | Self::Text { .. }
             | Self::Input { .. }
+            | Self::Editor { .. }
             | Self::Space { .. }
             | Self::Rule { .. }
             | Self::Toggle { .. }
@@ -851,7 +878,8 @@ pub const MAX_NODES: usize = 8_192;
 /// The longest string a single node may carry (text, placeholder, key).
 pub const MAX_STRING_BYTES: usize = 64 << 10;
 /// The most SHAPED text one frame may carry in total — every [`Node::Text`]
-/// content, input value and placeholder, and plain button label together.
+/// content, input or editor value and placeholder, and plain button label
+/// together.
 ///
 /// The per-string and per-node caps do not bound this: 128 strings of
 /// [`MAX_STRING_BYTES`] are a legal 8 MiB frame, and the host reshapes all
@@ -1343,6 +1371,22 @@ fn sanitize_node(
                 bound_color(&mut face.selection);
             }
         }
+        Node::Editor {
+            key,
+            placeholder,
+            text,
+            width,
+            min_height,
+            max_height,
+            ..
+        } => {
+            claim(key, taken);
+            spend_text(placeholder, &mut budgets.text);
+            spend_text(text, &mut budgets.text);
+            bound_optional(width);
+            bound_optional(min_height);
+            bound_optional(max_height);
+        }
         Node::Button {
             key,
             content,
@@ -1557,6 +1601,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Slider { width, height, .. }
         | Node::Space { width, height } => vec![width, height],
         Node::Progress { length, girth, .. } => vec![length, girth],
+        Node::Editor { height, .. } => vec![height],
         Node::Text { width, .. }
         | Node::Input { width, .. }
         | Node::Toggle { width, .. }
@@ -1816,6 +1861,16 @@ mod tests {
                     secure: false,
                     style: InputStyle::default(),
                 },
+                Node::Editor {
+                    key: "App/e".into(),
+                    placeholder: "Notes".into(),
+                    text: "line\nline".into(),
+                    on_edit: Some(5),
+                    width: None,
+                    height: Some(Length::Fill),
+                    min_height: Some(80.0),
+                    max_height: None,
+                },
             ])),
             patches: vec![Patch::Remove {
                 path: vec![0, 1],
@@ -1836,6 +1891,10 @@ mod tests {
             Event::Input {
                 handler: 0,
                 text: "xy".into(),
+            },
+            Event::Edit {
+                handler: 5,
+                text: "xy\nz".into(),
             },
             Event::Toggle {
                 handler: 1,
@@ -2085,6 +2144,48 @@ mod tests {
         assert_eq!(shaped.iter().sum::<usize>(), MAX_TEXT_BYTES_PER_FRAME);
         assert_eq!(&shaped[..4], &[EACH; 4]);
         assert_eq!(&shaped[4..], &[0; NODES - 4]);
+    }
+
+    #[test]
+    fn an_editor_spends_the_text_budget_like_an_input() {
+        let long = "x".repeat(MAX_TEXT_BYTES_PER_FRAME);
+        let mut frame = Frame {
+            root: Some(column(vec![
+                Node::Editor {
+                    key: "App/e".into(),
+                    placeholder: long.clone(),
+                    text: long,
+                    on_edit: None,
+                    width: None,
+                    height: None,
+                    min_height: Some(f32::NAN),
+                    max_height: Some(f32::INFINITY),
+                },
+                text("tail"),
+            ])),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        let Node::Editor {
+            placeholder,
+            text,
+            min_height,
+            max_height,
+            ..
+        } = &children[0]
+        else {
+            panic!()
+        };
+        assert_eq!(placeholder.len(), MAX_TEXT_BYTES_PER_FRAME);
+        assert!(text.is_empty());
+        assert_eq!((*min_height, *max_height), (Some(0.0), Some(MAX_PIXELS)));
+        let Node::Text { content, .. } = &children[1] else {
+            panic!()
+        };
+        assert!(content.is_empty());
     }
 
     #[test]

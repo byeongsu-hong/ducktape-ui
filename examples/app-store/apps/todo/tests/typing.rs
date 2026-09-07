@@ -4,27 +4,40 @@
 use app_store_todo::items::{Item, decode, encode};
 use app_store_todo::{boot_native, tick_native};
 use ui_lang_guest::testing::{
-    answer, find, has_text, item, keys, press, slide, texts, toggle, type_into,
+    answer, edit, find, has_text, item, keys, press, slide, texts, toggle, type_into,
 };
 use ui_lang_guest::wire::{Frame, Node, Request, Rgba};
 
 fn boot_with(stored: &[Item]) -> Frame {
-    boot_native();
-    let frame = tick_native(Vec::new());
-    // The load and the colour-mode subscription, in whichever order the
-    // parallel group started them.
-    assert_eq!(frame.requests.len(), 2, "{:?}", frame.requests);
-    request_for(&frame.requests, "host.theme");
-    let load = request_for(&frame.requests, "storage.get");
-    assert_eq!(load.payload, b"items");
-    tick_native(vec![answer(load.id, &encode(stored))])
+    boot_with_notes(stored, "")
 }
 
-fn request_for<'a>(requests: &'a [Request], kind: &str) -> &'a Request {
+fn boot_with_notes(stored: &[Item], notes: &str) -> Frame {
+    boot_native();
+    let frame = tick_native(Vec::new());
+    // The two loads and the colour-mode subscription, in whichever order
+    // the parallel group started them.
+    assert_eq!(frame.requests.len(), 3, "{:?}", frame.requests);
+    request_for(&frame.requests, "host.theme", b"");
+    let load = request_for(&frame.requests, "storage.get", b"items");
+    let load_notes = request_for(&frame.requests, "storage.get", b"notes");
+    tick_native(vec![
+        answer(load.id, &encode(stored)),
+        answer(load_notes.id, notes.as_bytes()),
+    ])
+}
+
+/// The request of `kind` whose payload is `payload`; any payload for the
+/// one kind sent once.
+fn request_for<'a>(requests: &'a [Request], kind: &str, payload: &[u8]) -> &'a Request {
     requests
         .iter()
-        .find(|request| request.kind == kind)
-        .unwrap_or_else(|| panic!("no {kind} in {requests:?}"))
+        .find(|request| {
+            request.kind == kind
+                && (request.payload == payload
+                    || requests.iter().filter(|other| other.kind == kind).count() == 1)
+        })
+        .unwrap_or_else(|| panic!("no {kind} {payload:?} in {requests:?}"))
 }
 
 #[test]
@@ -86,6 +99,35 @@ fn typing_into_the_input_and_adding_appends_a_row_and_saves_it() {
     assert_eq!(publish.payload, b"todo\n2 items, 1 left");
     let frame = tick_native(vec![answer(publish.id, &[])]);
     assert!(has_text(&frame, "saved 2 items"), "{:?}", texts(&frame));
+}
+
+/// The notes are an `editor` the host edits: the guest hears the whole text
+/// and echoes it, and Save writes it under its own storage key.
+#[test]
+fn editing_the_notes_echoes_them_and_save_writes_them() {
+    let frame = boot_with_notes(&[], "carried over");
+    let Some(Node::Editor { text, on_edit, .. }) = find(&frame, "Todo/app/content/notes") else {
+        panic!("no editor in {:?}", keys(&frame));
+    };
+    assert_eq!(text, "carried over");
+    assert!(on_edit.is_some(), "the editor is enabled");
+    assert!(has_text(&frame, "carried over"), "{:?}", texts(&frame));
+
+    let frame = tick_native(edit(&frame, "Notes", "buy milk\nand eggs"));
+    let Some(Node::Editor { text, .. }) = find(&frame, "Todo/app/content/notes") else {
+        panic!("no editor in {:?}", keys(&frame));
+    };
+    assert_eq!(text, "buy milk\nand eggs", "the guest echoes the host's text");
+    assert!(frame.requests.is_empty(), "typing saves nothing: {:?}", frame.requests);
+
+    let frame = tick_native(press(&frame, "Save notes"));
+    let [save] = frame.requests.as_slice() else {
+        panic!("one save after Save notes, got {:?}", frame.requests);
+    };
+    assert_eq!(save.kind, "storage.set");
+    assert_eq!(save.payload, b"notes\nbuy milk\nand eggs");
+    let frame = tick_native(vec![answer(save.id, &[])]);
+    assert!(has_text(&frame, "saved notes"), "{:?}", texts(&frame));
 }
 
 /// A row's checkbox and the footer's toggler are the form controls the wire
@@ -223,7 +265,7 @@ fn backdrop(frame: &Frame) -> Option<Rgba> {
 fn the_hosts_dark_mode_repaints_the_app() {
     boot_native();
     let light = tick_native(Vec::new());
-    let theme = request_for(&light.requests, "host.theme");
+    let theme = request_for(&light.requests, "host.theme", b"");
     let lit = backdrop(&light).expect("the boot frame paints the app");
     let dark = tick_native(vec![item(theme.id, b"dark")]);
     assert_ne!(

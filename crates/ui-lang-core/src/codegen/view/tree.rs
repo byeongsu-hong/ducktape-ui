@@ -25,9 +25,12 @@
 //! Interaction: a button's message goes into the guest's per-frame table
 //! (`ui_lang_guest::slots::message`) and the node carries the index; an
 //! input's `String -> Message` constructor likewise (`slots::handler`), as
-//! do a checkbox's `bool`, a slider's `f32`, a pick list's option index, a
-//! mouse area's pointer position and scroll delta. Colours are resolved
-//! through the app's palette here and cross as RGBA.
+//! do an editor's, a checkbox's `bool`, a slider's `f32`, a pick list's
+//! option index, a mouse area's pointer position and scroll delta. An
+//! `editor` state field is a `String` on this target (`editor_type_code`):
+//! the host owns the `text_editor::Content`, and the guest hears the whole
+//! text back like an input's. Colours are resolved through the app's
+//! palette here and cross as RGBA.
 //!
 //! A per-state style given as literal colours crosses as a set of faces the
 //! host paints over its own theme; a style given as a Rust callback
@@ -71,6 +74,7 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::Text => text(node, identity, document, env, scope)?,
         ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,
+        ResolvedViewKind::TextEditor => editor(node, identity, document, message, env, scope)?,
         ResolvedViewKind::Button { content } => button(
             node,
             identity,
@@ -1350,6 +1354,114 @@ fn input(
             env,
             origin
         )?),
+    ))
+}
+
+fn editor(
+    id: ViewId,
+    identity: Option<&ResolvedViewIdentity>,
+    program: &LoweredProgram,
+    message: &str,
+    env: &dyn BindingEnvironment,
+    scope: &str,
+) -> Result<String, Error> {
+    let editor = program.resolved_text_editor(id)?;
+    let origin = editor.origin;
+    refuse_when(program, origin, editor.action.is_some(), "an editor action")?;
+    refuse_when(
+        program,
+        origin,
+        editor.key_binding.is_some(),
+        "an editor key binding",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        editor.highlight.is_some() || editor.highlighter.is_some(),
+        "an editor highlighter",
+    )?;
+    let styles = &editor.styles;
+    refuse_when(
+        program,
+        origin,
+        editor.custom_style.is_some()
+            || styles.active.is_some()
+            || styles.hovered.is_some()
+            || styles.focused.is_some()
+            || styles.focused_hovered.is_some()
+            || styles.disabled.is_some(),
+        "a style on an editor",
+    )?;
+    refuse_when(
+        program,
+        origin,
+        editor.size.is_some()
+            || editor.padding.is_some()
+            || editor.line_height.is_some()
+            || editor.wrapping.is_some()
+            || editor.font.is_some(),
+        "this editor option",
+    )?;
+    let state = resolved_editor_state(editor, env, program)?;
+    let constructor = match &state.state {
+        Some(StateBinding::App(name)) => {
+            let variant = editor_variant(name);
+            format!("{message}::{variant} as fn(::std::string::String) -> {message}")
+        }
+        Some(StateBinding::Component {
+            component,
+            name,
+            scope,
+        }) => {
+            let variant = component_editor_variant(component, name);
+            format!(
+                "{{ let __scope = ({}).clone(); move |__value| {message}::{variant}(__scope.clone(), __value) }}",
+                borrowed_scope(scope)
+            )
+        }
+        None => {
+            return Err(program.invariant_at_origin(
+                origin,
+                "normalized editor binding does not resolve to editor state",
+            ));
+        }
+    };
+    let handler = handler_code(
+        "::std::string::String",
+        message,
+        &constructor,
+        "move |__sent: ::std::string::String| ::std::option::Option::Some(__route(__sent))",
+    );
+    let on_edit = match editor.disabled {
+        Some(disabled) => format!(
+            "if ({}) {{ ::std::option::Option::None }} else {{ ::std::option::Option::Some({handler}) }}",
+            resolved_expr_use_code(program, disabled, env, ValueMode::Owned)?
+        ),
+        None => format!("::std::option::Option::Some({handler})"),
+    };
+    let pixels = |value: Option<CheckedExprUseId>| -> Result<Option<String>, Error> {
+        value
+            .map(|value| {
+                Ok(format!(
+                    "({}) as f32",
+                    resolved_expr_use_code(program, value, env, ValueMode::Owned)?
+                ))
+            })
+            .transpose()
+    };
+    let key = key_code(identity, "editor", origin, scope, env, program)?;
+    Ok(format!(
+        "{WIRE}::Node::Editor {{ key: {key}, placeholder: {}, text: ({}).to_string(), on_edit: {on_edit}, width: {}, height: {}, min_height: {}, max_height: {} }}",
+        editor
+            .placeholder
+            .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+            .transpose()?
+            .unwrap_or_else(|| "::std::string::String::new()".into()),
+        state.code,
+        option_code(pixels(editor.width)?),
+        dimension_code(editor.height.as_ref(), false, program, env, origin)?,
+        option_code(pixels(editor.min_height)?),
+        option_code(pixels(editor.max_height)?),
     ))
 }
 

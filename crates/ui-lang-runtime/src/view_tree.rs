@@ -7,7 +7,9 @@
 //! the guest only ever sees a whole-string [`wire::Event::Input`] after the
 //! fact, and gets to overwrite the host's copy only by reporting a value
 //! that differs from the one it reported last frame (its own handler
-//! cleared or set the field).
+//! cleared or set the field). An editor's `text_editor::Content` lives
+//! here the same way, and the guest hears its whole text as a
+//! [`wire::Event::Edit`].
 //!
 //! The rendered element speaks [`Output`]; the host turns each one into the
 //! wire event with [`Inputs::apply`] and hands it to the guest.
@@ -17,12 +19,16 @@
 //! keeps the guest.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use iced::alignment::{Horizontal, Vertical};
+use iced::widget::text_editor;
 use iced::{Background, Color, Element, Length, widget};
 use ui_lang_wire as wire;
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
+
+mod editor;
 
 pub type IceElement<'a, Message> = Element<'a, Message, iced::Theme, iced::Renderer>;
 
@@ -38,6 +44,20 @@ pub enum Output {
         key: String,
         handler: u32,
         text: String,
+    },
+    /// The user did `action` in an editor: a keystroke, a paste, a click,
+    /// a caret move. The host performs it on the `Content` it holds and the
+    /// guest hears the text, when it changed.
+    EditorAction {
+        key: String,
+        handler: u32,
+        action: text_editor::Action,
+    },
+    /// Accessibility asked the editor under `key` to move its caret.
+    MoveCaret {
+        key: String,
+        line: usize,
+        column: usize,
     },
     /// A checkbox or toggler was flipped to `on`.
     Toggle { handler: u32, on: bool },
@@ -83,10 +103,21 @@ pub type Surface = Box<dyn Fn(&str) -> IceElement<'static, Output> + Send + Sync
 /// A name not in here renders as a visible placeholder naming it.
 pub type Surfaces = HashMap<String, Surface>;
 
-/// The live text of every input in a tree, by node key.
+/// The live content of every editor in a tree, by node key. The widget
+/// shares it (`editor::Shared`) because the tree it sits in outlives the
+/// lock on the guest that owns this.
+#[derive(Debug)]
+struct EditorField {
+    content: editor::Shared,
+    /// What the guest said the text was, last frame.
+    reported: String,
+}
+
+/// The live text of every input and editor in a tree, by node key.
 #[derive(Debug, Default)]
 pub struct Inputs {
     fields: HashMap<String, Field>,
+    editors: HashMap<String, EditorField>,
 }
 
 impl Inputs {
@@ -99,7 +130,8 @@ impl Inputs {
         // holds, and a tree of a thousand inputs asking a list a thousand
         // times is a million comparisons on the window thread.
         let mut seen = HashMap::new();
-        collect_inputs(root, &mut seen);
+        let mut editors = HashMap::new();
+        collect_inputs(root, &mut seen, &mut editors);
         self.fields.retain(|key, _| seen.contains_key(key));
         for (key, value) in seen {
             match self.fields.get_mut(&key) {
@@ -114,6 +146,33 @@ impl Inputs {
                         Field {
                             text: value.clone(),
                             reported: value,
+                        },
+                    );
+                }
+            }
+        }
+        self.editors.retain(|key, _| editors.contains_key(key));
+        for (key, text) in editors {
+            match self.editors.get_mut(&key) {
+                Some(field) if field.reported == text => {}
+                Some(field) => {
+                    // The guest set the text — unless it is echoing what the
+                    // user typed, which the content already reads; rebuilding
+                    // it then would put the caret back at the top on every
+                    // keystroke.
+                    let mut content = lock(&field.content);
+                    if content.text() != text {
+                        *content = text_editor::Content::with_text(&text);
+                    }
+                    drop(content);
+                    field.reported = text;
+                }
+                None => {
+                    self.editors.insert(
+                        key,
+                        EditorField {
+                            content: Arc::new(Mutex::new(text_editor::Content::with_text(&text))),
+                            reported: text,
                         },
                     );
                 }
@@ -146,6 +205,11 @@ impl Inputs {
     /// held. The host's own copy of the field is cut the same way, so the
     /// widget shows exactly what the guest was told — a paste past the
     /// bound is cut, not refused, and the next render paints the cut value.
+    ///
+    /// An editor action is performed on the host's `Content` here, and the
+    /// guest hears the whole text only when an action changed it: a caret
+    /// move or a click is the host's alone and queues nothing, as does an
+    /// action for an editor the tree no longer has.
     pub fn apply(&mut self, output: Output, pending: &mut Vec<wire::Event>) {
         let event = match output {
             Output::Activate(index) => wire::Event::Message(index),
@@ -159,6 +223,38 @@ impl Inputs {
                     field.text = text.clone();
                 }
                 wire::Event::Input { handler, text }
+            }
+            Output::EditorAction {
+                key,
+                handler,
+                action,
+            } => {
+                let Some(field) = self.editors.get_mut(&key) else {
+                    return;
+                };
+                let mut content = lock(&field.content);
+                let before = content.text();
+                content.perform(action);
+                let mut text = content.text();
+                if text == before {
+                    return;
+                }
+                // A paste past the bound is cut like an input's, at the
+                // cost of the caret: the content is rebuilt from the cut.
+                if text.len() > wire::MAX_STRING_BYTES {
+                    wire::truncate_string(&mut text);
+                    *content = text_editor::Content::with_text(&text);
+                }
+                wire::Event::Edit { handler, text }
+            }
+            Output::MoveCaret { key, line, column } => {
+                if let Some(field) = self.editors.get(&key) {
+                    lock(&field.content).move_to(text_editor::Cursor {
+                        position: text_editor::Position { line, column },
+                        selection: None,
+                    });
+                }
+                return;
             }
             Output::Toggle { handler, on } => wire::Event::Toggle { handler, on },
             Output::Slide { handler, value } => wire::Event::Slide { handler, value },
@@ -201,28 +297,47 @@ impl Inputs {
         };
         pending.push(event);
     }
+
+    /// The editor content under `key`; `None` for an editor the last
+    /// [`Inputs::adopt`] did not see.
+    fn editor(&self, key: &str) -> Option<&editor::Shared> {
+        self.editors.get(key).map(|field| &field.content)
+    }
 }
 
-fn collect_inputs(node: &wire::Node, into: &mut HashMap<String, String>) {
+fn lock(content: &editor::Shared) -> std::sync::MutexGuard<'_, text_editor::Content> {
+    content
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn collect_inputs(
+    node: &wire::Node,
+    into: &mut HashMap<String, String>,
+    editors: &mut HashMap<String, String>,
+) {
     match node {
         wire::Node::Input { key, value, .. } => {
             into.insert(key.clone(), value.clone());
+        }
+        wire::Node::Editor { key, text, .. } => {
+            editors.insert(key.clone(), text.clone());
         }
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
         | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
-            collect_inputs(content, into);
+            collect_inputs(content, into, editors);
         }
         wire::Node::Linear { children, .. } | wire::Node::Grid { children, .. } => {
             for child in children {
-                collect_inputs(child, into);
+                collect_inputs(child, into, editors);
             }
         }
         wire::Node::Button {
             content: wire::ButtonContent::Child(child),
             ..
-        } => collect_inputs(child, into),
+        } => collect_inputs(child, into, editors),
         wire::Node::Button { .. }
         | wire::Node::Text { .. }
         | wire::Node::Svg { .. }
@@ -296,6 +411,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         | wire::Node::Svg { .. }
         | wire::Node::Text { .. }
         | wire::Node::Input { .. }
+        | wire::Node::Editor { .. }
         | wire::Node::Space { .. }
         | wire::Node::Rule { .. }
         | wire::Node::Toggle { .. }
@@ -1266,6 +1382,45 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .disabled(false)
                 .into()
         }
+        wire::Node::Editor {
+            key,
+            placeholder,
+            text,
+            on_edit,
+            ..
+        } => {
+            // A key the host has not adopted yet (a render before the frame
+            // was taken in) shows the guest's text and keeps nothing.
+            let content = inputs
+                .editor(key)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(Mutex::new(text_editor::Content::with_text(text))));
+            let (value, cursor) = {
+                let content = lock(&content);
+                (content.text(), content.cursor())
+            };
+            let move_to = {
+                let key = key.clone();
+                move |line, column| Output::MoveCaret {
+                    key: key.clone(),
+                    line,
+                    column,
+                }
+            };
+            accessible(
+                editor::HostEditor::new(node, content),
+                StableId::new(key),
+                Role::MultilineTextInput,
+            )
+            .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+            .focus_id(widget::Id::from(key.clone()))
+            .label(placeholder.clone())
+            .value(value)
+            .editor_caret(cursor)
+            .on_move_to(move_to)
+            .disabled(on_edit.is_none())
+            .into()
+        }
         wire::Node::Button {
             key,
             content,
@@ -1680,6 +1835,130 @@ mod tests {
         assert_eq!(inputs.text("App/draft", "fallback"), "fallback");
     }
 
+    fn editor_node(text: &str) -> wire::Node {
+        wire::Node::Editor {
+            key: "App/notes".into(),
+            placeholder: "Notes".into(),
+            text: text.into(),
+            on_edit: Some(3),
+            width: None,
+            height: Some(wire::Length::Fill),
+            min_height: Some(80.0),
+            max_height: None,
+        }
+    }
+
+    fn editor_text(inputs: &Inputs) -> String {
+        lock(inputs.editor("App/notes").expect("adopted")).text()
+    }
+
+    /// What `apply` queues for one output.
+    fn applied(inputs: &mut Inputs, output: Output) -> Option<wire::Event> {
+        let mut pending = Vec::new();
+        inputs.apply(output, &mut pending);
+        assert!(pending.len() <= 1, "{pending:?}");
+        pending.pop()
+    }
+
+    #[test]
+    fn an_editor_action_edits_the_hosts_content_and_only_a_text_change_reaches_the_guest() {
+        use text_editor::{Action, Edit, Motion};
+        let mut inputs = Inputs::default();
+        inputs.adopt(&editor_node("ab"));
+        let insert = |c| Output::EditorAction {
+            key: "App/notes".into(),
+            handler: 3,
+            action: Action::Edit(Edit::Insert(c)),
+        };
+        // The caret starts at the top: the host's content, not the guest's.
+        assert_eq!(
+            applied(&mut inputs, insert('x')),
+            Some(wire::Event::Edit {
+                handler: 3,
+                text: "xab".into()
+            })
+        );
+        // A caret move is the host's alone.
+        assert_eq!(
+            applied(
+                &mut inputs,
+                Output::EditorAction {
+                    key: "App/notes".into(),
+                    handler: 3,
+                    action: Action::Move(Motion::End),
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            applied(&mut inputs, insert('y')),
+            Some(wire::Event::Edit {
+                handler: 3,
+                text: "xaby".into()
+            })
+        );
+        // The guest has not caught up: it still reports the old text.
+        inputs.adopt(&editor_node("ab"));
+        assert_eq!(editor_text(&inputs), "xaby");
+        // It echoes what it was told: the host's content, caret and all.
+        inputs.adopt(&editor_node("xaby"));
+        assert_eq!(editor_text(&inputs), "xaby");
+        assert_eq!(
+            applied(&mut inputs, insert('z')),
+            Some(wire::Event::Edit {
+                handler: 3,
+                text: "xabyz".into()
+            })
+        );
+        // Its handler set the text: the host follows.
+        inputs.adopt(&editor_node(""));
+        assert_eq!(editor_text(&inputs), "");
+        // Accessibility moves the caret without a word to the guest.
+        inputs.adopt(&editor_node("one\ntwo"));
+        assert_eq!(
+            applied(
+                &mut inputs,
+                Output::MoveCaret {
+                    key: "App/notes".into(),
+                    line: 1,
+                    column: 1,
+                }
+            ),
+            None
+        );
+        assert_eq!(
+            applied(&mut inputs, insert('!')),
+            Some(wire::Event::Edit {
+                handler: 3,
+                text: "one\nt!wo".into()
+            })
+        );
+        // Gone from the tree, gone from the host: an action for it is dropped.
+        inputs.adopt(&wire::Node::empty());
+        assert_eq!(applied(&mut inputs, insert('q')), None);
+    }
+
+    #[test]
+    fn a_paste_into_an_editor_past_the_bound_is_cut() {
+        use text_editor::{Action, Edit};
+        let mut inputs = Inputs::default();
+        inputs.adopt(&editor_node(""));
+        let prefix = "a".repeat(wire::MAX_STRING_BYTES - 1);
+        let event = applied(
+            &mut inputs,
+            Output::EditorAction {
+                key: "App/notes".into(),
+                handler: 3,
+                action: Action::Edit(Edit::Paste(Arc::new(format!("{prefix}€€€")))),
+            },
+        );
+        let Some(wire::Event::Edit { text, .. }) = event else {
+            panic!("expected an Edit event, got {event:?}");
+        };
+        assert_eq!(text, prefix);
+        assert_eq!(editor_text(&inputs), prefix);
+    }
+
     #[test]
     fn an_edit_inside_the_bound_is_untouched() {
         let mut inputs = Inputs::default();
@@ -1840,6 +2119,7 @@ mod tests {
                             height: Some(wire::Length::Fixed(40.0)),
                         }),
                     },
+                    editor_node("notes"),
                     wire::Node::Button {
                         key: "App/content/add".into(),
                         content: wire::ButtonContent::Label("Add".into()),

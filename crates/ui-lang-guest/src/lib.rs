@@ -208,6 +208,9 @@ impl<A: App> Driver<A> {
                 wire::Event::Input { handler, text } => {
                     slots::run_handler::<String, A::Message>(handler, text)
                 }
+                wire::Event::Edit { handler, text } => {
+                    slots::run_handler::<String, A::Message>(handler, text)
+                }
                 wire::Event::Toggle { handler, on } => {
                     slots::run_handler::<bool, A::Message>(handler, on)
                 }
