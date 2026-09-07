@@ -76,7 +76,7 @@ fn count_layout(hit: bool) {
     });
 }
 use std::hash::{Hash, Hasher as _};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 /// One unmounted lazy subtree, waiting under `(site, dependency hash)` for a
 /// same-content remount to reclaim it.
@@ -162,6 +162,7 @@ impl MemoSite {
     }
 }
 
+#[derive(Default)]
 struct Parking {
     entries: FxHashMap<MemoSite, (u64, Box<dyn Any>)>,
     /// Park order, oldest first, kept in exact parity with `entries`.
@@ -171,18 +172,65 @@ struct Parking {
 const PARKING_CAP: usize = 1024;
 
 thread_local! {
-    static PARKING: RefCell<Parking> = RefCell::new(Parking {
-        entries: FxHashMap::default(),
-        order: std::collections::VecDeque::new(),
-    });
+    static PARKING: RefCell<Parking> = RefCell::new(Parking::default());
 }
 
-/// `try_with` because thread teardown drops parked subtrees whose nested lazy
-/// state parks again; both here and in [`park`] any dropping of foreign
-/// subtrees happens OUTSIDE the borrow, since those drops re-enter the lot.
-fn reclaim(site: MemoSite, hash: u64) -> Option<Box<dyn Any>> {
-    let taken = PARKING
-        .try_with(|parking| {
+/// Owns parked native subtrees for one mounted module view. Keep this owner in
+/// UI-thread view state, not in cached elements. Dropping it releases the lot.
+#[derive(Default)]
+pub struct MemoParking(Rc<RefCell<Parking>>);
+
+/// A non-owning connection to a module's parking lot. Cached subtrees may retain
+/// this handle without keeping the instance or its native resources alive.
+#[derive(Clone)]
+pub struct MemoParkingHandle(Rc<RefCell<Weak<RefCell<Parking>>>>);
+
+impl MemoParkingHandle {
+    pub(crate) fn unbound() -> Self {
+        Self(Rc::new(RefCell::new(Weak::new())))
+    }
+
+    pub(crate) fn attach(&self, owner: &MemoParking) {
+        *self.0.borrow_mut() = Rc::downgrade(&owner.0);
+    }
+
+    fn target(&self) -> ParkingTarget {
+        ParkingTarget::Owned(self.0.borrow().clone())
+    }
+}
+
+impl MemoParking {
+    pub fn handle(&self) -> MemoParkingHandle {
+        let handle = MemoParkingHandle::unbound();
+        handle.attach(self);
+        handle
+    }
+}
+
+#[derive(Clone)]
+enum ParkingTarget {
+    Global,
+    Owned(Weak<RefCell<Parking>>),
+}
+
+impl ParkingTarget {
+    fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Global, Self::Global) => true,
+            (Self::Owned(a), Self::Owned(b)) => Weak::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    fn with<T>(&self, f: impl FnOnce(&RefCell<Parking>) -> T) -> Option<T> {
+        match self {
+            Self::Global => PARKING.try_with(f).ok(),
+            Self::Owned(handle) => handle.upgrade().map(|lot| f(&lot)),
+        }
+    }
+
+    fn reclaim(&self, site: MemoSite, hash: u64) -> Option<Box<dyn Any>> {
+        let (matched, stale) = self.with(|parking| {
             let mut parking = parking.borrow_mut();
             let Parking { entries, order } = &mut *parking;
             let parked = entries.remove(&site);
@@ -194,16 +242,14 @@ fn reclaim(site: MemoSite, hash: u64) -> Option<Box<dyn Any>> {
                 Some((_, subtree)) => (None, Some(subtree)),
                 None => (None, None),
             }
-        })
-        .ok();
-    let (matched, stale) = taken?;
-    drop(stale);
-    matched
-}
+        })?;
+        // Foreign subtrees may drop nested memos that re-enter the lot.
+        drop(stale);
+        matched
+    }
 
-fn park(site: MemoSite, hash: u64, subtree: Box<dyn Any>) {
-    let displaced = PARKING
-        .try_with(|parking| {
+    fn park(&self, site: MemoSite, hash: u64, subtree: Box<dyn Any>) {
+        let displaced = self.with(|parking| {
             let mut parking = parking.borrow_mut();
             let Parking { entries, order } = &mut *parking;
             let stale = entries.remove(&site).map(|(_, subtree)| subtree);
@@ -222,9 +268,19 @@ fn park(site: MemoSite, hash: u64, subtree: Box<dyn Any>) {
             debug_assert!(replaced.is_none());
             order.push_back(site);
             (stale, evicted, replaced)
-        })
-        .ok();
-    drop(displaced);
+        });
+        drop(displaced);
+    }
+}
+
+#[cfg(test)]
+fn reclaim(site: MemoSite, hash: u64) -> Option<Box<dyn Any>> {
+    ParkingTarget::Global.reclaim(site, hash)
+}
+
+#[cfg(test)]
+fn park(site: MemoSite, hash: u64, subtree: Box<dyn Any>) {
+    ParkingTarget::Global.park(site, hash, subtree);
 }
 
 /// How many unmounted subtrees the lot is holding, for probes that price it.
@@ -240,6 +296,7 @@ pub fn parked_subtrees() -> usize {
 pub struct MemoLazy<'a, Message, Theme, Renderer, Dependency, View> {
     dependency: Dependency,
     site: MemoSite,
+    parking: Option<MemoParkingHandle>,
     view: Box<dyn Fn(&Dependency) -> View + 'a>,
     element: RefCell<Option<Rc<RefCell<Option<Element<'static, Message, Theme, Renderer>>>>>>,
 }
@@ -263,6 +320,7 @@ where
     MemoLazy {
         dependency,
         site: MemoSite::new(site, &scope),
+        parking: None,
         view: Box::new(view),
         element: RefCell::new(None),
     }
@@ -274,6 +332,19 @@ where
     Dependency: Hash + 'a,
     View: Into<Element<'static, Message, Theme, Renderer>>,
 {
+    /// Parks unmounted content in the module's lot instead of the native
+    /// thread-wide lot. This retains only a weak handle to the owner.
+    pub fn parking(mut self, handle: MemoParkingHandle) -> Self {
+        self.parking = Some(handle);
+        self
+    }
+
+    fn parking_target(&self) -> ParkingTarget {
+        self.parking
+            .as_ref()
+            .map_or(ParkingTarget::Global, MemoParkingHandle::target)
+    }
+
     fn with_element<T>(&self, f: impl FnOnce(&Element<'_, Message, Theme, Renderer>) -> T) -> T {
         f(self
             .element
@@ -304,6 +375,7 @@ struct Internal<Message: 'static, Theme: 'static, Renderer: 'static> {
     element: Rc<RefCell<Option<Element<'static, Message, Theme, Renderer>>>>,
     hash: u64,
     site: MemoSite,
+    parking: ParkingTarget,
     /// The memoized layout for the current `hash`: the `Limits` the node was
     /// computed under and the node itself. `None` after a rebuild.
     layout: MemoLayout,
@@ -342,7 +414,7 @@ impl<Message, Theme, Renderer> Drop for Internal<Message, Theme, Renderer> {
         let Some(element) = self.element.borrow_mut().take() else {
             return;
         };
-        park(
+        self.parking.park(
             self.site,
             self.hash,
             Box::new(Parked {
@@ -376,7 +448,7 @@ where
             hasher.finish()
         };
 
-        if let Some(parked) = reclaim(self.site, hash)
+        if let Some(parked) = self.parking_target().reclaim(self.site, hash)
             && let Ok(parked) = parked.downcast::<Parked<Message, Theme, Renderer>>()
         {
             let Parked {
@@ -391,6 +463,7 @@ where
                 element,
                 hash,
                 site: self.site,
+                parking: self.parking_target(),
                 layout,
                 tree,
             });
@@ -408,6 +481,7 @@ where
             element,
             hash,
             site: self.site,
+            parking: self.parking_target(),
             layout: MemoLayout::none(),
             tree,
         })
@@ -421,6 +495,13 @@ where
         let current = tree
             .state
             .downcast_mut::<Internal<Message, Theme, Renderer>>();
+
+        if current.site != self.site || !current.parking.same(&self.parking_target()) {
+            // Equal dependencies do not make distinct mounts interchangeable.
+            // Replacing the whole state parks the previous mount independently.
+            tree.state = self.state();
+            return;
+        }
 
         let new_hash = {
             let mut hasher = FxHasher::default();
@@ -814,6 +895,132 @@ mod tests {
         assert!(
             internal(&mut tree).layout.is_empty(),
             "a changed dependency rebuilds the element — a kept node would be stale"
+        );
+    }
+
+    #[test]
+    fn changing_mount_identity_replaces_state_even_with_equal_dependencies() {
+        let builds = Rc::new(Cell::new(0));
+        let first = counting_widget_in(7, 805, 1, builds.clone());
+        let mut tree = Tree::new(&first as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        internal(&mut tree).layout = MemoLayout::single(
+            layout::Limits::NONE,
+            layout::Node::new(Size::new(10.0, 10.0)),
+        );
+        let second = counting_widget_in(7, 805, 2, builds.clone());
+        second.diff(&mut tree);
+        assert_eq!(
+            builds.get(),
+            2,
+            "a distinct mount must build its own content"
+        );
+        assert!(internal(&mut tree).layout.is_empty());
+        assert!(internal(&mut tree).site == MemoSite::new(805, &2));
+        // The old mount remains independently parked with its own layout.
+        let remount = counting_widget_in(7, 805, 1, builds.clone());
+        let mut old = Tree::new(&remount as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        assert_eq!(builds.get(), 2);
+        assert!(!internal(&mut old).layout.is_empty());
+    }
+
+    #[test]
+    fn owned_parking_reclaims_only_within_its_instance() {
+        let first = MemoParking::default();
+        let second = MemoParking::default();
+        let builds = Rc::new(Cell::new(0));
+        let mount =
+            |lot: &MemoParking| counting_widget(7, 806, builds.clone()).parking(lot.handle());
+        let a = mount(&first);
+        let mut tree = Tree::new(&a as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        let b = mount(&second);
+        b.diff(&mut tree);
+        assert_eq!(
+            builds.get(),
+            2,
+            "another instance must not inherit live state"
+        );
+        drop(tree);
+        for lot in [&first, &second] {
+            let remount = mount(lot);
+            drop(Tree::new(
+                &remount as &dyn Widget<(), iced::Theme, iced::Renderer>,
+            ));
+        }
+        assert_eq!(
+            builds.get(),
+            2,
+            "each instance must reclaim its own subtree"
+        );
+    }
+
+    #[test]
+    fn rebinding_a_render_slot_does_not_move_an_old_trees_parking_owner() {
+        let first = MemoParking::default();
+        let second = MemoParking::default();
+        let slot = MemoParkingHandle::unbound();
+        slot.attach(&first);
+        let builds = Rc::new(Cell::new(0));
+        let widget = counting_widget(7, 809, builds.clone()).parking(slot.clone());
+        let old = Tree::new(&widget as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        slot.attach(&second);
+        drop(old);
+        assert_eq!(
+            first.0.borrow().entries.len(),
+            1,
+            "old state parks with its original owner"
+        );
+        assert_eq!(second.0.borrow().entries.len(), 0);
+        drop(Tree::new(
+            &widget as &dyn Widget<(), iced::Theme, iced::Renderer>,
+        ));
+        assert_eq!(builds.get(), 2, "new state uses the newly attached owner");
+    }
+
+    #[test]
+    fn dropping_the_parking_owner_releases_nested_native_resources() {
+        let owner = MemoParking::default();
+        let handle = owner.handle();
+        let lease = Rc::new(());
+        let weak = Rc::downgrade(&lease);
+        let outer: TestLazy<'static> = memo_lazy(
+            1,
+            move |value: &i32| {
+                let lease = lease.clone();
+                let inner: TestLazy<'static> = memo_lazy(
+                    *value,
+                    move |_: &i32| {
+                        let lease = lease.clone();
+                        Element::from(iced::widget::button("leased surface").on_press_with(
+                            move || {
+                                let _keep_alive = &lease;
+                            },
+                        ))
+                    },
+                    808,
+                    1,
+                )
+                .parking(handle.clone());
+                Element::from(inner)
+            },
+            807,
+            1,
+        )
+        .parking(owner.handle());
+        let tree = Tree::new(&outer as &dyn Widget<(), iced::Theme, iced::Renderer>);
+        drop(outer);
+        drop(tree);
+        assert!(weak.upgrade().is_some(), "unmounted content stays parked");
+        assert_eq!(owner.0.borrow().entries.len(), 1);
+        let global_before = parked_subtrees();
+        drop(owner);
+        assert!(
+            weak.upgrade().is_none(),
+            "instance disposal must release nested leases"
+        );
+        assert_eq!(
+            parked_subtrees(),
+            global_before,
+            "nested drops must not escape to the global lot"
         );
     }
 

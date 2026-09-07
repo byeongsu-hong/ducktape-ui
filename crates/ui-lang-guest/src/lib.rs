@@ -11,8 +11,6 @@
 //! [`export_app!`] turns an app into the `ice:view` component exports;
 //! `boot_native`/`tick_native` drive the same app in an ordinary test.
 
-use std::any::Any;
-use std::cell::RefCell;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +28,7 @@ use iced_runtime::{Action, task};
 
 mod clipboard;
 mod markdown;
+mod memo;
 pub use markdown::Markdown;
 pub mod host;
 pub mod testing;
@@ -57,77 +56,7 @@ pub trait App: Sized + 'static {
 /// crate without naming the app's message type; the driver downcasts, by
 /// argument and message type both, so an index the host sends with the
 /// wrong kind of value finds nothing.
-pub mod slots {
-    use super::*;
-
-    thread_local! {
-        static MESSAGES: RefCell<Vec<Box<dyn Any>>> = const { RefCell::new(Vec::new()) };
-        static HANDLERS: RefCell<Vec<Box<dyn Any>>> = const { RefCell::new(Vec::new()) };
-        /// Every picture hash a frame has carried the bytes for. Not a
-        /// per-frame table: the host keeps a picture for the guest's life,
-        /// so the bytes cross once and the hash stands for them after.
-        static PICTURES: RefCell<std::collections::HashSet<u64>> =
-            RefCell::new(std::collections::HashSet::new());
-    }
-
-    /// What a [`wire::Node::Svg`] carries for `bytes`: the picture's hash,
-    /// and the picture itself the first time this guest shows it. The hash
-    /// is the process's default hasher over the bytes — an opaque key the
-    /// host never recomputes, consistent for as long as the guest runs.
-    pub fn picture(bytes: impl AsRef<[u8]>) -> (u64, Option<Vec<u8>>) {
-        use std::hash::{Hash, Hasher};
-        let bytes = bytes.as_ref();
-        let mut hasher = std::hash::DefaultHasher::new();
-        bytes.hash(&mut hasher);
-        let hash = hasher.finish();
-        let first = PICTURES.with_borrow_mut(|sent| sent.insert(hash));
-        (hash, first.then(|| bytes.to_vec()))
-    }
-
-    pub fn message<M: 'static>(message: M) -> u32 {
-        MESSAGES.with_borrow_mut(|table| {
-            table.push(Box::new(message));
-            (table.len() - 1) as u32
-        })
-    }
-
-    /// A handler returns `None` for a value it has no message for — a
-    /// pick list index past its options — and the event is dropped.
-    pub fn handler<A: 'static, M: 'static>(handler: Box<dyn Fn(A) -> Option<M>>) -> u32 {
-        HANDLERS.with_borrow_mut(|table| {
-            table.push(Box::new(handler));
-            (table.len() - 1) as u32
-        })
-    }
-
-    pub(crate) fn reset() {
-        MESSAGES.with_borrow_mut(Vec::clear);
-        HANDLERS.with_borrow_mut(Vec::clear);
-    }
-
-    /// A new driver faces a host that has seen nothing.
-    pub(crate) fn forget_pictures() {
-        PICTURES.with_borrow_mut(std::collections::HashSet::clear);
-    }
-
-    pub(crate) fn take_message<M: Clone + 'static>(index: u32) -> Option<M> {
-        MESSAGES.with_borrow(|table| {
-            table
-                .get(index as usize)
-                .and_then(|entry| entry.downcast_ref::<M>())
-                .cloned()
-        })
-    }
-
-    pub(crate) fn run_handler<A: 'static, M: 'static>(index: u32, value: A) -> Option<M> {
-        HANDLERS.with_borrow(|table| {
-            table
-                .get(index as usize)
-                .and_then(|entry| entry.downcast_ref::<Box<dyn Fn(A) -> Option<M>>>())
-                .and_then(|handler| handler(value))
-        })
-    }
-}
+pub mod slots;
 
 /// One running task: its stream, and the flag its waker sets. A task is
 /// polled only when the flag is up — set at spawn, by a host answer
@@ -142,6 +71,7 @@ struct Task<M> {
 /// `subscribe` block keeps alive, and the last tree it sent so an identical
 /// one crosses as `unchanged` and a changed one as patches against it.
 pub struct Driver<A: App> {
+    slots: slots::Context,
     app: A,
     tasks: Vec<Task<A::Message>>,
     /// Diffs the recipes `subscription` returns against the ones running,
@@ -179,10 +109,12 @@ const SUBSCRIPTION_QUEUE: usize = 100;
 
 impl<A: App> Driver<A> {
     pub fn new() -> Self {
-        slots::forget_pictures();
+        let slots = slots::Context::default();
+        let _context = slots.enter();
         let (app, boot) = A::boot();
         let (subscribed, produced) = mpsc::channel(SUBSCRIPTION_QUEUE);
         let mut driver = Self {
+            slots,
             app,
             tasks: Vec::new(),
             tracker: Tracker::new(),
@@ -205,6 +137,7 @@ impl<A: App> Driver<A> {
     /// a test can read it; the component export drops a tree the host can
     /// rebuild before it crosses.
     pub fn tick(&mut self, events: Vec<wire::Event>) -> wire::Frame {
+        let _context = self.slots.enter();
         self.settle();
         for event in events {
             let message = match event {
@@ -790,5 +723,55 @@ mod tests {
     #[test]
     fn a_short_panic_message_keeps_its_location() {
         assert_eq!(super::panic_line("boom", "app.ice:1"), "boom at app.ice:1");
+    }
+}
+
+#[cfg(test)]
+mod driver_routes_tests {
+    use super::*;
+
+    struct Next(u32);
+    impl App for Next {
+        type Message = u32;
+        fn boot() -> (Self, iced::Task<u32>) {
+            (Self(0), iced::Task::none())
+        }
+        fn view(&self) -> wire::Node {
+            wire::Node::Button {
+                key: "next".into(),
+                content: wire::ButtonContent::Label(self.0.to_string()),
+                label: None,
+                checked: None,
+                expanded: None,
+                description: None,
+                on_press: Some(slots::message(self.0 + 1)),
+                width: None,
+                height: None,
+                padding: None,
+                style: wire::ButtonStyle::default(),
+            }
+        }
+        fn update(&mut self, message: u32) -> iced::Task<u32> {
+            self.0 = message;
+            iced::Task::none()
+        }
+        fn subscription(&self) -> iced::Subscription<u32> {
+            iced::Subscription::none()
+        }
+    }
+
+    #[test]
+    fn two_drivers_keep_their_own_rendered_routes() {
+        let mut first = Driver::<Next>::new();
+        first.tick(vec![]);
+        let first_frame = first.tick(vec![wire::Event::Message(0)]);
+        assert!(testing::has_text(&first_frame, "1"));
+        let mut second = Driver::<Next>::new();
+        second.tick(vec![]);
+        let first_frame = first.tick(vec![wire::Event::Message(0)]);
+        assert!(
+            testing::has_text(&first_frame, "2"),
+            "the first driver's next route must survive a second driver's render"
+        );
     }
 }

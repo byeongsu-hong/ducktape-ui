@@ -30,6 +30,7 @@ mod lists;
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
+mod memo;
 mod text;
 mod tooltip;
 pub use text::register_font_family;
