@@ -653,6 +653,9 @@ pub enum Node {
         /// The accessible name of a button whose content is not a plain
         /// label.
         label: Option<String>,
+        checked: Option<bool>,
+        expanded: Option<bool>,
+        description: Option<String>,
         /// `None` is a disabled button.
         on_press: Option<u32>,
         width: Option<Length>,
@@ -1600,6 +1603,7 @@ fn sanitize_node(
             key,
             content,
             label,
+            description,
             padding,
             style,
             ..
@@ -1610,6 +1614,9 @@ fn sanitize_node(
             }
             if let Some(label) = label {
                 truncate_string(label);
+            }
+            if let Some(description) = description {
+                spend_text(description, &mut budgets.text);
             }
             bound_edges(padding);
             for face in [
@@ -2185,6 +2192,9 @@ mod tests {
             root: Some(column(vec![
                 text("hello"),
                 Node::Button {
+                    checked: None,
+                    expanded: None,
+                    description: None,
                     key: "App/b".into(),
                     content: ButtonContent::Label("Go".into()),
                     label: None,
@@ -2553,6 +2563,9 @@ mod tests {
                     style: InputStyle::default(),
                 },
                 Node::Button {
+                    checked: None,
+                    expanded: None,
+                    description: Some("Details".into()),
                     key: "App/b".into(),
                     content: ButtonContent::Label(long.clone()),
                     label: Some(long),
@@ -2581,10 +2594,17 @@ mod tests {
         // so it answers to the per-string cap alone.
         assert_eq!(placeholder.len(), MAX_TEXT_BYTES_PER_FRAME);
         assert!(value.is_empty());
-        let Node::Button { content, label, .. } = &children[1] else {
+        let Node::Button {
+            content,
+            label,
+            description,
+            ..
+        } = &children[1]
+        else {
             panic!()
         };
         assert_eq!(*content, ButtonContent::Label(String::new()));
+        assert_eq!(description.as_deref(), Some(""));
         assert_eq!(label.as_deref().map(str::len), Some(MAX_STRING_BYTES));
         assert_eq!(children[2], text(""));
     }
@@ -2661,6 +2681,9 @@ mod tests {
 
     fn button(content: ButtonContent) -> Node {
         Node::Button {
+            checked: None,
+            expanded: None,
+            description: None,
             key: "App/b".into(),
             content,
             label: None,

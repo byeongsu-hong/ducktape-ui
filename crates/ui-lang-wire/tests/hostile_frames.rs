@@ -311,6 +311,9 @@ fn gen_anchor(rng: &mut Rng) -> ScrollAnchor {
 
 fn gen_button_label(rng: &mut Rng) -> Node {
     Node::Button {
+        checked: rng.next_bool().then(|| rng.next_bool()),
+        expanded: rng.next_bool().then(|| rng.next_bool()),
+        description: rng.next_bool().then(|| gen_string(rng)),
         key: gen_key(rng),
         content: ButtonContent::Label(gen_string(rng)),
         label: rng.next_bool().then(|| gen_string(rng)),
@@ -682,6 +685,9 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                 content: Box::new(node),
             },
             _ => Node::Button {
+                checked: rng.next_bool().then(|| rng.next_bool()),
+                expanded: rng.next_bool().then(|| rng.next_bool()),
+                description: rng.next_bool().then(|| gen_string(rng)),
                 key: gen_key(rng),
                 content: ButtonContent::Child(Box::new(node)),
                 label: rng.next_bool().then(|| gen_string(rng)),
@@ -1299,6 +1305,7 @@ fn check_bounds(
         Node::Button {
             content,
             label,
+            description,
             width,
             height,
             padding,
@@ -1311,6 +1318,9 @@ fn check_bounds(
             }
             if let Some(label) = label {
                 check_string(label, ctx, "accessible label");
+            }
+            if let Some(description) = description {
+                check_string(description, ctx, "button description");
             }
             check_length(width, ctx);
             check_length(height, ctx);

@@ -1435,3 +1435,15 @@ mutation dropping native text height made its intended assertion fail
 (actual 24, expected 44); restoration passes. The imported-component E190 test
 first failed on line 1 instead of 2, then passed after preventing double remap.
 Font assets remain host-owned; the host registers trusted names for resolution.
+
+### Tree button accessibility
+
+Tree buttons preserve optional `checked=`, `expanded=` and `description=`.
+The host forwards them to the native accessible wrapper: `false` is distinct
+from omission, and descriptions share the frame text budget. This changes the
+Button wire layout; rebuild hosts and guests together. Button recipes remain
+separate work. Native AccessKit snapshot tests cover true/false/absent states;
+the widget wasm fixture verifies copied state after a native focus-button click.
+
+Red evidence: omitting host checked forwarding changes the AccessKit snapshot
+from `Some(True)` to `None` and fails the intended assertion; restoration passes.
