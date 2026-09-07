@@ -1441,9 +1441,23 @@ Font assets remain host-owned; the host registers trusted names for resolution.
 Tree buttons preserve optional `checked=`, `expanded=` and `description=`.
 The host forwards them to the native accessible wrapper: `false` is distinct
 from omission, and descriptions share the frame text budget. This changes the
-Button wire layout; rebuild hosts and guests together. Button recipes remain
-separate work. Native AccessKit snapshot tests cover true/false/absent states;
+Button wire layout; rebuild hosts and guests together.
+Native AccessKit snapshot tests cover true/false/absent states;
 the widget wasm fixture verifies copied state after a native focus-button click.
 
 Red evidence: omitting host checked forwarding changes the AccessKit snapshot
 from `Some(True)` to `None` and fails the intended assertion; restoration passes.
+
+### Tree button recipe evidence
+
+Codegen tests cover named default fonts, plain-label default size, recipe faces,
+focus-ring color and explicit zero padding in Native and Tree targets. Runtime
+tests check typed-face precedence, disabled alpha and pressed-to-hover fallback.
+Hostile frame generators include recipe fonts, colors and nonfinite numbers.
+The actual widget wasm fixture uses a named-font recipe and fixed-size action;
+`bundled_widget_recipe_ring_uses_keyboard_focus_only` checks raster output after
+pointer and keyboard focus. CI runs this with the mounted widget task tests.
+Removing host focus-ring forwarding fails the keyboard-ring assertion; restoring
+it passes. The default-font assertion failed before propagation was added, and
+the zero-padding assertion failed before native template/codegen and Tree
+preserved explicit zero.

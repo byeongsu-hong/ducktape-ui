@@ -423,13 +423,15 @@ For module packaging requirements and the connected implementation phases, see
   selectable. Tracked graphemes consume the frame node budget. Boxes carry
   `max-w=`, `max-h=`, clipping and padding; buttons accept padding utilities.
   Host and guests must be rebuilt together for these wire fields.
-  Button recipes, tooltip and its opaque activity-log surface slot remain
-  prerequisites for mounting the actual Ducktape node screen unchanged.
+  The actual Ducktape typed node root now reaches `components/node.ice:708`
+  (`row wrap`). Wrapping layouts, tooltip and its opaque activity-log surface
+  slot remain prerequisites for mounting that screen unchanged.
 
 - Button `checked=`, `expanded=` and `description=` cross to the host's native
   accessibility wrapper. False remains distinct from omission; descriptions
   consume the shared text budget. Host and guests must be rebuilt together.
-  Button recipes/presets and focus-visible styles remain followups.
+  Buttons also carry all eight native presets and resolved recipes, including
+  guest default label typography, disabled treatment and keyboard focus rings.
 
 - The wire carries `box`, `mouse`, `col`/`row`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
   `text`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,

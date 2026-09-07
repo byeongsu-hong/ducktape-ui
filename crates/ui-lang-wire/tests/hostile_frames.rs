@@ -188,6 +188,33 @@ fn gen_face(rng: &mut Rng) -> Face {
 
 fn gen_button_style(rng: &mut Rng) -> ButtonStyle {
     ButtonStyle {
+        preset: [
+            ButtonPreset::Primary,
+            ButtonPreset::Secondary,
+            ButtonPreset::Success,
+            ButtonPreset::Warning,
+            ButtonPreset::Danger,
+            ButtonPreset::Text,
+            ButtonPreset::Background,
+            ButtonPreset::Subtle,
+        ][rng.next_range(8)],
+        recipe: rng.next_bool().then(|| ButtonRecipe {
+            base: gen_face(rng),
+            hover_background: gen_opt_color(rng),
+            pressed_background: gen_opt_color(rng),
+            disabled_background: gen_opt_color(rng),
+            disabled_text: gen_opt_color(rng),
+            disabled_opacity: gen_opt_f32(rng),
+            focus_ring: gen_opt_color(rng),
+            text_size: gen_opt_f32(rng),
+            line_height: gen_opt_f32(rng),
+            font: rng.next_bool().then(|| NamedFont {
+                family: FontFamily::Named(gen_string(rng)),
+                weight: Weight::Semibold,
+                stretch: FontStretch::Normal,
+                style: FontStyle::Normal,
+            }),
+        }),
         active: gen_face(rng),
         hovered: rng.next_bool().then(|| gen_face(rng)),
         pressed: rng.next_bool().then(|| gen_face(rng)),
@@ -1325,6 +1352,36 @@ fn check_bounds(
             check_length(width, ctx);
             check_length(height, ctx);
             check_edges(padding, ctx);
+            if let Some(recipe) = &style.recipe {
+                for value in [
+                    &recipe.base.background,
+                    &recipe.base.text,
+                    &recipe.hover_background,
+                    &recipe.pressed_background,
+                    &recipe.disabled_background,
+                    &recipe.disabled_text,
+                    &recipe.focus_ring,
+                ] {
+                    check_color(value, ctx);
+                }
+                check_border(&recipe.base.border, ctx);
+                if let Some(value) = recipe.disabled_opacity {
+                    assert!(value.is_finite() && (0.0..=1.0).contains(&value));
+                }
+                if let Some(value) = recipe.text_size {
+                    assert!(value.is_finite() && (0.0..=TEXT_PIXEL_BOUND).contains(&value));
+                }
+                if let Some(value) = recipe.line_height {
+                    assert!(value.is_finite() && (f32::EPSILON..=16.0).contains(&value));
+                }
+                if let Some(NamedFont {
+                    family: FontFamily::Named(name),
+                    ..
+                }) = &recipe.font
+                {
+                    check_string(name, ctx, "button font");
+                }
+            }
             for face in [
                 Some(&style.active),
                 style.hovered.as_ref(),

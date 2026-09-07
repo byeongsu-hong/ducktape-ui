@@ -12,7 +12,7 @@ impl ResolvedStyleFontWeight {
 
 impl ResolvedStyle {
     pub(in crate::codegen) fn padding_code(&self) -> Option<String> {
-        (self.padding != [0; 4]).then(|| {
+        self.has_padding().then(|| {
             format!(
                 "::iced::Padding {{ top: {}.0, right: {}.0, bottom: {}.0, left: {}.0 }}",
                 self.padding[0], self.padding[1], self.padding[2], self.padding[3]

@@ -27,6 +27,8 @@ mod text;
 pub use text::{
     FontFamily, FontStretch, FontStyle, LineHeight, NamedFont, Shaping, TextOptions, Wrapping,
 };
+mod button;
+pub use button::{ButtonPreset, ButtonRecipe};
 mod canvas;
 pub use canvas::{
     CanvasCommand, CanvasLineCap, CanvasLineJoin, CanvasSegment, CanvasShape, CanvasStroke,
@@ -284,8 +286,10 @@ pub struct Face {
     pub border: Option<Border>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ButtonStyle {
+    pub preset: ButtonPreset,
+    pub recipe: Option<ButtonRecipe>,
     pub active: Face,
     pub hovered: Option<Face>,
     pub pressed: Option<Face>,
@@ -1617,6 +1621,9 @@ fn sanitize_node(
             }
             if let Some(description) = description {
                 spend_text(description, &mut budgets.text);
+            }
+            if let Some(recipe) = &mut style.recipe {
+                recipe.sanitize(&mut budgets.text);
             }
             bound_edges(padding);
             for face in [

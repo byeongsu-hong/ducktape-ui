@@ -76,11 +76,15 @@ impl TextOptions {
             None => {}
         }
         self.tracking = bounded(self.tracking).min(MAX_TEXT_PIXELS);
-        if let Some(NamedFont {
-            family: FontFamily::Named(name),
-            ..
-        }) = &mut self.font
-        {
+        if let Some(font) = &mut self.font {
+            font.sanitize(text_budget);
+        }
+    }
+}
+
+impl NamedFont {
+    pub(super) fn sanitize(&mut self, text_budget: &mut usize) {
+        if let FontFamily::Named(name) = &mut self.family {
             spend_text(name, text_budget);
         }
     }

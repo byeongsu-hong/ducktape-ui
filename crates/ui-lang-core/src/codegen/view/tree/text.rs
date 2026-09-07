@@ -52,18 +52,31 @@ pub(super) fn options(
         None if !style.font_monospace => program.settings().default_font.as_ref(),
         _ => None,
     };
-    let font = face.map(|font| {
-        let family = match &font.family {
-            FontFamily::Named(name) => format!("{WIRE}::FontFamily::Named({}.into())", rust_string(name)),
-            family => format!("{WIRE}::FontFamily::{family:?}"),
-        };
-        let weight = style.font_weight.map_or_else(|| format!("{:?}", font.weight), |weight| weight.code().to_owned());
-        format!("{WIRE}::NamedFont {{ family: {family}, weight: {WIRE}::Weight::{weight}, stretch: {WIRE}::FontStretch::{:?}, style: {WIRE}::FontStyle::{:?} }}", font.stretch, font.style)
-    });
+    let font = face.map(|font| named_font(font, style.font_weight));
     Ok(format!(
         "{WIRE}::TextOptions {{ height: {height}, align_y: {align_y}, line_height: {}, shaping: {shaping}, wrapping: {wrapping}, tracking: {:?}f32, font: {} }}",
         option_code(line_height),
         options.tracking.unwrap_or(0.0).min(f64::from(f32::MAX)) as f32,
         option_code(font)
     ))
+}
+
+pub(super) fn named_font(
+    font: &ResolvedDefaultFont,
+    weight: Option<ResolvedStyleFontWeight>,
+) -> String {
+    let family = match &font.family {
+        FontFamily::Named(name) => {
+            format!("{WIRE}::FontFamily::Named({}.into())", rust_string(name))
+        }
+        family => format!("{WIRE}::FontFamily::{family:?}"),
+    };
+    let weight = weight.map_or_else(
+        || format!("{:?}", font.weight),
+        |weight| weight.code().to_owned(),
+    );
+    format!(
+        "{WIRE}::NamedFont {{ family: {family}, weight: {WIRE}::Weight::{weight}, stretch: {WIRE}::FontStretch::{:?}, style: {WIRE}::FontStyle::{:?} }}",
+        font.stretch, font.style
+    )
 }

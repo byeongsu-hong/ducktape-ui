@@ -903,7 +903,7 @@ fn style_is_only_text_color(style: &ResolvedStyle) -> bool {
     !style.width_fill
         && !style.height_fill
         && style.max_width.is_none()
-        && style.padding == [0; 4]
+        && !style.has_padding()
         && style.gap.is_none()
         && !style.items_center
         && !style.self_center
