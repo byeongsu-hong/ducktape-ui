@@ -571,6 +571,14 @@ jobs:
       - name: Verify retained host session views
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_retained_ -- --ignored
+      - name: Bundle the rich composer fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-composer-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/composer-fixture
+      - name: Verify native composer input through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_composer_ -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

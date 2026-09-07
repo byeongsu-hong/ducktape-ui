@@ -436,3 +436,8 @@ need separate boundaries. See the [app-store fixture](examples/app-store/README.
 The example host also binds retained surfaces per guest instance. Its native
 log timeline keeps view selection/scroll separate from the host session's
 lifetime; see the [retained session fixture](examples/app-store/README.md#retained-host-session-fixture).
+
+
+The example's [rich composer fixture](examples/app-store/README.md#rich-composer-fixture)
+keeps native editing, IME and per-view history in the host while a wasm guest
+receives semantic text/selection/submission notices and retains its draft.
