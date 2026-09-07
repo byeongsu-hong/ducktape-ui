@@ -18636,7 +18636,9 @@ view
         let elapsed = started.elapsed();
         assert_eq!(program.keyed_columns.len(), KEYED_COLUMNS);
         assert_eq!(
-            generated.matches("::iced::widget::keyed_column(").count(),
+            generated
+                .matches("::ui_lang_runtime::keyed_column(")
+                .count(),
             KEYED_COLUMNS
         );
         eprintln!("4k normalized keyed columns lowered and emitted in {elapsed:?}");
