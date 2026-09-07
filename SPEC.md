@@ -1046,3 +1046,13 @@ defaults, including `@p-0px`. Font names share the frame text budget and trusted
 host registry; numeric recipe values are sanitized. Unsupported utility
 properties and Rust style callbacks remain E190. ButtonStyle changes require
 host and guest rebuilds together.
+
+### Tree wrapping rows and columns
+
+Tree `row wrap` and `col wrap` use the native host wrapping widgets. They carry
+`wrap-gap=` and `wrap-align=` alongside ordinary spacing, dimensions, padding
+and child alignment. The host reflows when its available size changes; guests
+provide children and copied values without measuring pixels. Optional wrapping
+settings distinguish an ordinary layout from a wrapping layout with defaults.
+Inter-line spacing uses the existing wire and child-count spacing limits.
+Rebuild hosts and guests together for the Linear wire field.

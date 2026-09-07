@@ -558,7 +558,22 @@ fn layout(
     let child_scope = rendered_child_scope(identity, scope)?;
     match &layout.mode {
         ResolvedLayoutMode::Linear(linear) => {
-            refuse_when(program, origin, linear.wrap, "a wrapping layout")?;
+            let wrap = if linear.wrap {
+                let spacing = linear
+                    .wrap_spacing
+                    .map(|value| {
+                        resolved_expr_use_code(program, value, env, ValueMode::Owned)
+                            .map(|value| format!("({value}) as f32"))
+                    })
+                    .transpose()?;
+                format!(
+                    "Some({WIRE}::Wrap {{ spacing: {}, align: {} }})",
+                    option_code(spacing),
+                    option_code(linear.wrap_align.map(align_x_code))
+                )
+            } else {
+                "None".into()
+            };
             refuse_when(
                 program,
                 origin,
@@ -598,7 +613,7 @@ fn layout(
             )?;
             write!(
                 body,
-                " {WIRE}::Node::Linear {{ key: {key}, axis: {WIRE}::Axis::{axis}, spacing: {}, padding: {}, width: {}, height: {}, align: {}, background: {background}, border: {border}, children: __children }} }}",
+                " {WIRE}::Node::Linear {{ key: {key}, wrap: {wrap}, axis: {WIRE}::Axis::{axis}, spacing: {}, padding: {}, width: {}, height: {}, align: {}, background: {background}, border: {border}, children: __children }} }}",
                 option_code(spacing),
                 edges_code(&linear.padding, style.padding, program, env)?,
                 dimension_code(linear.width.as_ref(), style.width_fill, program, env, origin)?,

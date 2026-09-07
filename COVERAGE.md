@@ -1461,3 +1461,18 @@ Removing host focus-ring forwarding fails the keyboard-ring assertion; restoring
 it passes. The default-font assertion failed before propagation was added, and
 the zero-padding assertion failed before native template/codegen and Tree
 preserved explicit zero.
+
+### Tree wrapping layout evidence
+
+`tree_wrapping_layout_copies_both_axes` checks wrap spacing/alignment emission
+for rows and columns. `wrapping_rows_and_columns_reflow_at_host_limits` lays out
+both axes at narrow and wide host limits and checks the resulting cross-axis
+size, including inter-line spacing. Hostile frame generation includes wrapping
+settings with nonfinite and excessive gaps. The bundled text fixture adds a
+wrapping action row; `text_wasm_wrapping_reflows_and_routes_after_resize` checks
+single-row to multi-row reflow and a native click through the wrapped wasm
+button. CI explicitly runs both text fixture host tests.
+
+Red evidence: disabling both host wrapping branches changes the narrow row's
+cross-axis size from 72 to 20 and fails its assertion. Restoring wrapping
+passes the two-axis test.

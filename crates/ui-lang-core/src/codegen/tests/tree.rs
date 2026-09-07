@@ -1331,3 +1331,13 @@ fn explicit_zero_button_padding_clears_native_defaults() {
         );
     }
 }
+
+#[test]
+fn tree_wrapping_layout_copies_both_axes() {
+    for axis in ["row", "col"] {
+        let generated = tree(&format!(
+            "  {axis} wrap wrap-gap=3.0 wrap-align=end gap=8.0\n    button \"Go\" -> remove 0\n"
+        ));
+        assert!(generated.contains("Wrap { spacing: ::std::option::Option::Some((3.0) as f32), align: ::std::option::Option::Some(::ui_lang_guest::wire::AlignX::Right)"));
+    }
+}

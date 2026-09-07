@@ -47,6 +47,7 @@ fn frame_of_texts(count: usize, filler: &str, bytes: usize) -> wire::Node {
     }
     let mut frame = wire::Frame {
         root: Some(wire::Node::Linear {
+            wrap: None,
             key: "App/lines".into(),
             axis: wire::Axis::Column,
             spacing: None,

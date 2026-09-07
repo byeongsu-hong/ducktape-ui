@@ -1135,6 +1135,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         }
         wire::Node::Linear {
             key,
+            wrap,
             axis,
             spacing,
             padding: edges,
@@ -1150,7 +1151,14 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             let count = children.len();
             let rendered = children
                 .iter()
-                .map(|child| bounded_fill_element(render_node(child, kept), count, is_row))
+                .map(|child| {
+                    let element = render_node(child, kept);
+                    if wrap.is_some() {
+                        element
+                    } else {
+                        bounded_fill_element(element, count, is_row)
+                    }
+                })
                 .collect::<Vec<_>>();
             let spacing = bounded_spacing(f64::from(spacing.unwrap_or(0.0)), count);
             let layout: IceElement<'static, Output> = match axis {
@@ -1168,7 +1176,19 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     if let Some(align) = align {
                         column = column.align_x(horizontal(*align));
                     }
-                    column.into()
+                    if let Some(wrap) = wrap {
+                        let mut wrapped = column.wrap();
+                        if let Some(gap) = wrap.spacing {
+                            wrapped =
+                                wrapped.horizontal_spacing(bounded_spacing(f64::from(gap), count));
+                        }
+                        if let Some(align) = wrap.align {
+                            wrapped = wrapped.align_x(cross(align));
+                        }
+                        wrapped.into()
+                    } else {
+                        column.into()
+                    }
                 }
                 wire::Axis::Row => {
                     let mut row = widget::row(rendered).spacing(spacing);
@@ -1184,7 +1204,19 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     if let Some(align) = align {
                         row = row.align_y(cross(*align));
                     }
-                    row.into()
+                    if let Some(wrap) = wrap {
+                        let mut wrapped = row.wrap();
+                        if let Some(gap) = wrap.spacing {
+                            wrapped =
+                                wrapped.vertical_spacing(bounded_spacing(f64::from(gap), count));
+                        }
+                        if let Some(align) = wrap.align {
+                            wrapped = wrapped.align_x(horizontal(align));
+                        }
+                        wrapped.into()
+                    } else {
+                        row.into()
+                    }
                 }
             };
             accessible(
@@ -1972,6 +2004,69 @@ mod tests {
     use super::*;
 
     #[test]
+    fn wrapping_rows_and_columns_reflow_at_host_limits() {
+        use iced::advanced::{layout::Limits, renderer::Headless, widget::Tree};
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for axis in [wire::Axis::Row, wire::Axis::Column] {
+            let row = axis == wire::Axis::Row;
+            let node = wire::Node::Linear {
+                key: "wrap".into(),
+                axis,
+                wrap: Some(wire::Wrap {
+                    spacing: Some(6.0),
+                    align: Some(wire::AlignX::Right),
+                }),
+                spacing: Some(8.0),
+                padding: None,
+                width: Some(if row {
+                    wire::Length::Fill
+                } else {
+                    wire::Length::Shrink
+                }),
+                height: Some(if row {
+                    wire::Length::Shrink
+                } else {
+                    wire::Length::Fill
+                }),
+                align: None,
+                background: None,
+                border: None,
+                children: (0..3)
+                    .map(|_| wire::Node::Space {
+                        width: Some(wire::Length::Fixed(if row { 60.0 } else { 20.0 })),
+                        height: Some(wire::Length::Fixed(if row { 20.0 } else { 60.0 })),
+                    })
+                    .collect(),
+            };
+            for (available, expected_cross) in [(100.0, 72.0), (200.0, 20.0)] {
+                let mut element = render(
+                    &node,
+                    &Inputs::default(),
+                    &Pictures::default(),
+                    &Surfaces::new(),
+                );
+                let mut tree = Tree::new(&element);
+                let layout = element.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &Limits::new(iced::Size::ZERO, iced::Size::new(available, available)),
+                );
+                let size = layout.size();
+                assert_eq!(
+                    if row { size.height } else { size.width },
+                    expected_cross,
+                    "wrapping {axis:?} reflows at {available}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn wire_button_accessibility_distinguishes_false_from_absence() {
         use iced::advanced::renderer::Headless;
         use iced::advanced::widget::operation::{Operation, Outcome};
@@ -2657,6 +2752,7 @@ mod tests {
             border: None,
             snap: Some(true),
             content: Box::new(wire::Node::Linear {
+                wrap: None,
                 key: "App/content".into(),
                 axis: wire::Axis::Column,
                 spacing: Some(4.0),

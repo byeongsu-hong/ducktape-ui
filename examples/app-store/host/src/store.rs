@@ -1333,6 +1333,7 @@ mod tests {
 
     fn column(children: Vec<wire::Node>) -> wire::Node {
         wire::Node::Linear {
+            wrap: None,
             key: "App/col".into(),
             axis: wire::Axis::Column,
             spacing: None,
