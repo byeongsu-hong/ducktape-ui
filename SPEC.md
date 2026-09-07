@@ -929,3 +929,15 @@ fills that region (e.g. its native Shader uses `width(Fill).height(Fill)`) and o
 state and redraw schedule. An unknown name shows the existing placeholder
 inside the same bounds. Surface names share the extern component registry.
 This establishes a host rendering boundary, not guest GPU execution.
+
+
+## Native editor surfaces in the example host
+
+A named surface may keep a native editor document behind an instance-scoped
+view lease and publish ordinary record values. The app-store `rich_composer`
+example demonstrates this with `RichTextEditor`: guest text echoes preserve
+native input state; changed text or an explicit reset generation replaces it.
+Composition, native actions and history never cross as Rust values. See the
+[fixture contract](examples/app-store/README.md#rich-composer-fixture) for its
+semantic notice, byte/history bounds and lifecycle. This is an example provider,
+not a new Ice keyword or an encoding for arbitrary native editor callbacks.

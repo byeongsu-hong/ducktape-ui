@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+mod composer;
 pub(crate) mod log;
 
 use iced::widget::{canvas, column, text};
@@ -18,6 +19,7 @@ use crate::capabilities::clock;
 /// Providers bound to one guest instance and its host-owned session.
 pub fn registry(session: Arc<log::Session>) -> Surfaces {
     let mut surfaces = Surfaces::new();
+    surfaces.insert("rich_composer".into(), composer::provider());
     surfaces.insert(
         "ice.markdown".into(),
         Box::new(ui_lang_runtime::view_tree::markdown_surface),

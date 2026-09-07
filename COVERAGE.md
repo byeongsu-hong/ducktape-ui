@@ -1278,3 +1278,31 @@ Element just for draw makes enabled/hovered button pixels identical. Before
 native anchor synchronization, a surviving row moved from y=109.3999 to
 y=85.3999 after one eviction; the restored native revision preserves its
 screen coordinate. These are reached assertion failures, not build failures.
+
+
+### Native rich composer notices
+
+The app-store composer fixture uses an actual bundled wasm guest and the
+runtime RichTextEditor. `bundled_composer_` tests drive native typing with an
+echo frame after each key, Enter/Shift+Enter, focused formatting, selection,
+undo/redo, IME commit, programmatic reset/disable during preedit, remount,
+replacement and concurrent guest drafts. Large-selection and oversized-edit
+assertions observe the guest state through its emitted surface arguments and
+selection byte count; previews deliberately avoid duplicate frame-budget use.
+`composer_tree_owns_its_document_until_unmounted` checks native lease survival
+across Element replacement and release with a live registry after unmount.
+
+Commands: the actual bundle and host tests in the app-store README, and
+`cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host
+composer_tree_`. The scope is native input and semantic notices with the
+plain highlighter; application-specific page/highlighting/terminal parity is
+not claimed.
+
+Assertion-level Red/Green evidence: removing reset generation handling commits
+`old` into `replacement`; allowing disabled focus restores an old composing
+focus after enabling. Forcing guest echoes to replace the native document
+interrupts the five-key typing assertion. Raising the document cap admits an
+oversized replacement that should leave the original selected draft intact.
+Bypassing registry reuse fails the Tree lease identity assertion. Sharing the
+registry across guests makes a second guest replace the first guest's live
+draft. Restored code must pass the same assertions.

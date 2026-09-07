@@ -450,8 +450,10 @@ For module packaging requirements and the connected implementation phases, see
   Recursive records, enums and opaque native editor/terminal/log state remain
   unsupported as copied arguments. Registries are now owned per guest; the
   `session_log` provider binds a host-owned log session and retains each native
-  view independently. Rich editor events and terminal providers remain work
-  for module-owned views.
+  view independently. The `rich_composer` provider now keeps native input,
+  IME and per-view history behind typed semantic notices (see its fixture
+  below). Application highlighting, page-specific events and terminal
+  providers remain work for module-owned views.
 - A `shader` call uses that same named surface registry and typed routes.
   Its `w=`/`h=` cross in a containing box, with Iced's 100×100 defaults
   and zero intrinsic size for `shrink`.
@@ -733,3 +735,56 @@ ownership; it does not serialize native editor actions or terminal sessions.
 Fixture capture (600×1000, dark theme, scale 1, pointer over Resume tail):
 
 ![Retained native session log](docs/retained-session-log.png)
+
+
+## Rich composer fixture
+
+The example's `rich_composer(text, reset, placeholder, disabled)` provider
+uses the runtime `RichTextEditor`. Text, caret/selection, composition and
+undo/redo remain native; the guest receives a `ComposerNotice` record with
+`text`, `selected`, `submitted`, `line`, `column`, `anchor_line` and
+`anchor_column`. The guest owns draft/submission policy and echoes the text
+in the next frame. Equal echoes preserve the native caret and history;
+changed text or an explicit `reset` generation installs a new document and
+clears its native input state. Reset generations let a guest clear or replace
+a document even when its text happens to be equal.
+
+Plain Enter reports submission without inserting a newline. Shift+Enter
+inserts a newline. Focused Cmd/Ctrl+B and I wrap selection in bold/italic
+markers; Cmd/Ctrl+Shift+C and 9 insert code/quote markers. Cmd/Ctrl+Z and
+Shift+Z undo/redo per edit. History belongs to each mounted view, with at most
+128 snapshots and 1 MiB of snapshot text across both stacks. The Tree holds
+the document lease across Element rebuilds; unmount releases it. A later
+mount starts from the guest draft with fresh caret/history. Provider registries
+and native document identities isolate separate guests at identical node keys.
+Disabling clears composing focus; enabling requires a fresh focus interaction.
+
+Documents are limited to 32,640 UTF-8 bytes so a notice containing the full
+text and full selection fits the shared event budget. Oversized edits are
+rejected atomically, preserving text and selection; oversized initial/replacement
+arguments show an explicit placeholder. The whole view still obeys the wire's
+shared frame budget. The fixture limits its displayed previews to avoid
+spending that budget again on duplicate long text.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-composer-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/composer-fixture
+cargo test --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-host bundled_composer_ -- --ignored
+```
+
+The actual wasm tests cover typing with guest echoes between keys, Enter and
+Shift+Enter, formatting, selection, undo/redo, IME preedit/commit, non-pointer
+reset/disable during composition, remount, replacement and concurrent guest
+drafts, and full-selection/oversized-edit budgets. A native Tree ownership
+test checks that a live registry cannot retain an unmounted document.
+
+This provides a native input and semantic event boundary. It uses the default
+plain highlighter; Ducktape's application-specific Markdown highlighting,
+page todo/link/menu/gutter/comment adapters and terminal provider remain later
+integration work. Native `Content` and editor `Action` are still not wire values.
+
+Native fixture capture (600×1000, dark theme, scale 1, after editing both views):
+
+![Two native composers driven by a wasm guest](docs/rich-composer.png)

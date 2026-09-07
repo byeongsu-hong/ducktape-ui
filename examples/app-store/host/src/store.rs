@@ -1455,3 +1455,7 @@ mod widget_tests;
 #[cfg(test)]
 #[path = "retained_tests.rs"]
 mod retained_tests;
+
+#[cfg(test)]
+#[path = "composer_tests.rs"]
+mod composer_tests;
