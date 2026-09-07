@@ -1476,3 +1476,18 @@ button. CI explicitly runs both text fixture host tests.
 Red evidence: disabling both host wrapping branches changes the narrow row's
 cross-axis size from 72 to 20 and fails its assertion. Restoring wrapping
 passes the two-axis test.
+
+### Tree tooltip evidence
+
+The Tree construct table emits tooltip content/tip children. Hostile frames
+include tooltip styles, excessive delays and malformed numeric values; node
+depth/count and diff/patch checks walk both children. The actual text wasm
+fixture uses a bottom tooltip with transparent style, zero padding and 90ms
+delay. `text_wasm_tooltip_delays_hides_and_describes_its_button` reads a native
+AccessKit snapshot through the public snapshot task, checks description before
+hover, then checks raster output before/after the delay and after leaving. CI
+explicitly runs all text fixture host tests.
+
+Red evidence: removing the tooltip description wrapper fails the AccessKit
+description assertion. Forcing a 60-second delay fails the delayed-overlay
+pixel assertion. Restoring each implementation passes the host fixture tests.

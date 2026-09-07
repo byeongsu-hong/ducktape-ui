@@ -271,3 +271,99 @@ fn text_wasm_wrapping_reflows_and_routes_after_resize() {
         "wrapped button routes through wasm"
     );
 }
+
+#[test]
+#[ignore = "requires bundled text-fixture wasm"]
+fn text_wasm_tooltip_delays_hides_and_describes_its_button() {
+    let guest = guest();
+    let mut renderer = renderer();
+    let mut ui = build(
+        &guest,
+        user_interface::Cache::default(),
+        &mut renderer,
+        900.0,
+    );
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now, 900.0);
+    }
+    use iced::futures::StreamExt;
+    use iced_test::runtime::{Action, task};
+    let mut stream = task::into_stream(ui_lang_runtime::snapshot::<String>("Tooltip")).unwrap();
+    let Some(Action::Widget(mut operation)) = iced::futures::executor::block_on(stream.next())
+    else {
+        panic!("snapshot operation")
+    };
+    ui.operate(&renderer, operation.as_mut());
+    let _ = operation.finish();
+    let Some(Action::Output(snapshot)) = iced::futures::executor::block_on(stream.next()) else {
+        panic!("snapshot output")
+    };
+    assert!(
+        snapshot
+            .update
+            .nodes
+            .iter()
+            .any(|(_, node)| node.description() == Some("Apply changes")),
+        "the tooltip supplies the accessible button description before hover"
+    );
+    fn red_pixels(ui: &mut Ui, renderer: &mut iced::Renderer, cursor: mouse::Cursor) -> usize {
+        ui.draw(
+            renderer,
+            &iced::Theme::Light,
+            &iced::advanced::renderer::Style {
+                text_color: iced::Color::BLACK,
+            },
+            cursor,
+        );
+        renderer
+            .screenshot(Size::new(900, 600), 1.0, iced::Color::WHITE)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|pixel| pixel[0] > 240 && pixel[1] < 20 && pixel[2] < 20)
+            .count()
+    }
+    let point = bounds(&mut ui, &mut renderer, "Apply").unwrap().center();
+    let cursor = mouse::Cursor::Available(point);
+    ui.update(
+        &[Event::Mouse(mouse::Event::CursorMoved { position: point })],
+        cursor,
+        &mut renderer,
+        &mut iced::advanced::clipboard::Null,
+        &mut vec![],
+    );
+    assert_eq!(
+        red_pixels(&mut ui, &mut renderer, cursor),
+        0,
+        "tip stays hidden before its delay"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(110));
+    ui.update(
+        &[Event::Window(window::Event::RedrawRequested(
+            std::time::Instant::now(),
+        ))],
+        cursor,
+        &mut renderer,
+        &mut iced::advanced::clipboard::Null,
+        &mut vec![],
+    );
+    assert!(
+        red_pixels(&mut ui, &mut renderer, cursor) > 1500,
+        "native delayed tooltip crosses the guest overlay boundary"
+    );
+    ui.update(
+        &[Event::Mouse(mouse::Event::CursorMoved {
+            position: iced::Point::new(850.0, 550.0),
+        })],
+        mouse::Cursor::Unavailable,
+        &mut renderer,
+        &mut iced::advanced::clipboard::Null,
+        &mut vec![],
+    );
+    assert_eq!(
+        red_pixels(&mut ui, &mut renderer, mouse::Cursor::Unavailable),
+        0,
+        "tip hides after leaving its content"
+    );
+}

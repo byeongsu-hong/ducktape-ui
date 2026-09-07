@@ -761,11 +761,10 @@ const COVERAGE: &[Coverage] = &[
         "  pin w=64.0 h=24.0 x=2.0 y=3.0\n    text \"a\" @text-fg\n",
         "`pin`",
     ),
-    refused(
+    emitted(
         "tooltip",
         "",
         "  tooltip delay=0\n    text \"a\" @text-fg\n    text \"tip\" @text-fg\n",
-        "`tooltip`",
     ),
     emitted(
         "responsive size: container rules",

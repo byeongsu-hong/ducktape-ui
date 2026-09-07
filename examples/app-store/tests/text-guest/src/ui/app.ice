@@ -50,7 +50,20 @@ view
           clip=true
           bg=primary
         text "Clipped content extending past its parent" wrap=none size=28.0
-      button "Apply" #apply @px-4 py-2 -> apply
+      tooltip
+        with
+          position=bottom
+          gap=13.5
+          p=0.0
+          delay=90
+          style=transparent
+        button "Apply" #apply @px-4 py-2 -> apply
+        box
+          with
+            w=100.0
+            h=30.0
+            bg=danger
+          text "Apply changes" @text-fg
       row #actions wrap
         with
           w=fill

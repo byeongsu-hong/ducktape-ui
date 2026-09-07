@@ -23,6 +23,8 @@
 
 use serde::{Deserialize, Serialize};
 
+mod tooltip;
+pub use tooltip::{TooltipPosition, TooltipPreset, TooltipStyle};
 mod text;
 pub use text::{
     FontFamily, FontStretch, FontStyle, LineHeight, NamedFont, Shaping, TextOptions, Wrapping,
@@ -503,6 +505,18 @@ pub enum Node {
         #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
+    Tooltip {
+        key: String,
+        position: TooltipPosition,
+        gap: f32,
+        padding: f32,
+        delay_ms: u64,
+        snap: bool,
+        style: TooltipStyle,
+        /// Content followed by tip; extra children are discarded by sanitization.
+        #[serde(deserialize_with = "decode_children")]
+        children: Vec<Node>,
+    },
     Linear {
         key: String,
         wrap: Option<Wrap>,
@@ -859,6 +873,7 @@ impl Node {
             | Self::Stack { key, .. }
             | Self::Hover { key, .. }
             | Self::Overlay { key, .. }
+            | Self::Tooltip { key, .. }
             | Self::Canvas { key, .. }
             | Self::Surface { key, .. } => Some(key),
             Self::Space { .. } => None,
@@ -880,6 +895,7 @@ impl Node {
             | Self::Grid { children, .. }
             | Self::Stack { children, .. }
             | Self::Hover { children, .. }
+            | Self::Tooltip { children, .. }
             | Self::Overlay { children, .. }
             | Self::When { children, .. } => children,
 
@@ -923,6 +939,7 @@ impl Node {
             | Self::Grid { children, .. }
             | Self::Stack { children, .. }
             | Self::Hover { children, .. }
+            | Self::Tooltip { children, .. }
             | Self::Overlay { children, .. }
             | Self::When { children, .. } => children,
 
@@ -957,6 +974,7 @@ impl Node {
             | Self::Stack { children, .. }
             | Self::When { children, .. }
             | Self::Hover { children, .. }
+            | Self::Tooltip { children, .. }
             | Self::Overlay { children, .. } => Some(children),
             Self::Container { .. }
             | Self::Responsive { .. }
@@ -1483,6 +1501,22 @@ fn sanitize_node(
             *radius = bounded(*radius);
             children.truncate(2);
         }
+        Node::Tooltip {
+            key,
+            gap,
+            padding,
+            delay_ms,
+            style,
+            children,
+            ..
+        } => {
+            claim(key, taken);
+            *gap = bounded(*gap);
+            *padding = bounded(*padding);
+            style.sanitize();
+            *delay_ms = (*delay_ms).min(60_000);
+            children.truncate(2);
+        }
         Node::Overlay {
             key,
             padding,
@@ -1867,6 +1901,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Sensor { .. }
         | Node::MouseArea { .. }
         | Node::Overlay { .. }
+        | Node::Tooltip { .. }
         | Node::When { .. }
         | Node::Surface { .. } => Vec::new(),
     };

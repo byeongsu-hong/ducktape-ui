@@ -29,6 +29,7 @@ use ui_lang_wire as wire;
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
 mod text;
+mod tooltip;
 pub use text::register_font_family;
 mod button;
 mod canvas;
@@ -364,6 +365,7 @@ fn collect_inputs(
         | wire::Node::Grid { children, .. }
         | wire::Node::Stack { children, .. }
         | wire::Node::Hover { children, .. }
+        | wire::Node::Tooltip { children, .. }
         | wire::Node::Overlay { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
@@ -440,6 +442,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         | wire::Node::Grid { children, .. }
         | wire::Node::Stack { children, .. }
         | wire::Node::Hover { children, .. }
+        | wire::Node::Tooltip { children, .. }
         | wire::Node::Overlay { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
@@ -1133,6 +1136,18 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .into()
         }
+        wire::Node::Tooltip {
+            position,
+            gap,
+            padding,
+            delay_ms,
+            snap,
+            style,
+            children,
+            ..
+        } => tooltip::render(
+            *position, *gap, *padding, *delay_ms, *snap, *style, children, kept,
+        ),
         wire::Node::Linear {
             key,
             wrap,
