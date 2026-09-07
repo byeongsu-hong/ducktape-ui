@@ -1581,3 +1581,7 @@ mod keyed_tests;
 #[cfg(test)]
 #[path = "lazy_tests.rs"]
 mod lazy_tests;
+
+#[cfg(test)]
+#[path = "flex_tests.rs"]
+mod flex_tests;

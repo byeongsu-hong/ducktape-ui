@@ -875,6 +875,7 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
             Node::Linear { .. }
                 | Node::Grid { .. }
                 | Node::KeyedColumn { .. }
+                | Node::Flex { .. }
                 | Node::Stack { .. }
                 | Node::Hover { .. }
                 | Node::Overlay { .. }
@@ -907,6 +908,7 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
                         Node::Linear { .. }
                         | Node::Grid { .. }
                         | Node::KeyedColumn { .. }
+                        | Node::Flex { .. }
                         | Node::Stack { .. }
                         | Node::Hover { .. }
                         | Node::Overlay { .. },
@@ -914,6 +916,7 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
                     Node::Linear { .. }
                     | Node::Grid { .. }
                     | Node::KeyedColumn { .. }
+                    | Node::Flex { .. }
                     | Node::Stack { .. }
                     | Node::Hover { .. }
                     | Node::Overlay { .. },
@@ -924,6 +927,7 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
                         Node::Linear { .. }
                             | Node::Grid { .. }
                             | Node::KeyedColumn { .. }
+                            | Node::Flex { .. }
                             | Node::Stack { .. }
                             | Node::Hover { .. }
                             | Node::Overlay { .. }
@@ -932,6 +936,7 @@ fn gen_patch(rng: &mut Rng, root: &Node, hostile: bool) -> Patch {
                         Node::Linear { .. }
                             | Node::Grid { .. }
                             | Node::KeyedColumn { .. }
+                            | Node::Flex { .. }
                             | Node::Stack { .. }
                             | Node::Hover { .. }
                             | Node::Overlay { .. }
@@ -1072,6 +1077,7 @@ fn tree_depth(node: &Node) -> usize {
         Node::Linear { children, .. }
         | Node::Grid { children, .. }
         | Node::KeyedColumn { children, .. }
+        | Node::Flex { children, .. }
         | Node::Stack { children, .. }
         | Node::Hover { children, .. }
         | Node::Tooltip { children, .. }
@@ -1277,6 +1283,31 @@ fn check_bounds(
             check_length(height, ctx);
             check_color(background, ctx);
             check_border(border, ctx);
+            for child in children {
+                check_bounds(child, depth + 1, keys, svg_bytes, ctx);
+            }
+        }
+        Node::Flex {
+            layout,
+            items,
+            children,
+            background,
+            border,
+            ..
+        } => {
+            check_pixels(&layout.row_gap, ctx, "row gap");
+            check_pixels(&layout.column_gap, ctx, "column gap");
+            check_pixels(&layout.max_width, ctx, "max width");
+            check_pixels(&layout.max_height, ctx, "max height");
+            check_pixels(&layout.surface_max_width, ctx, "surface max width");
+            check_length(&layout.surface_width, ctx);
+            check_length(&layout.surface_height, ctx);
+            check_length(&layout.width, ctx);
+            check_length(&layout.height, ctx);
+            check_edges(&layout.padding, ctx);
+            check_color(background, ctx);
+            check_border(border, ctx);
+            assert_eq!(items.len(), children.len(), "{ctx}: flex item cardinality");
             for child in children {
                 check_bounds(child, depth + 1, keys, svg_bytes, ctx);
             }

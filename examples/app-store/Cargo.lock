@@ -307,6 +307,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "app-store-flex-fixture"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "app-store-host"
 version = "0.1.0"
 dependencies = [

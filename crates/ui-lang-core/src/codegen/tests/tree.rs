@@ -699,11 +699,10 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  hover\n    text \"a\" @text-fg\n    text \"b\" @text-fg\n",
     ),
-    refused(
+    emitted(
         "layout: flex",
         "",
         "  flex gap=4.0\n    text \"a\" @text-fg\n",
-        "`flex`",
     ),
     // The widgets the wire has no node for.
     emitted(
@@ -1377,4 +1376,56 @@ fn tree_lazy_emits_a_guest_cache_with_a_stable_wire_boundary() {
     let generated = compile_for(&source, "lazy.ice", Target::Tree).unwrap();
     assert!(generated.contains("::ui_lang_guest::memo_lazy("));
     assert!(!generated.contains("::ui_lang_runtime::memo_lazy("));
+}
+
+#[test]
+fn tree_flex_copies_layout_item_options_and_control_flow() {
+    let source = format!(
+        r#"app Flexbox
+{PALETTE}state
+  values = [1, 2, 3]
+view
+  flex dir=row-reverse wrap=wrap-reverse w=fill h=300.0 max-w=900.0 max-h=500.0 gap=8.0 gap-y=12.0 gap-x=16.0 justify=space-evenly items=baseline content=space-between p=4.0 clip=true
+    box order=2 grow=1.0 shrink=0.5 basis=percent(40.0) self=flex-end m=auto
+      text "First"
+    box flex=2.0,1.0,120.0 mx=percent(5.0) mt=-2.0
+      text "Second"
+    flex
+      with
+        w=100.0
+        h=50.0
+        @w-full
+        @h-full
+        @max-w-sm
+        @bg-primary
+      text "Utility sized surface"
+    for value in values
+      if value > 1
+        match value
+          2
+            text value
+          _
+            text "Last"
+"#
+    );
+    let generated = compile_for(&source, "flexbox.ice", Target::Tree).unwrap();
+    for expected in [
+        "::ui_lang_guest::wire::Node::Flex",
+        "FlexDirection::RowReverse",
+        "FlexWrap::WrapReverse",
+        "FlexContentAlignment::SpaceEvenly",
+        "FlexItemAlignment::Baseline",
+        "FlexContentAlignment::SpaceBetween",
+        "FlexBasis::Percent",
+        "FlexMargin::Auto",
+        "FlexMargin::Percent",
+        "FlexItemAlignment::FlexEnd",
+        "__items.push(",
+        "enumerate()",
+        "surface_width: ::std::option::Option::Some(::ui_lang_guest::wire::Length::Fill)",
+    ] {
+        assert!(generated.contains(expected), "missing {expected}");
+    }
+    assert!(!generated.contains("::ui_lang_runtime::flex("));
+    assert!(!generated.contains("::ui_lang_runtime::flex_item("));
 }

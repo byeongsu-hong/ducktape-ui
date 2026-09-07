@@ -39,7 +39,9 @@
 use super::*;
 mod button;
 mod canvas;
+mod flex;
 mod lists;
+pub(super) use flex::item_code as flex_item_code;
 pub(super) use lists::keyed_column;
 mod responsive;
 mod text;
@@ -558,6 +560,11 @@ fn layout(
             layout, identity, children, program, message, env, scope, slot,
         );
     }
+    if let ResolvedLayoutMode::Flex(flex) = &layout.mode {
+        return flex::render(
+            layout, flex, identity, children, program, message, env, scope, slot,
+        );
+    }
     let origin = layout.origin;
     let style = &layout.utility_style;
     refuse_box_utilities(style, program, origin)?;
@@ -781,7 +788,7 @@ fn layout(
         ResolvedLayoutMode::Stack(_) | ResolvedLayoutMode::Hover(_) => {
             unreachable!("handled layered layout")
         }
-        ResolvedLayoutMode::Flex(_) => Err(refused(program, origin, "flex")),
+        ResolvedLayoutMode::Flex(_) => unreachable!("handled flex layout"),
     }
 }
 
