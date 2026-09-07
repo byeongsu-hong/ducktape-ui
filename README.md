@@ -408,3 +408,7 @@ name host surfaces with copied scalar arguments and typed return events; see
 [app-store](examples/app-store/README.md) for the runnable host and
 [module-owned views](examples/app-store/module-views.md) for the packaging and
 runtime gaps identified from Ducktape's existing screens.
+
+The wasm tree target preserves omitted border style fields: setting a border
+colour does not square a checkbox or reset its native border width. See the
+[app-store wire rendering notes](examples/app-store/README.md#wire-and-rendering).

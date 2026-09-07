@@ -153,6 +153,19 @@ view
 }
 
 #[test]
+fn omitted_border_fields_remain_absent_on_the_wire() {
+    let generated = tree_with(
+        "on flip(value)\n  busy = value\n",
+        "  col\n    checkbox \"Busy\" checked=busy -> flip _\n      active unchecked border=primary\n    button \"Remove\" -> remove 0\n",
+    );
+    assert!(
+        generated
+            .contains("width: ::std::option::Option::None, radius: ::std::option::Option::None"),
+        "{generated}"
+    );
+}
+
+#[test]
 fn form_controls_compile_to_wire_nodes_with_handler_slots() {
     let generated = tree_with(
         "on flip(value)\n  busy = value\non slide(value)\n  amount = value\non choose(value)\n  choice = some(value)\n",

@@ -203,10 +203,12 @@ impl Edges {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Border {
-    pub color: Rgba,
-    pub width: f32,
-    /// top-left, top-right, bottom-right, bottom-left.
-    pub radius: [f32; 4],
+    /// Unspecified fields retain the host style, including earlier faces.
+    pub color: Option<Rgba>,
+    pub width: Option<f32>,
+    /// top-left, top-right, bottom-right, bottom-left. `Some([0.0; 4])`
+    /// explicitly squares the corners; `None` preserves their radius.
+    pub radius: Option<[f32; 4]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -1711,11 +1713,11 @@ fn bound_control_face(face: &mut ControlFace) {
 
 fn bound_border(border: &mut Option<Border>) {
     if let Some(border) = border {
-        let mut color = Some(border.color);
-        bound_color(&mut color);
-        border.color = color.expect("kept");
-        border.width = bounded(border.width);
-        for radius in &mut border.radius {
+        bound_color(&mut border.color);
+        if let Some(width) = &mut border.width {
+            *width = bounded(*width);
+        }
+        for radius in border.radius.iter_mut().flatten() {
             *radius = bounded(*radius);
         }
     }
@@ -1920,6 +1922,33 @@ mod tests {
             })
             .sum::<usize>();
         assert!(bytes + name.len() <= MAX_TEXT_BYTES_PER_FRAME);
+    }
+
+    #[test]
+    fn border_sanitization_preserves_absence_and_explicit_zero() {
+        let absent = Some(Border {
+            color: None,
+            width: None,
+            radius: None,
+        });
+        let mut bounded = absent;
+        bound_border(&mut bounded);
+        assert_eq!(bounded, absent);
+        assert_eq!(decode::<Option<Border>>(&encode(&bounded)).unwrap(), absent);
+        let mut explicit = Some(Border {
+            color: Some(Rgba([0.0; 4])),
+            width: Some(f32::NAN),
+            radius: Some([-1.0; 4]),
+        });
+        bound_border(&mut explicit);
+        let zero = Some(Border {
+            color: Some(Rgba([0.0; 4])),
+            width: Some(0.0),
+            radius: Some([0.0; 4]),
+        });
+        assert_eq!(explicit, zero);
+        assert_ne!(explicit, absent);
+        assert_eq!(decode::<Option<Border>>(&encode(&explicit)).unwrap(), zero);
     }
 
     #[test]

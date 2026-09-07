@@ -842,3 +842,13 @@ surface names render a visible placeholder. Surface arguments are bounded to
 sanitize to zero. Returned strings are truncated on a UTF-8 boundary to the
 wire string limit before entering the guest. Compound and opaque native
 arguments/events fail with E190 until their wire representation exists.
+
+## Partial border styles on the tree target
+
+A tree-target border retains colour, width and corner radii as independent
+optional values. Omission preserves the host widget's base style or a value
+applied by an earlier state face. Explicit transparent colour, zero width,
+and zero radii overwrite those fields. A partial border on a plain container
+is applied over the default container border. Sanitization bounds present
+values without creating absent ones. This matches the native emitter's
+field-by-field style updates.

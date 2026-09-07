@@ -312,8 +312,8 @@ fn radius_code(
 }
 
 /// A border from its parts, any of which may be absent. A radius alone still
-/// needs a border (the host rounds the background through it), drawn
-/// transparent and zero wide.
+/// needs a border (the host rounds the background through it); omitted
+/// fields must retain the host style, including earlier state faces.
 fn border_parts_code(
     color: Option<&ResolvedThemeColor>,
     width: Option<String>,
@@ -322,11 +322,9 @@ fn border_parts_code(
     if color.is_none() && width.is_none() && radius.is_none() {
         return option_code(None);
     }
-    let color = color
-        .map(rgba_code)
-        .unwrap_or_else(|| format!("{WIRE}::Rgba([0.0, 0.0, 0.0, 0.0])"));
-    let width = width.unwrap_or_else(|| "0.0".into());
-    let radius = radius.unwrap_or_else(|| "[0.0; 4]".into());
+    let color = option_code(color.map(rgba_code));
+    let width = option_code(width);
+    let radius = option_code(radius);
     option_code(Some(format!(
         "{WIRE}::Border {{ color: {color}, width: {width}, radius: {radius} }}"
     )))

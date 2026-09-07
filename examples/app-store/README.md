@@ -458,6 +458,12 @@ For module packaging requirements and the connected implementation phases, see
   are the shapes the faces have no room for: a toggler's knob border and
   padding ratio, a slider's handle shape, a rule's `fill=`. A slider
   carries `f64` values only.
+- Border colour, width and corner radii retain their individual absence
+  on the wire. Setting only `border=…` keeps the host's width and rounding;
+  a hover face that sets only the width keeps the active face's colour and
+  corners. An explicit transparent colour, `border-w=0.0` or `r=0.0`
+  still clears that field. This applies to each host control's border style,
+  including progress bars; a plain container starts from its default border.
 - A `scroll` carries its bar options (`bar=hidden`, `bar-w=`, `bar-m=`,
   `scroller-w=`, `bar-gap=`), anchors (`anchor-y=end`, `anchor-y=keep`)
   and `auto=`; its `scroll=` and `viewport=` routes and its status styles

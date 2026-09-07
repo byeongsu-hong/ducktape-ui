@@ -1100,3 +1100,22 @@ Red evidence: removing the renderer's route produced `left: []` instead of
 the expected `Surface` event after a real button click. Dropping the guest's
 surface message failed the generated fixture's expected link text assertion.
 Both tests pass again with the production paths restored.
+
+### Tree-target partial border styles
+
+`wire::Border` carries optional colour, width and per-corner radii. The
+codegen test `omitted_border_fields_remain_absent_on_the_wire` rejects the
+former width-zero/radius-zero lowering. Runtime `view_tree` tests compare a
+colour-only checkbox border with the native theme, check inherited button
+faces and explicit zero/transparent overrides, and preserve the toggler's
+automatic radius. Wire round trips, sanitization and hostile-frame tests
+preserve absence while bounding present values.
+
+Red: defaulting an absent radius to zero makes
+`checkbox_border_color_keeps_native_rounding_and_width` fail with radius 0
+instead of the native radius 2. Restoring omission preservation passes.
+
+Pick lists apply active before hovered/opened, and opened before
+opened-hovered, matching native state inheritance. Before that ordering fix,
+`pick_list_border_faces_follow_native_state_inheritance` fails its expected
+active radius (7); the same test passes after the ordered overlay is restored.
