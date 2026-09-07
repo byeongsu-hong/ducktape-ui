@@ -184,6 +184,39 @@ fn a_grid_compiles_to_a_grid_node() {
     assert!(!fluid.contains("::iced::widget::grid("), "{fluid}");
 }
 
+/// The guest's handler table outlives the view that filled it, so a slider's
+/// change closure owns what its route arguments name: an argument bound by
+/// the `for` around it is evaluated in the loop body and moved in, not
+/// borrowed from the loop binding.
+#[test]
+fn a_slider_route_argument_from_a_for_binding_is_owned_by_the_handler() {
+    let generated = tree_with(
+        "on slide_to(label, value)\n  amount = value\n",
+        "  col\n    button \"×\" -> remove 0\n    for item in items\n      slider amount min=0.0 max=100.0 -> slide_to item _\n",
+    );
+    let slider = generated
+        .find("::ui_lang_guest::wire::Node::Slider {")
+        .map(|at| &generated[at..])
+        .expect("the slider is emitted");
+    let handler = slider
+        .find("::ui_lang_guest::slots::handler::<f32, __DemoMessage>(")
+        .map(|at| &slider[at..])
+        .expect("the change route is a handler slot");
+    let (hoist, closure) = handler
+        .split_once("move |__value|")
+        .expect("the route callback is a move closure");
+    assert!(
+        hoist.contains("let __route_arg_0 = item.to_owned();"),
+        "the loop binding is cloned before the closure:\n{handler}"
+    );
+    assert!(
+        closure.starts_with(
+            " __DemoMessage::SlideTo(::std::clone::Clone::clone(&__route_arg_0), __value)"
+        ),
+        "the closure reads its own copy:\n{handler}"
+    );
+}
+
 #[test]
 fn a_construct_the_wire_does_not_carry_fails_at_its_line() {
     let source = format!(
@@ -380,6 +413,11 @@ const COVERAGE: &[Coverage] = &[
         "slider",
         SLIDE,
         "  slider amount min=0.0 max=100.0 -> slide _\n",
+    ),
+    emitted(
+        "slider: route argument",
+        "on slide_to(index, value)\n  amount = value\n",
+        "  slider amount min=0.0 max=100.0 -> slide_to 1 _\n",
     ),
     emitted("progress", "", "  progress amount\n"),
     emitted(
@@ -622,12 +660,6 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  progress amount style=success\n",
         "a progress style",
-    ),
-    refused(
-        "slider: route argument",
-        "on slide_to(index, value)\n  amount = value\n",
-        "  slider amount min=0.0 max=100.0 -> slide_to 1 _\n",
-        "an argument on a slider route",
     ),
     refused(
         "pick list: style",

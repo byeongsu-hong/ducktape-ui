@@ -119,22 +119,50 @@ pub(in crate::codegen) fn resolved_interaction_route_code(
     program: &LoweredProgram,
     message: &str,
 ) -> Result<String, Error> {
+    resolved_interaction_route_code_impl(route, payloads, None, env, program, message)
+}
+
+/// `snapshots`, when given, name each expression argument's value in route
+/// order instead of evaluating the expression here: the caller evaluated
+/// them where the bindings were alive, and the route reads the names.
+fn resolved_interaction_route_code_impl(
+    route: &ResolvedInteractionRoute,
+    payloads: &[&str],
+    snapshots: Option<&[String]>,
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
     let invariant = |message| program.invariant_at_origin(route.origin, message);
-    let mut args = route
-        .args
-        .iter()
-        .map(|arg| match arg {
-            ResolvedInteractionRouteArg::Expression(expression) => {
-                resolved_expr_use_code(program, *expression, env, ValueMode::Owned)
-            }
+    let mut snapshot = 0;
+    let mut args = Vec::with_capacity(route.args.len());
+    for arg in &route.args {
+        args.push(match arg {
+            ResolvedInteractionRouteArg::Expression(expression) => match snapshots {
+                Some(snapshots) => {
+                    let code = snapshots.get(snapshot).cloned().ok_or_else(|| {
+                        invariant("interaction route has fewer snapshots than expressions")
+                    })?;
+                    snapshot += 1;
+                    code
+                }
+                None => resolved_expr_use_code(program, *expression, env, ValueMode::Owned)?,
+            },
             ResolvedInteractionRouteArg::Payload { index, .. } => payloads
                 .get(*index as usize)
                 .map(|payload| (*payload).to_owned())
                 .ok_or_else(|| {
                     invariant("interaction route payload index is outside its contract")
-                }),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+                })?,
+        });
+    }
+    if let Some(snapshots) = snapshots
+        && snapshot != snapshots.len()
+    {
+        return Err(invariant(
+            "interaction route has more snapshots than expressions",
+        ));
+    }
     match &route.target {
         ResolvedInteractionRouteTarget::TargetHandler(handler) => {
             let target = program.try_handler(*handler).ok_or_else(|| {
@@ -348,5 +376,29 @@ pub(in crate::codegen) fn resolved_interaction_route_callback_code(
 ) -> Result<String, Error> {
     resolved_interaction_route_callback_with_code(route, pattern, env, program, |callback_env| {
         resolved_interaction_route_code(route, payloads, callback_env, program, message)
+    })
+}
+
+/// The callback with every expression argument already evaluated: the
+/// closure owns the values `snapshots` name instead of borrowing what the
+/// view would evaluate them from, so it may outlive the view.
+pub(in crate::codegen) fn resolved_interaction_route_callback_with_snapshots(
+    route: &ResolvedInteractionRoute,
+    pattern: &str,
+    payloads: &[&str],
+    snapshots: &[String],
+    env: &dyn BindingEnvironment,
+    program: &LoweredProgram,
+    message: &str,
+) -> Result<String, Error> {
+    resolved_interaction_route_callback_with_code(route, pattern, env, program, |callback_env| {
+        resolved_interaction_route_code_impl(
+            route,
+            payloads,
+            Some(snapshots),
+            callback_env,
+            program,
+            message,
+        )
     })
 }

@@ -3,7 +3,9 @@
 
 use app_store_todo::items::{Item, decode, encode};
 use app_store_todo::{boot_native, tick_native};
-use ui_lang_guest::testing::{answer, find, has_text, item, press, texts, toggle, type_into};
+use ui_lang_guest::testing::{
+    answer, find, has_text, item, keys, press, slide, texts, toggle, type_into,
+};
 use ui_lang_guest::wire::{Frame, Node, Request, Rgba};
 
 fn boot_with(stored: &[Item]) -> Frame {
@@ -42,6 +44,7 @@ fn typing_into_the_input_and_adding_appends_a_row_and_saves_it() {
         id: 4,
         text: "Already here".into(),
         done: true,
+        priority: 0,
     }];
     let frame = boot_with(&stored);
     assert!(has_text(&frame, "Already here"), "{:?}", texts(&frame));
@@ -95,11 +98,13 @@ fn checking_an_item_marks_it_done_and_hiding_done_removes_its_row() {
             id: 1,
             text: "Already here".into(),
             done: false,
+            priority: 0,
         },
         Item {
             id: 2,
             text: "Long gone".into(),
             done: true,
+            priority: 0,
         },
     ];
     let frame = boot_with(&stored);
@@ -127,6 +132,60 @@ fn checking_an_item_marks_it_done_and_hiding_done_removes_its_row() {
     };
     let frame = tick_native(toggle(&frame, "Hide done", false));
     assert!(has_text(&frame, "Long gone"), "{:?}", texts(&frame));
+}
+
+/// Each row's slider routes with the row's item id, an argument bound by the
+/// `for` around it: dragging the second row's slider changes that item alone,
+/// and the change is saved with the priority in its line.
+#[test]
+fn dragging_a_rows_slider_sets_that_items_priority() {
+    let stored = vec![
+        Item {
+            id: 1,
+            text: "First".into(),
+            done: false,
+            priority: 0,
+        },
+        Item {
+            id: 2,
+            text: "Second".into(),
+            done: false,
+            priority: 0,
+        },
+    ];
+    let frame = boot_with(&stored);
+    assert_eq!(priorities(&frame), [0.0, 0.0]);
+
+    let second = row_sliders(&frame).remove(1);
+    let frame = tick_native(slide(&frame, &second, 2.0));
+    assert_eq!(priorities(&frame), [0.0, 2.0]);
+    assert_eq!(frame.requests.len(), 1, "{:?}", frame.requests);
+    assert_eq!(frame.requests[0].kind, "storage.set");
+    let mut saved = stored;
+    saved[1].priority = 2;
+    assert_eq!(
+        frame.requests[0].payload,
+        [b"items\n".as_slice(), &encode(&saved)].concat()
+    );
+}
+
+/// The row sliders' keys, in row order; rows are unidentified, so the key
+/// is the loop scope's plus the slider's origin.
+fn row_sliders(frame: &Frame) -> Vec<String> {
+    keys(frame)
+        .into_iter()
+        .filter(|key| key.contains("@slider"))
+        .collect()
+}
+
+fn priorities(frame: &Frame) -> Vec<f32> {
+    row_sliders(frame)
+        .iter()
+        .map(|key| match find(frame, key) {
+            Some(Node::Slider { value, .. }) => *value,
+            other => panic!("{key} is not a slider: {other:?}"),
+        })
+        .collect()
 }
 
 fn progress(frame: &Frame) -> f32 {

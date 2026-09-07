@@ -9,11 +9,13 @@ app Todo
 use "theme.ice"
 
 extern crate::items
-  Item(id:i64, text:str, done:bool)
+  Item(id:i64, text:str, done:bool, priority:i64)
   StorageError(message:str)
   pure add_item(items:[Item], id:i64, text:str) -> [Item]
   pure toggle_item(items:[Item], id:i64) -> [Item]
   pure remove_item(items:[Item], id:i64) -> [Item]
+  pure set_priority(items:[Item], id:i64, priority:f64) -> [Item]
+  pure priority_of(item:&Item) -> f64
   pure remaining(items:&[Item]) -> str
   pure done_share(items:&[Item]) -> f64
   pure next_after(items:[Item]) -> i64
@@ -63,6 +65,11 @@ on toggle(id)
 
 on remove(id)
   items = remove_item(items, id)
+  run every save_items(items) -> saved _ | failed _
+
+// The row's slider names its item: the argument is bound by the `for`.
+on prioritise(id, value)
+  items = set_priority(items, id, value)
   run every save_items(items) -> saved _ | failed _
 
 on hide(value)
@@ -120,6 +127,12 @@ view
                     gap=12.0
                     align=center
                   checkbox item.text checked=item.done w=fill -> toggle item.id
+                  slider priority_of(item) -> prioritise item.id _
+                    with
+                      min=0.0
+                      max=3.0
+                      step=1.0
+                      w=96.0
                   button "×" -> remove item.id
                     active bg=raised text=danger r=8.0
                     hovered bg=border text=danger r=8.0

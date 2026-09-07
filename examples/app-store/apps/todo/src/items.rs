@@ -10,6 +10,8 @@ pub struct Item {
     pub id: i64,
     pub text: String,
     pub done: bool,
+    /// `0..=3`, what the row's slider sets.
+    pub priority: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -32,6 +34,7 @@ pub fn add_item(mut items: Vec<Item>, id: i64, text: String) -> Vec<Item> {
             id,
             text,
             done: false,
+            priority: 0,
         });
     }
     items
@@ -44,6 +47,20 @@ pub fn toggle_item(mut items: Vec<Item>, id: i64) -> Vec<Item> {
         }
     }
     items
+}
+
+/// The slider hands over an `f64`; the item keeps the step it snapped to.
+pub fn set_priority(mut items: Vec<Item>, id: i64, priority: f64) -> Vec<Item> {
+    for item in &mut items {
+        if item.id == id {
+            item.priority = priority.round().clamp(0.0, 3.0) as i64;
+        }
+    }
+    items
+}
+
+pub fn priority_of(item: &Item) -> f64 {
+    item.priority as f64
 }
 
 pub fn remove_item(mut items: Vec<Item>, id: i64) -> Vec<Item> {
@@ -106,13 +123,19 @@ pub fn theme_changes() -> impl Stream<Item = Result<String, StorageError>> + Sen
     })
 }
 
-/// `id\tdone\ttext` per line; tabs and newlines in a text are folded to spaces.
+/// `id\tdone\tpriority\ttext` per line; tabs and newlines in a text are folded
+/// to spaces.
 pub fn encode(items: &[Item]) -> Vec<u8> {
     items
         .iter()
         .map(|item| {
             let text = item.text.replace(['\t', '\n'], " ");
-            format!("{}\t{}\t{text}\n", item.id, u8::from(item.done))
+            format!(
+                "{}\t{}\t{}\t{text}\n",
+                item.id,
+                u8::from(item.done),
+                item.priority
+            )
         })
         .collect::<String>()
         .into_bytes()
@@ -122,11 +145,17 @@ pub fn decode(bytes: &[u8]) -> Vec<Item> {
     String::from_utf8_lossy(bytes)
         .lines()
         .filter_map(|line| {
-            let mut fields = line.splitn(3, '\t');
+            let mut fields = line.splitn(4, '\t');
             let id = fields.next()?.parse().ok()?;
             let done = fields.next()? == "1";
+            let priority = fields.next()?.parse().ok()?;
             let text = fields.next()?.to_string();
-            Some(Item { id, text, done })
+            Some(Item {
+                id,
+                text,
+                done,
+                priority,
+            })
         })
         .collect()
 }
