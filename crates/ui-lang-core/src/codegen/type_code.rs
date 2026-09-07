@@ -1,12 +1,16 @@
 use super::*;
 
 pub(super) fn rust_type_code(program: &LoweredProgram, ty: &Type) -> String {
-    if *ty == Type::Editor {
-        return editor_type_code(program).to_owned();
-    }
-    rust_type_code_with_named(ty, &|name| {
+    rust_type_code_with_named(ty, program.target(), &|name| {
         program.struct_rust_path_by_name(name).map(str::to_owned)
     })
+}
+
+pub(super) fn markdown_type_code(program: &LoweredProgram) -> &'static str {
+    match program.target() {
+        Target::Tree => "::ui_lang_guest::Markdown",
+        Target::Native => "::iced::widget::markdown::Content",
+    }
 }
 
 /// What an `editor` state field holds. A view module never holds a
@@ -30,6 +34,7 @@ pub(super) fn editor_message_payload_code(program: &LoweredProgram) -> &'static 
 
 fn rust_type_code_with_named(
     ty: &Type,
+    target: Target,
     named_rust_path: &impl Fn(&str) -> Option<String>,
 ) -> String {
     match ty {
@@ -45,30 +50,38 @@ fn rust_type_code_with_named(
         Type::DebugSpan => "::iced::debug::Span".into(),
         Type::List(inner) => format!(
             "::std::vec::Vec<{}>",
-            rust_type_code_with_named(inner, named_rust_path)
+            rust_type_code_with_named(inner, target, named_rust_path)
         ),
         Type::Option(inner) => format!(
             "::std::option::Option<{}>",
-            rust_type_code_with_named(inner, named_rust_path)
+            rust_type_code_with_named(inner, target, named_rust_path)
         ),
         Type::Result(output, error) => format!(
             "::std::result::Result<{}, {}>",
-            rust_type_code_with_named(output, named_rust_path),
-            rust_type_code_with_named(error, named_rust_path)
+            rust_type_code_with_named(output, target, named_rust_path),
+            rust_type_code_with_named(error, target, named_rust_path)
         ),
         Type::Combo(inner) => format!(
             "::iced::widget::combo_box::State<{}>",
-            rust_type_code_with_named(inner, named_rust_path)
+            rust_type_code_with_named(inner, target, named_rust_path)
         ),
         Type::Animation(inner) => match inner.as_ref() {
             Type::F64 => "::iced::Animation<f32>".into(),
             inner => format!(
                 "::iced::Animation<{}>",
-                rust_type_code_with_named(inner, named_rust_path)
+                rust_type_code_with_named(inner, target, named_rust_path)
             ),
         },
-        Type::Markdown => "::iced::widget::markdown::Content".into(),
-        Type::Editor => "::iced::widget::text_editor::Content".into(),
+        Type::Markdown => match target {
+            Target::Tree => "::ui_lang_guest::Markdown",
+            Target::Native => "::iced::widget::markdown::Content",
+        }
+        .into(),
+        Type::Editor => match target {
+            Target::Tree => "::std::string::String",
+            Target::Native => "::iced::widget::text_editor::Content",
+        }
+        .into(),
         Type::Event => "::iced::Event".into(),
         Type::EventStatus => "::iced::event::Status".into(),
         Type::Key => "::iced::keyboard::Key".into(),
@@ -150,7 +163,7 @@ mod tests {
     #[test]
     fn test_target_uses_the_public_runtime_target() {
         assert_eq!(
-            rust_type_code_with_named(&Type::TestTarget, &|_| None),
+            rust_type_code_with_named(&Type::TestTarget, Target::Native, &|_| None),
             "::ui_lang_runtime::testing::Target"
         );
     }
@@ -164,12 +177,17 @@ mod tests {
                     Box::new(Type::List(Box::new(Type::Named("external".into())))),
                     Box::new(Type::Option(Box::new(Type::Named("generated-type".into())))),
                 ),
+                Target::Native,
                 &named,
             ),
             "::std::result::Result<::std::vec::Vec<crate::External>, ::std::option::Option<__IceType067656e6572617465642d74797065>>"
         );
         assert_eq!(
-            rust_type_code_with_named(&Type::Animation(Box::new(Type::F64)), &named),
+            rust_type_code_with_named(
+                &Type::Animation(Box::new(Type::F64)),
+                Target::Native,
+                &named
+            ),
             "::iced::Animation<f32>"
         );
     }

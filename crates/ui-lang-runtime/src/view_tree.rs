@@ -29,6 +29,10 @@ use ui_lang_wire as wire;
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
 mod editor;
+#[cfg(feature = "markdown")]
+mod markdown;
+#[cfg(feature = "markdown")]
+pub use markdown::markdown_surface;
 
 pub type IceElement<'a, Message> = Element<'a, Message, iced::Theme, iced::Renderer>;
 

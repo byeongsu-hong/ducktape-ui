@@ -2162,7 +2162,8 @@ fn expr_builtin_group_6(
             expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
         ),
         "markdown" => format!(
-            "::iced::widget::markdown::Content::parse(&{})",
+            "{}::parse(&{})",
+            markdown_type_code(context.program),
             expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
         ),
         "markdown_images" => format!(
@@ -2716,10 +2717,11 @@ fn resolved_expr_use_code_in(
         ResolvedInitializerCoercion::StrToMarkdown => {
             match &expressions.expression(expression_use.root).kind {
                 ResolvedExpressionKind::Str(value) => format!(
-                    "::iced::widget::markdown::Content::parse({})",
+                    "{}::parse({})",
+                    markdown_type_code(context.program),
                     rust_string(value)
                 ),
-                _ => format!("::iced::widget::markdown::Content::parse(&({code}))"),
+                _ => format!("{}::parse(&({code}))", markdown_type_code(context.program)),
             }
         }
         ResolvedInitializerCoercion::StrToEditor if context.program.target() == Target::Tree => {

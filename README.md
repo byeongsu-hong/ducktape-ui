@@ -410,6 +410,11 @@ and typed return events; see
 [module-owned views](examples/app-store/module-views.md) for the packaging and
 runtime gaps identified from Ducktape's existing screens.
 
+Markdown also crosses as source and resolved settings through a named host
+surface, with typed link events and source-preserving append/replacement.
+The app-store registers the default `ice.markdown` renderer; custom viewers
+use their declared provider name.
+
 The wasm tree target preserves omitted border style fields: setting a border
 colour does not square a checkbox or reset its native border width. See the
 [app-store wire rendering notes](examples/app-store/README.md#wire-and-rendering).

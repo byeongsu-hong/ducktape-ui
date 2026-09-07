@@ -19,6 +19,10 @@ pub fn registry() -> &'static Surfaces {
     SURFACES.get_or_init(|| {
         let mut surfaces = Surfaces::new();
         surfaces.insert(
+            "ice.markdown".into(),
+            Box::new(ui_lang_runtime::view_tree::markdown_surface),
+        );
+        surfaces.insert(
             "clock_face".into(),
             Box::new(|_key: &str, args: &[SurfaceValue]| {
                 let [SurfaceValue::Str(caption)] = args else {

@@ -136,7 +136,8 @@ pub(in crate::codegen) fn generate_extern_probes(
     }
     for item in program.extern_functions() {
         if component_ids.contains(&item.declaration.id)
-            || (program.target() == Target::Tree && item.kind == ExternKind::Shader)
+            || (program.target() == Target::Tree
+                && matches!(item.kind, ExternKind::Shader | ExternKind::MarkdownViewer))
         {
             continue;
         }

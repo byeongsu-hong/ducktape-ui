@@ -29,6 +29,8 @@ use iced_runtime::futures::subscription::{self, Tracker};
 use iced_runtime::{Action, task};
 
 mod clipboard;
+mod markdown;
+pub use markdown::Markdown;
 pub mod host;
 pub mod testing;
 

@@ -8,30 +8,7 @@ pub(in crate::codegen) fn render_markdown(
 ) -> Result<String, Error> {
     let program = document;
     let content = resolved_markdown_content(markdown, env, program)?;
-    let mut settings = String::from(
-        "let mut __markdown_settings = ::iced::widget::markdown::Settings::from(self.__theme());",
-    );
-    for (value, field, minimum) in [
-        (markdown.text_size, "text_size", "f32::EPSILON"),
-        (markdown.h1_size, "h1_size", "f32::EPSILON"),
-        (markdown.h2_size, "h2_size", "f32::EPSILON"),
-        (markdown.h3_size, "h3_size", "f32::EPSILON"),
-        (markdown.h4_size, "h4_size", "f32::EPSILON"),
-        (markdown.h5_size, "h5_size", "f32::EPSILON"),
-        (markdown.h6_size, "h6_size", "f32::EPSILON"),
-        (markdown.code_size, "code_size", "f32::EPSILON"),
-        (markdown.spacing, "spacing", "0.0"),
-    ] {
-        if let Some(value) = value {
-            write!(
-                settings,
-                " __markdown_settings.{field} = {}.into();",
-                resolved_markdown_f32(value, minimum, program, env)?
-            )
-            .unwrap();
-        }
-    }
-    append_resolved_markdown_style(&mut settings, &markdown.style, program, env)?;
+    let settings = markdown_settings_code(markdown, program, env)?;
     let callback = resolved_interaction_route_callback_code(
         &markdown.link,
         "__event",
@@ -88,7 +65,7 @@ pub(in crate::codegen) fn render_markdown(
     Ok(format!("{{ {settings} {view}.map({callback}) }}"))
 }
 
-fn resolved_markdown_content<'a>(
+pub(super) fn resolved_markdown_content<'a>(
     markdown: &ResolvedMarkdown,
     env: &'a dyn BindingEnvironment,
     program: &LoweredProgram,
@@ -207,4 +184,36 @@ fn append_resolved_markdown_style(
         .unwrap();
     }
     Ok(())
+}
+
+pub(super) fn markdown_settings_code(
+    markdown: &ResolvedMarkdown,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let mut settings = String::from(
+        "let mut __markdown_settings = ::iced::widget::markdown::Settings::from(self.__theme());",
+    );
+    for (value, field, minimum) in [
+        (markdown.text_size, "text_size", "f32::EPSILON"),
+        (markdown.h1_size, "h1_size", "f32::EPSILON"),
+        (markdown.h2_size, "h2_size", "f32::EPSILON"),
+        (markdown.h3_size, "h3_size", "f32::EPSILON"),
+        (markdown.h4_size, "h4_size", "f32::EPSILON"),
+        (markdown.h5_size, "h5_size", "f32::EPSILON"),
+        (markdown.h6_size, "h6_size", "f32::EPSILON"),
+        (markdown.code_size, "code_size", "f32::EPSILON"),
+        (markdown.spacing, "spacing", "0.0"),
+    ] {
+        if let Some(value) = value {
+            write!(
+                settings,
+                " __markdown_settings.{field} = {}.into();",
+                resolved_markdown_f32(value, minimum, program, env)?
+            )
+            .unwrap();
+        }
+    }
+    append_resolved_markdown_style(&mut settings, &markdown.style, program, env)?;
+    Ok(settings)
 }

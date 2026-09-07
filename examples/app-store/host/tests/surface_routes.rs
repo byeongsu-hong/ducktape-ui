@@ -197,4 +197,64 @@ fn a_bundled_guest_receives_typed_surface_events_and_patches_its_view() {
         value: selected.clone(),
     }]);
     assert_eq!(surface(&changed, "rows").0[1], selected);
+    fn document(node: &Node, name: &str) -> wire::MarkdownDocument {
+        wire::MarkdownDocument::from_surface_value(&surface(node, name).0[0])
+            .expect("markdown document argument")
+    }
+    fn button(node: &Node, label: &str) -> Option<u32> {
+        if let Node::Button {
+            content: wire::ButtonContent::Label(found),
+            on_press,
+            ..
+        } = node
+            && found == label
+        {
+            return *on_press;
+        }
+        node.children()
+            .iter()
+            .find_map(|child| button(child, label))
+    }
+    let doc = document(&changed, "ice.markdown");
+    assert_eq!(doc.source, "[Open](duck://docs/start)");
+    assert_eq!(doc.metrics[0], 18.0);
+    assert_eq!(doc.metrics[1], 30.0);
+    assert_eq!(doc.metrics[8], 7.0);
+    assert_eq!(doc.padding, [2.0; 4]);
+    assert_eq!(doc.radii, [3.0; 4]);
+    assert_eq!(doc.palette[1], [1.0; 4]);
+    assert_eq!(
+        surface(&changed, "docs_viewer").0[1],
+        V::Str("custom".into())
+    );
+    let appended = tick(vec![Event::Message(
+        button(&changed, "Append docs").unwrap(),
+    )]);
+    assert!(
+        document(&appended, "ice.markdown")
+            .source
+            .ends_with("![More](asset:more)"),
+        "appended markdown source must cross the wire"
+    );
+    assert!(has_text(&appended, "asset:more"));
+    let linked = tick(vec![Event::Surface {
+        handler: surface(&appended, "ice.markdown").1,
+        value: V::Str("duck://docs/start".into()),
+    }]);
+    assert!(has_text(&linked, "duck://docs/start"));
+    assert!(has_text(&linked, "default"));
+    let wrong = tick(vec![Event::Surface {
+        handler: surface(&linked, "docs_viewer").1,
+        value: V::Bool(true),
+    }]);
+    assert!(has_text(&wrong, "default"));
+    let linked = tick(vec![Event::Surface {
+        handler: surface(&wrong, "docs_viewer").1,
+        value: V::Str("duck://custom".into()),
+    }]);
+    assert!(has_text(&linked, "duck://custom"));
+    assert!(has_text(&linked, "custom"));
+    let reset = tick(vec![Event::Message(button(&linked, "Reset docs").unwrap())]);
+    assert_eq!(document(&reset, "ice.markdown").source, "Replacement");
+    assert!(!has_text(&reset, "asset:more"));
 }

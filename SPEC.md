@@ -369,6 +369,17 @@ adapter needs them. `theme` is the one adapter whose return type is implicit, so
 no `->` appears in Ice. Native consumers must enable the matching iced Cargo
 feature (`wgpu` for shaders, `canvas`, `sipper`, `selector`, `image`).
 
+On the tree target, `markdown` state holds source-preserving
+`ui_lang_guest::Markdown`. A default markdown view emits the `ice.markdown`
+surface; `viewer=name(args)` emits the declared viewer name. Argument zero
+is a `ui_lang_wire::MarkdownDocument` record containing source, resolved
+settings and the guest palette; subsequent arguments and return events use
+the ordinary typed surface encoding. The native viewer factory is not linked
+into the guest. The host owns parsing, rendering and any image assets.
+Default and monospace fonts are supported; named fonts and inline gradients
+are rejected with E190 on this target. The default runtime provider requires
+the `markdown` feature (included in `full-runtime`).
+
 ## 6. Semantic invariants
 
 These are the rules a construct listing cannot express.

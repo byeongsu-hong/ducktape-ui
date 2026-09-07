@@ -80,7 +80,7 @@ that binary into an isolated view package.
 | Phase | Work in Ice / app-store | Evidence required before calling it complete |
 | --- | --- | --- |
 | 3a — surface values and routes | Typed scalar arguments/events and records/lists/options for data-backed surfaces (implemented, including nested validation). Recursive records and sum types remain pending. Preserve borrowed-call syntax by copying wire values. Reject opaque native values. | Actual bundled wasm uses mixed arguments and link/event routes; host-rendered interaction returns the right payload; wrong payload type and unknown surface are exercised; wire limits and patches remain bounded. |
-| 3b — host surfaces and retained state | Named shader surface lowering implemented; markdown viewers and editor/terminal/log resource and event boundaries remain. Use representative module examples. | Markdown link route; editor edit/submit/selection/IME behavior; terminal/log resource lifecycle, two concurrent instances and cleanup. A no-op provider or placeholder does not count as parity. |
+| 3b — host surfaces and retained state | Named shader and markdown surface lowering implemented; editor/terminal/log resource and event boundaries remain. Use representative module examples. | Markdown link route; editor edit/submit/selection/IME behavior; terminal/log resource lifecycle, two concurrent instances and cleanup. A no-op provider or placeholder does not count as parity. |
 | 3c — declarative graphics and responsive layout | Canvas geometry data and host-evaluated container rules, with widget-local opt-in measurements only. | Geometry rendering and interaction; multiple container widths with correct branches and no guest layout callback; bounded sensor feedback. |
 | 4a — actual app layouts first | stack/hover/overlay/keyed/lazy/flex/pin/tooltip; preserve union sizing, hit routing, identity, virtualization and scroll behavior. | Representative chat list and menus, page overlay, file/forge list; reorder/edit/scroll assertions and frame measurements, not compile-only coverage. |
 | 4b — remaining content/layout/style | rich text/markdown/qr/image/combo, table/pane grid/theme/themer/float/resize handle and remaining supported surface shapes. | Per-feature native/wire behavior checks and real wasm bundle builds; preserve intentional rejection of native callbacks. |
@@ -112,3 +112,23 @@ the backing session can have a longer host-owned lifetime. In particular,
 operator visits another pane. Releasing a view handle must not implicitly
 terminate that session. Phase 3b must distinguish view leases from session
 ownership and preserve background status updates.
+
+### Markdown boundary implementation notes
+
+The existing Forge/Files views use the already-supported scalar extern
+component `forge_markdown(source, doc, dark) -> str`; they do not use an Ice
+`markdown-viewer` declaration. Their actual host provider and asset policy
+still belong to the later Ducktape integration.
+
+General Ice markdown now retains source alongside the native parser, whose
+`Content` has no source getter. Incremental `append`, replacement and
+`markdown_images()` preserve native behavior. Source, resolved settings and
+guest palette cross to `ice.markdown`, or to the declared custom viewer name
+with its typed arguments. Parser internals and native viewer state stay local.
+The default host owns parsed content and its borrowing native widgets in a
+cache scoped to the mounted widget tree. Unchanged frames preserve link and
+scroll state; changed documents rebuild the content and unmount drops it.
+Runtime mouse/raster tests and the bundled surface fixture cover link routes,
+append/replacement, guest colors and custom viewer arguments/events. The
+remaining phase 3b work is the editor/terminal/log resource boundary; actual
+Ducktape markdown providers and image assets still require host integration.
