@@ -147,7 +147,7 @@ its `.ice` line. `export_app!` implements the guest crate's `App` trait over
 the generated `__boot` / `__view` / `__update`, emits the `ice:view`
 component exports (`init`, `tick`, `snapshot`, `restore`, and the `panicked` import the guest's
 panic hook calls before it aborts), and writes name,
-description and capabilities into an `ice.manifest` custom section, so the
+description, capabilities and the declared primary window size into an `ice.manifest` custom section, so the
 catalog lists the app — and shows what it will touch — by reading the
 file: no compilation, no instantiation.
 
@@ -657,10 +657,11 @@ For module packaging requirements and the connected implementation phases, see
   window; app state is not persisted or suspended — a reopen, like a
   Restart after a trap, leaves an app with nothing but what it wrote to
   storage.
-- Every guest window opens at 560×420 (at least 320×240) wherever the
-  platform puts it the first time, and where it was last seen after that;
-  the app's own `window size` is ignored. One instance per module.
-- The manifest has no icon, version, author or preferred size.
+- Guest windows open with a valid saved placement first, otherwise the declared
+  primary `window size`, otherwise 560×420. The native open settings already
+  contain that size; minimum size is 320×240 capped to the chosen size per axis.
+  Restart retains the existing window. One instance per module.
+- The manifest has no icon, application version or author.
 - The catalog is one local directory, polled asynchronously every second and
   on Rescan. There is no remote catalog, download or state migration. Scanning
   reads each module in full for its manifest and content hash; unchanged results
@@ -1229,4 +1230,35 @@ cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
   --out examples/app-store/target/pick-fixture
 cd examples/app-store
 cargo test -p app-store-host bundled_pick_ -- --ignored
+
+### Preferred window size evidence
+
+`ice.manifest.v1` has exactly five newline-separated fields: format version,
+name, description, comma-terminated capabilities (or an empty line), and
+`none` or `width,height`. Width and height preserve f32 fractions and must be
+finite, positive and at most 8192 logical pixels. Tree reports an E190 diagnostic
+at `window size` for values outside this range (including f32 underflow); native
+target limits are unchanged. Malformed, duplicate and old
+manifests are excluded from the catalog. Rebuild hosts and all guest modules;
+`export_app!` keeps its four arguments and reads the generated declaration.
+
+The [window-size fixture](tests/window-size-guest/src/ui/app.ice) declares
+640.5×480.25. Its host test checks catalog discovery, instantiation and the
+first native Open settings and layout geometry, saved-placement precedence,
+move-only persistence and no post-open resize. A move confirms position; a resize
+alone cannot turn an unknown position into a saved origin. Saved sizes apply even
+when position is unknown. The local `windows` file now records exactly six
+tab-separated fields: id, x, y, width, height, and a boolean position-known flag;
+old five-field records are rejected, without migration.
+The reload v1/v2 fixtures declare 600.5×400.25 and 900.5×700.25 respectively;
+their mounted replacement test keeps the existing window and native state.
+The install-completion test also checks that a stale consent token emits no
+native window action and an accepted completion opens at the declared size.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-window-size-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/window-size-fixture
+cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host \
+  bundled_preferred_size_ -- --ignored
 ```

@@ -1580,3 +1580,41 @@ fn tree_pick_handle_variants_compile() {
         compile_for(&source, "pick.ice", Target::Tree).unwrap();
     }
 }
+
+#[test]
+fn tree_manifest_preferred_window_size_is_static_and_preserves_f32() {
+    for (settings, expected) in [
+        ("", "none"),
+        ("  window\n    size 640.5 480.25\n", "640.5,480.25"),
+    ] {
+        let source = format!("app Sized\n{settings}{PALETTE}view\n  text \"Sized\"\n");
+        let generated = compile_for(&source, "sized.ice", Target::Tree).unwrap();
+        assert!(generated.contains(&format!(
+            "__PREFERRED_WINDOW_SIZE: &'static str = {expected:?}"
+        )));
+    }
+}
+
+#[test]
+fn tree_preferred_size_rejects_out_of_bounds_at_declaration() {
+    for size in [
+        "9000 500",
+        "500 8192.01",
+        "0.00000000000000000000000000000000000000000000000001 500",
+    ] {
+        let source =
+            format!("app Sized\n  window\n    size {size}\n{PALETTE}view\n  text \"Sized\"\n");
+        assert!(
+            compile_for(&source, "sized.ice", Target::Native).is_ok(),
+            "native range remains unchanged"
+        );
+        let error = compile_for(&source, "sized.ice", Target::Tree)
+            .expect_err("Tree preferred size must fit host bounds");
+        assert_eq!(error.code, "E190");
+        assert_eq!(error.line, 3);
+        assert!(error.message.contains("8192"));
+    }
+    let source =
+        format!("app Sized\n  window\n    size 8192 8192\n{PALETTE}view\n  text \"Sized\"\n");
+    assert!(compile_for(&source, "sized.ice", Target::Tree).is_ok());
+}

@@ -117,8 +117,8 @@ on install_completed(completion)
   opening = committed.opening
   status = committed.status
   rows = build_rows(catalog, query, library, running, generation)
-  return if !committed.open
-  task window open guest -> guest_opened _
+  placements = prepare_window(placements, committed.open)
+  task open_guest(committed.open, placements) -> guest_opened _
 
 // Startup restoration intentionally delivers every remembered app.
 on instantiated(app)
@@ -126,19 +126,14 @@ on instantiated(app)
   opening = enqueue(opening, app)
   status = ""
   rows = build_rows(catalog, query, library, running, generation)
-  task window open guest -> guest_opened _
+  placements = prepare_window(placements, some(app))
+  task open_guest(some(app), placements) -> guest_opened _
 
-// The window opens at the template's size and wherever the platform puts
-// it; if the app was seen somewhere before, it goes back there.
+// Native open already applied saved placement or the declared preferred size.
 on guest_opened(id)
   running = attach_window(running, opening, id)
   opening = drop_first(opening)
   rows = build_rows(catalog, query, library, running, generation)
-  placing = placement_at(placements, running, id)
-  return if !placing.placed
-  parallel
-    task window resize placing.w placing.h target=id
-    task window move placing.x placing.y target=id
 
 on guest_moved(id, x, y)
   return if !is_guest(running, id)

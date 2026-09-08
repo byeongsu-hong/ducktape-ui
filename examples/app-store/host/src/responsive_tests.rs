@@ -40,6 +40,7 @@ fn guest(counts: Arc<Counts>) -> Arc<Mutex<Guest>> {
         .map(|b| format!("{b:02x}"))
         .collect();
     let mut guest = Guest::load(&CatalogEntry {
+        preferred_size: None,
         id: "responsive-fixture".into(),
         name: "Responsive fixture".into(),
         description: String::new(),

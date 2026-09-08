@@ -11,6 +11,7 @@ fn guest(macos: bool) -> Arc<Mutex<Guest>> {
     let bytes = std::fs::read(&path).expect("bundle keyboard fixture first");
     let guest = Arc::new(Mutex::new(
         Guest::load(&CatalogEntry {
+            preferred_size: None,
             id: "keyboard-fixture".into(),
             name: "Keyboard fixture".into(),
             description: String::new(),

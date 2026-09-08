@@ -2,6 +2,8 @@ app ReloadFixture
   title "Reload fixture"
   palette active_palette
   id "dev.ducktape.reload-fixture"
+  window
+    size 600.5 400.25
 
 use "theme.ice"
 

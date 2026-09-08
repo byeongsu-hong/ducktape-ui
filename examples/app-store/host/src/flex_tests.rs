@@ -25,6 +25,7 @@ fn guest() -> Arc<Mutex<Guest>> {
         .map(|b| format!("{b:02x}"))
         .collect();
     let guest = Guest::load(&CatalogEntry {
+        preferred_size: None,
         id: "flex-fixture".into(),
         name: "Flex fixture".into(),
         description: String::new(),

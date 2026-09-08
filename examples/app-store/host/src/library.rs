@@ -10,13 +10,14 @@ use iced::futures::{Stream, StreamExt};
 use iced::time::Instant;
 
 use crate::capabilities::storage;
-use crate::catalog::{CatalogEntry, StoreError, filter_catalog};
+use crate::catalog::{CatalogEntry, PreferredSize, StoreError, filter_catalog};
 use crate::limits::{FUEL_PER_SECOND, FUEL_PER_TICK};
 use crate::store::{Surface, install_app};
 
 /// An instance the store has loaded and is about to give a window.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Loaded {
+    pub preferred_size: Option<PreferredSize>,
     pub id: String,
     pub name: String,
     /// The hash the module was verified against on the way in — what the
@@ -232,6 +233,7 @@ pub fn build_rows(
                 found: entry.is_some(),
                 changed: entry.as_ref().is_some_and(|entry| changed(library, entry)),
                 entry: entry.unwrap_or_else(|| CatalogEntry {
+                    preferred_size: None,
                     id: id.clone(),
                     name: String::new(),
                     description: String::new(),
@@ -274,6 +276,67 @@ pub fn restore_running(
 pub fn enqueue(mut opening: Vec<Loaded>, app: Loaded) -> Vec<Loaded> {
     opening.push(app);
     opening
+}
+
+/// Resolve the first-frame size before handing native settings to Iced.
+fn guest_window_settings(
+    id: &str,
+    preferred: Option<PreferredSize>,
+    placements: &[Placement],
+) -> iced::window::Settings {
+    let saved = placements
+        .iter()
+        .find(|p| p.id == id && PreferredSize::new(p.w as f32, p.h as f32).is_some());
+    let size = saved
+        .map(|p| iced::Size::new(p.w as f32, p.h as f32))
+        .or_else(|| preferred.map(PreferredSize::size))
+        .unwrap_or(iced::Size::new(560.0, 420.0));
+    iced::window::Settings {
+        size,
+        min_size: Some(iced::Size::new(
+            size.width.min(320.0),
+            size.height.min(240.0),
+        )),
+        position: saved
+            .filter(|p| p.placed && (p.x as f32).is_finite() && (p.y as f32).is_finite())
+            .map(|p| iced::window::Position::Specific(iced::Point::new(p.x as f32, p.y as f32)))
+            .unwrap_or_default(),
+        ..Default::default()
+    }
+}
+
+/// Seed dimensions before any native move can arrive without a resize.
+pub fn prepare_window(mut placements: Vec<Placement>, app: &Option<Loaded>) -> Vec<Placement> {
+    let Some(app) = app else {
+        return placements;
+    };
+    let settings = guest_window_settings(&app.id, app.preferred_size, &placements);
+    let (position, placed) = match settings.position {
+        iced::window::Position::Specific(point) => (point, true),
+        _ => (iced::Point::ORIGIN, false),
+    };
+    placements.retain(|p| p.id != app.id);
+    placements.push(Placement {
+        id: app.id.clone(),
+        x: position.x as f64,
+        y: position.y as f64,
+        w: settings.size.width as f64,
+        h: settings.size.height as f64,
+        placed,
+    });
+    placements
+}
+
+pub fn open_guest(app: Option<Loaded>, placements: Vec<Placement>) -> iced::Task<iced::window::Id> {
+    let Some(app) = app else {
+        return iced::Task::none();
+    };
+    iced::window::open(guest_window_settings(
+        &app.id,
+        app.preferred_size,
+        &placements,
+    ))
+    .1
 }
 
 /// Gives the first instance waiting for a window the one that just opened.
@@ -434,61 +497,43 @@ pub fn remembered_placements() -> Vec<Placement> {
         .collect()
 }
 
-fn parse_placement(line: &str) -> Option<Placement> {
+pub(crate) fn parse_placement(line: &str) -> Option<Placement> {
     let mut fields = line.split('\t');
     let id = fields.next()?.to_string();
     let mut number = || fields.next()?.parse::<f64>().ok();
     let (x, y, w, h) = (number()?, number()?, number()?, number()?);
+    let placed = fields.next()?.parse::<bool>().ok()?;
+    if fields.next().is_some() || PreferredSize::new(w as f32, h as f32).is_none() {
+        return None;
+    }
     Some(Placement {
         id,
         x,
         y,
         w,
         h,
-        placed: true,
+        placed,
     })
 }
 
 /// Writes the list; returns the dirty flag it leaves behind, which is none.
 pub fn save_placements(placements: &[Placement]) -> bool {
+    save_placements_in(placements, &storage::data_dir())
+}
+
+pub(crate) fn save_placements_in(placements: &[Placement], dir: &std::path::Path) -> bool {
     let lines: Vec<String> = placements
         .iter()
-        .filter(|placement| placement.placed)
         .map(|placement| {
             format!(
-                "{}\t{}\t{}\t{}\t{}",
-                placement.id, placement.x, placement.y, placement.w, placement.h
+                "{}\t{}\t{}\t{}\t{}\t{}",
+                placement.id, placement.x, placement.y, placement.w, placement.h, placement.placed
             )
         })
         .collect();
-    let dir = storage::data_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::create_dir_all(dir);
     let _ = storage::write_atomic(&dir.join(WINDOWS_FILE), lines.join("\n").as_bytes());
     false
-}
-
-/// A placement with nothing to apply.
-pub fn no_placement() -> Placement {
-    Placement {
-        id: String::new(),
-        x: 0.0,
-        y: 0.0,
-        w: 0.0,
-        h: 0.0,
-        placed: false,
-    }
-}
-
-/// What the app shown in `window` remembers, or nothing to apply.
-pub fn placement_at(
-    placements: &[Placement],
-    running: &[Running],
-    window: iced::window::Id,
-) -> Placement {
-    guest_at(running, window)
-        .and_then(|app| placements.iter().find(|placement| placement.id == app.id))
-        .cloned()
-        .unwrap_or_else(no_placement)
 }
 
 /// The window of the app in `window` moved: remember where.
@@ -502,6 +547,7 @@ pub fn moved(
     place(placements, running, window, |placement| {
         placement.x = x;
         placement.y = y;
+        placement.placed = true;
     })
 }
 
@@ -528,25 +574,13 @@ fn place(
     let Some(app) = guest_at(running, window) else {
         return placements;
     };
-    let index = match placements
+    let Some(index) = placements
         .iter()
         .position(|placement| placement.id == app.id)
-    {
-        Some(index) => index,
-        None => {
-            placements.push(Placement {
-                id: app.id.clone(),
-                x: 0.0,
-                y: 0.0,
-                w: 560.0,
-                h: 420.0,
-                placed: false,
-            });
-            placements.len() - 1
-        }
+    else {
+        return placements;
     };
     edit(&mut placements[index]);
-    placements[index].placed = true;
     placements
 }
 
@@ -691,6 +725,7 @@ mod tests {
 
     fn entry(id: &str, hash: &str) -> CatalogEntry {
         CatalogEntry {
+            preferred_size: None,
             id: id.into(),
             name: id.to_uppercase(),
             description: String::new(),
@@ -699,6 +734,44 @@ mod tests {
             mark: String::new(),
             hash: hash.into(),
         }
+    }
+
+    #[test]
+    fn preferred_window_settings_choose_saved_declared_then_default() {
+        assert_eq!(
+            guest_window_settings("sized", None, &[]).size,
+            iced::Size::new(560.0, 420.0)
+        );
+        let preferred = PreferredSize::new(640.5, 480.25);
+        assert_eq!(
+            guest_window_settings("sized", preferred, &[]).size,
+            iced::Size::new(640.5, 480.25)
+        );
+        let saved = Placement {
+            id: "sized".into(),
+            x: -12.5,
+            y: 18.25,
+            w: 920.5,
+            h: 680.25,
+            placed: true,
+        };
+        let settings = guest_window_settings("sized", preferred, std::slice::from_ref(&saved));
+        assert_eq!(settings.size, iced::Size::new(920.5, 680.25));
+        assert!(
+            matches!(settings.position, iced::window::Position::Specific(point) if point == iced::Point::new(-12.5, 18.25))
+        );
+        for invalid in [f64::NAN, f64::INFINITY, 0.0, -1.0, 8193.0, 1e-50] {
+            let malformed = Placement {
+                w: invalid,
+                ..saved.clone()
+            };
+            assert_eq!(
+                guest_window_settings("sized", preferred, &[malformed]).size,
+                iced::Size::new(640.5, 480.25)
+            );
+        }
+        let small = guest_window_settings("sized", PreferredSize::new(100.5, 80.25), &[]);
+        assert_eq!(small.min_size, Some(small.size));
     }
 
     #[test]

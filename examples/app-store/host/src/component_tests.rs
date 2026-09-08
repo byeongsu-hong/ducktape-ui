@@ -9,6 +9,7 @@ fn guest() -> Guest {
         .join("../target/component-fixture/app_store_component_fixture.wasm");
     let bytes = std::fs::read(&path).expect("bundle component fixture first");
     Guest::load(&CatalogEntry {
+        preferred_size: None,
         id: "component-fixture".into(),
         name: "Component fixture".into(),
         description: String::new(),

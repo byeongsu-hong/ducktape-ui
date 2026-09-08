@@ -42,7 +42,7 @@ pub struct InstallCommit {
     pub library: Vec<Installed>,
     pub opening: Vec<Loaded>,
     pub status: String,
-    pub open: bool,
+    pub open: Option<Loaded>,
 }
 
 /// Revalidate the approval before persisting a pin or requesting a window.
@@ -57,7 +57,7 @@ pub fn commit_install(
         library,
         opening,
         status: String::new(),
-        open: false,
+        open: None,
     };
     if completion.serial != serial {
         return committed;
@@ -70,8 +70,8 @@ pub fn commit_install(
                 return committed;
             }
             committed.library = add_to_library(committed.library, app.id.clone(), app.hash.clone());
-            committed.opening = enqueue(committed.opening, app);
-            committed.open = true;
+            committed.opening = enqueue(committed.opening, app.clone());
+            committed.open = Some(app);
         }
         Err(error) => committed.status = error.message,
     }
@@ -239,6 +239,7 @@ fn finish(running: &[Running], serial: i64, reload: Reload) -> Result<Loaded, St
     *guest = fresh;
     drop(guest);
     Ok(Loaded {
+        preferred_size: entry.preferred_size,
         id: entry.id,
         name: entry.name,
         hash: entry.hash,
@@ -320,18 +321,11 @@ mod install_tests {
         let original_pins = std::fs::read(&pins_path).unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../target/reload-v1-fixture/app_store_reload_v1_fixture.wasm");
-        let bytes = std::fs::read(&path).expect("bundle the reload fixture");
-        let entry = CatalogEntry {
-            id: "install-completion".into(),
-            name: "Install completion".into(),
-            description: String::new(),
-            capabilities: vec![Capability {
-                name: "clock".into(),
-            }],
-            path: path.to_string_lossy().into(),
-            mark: "I".into(),
-            hash: sha256_hex(&bytes),
-        };
+        let mut entry = crate::catalog::scan_dir(path.parent().unwrap())
+            .into_iter()
+            .find(|entry| std::path::Path::new(&entry.path) == path)
+            .expect("bundle the current-format reload fixture");
+        entry.id = "install-completion".into();
         let completion =
             iced::futures::executor::block_on(install_requested(install_request(entry, 7)));
         assert!(
@@ -381,7 +375,7 @@ mod install_tests {
             "a superseded completion cannot enqueue a window"
         );
         assert!(
-            !stale.open,
+            stale.open.is_none(),
             "a superseded completion cannot request a native window"
         );
         assert_eq!(
@@ -390,8 +384,31 @@ mod install_tests {
             "a superseded completion cannot persist a pin"
         );
 
+        let placements = crate::library::prepare_window(vec![], &stale.open);
+        assert!(
+            iced_test::runtime::task::into_stream(crate::library::open_guest(
+                stale.open, placements
+            ))
+            .is_none(),
+            "stale completion emits no native window action"
+        );
+
         let current = commit_install(pins, vec![], &[], 7, completion);
-        assert!(current.open, "the current approval still opens its app");
+        assert!(
+            current.open.is_some(),
+            "the current approval still opens its app"
+        );
+        use iced::futures::StreamExt;
+        use iced_test::runtime::{Action, task, window};
+        let placements = crate::library::prepare_window(vec![], &current.open);
+        let mut native =
+            task::into_stream(crate::library::open_guest(current.open, placements)).unwrap();
+        let Some(Action::Window(window::Action::Open(_, settings, _))) =
+            iced::futures::executor::block_on(native.next())
+        else {
+            panic!("current install opens the native window")
+        };
+        assert_eq!(settings.size, iced::Size::new(600.5, 400.25));
         assert_eq!(current.opening.len(), 1);
         assert_eq!(current.opening[0].id, "install-completion");
         assert!(

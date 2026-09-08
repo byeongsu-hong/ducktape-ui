@@ -703,6 +703,14 @@ jobs:
       - name: Verify flex wrapping and native input through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host store::flex_tests -- --ignored
+      - name: Bundle preferred window size module
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-window-size-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/window-size-fixture
+      - name: Verify declared initial native window size through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_preferred_size_ -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host --test surface_routes -- --ignored

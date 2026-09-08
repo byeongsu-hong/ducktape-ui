@@ -25,6 +25,7 @@ fn guest() -> Arc<Mutex<Guest>> {
         .collect();
     Arc::new(Mutex::new(
         Guest::load(&CatalogEntry {
+            preferred_size: None,
             id: "composer-fixture".into(),
             name: "Composer fixture".into(),
             description: String::new(),

@@ -612,3 +612,21 @@ for the added Scroll field and ScrollOffset event.
 
 Tree pick lists carry native text metrics, menu styling, dynamic handles and
 open/close routes. See [pick module options](examples/app-store/README.md#pick-module-options).
+
+### Guest preferred window size
+
+Tree compilation carries the primary `window size` into the versioned
+`ice.manifest.v1` custom section without another `export_app!` argument. The
+strict five fields are version, name, description, comma-terminated capabilities
+(or empty), and `none` or `width,height`. There is no legacy fallback.
+The app-store catalog accepts finite positive f32 dimensions up to 8192 logical
+pixels; Tree rejects declarations outside that range at the `size` source line,
+without changing native-target limits. Saved placement takes precedence over the declaration, then the host
+560×420 default. The initial native open uses the final size; restart preserves
+the existing window. Hosts and guest modules must rebuild together.
+
+Evidence: Core `tree_manifest_preferred_window_size_is_static_and_preserves_f32`,
+host `manifest_format_and_preferred_size_are_strict`,
+`preferred_window_settings_choose_saved_declared_then_default`, and the actual
+wasm `bundled_preferred_size_reaches_initial_native_open` test documented in
+[the app-store guide](examples/app-store/README.md#preferred-window-size-evidence).

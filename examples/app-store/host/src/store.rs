@@ -57,15 +57,15 @@ impl ViewImports for HostState {
 
 use crate::catalog::sha256_hex;
 pub use crate::catalog::{
-    Capability, CatalogEntry, StoreError, capability_hint, catalog_dir, find_entry, scan_catalog,
-    short_hash,
+    Capability, CatalogEntry, PreferredSize, StoreError, capability_hint, catalog_dir, find_entry,
+    scan_catalog, short_hash,
 };
 pub use crate::guest_view::wasm_view;
 pub use crate::library::{
     CardModel, Gauge, Installed, Loaded, Placement, Rows, Running, ShelfModel, add_to_library,
     attach_window, build_rows, changed, drop_first, drop_window, empty_rows, enqueue, escape_page,
     escape_press, gauge, gauge_of, in_library, installing_label, is_guest, is_running, is_window,
-    library_hint, meter, moved, no_placement, opening_label, pinned, placement_at,
+    library_hint, meter, moved, open_guest, opening_label, pinned, prepare_window,
     remembered_library, remembered_placements, remove_from_library, renamed_running, resized,
     restore_running, running_count, running_label, save_placements, search_hint, search_press,
     surface_at, window_of, window_title,
@@ -141,6 +141,7 @@ pub async fn restart_guest(surface: Surface) -> Result<Surface, StoreError> {
 pub async fn install_app(entry: CatalogEntry) -> Result<Loaded, StoreError> {
     let guest = Guest::load(&entry).map_err(|message| StoreError { message })?;
     Ok(Loaded {
+        preferred_size: entry.preferred_size,
         id: entry.id,
         name: entry.name,
         hash: entry.hash,
@@ -1543,6 +1544,7 @@ mod tests {
         let path = std::env::temp_dir().join("app-store-store-test-rehashed.wasm");
         std::fs::write(&path, b"not the module that was scanned").expect("write");
         let entry = CatalogEntry {
+            preferred_size: None,
             id: "rehashed".into(),
             name: "Rehashed".into(),
             description: String::new(),

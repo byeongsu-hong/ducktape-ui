@@ -10,9 +10,6 @@ daemon IceStore
     size 1240 800
     min-size 960 620
     position centered
-  window guest
-    size 560 420
-    min-size 320 240
 
 use "theme.ice"
 use "externs.ice"

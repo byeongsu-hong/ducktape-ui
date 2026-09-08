@@ -12,6 +12,7 @@ fn guest() -> Arc<Mutex<Guest>> {
         .join("../target/qr-fixture/app_store_qr_fixture.wasm");
     let bytes = std::fs::read(&path).expect("bundle QR fixture first");
     let guest = Guest::load(&CatalogEntry {
+        preferred_size: None,
         id: "qr-fixture".into(),
         name: "QR fixture".into(),
         description: String::new(),

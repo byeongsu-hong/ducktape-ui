@@ -10,18 +10,13 @@ fn entry(version: u8) -> CatalogEntry {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
         "../target/reload-v{version}-fixture/app_store_reload_v{version}_fixture.wasm"
     ));
-    let bytes = std::fs::read(&path).expect("bundle both reload fixtures first");
-    CatalogEntry {
-        id: "reload-fixture".into(),
-        name: format!("Reload version {version}"),
-        description: String::new(),
-        capabilities: vec![Capability {
-            name: "clock".into(),
-        }],
-        path: path.to_string_lossy().into_owned(),
-        mark: "R".into(),
-        hash: sha256_hex(&bytes),
-    }
+    let mut entry = crate::catalog::scan_dir(path.parent().unwrap())
+        .into_iter()
+        .find(|entry| std::path::Path::new(&entry.path) == path)
+        .expect("bundle both current-format reload fixtures first");
+    entry.id = "reload-fixture".into();
+    entry.name = format!("Reload version {version}");
+    entry
 }
 fn running() -> Running {
     let guest = Guest::load(&entry(1)).unwrap();
@@ -100,6 +95,14 @@ fn bundled_reload_preserves_window_draft_focus_scroll_and_host_resources() {
         entry(1).hash,
         entry(2).hash,
         "the candidate must be a different binary"
+    );
+    assert_eq!(
+        entry(1).preferred_size.unwrap().size(),
+        iced::Size::new(600.5, 400.25)
+    );
+    assert_eq!(
+        entry(2).preferred_size.unwrap().size(),
+        iced::Size::new(900.5, 700.25)
     );
     let app = running();
     let guest = app.surface.0.clone();
