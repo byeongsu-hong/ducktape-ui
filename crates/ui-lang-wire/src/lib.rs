@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 mod background;
 pub use background::{Background, ColorStop};
 mod editor;
+pub mod editor_document;
 pub mod editor_transaction;
 pub use editor_transaction::{
     EditorBinding, EditorDecision, EditorEditKind, EditorFault, EditorHistoryEffect,
