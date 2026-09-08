@@ -175,6 +175,8 @@ jobs:
           # contract, so no name filter: `performance_contract` alone left
           # seven `allocation contract` tests never run in CI.
           cargo test --locked -p ui-lang-core -- --ignored --nocapture --test-threads=1
+          # Includes trace_allocations, a harness-free zero-allocation check:
+          # libtest's coordinator must not share its process-global measurement.
           cargo test --locked -p ui-lang-template -- --ignored --test-threads=1
           cargo test --locked -p ui-lang-runtime performance_contract -- --ignored --test-threads=1
           # `performance_contract`, not one test's name: naming the candle
