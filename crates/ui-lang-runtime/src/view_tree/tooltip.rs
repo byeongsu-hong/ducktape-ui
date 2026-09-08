@@ -42,14 +42,26 @@ pub(super) fn render(
         .into()
 }
 
-fn collect_text<'a>(node: &'a wire::Node, kept: &Kept<'_>, into: &mut Vec<&'a str>) {
+fn collect_text<'a>(
+    node: &'a wire::Node,
+    kept: &Kept<'_>,
+    into: &mut Vec<std::borrow::Cow<'a, str>>,
+) {
     if let wire::Node::When { condition, .. } = node
         && !condition.matches(kept.containers)
     {
         return;
     }
     if let wire::Node::Text { content, .. } = node {
-        into.push(content);
+        into.push(content.as_str().into());
+    } else if let wire::Node::RichText { spans, .. } = node {
+        into.push(
+            spans
+                .iter()
+                .map(|span| span.content.as_str())
+                .collect::<String>()
+                .into(),
+        );
     } else {
         for child in selected_children(node.children(), kept) {
             collect_text(child, kept, into);

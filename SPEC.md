@@ -1156,3 +1156,20 @@ relative to each pin, never window coordinates; the guest does not measure them.
 Signed offsets are bounded to ±8192 logical pixels (NaN becomes zero), and
 lengths use the existing wire sanitizer. Native `length` values remain refused.
 Host and guest must be rebuilt together for the Pin wire variant.
+
+## Tree rich text
+
+The Tree target copies literal spans and `for`-expanded spans into one native
+rich text paragraph. Each span carries text, optional size/line height/font/color,
+String link, solid background, border/radius/padding and underline/strike. Text
+layout options retain the existing copied width/height, wrapping and alignment
+contract. The host performs shaping, layout, painting and link hit testing.
+A click invokes the snapshotted String handler through the existing guest route
+store; cached lazy paragraphs preserve that handler across cache hits.
+
+Spans share the frame's decoded node allowance before allocation and its rendered
+node/text budgets before layout. Link and font strings spend that text budget too.
+Native gradients and custom Rust styles remain refused; a gradient span reports
+its own source location. Tooltip descriptions concatenate adjacent spans within
+a paragraph before separating distinct text nodes. Rebuild hosts and guests
+together for the RichText wire variant.

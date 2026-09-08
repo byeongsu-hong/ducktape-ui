@@ -220,46 +220,9 @@ fn render_resolved_rich_text(
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
     let program = document;
-    // Every child appends to the same span vector, so literal spans and
-    // `for`-generated spans land in one paragraph widget.
-    let mut spans = String::new();
-    for child in children {
-        match child {
-            ResolvedRichChild::Span(rich_span) => {
-                write!(
-                    spans,
-                    " __rich_spans.push({});",
-                    render_resolved_rich_span(rich_span, program, env)?
-                )
-                .unwrap();
-            }
-            ResolvedRichChild::For(iteration) => {
-                let item_name = &iteration.item.name;
-                let items =
-                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
-                let mut child_env = ScopedBindingEnv::new(env);
-                child_env.insert(
-                    item_name.clone(),
-                    resolved_local_binding(
-                        LocalBindingTypeSource::Resolved(program),
-                        iteration.item.local,
-                        item_name.clone(),
-                        false,
-                    ),
-                );
-                write!(spans, " for {item_name} in {items}.iter().cloned() {{").unwrap();
-                for rich_span in &iteration.spans {
-                    write!(
-                        spans,
-                        " __rich_spans.push({});",
-                        render_resolved_rich_span(rich_span, program, &child_env)?
-                    )
-                    .unwrap();
-                }
-                spans.push_str(" }");
-            }
-        }
-    }
+    let spans = render_rich_children(children, program, env, |span, env| {
+        render_resolved_rich_span(span, program, env)
+    })?;
     let mut code = String::from("::iced::widget::rich_text(__rich_spans)");
     append_resolved_text_options(&mut code, &text.options, &text.utility_style, env, program)?;
     if let Some(color) = color {
@@ -579,4 +542,48 @@ fn resolved_text_wrapping_code(wrapping: ResolvedTextWrapping) -> &'static str {
         ResolvedTextWrapping::Glyph => "Glyph",
         ResolvedTextWrapping::WordOrGlyph => "WordOrGlyph",
     }
+}
+
+pub(super) fn render_rich_children(
+    children: &[ResolvedRichChild],
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    span: impl Fn(&ResolvedRichSpan, &dyn BindingEnvironment) -> Result<String, Error>,
+) -> Result<String, Error> {
+    // Every child appends to the same span vector, so literal spans and
+    // `for`-generated spans land in one paragraph widget.
+    let mut spans = String::new();
+    for child in children {
+        match child {
+            ResolvedRichChild::Span(rich_span) => {
+                write!(spans, " __rich_spans.push({});", span(rich_span, env)?).unwrap();
+            }
+            ResolvedRichChild::For(iteration) => {
+                let item_name = &iteration.item.name;
+                let items =
+                    resolved_expr_use_code(program, iteration.items, env, ValueMode::Borrowed)?;
+                let mut child_env = ScopedBindingEnv::new(env);
+                child_env.insert(
+                    item_name.clone(),
+                    resolved_local_binding(
+                        LocalBindingTypeSource::Resolved(program),
+                        iteration.item.local,
+                        item_name.clone(),
+                        false,
+                    ),
+                );
+                write!(spans, " for {item_name} in {items}.iter().cloned() {{").unwrap();
+                for rich_span in &iteration.spans {
+                    write!(
+                        spans,
+                        " __rich_spans.push({});",
+                        span(rich_span, &child_env)?
+                    )
+                    .unwrap();
+                }
+                spans.push_str(" }");
+            }
+        }
+    }
+    Ok(spans)
 }

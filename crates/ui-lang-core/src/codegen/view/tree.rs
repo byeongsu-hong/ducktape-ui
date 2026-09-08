@@ -7,7 +7,7 @@
 //! the parent's child list; so a `for` over a list of rows compiles to the
 //! same loop for both targets and only the row inside changes.
 //!
-//! A construct the tree does not model (`float`, rich text, a gradient
+//! A construct the tree does not model (`float`, table, a gradient
 //! background...) fails the build, naming the construct and its `.ice`
 //! line, rather than rendering as something else. The host has a fixed
 //! vocabulary; a view module is written to it.
@@ -45,6 +45,7 @@ pub(super) use flex::item_code as flex_item_code;
 pub(super) use lists::keyed_column;
 mod pin;
 mod responsive;
+mod rich_text;
 mod text;
 mod tooltip;
 pub(in crate::codegen) use responsive::render_container_condition;
@@ -88,7 +89,9 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::ResponsiveSize { content } => responsive::render(
             node, identity, *content, document, message, env, scope, slot,
         )?,
-        ResolvedViewKind::Text => text(node, identity, document, env, scope)?,
+        ResolvedViewKind::Text | ResolvedViewKind::RichText => {
+            text(node, identity, document, message, env, scope)?
+        }
         ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,
         ResolvedViewKind::TextEditor => editor(node, identity, document, message, env, scope)?,
@@ -1036,6 +1039,7 @@ fn text(
     id: ViewId,
     identity: Option<&ResolvedViewIdentity>,
     program: &LoweredProgram,
+    message: &str,
     env: &dyn BindingEnvironment,
     scope: &str,
 ) -> Result<String, Error> {
@@ -1043,9 +1047,6 @@ fn text(
     let origin = text.origin;
     let options = &text.options;
     let style = &text.utility_style;
-    let ResolvedTextContent::Plain { value } = &text.content else {
-        return Err(refused(program, origin, "rich text"));
-    };
     refuse_when(program, origin, options.live.is_some(), "a live region")?;
     refuse_when(program, origin, options.heading.is_some(), "a heading")?;
     refuse_when(
@@ -1076,10 +1077,6 @@ fn text(
         "this utility style on text",
     )?;
     let key = key_code(identity, "text", origin, scope, env, program)?;
-    let content = format!(
-        "({}).to_string()",
-        resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
-    );
     let size = match options.size {
         Some(size) => Some(clamped_f32_code(
             size,
@@ -1120,10 +1117,15 @@ fn text(
         }
     };
     let text_options = text::options(text, program, env)?;
-    Ok(format!(
-        "{WIRE}::Node::Text {{ options: {text_options}, key: {key}, content: {content}, size: {}, color: {}, font: {WIRE}::Font {{ monospace: {monospace}, weight: {WIRE}::Weight::{weight} }}, width: {}, align_x: {} }}",
+    let fields = format!(
+        "options: {text_options}, key: {key}, size: {}, color: {}, font: {WIRE}::Font {{ monospace: {monospace}, weight: {WIRE}::Weight::{weight} }}, width: {}, align_x: {}",
         option_code(size),
-        option_code(style.text_color.as_ref().map(rgba_code)),
+        option_code(match &text.content {
+            ResolvedTextContent::Rich {
+                color: Some(color), ..
+            } => Some(rgba_code(color)),
+            _ => style.text_color.as_ref().map(rgba_code),
+        }),
         dimension_code(
             options.width.as_ref(),
             style.width_fill,
@@ -1132,7 +1134,26 @@ fn text(
             origin
         )?,
         option_code(align_x),
-    ))
+    );
+    match &text.content {
+        ResolvedTextContent::Plain { value } => {
+            let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
+            Ok(format!(
+                "{WIRE}::Node::Text {{ {fields}, content: ({value}).to_string() }}"
+            ))
+        }
+        ResolvedTextContent::Rich {
+            children, route, ..
+        } => {
+            refuse_when(
+                program,
+                origin,
+                options.tracking.is_some() || options.shaping.is_some(),
+                "tracking or shaping on rich text",
+            )?;
+            rich_text::render(children, route.as_ref(), &fields, program, message, env)
+        }
+    }
 }
 
 fn svg(

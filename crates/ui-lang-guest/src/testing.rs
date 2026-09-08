@@ -33,6 +33,9 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
         | Node::When { children, .. } => {
             children.iter().for_each(|child| collect_texts(child, out))
         }
+        Node::RichText { spans, .. } => {
+            out.push(spans.iter().map(|span| span.content.as_str()).collect())
+        }
         Node::Text { content, .. } => out.push(content.clone()),
         Node::Input {
             value: text,
@@ -108,6 +111,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
             ..
         } => find_by(child, matches),
         Node::Button { .. }
+        | Node::RichText { .. }
         | Node::Text { .. }
         | Node::Svg { .. }
         | Node::Input { .. }
@@ -405,6 +409,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
             ..
         } => collect_keys(child, out),
         Node::Button { .. }
+        | Node::RichText { .. }
         | Node::Text { .. }
         | Node::Svg { .. }
         | Node::Input { .. }

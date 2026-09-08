@@ -31,7 +31,9 @@ pub use flex::{
 
 mod tooltip;
 pub use tooltip::{TooltipPosition, TooltipPreset, TooltipStyle};
+mod rich_text;
 mod text;
+pub use rich_text::RichSpan;
 pub use text::{
     FontFamily, FontStretch, FontStyle, LineHeight, NamedFont, Shaping, TextOptions, Wrapping,
 };
@@ -488,6 +490,19 @@ pub enum ButtonContent {
 /// the accessibility tree.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Node {
+    /// Styled spans form one native paragraph; link clicks carry a String handler payload.
+    RichText {
+        key: String,
+        #[serde(deserialize_with = "rich_text::decode_spans")]
+        spans: Vec<RichSpan>,
+        size: Option<f32>,
+        color: Option<Rgba>,
+        font: Font,
+        width: Option<Length>,
+        align_x: Option<AlignX>,
+        options: TextOptions,
+        on_link: Option<u32>,
+    },
     /// Flex rules and item metadata, interpreted by the host's native layout engine.
     Flex {
         key: String,
@@ -957,6 +972,7 @@ impl Node {
             | Self::When { key, .. }
             | Self::Sensor { key, .. }
             | Self::Scroll { key, .. }
+            | Self::RichText { key, .. }
             | Self::Text { key, .. }
             | Self::Svg { key, .. }
             | Self::Input { key, .. }
@@ -1006,6 +1022,7 @@ impl Node {
                 ..
             } => std::slice::from_ref(child),
             Self::Button { .. }
+            | Self::RichText { .. }
             | Self::Text { .. }
             | Self::Svg { .. }
             | Self::Input { .. }
@@ -1054,6 +1071,7 @@ impl Node {
                 ..
             } => std::slice::from_mut(child),
             Self::Button { .. }
+            | Self::RichText { .. }
             | Self::Text { .. }
             | Self::Input { .. }
             | Self::Editor { .. }
@@ -1092,6 +1110,7 @@ impl Node {
             | Self::MouseArea { .. }
             | Self::Scroll { .. }
             | Self::Button { .. }
+            | Self::RichText { .. }
             | Self::Text { .. }
             | Self::Input { .. }
             | Self::Editor { .. }
@@ -1722,6 +1741,22 @@ fn sanitize_node(
             bound_color(background);
             bound_border(border);
         }
+        Node::RichText {
+            key,
+            spans,
+            size,
+            color,
+            options,
+            ..
+        } => {
+            claim(key, taken);
+            options.sanitize(&mut budgets.text);
+            rich_text::sanitize(spans, &mut budgets.text, budget);
+            if let Some(size) = size {
+                *size = bounded(*size).min(MAX_TEXT_PIXELS);
+            }
+            bound_color(color);
+        }
         Node::Text {
             options,
             key,
@@ -2089,7 +2124,8 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Space { width, height } => vec![width, height],
         Node::Progress { length, girth, .. } => vec![length, girth],
         Node::Editor { height, .. } => vec![height],
-        Node::Text { width, .. }
+        Node::RichText { width, .. }
+        | Node::Text { width, .. }
         | Node::Input { width, .. }
         | Node::Toggle { width, .. }
         | Node::Radio { width, .. }
@@ -2224,12 +2260,8 @@ mod budget {
             if depth > MAX_DEPTH {
                 return Err("a tree deeper than the host renders");
             }
-            let nodes = NODES.get() + 1;
-            if nodes > MAX_DECODED_NODES {
-                return Err("more nodes than the host holds");
-            }
+            spend(1)?;
             DEPTH.set(depth);
-            NODES.set(nodes);
             Ok(Self(()))
         }
     }
@@ -2238,6 +2270,16 @@ mod budget {
         fn drop(&mut self) {
             DEPTH.set(DEPTH.get().saturating_sub(1));
         }
+    }
+
+    /// Native paragraph spans share the same aggregate allocation allowance as nodes.
+    pub(super) fn spend(count: usize) -> Result<(), &'static str> {
+        let nodes = NODES.get().saturating_add(count);
+        if nodes > MAX_DECODED_NODES {
+            return Err("more nodes than the host holds");
+        }
+        NODES.set(nodes);
+        Ok(())
     }
 
     /// A fresh budget for one top-level [`decode`](super::decode). The depth
