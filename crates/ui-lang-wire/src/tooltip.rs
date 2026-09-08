@@ -31,10 +31,7 @@ pub struct TooltipStyle {
     pub background: Option<Rgba>,
     pub text: Option<Rgba>,
     pub border: Option<Border>,
-    pub shadow_color: Option<Rgba>,
-    pub shadow_x: Option<f32>,
-    pub shadow_y: Option<f32>,
-    pub shadow_blur: Option<f32>,
+    pub shadow: Shadow,
     pub pixel_snap: Option<bool>,
 }
 
@@ -42,18 +39,7 @@ impl TooltipStyle {
     pub(super) fn sanitize(&mut self) {
         bound_color(&mut self.background);
         bound_color(&mut self.text);
-        bound_color(&mut self.shadow_color);
         bound_border(&mut self.border);
-        bound_optional(&mut self.shadow_blur);
-        for value in [&mut self.shadow_x, &mut self.shadow_y]
-            .into_iter()
-            .flatten()
-        {
-            *value = if value.is_finite() {
-                value.clamp(-MAX_PIXELS, MAX_PIXELS)
-            } else {
-                0.0
-            };
-        }
+        self.shadow.sanitize();
     }
 }

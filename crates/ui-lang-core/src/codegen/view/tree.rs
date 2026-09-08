@@ -461,6 +461,33 @@ fn background_code(
     ))
 }
 
+fn shadow_code(
+    color: Option<&ResolvedThemeColor>,
+    x: Option<CheckedExprUseId>,
+    y: Option<CheckedExprUseId>,
+    blur: Option<CheckedExprUseId>,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+) -> Result<String, Error> {
+    let number = |value: Option<CheckedExprUseId>| -> Result<String, Error> {
+        Ok(option_code(
+            value
+                .map(|value| {
+                    resolved_expr_use_code(program, value, env, ValueMode::Owned)
+                        .map(|value| format!("({value}) as f32"))
+                })
+                .transpose()?,
+        ))
+    };
+    Ok(format!(
+        "{WIRE}::Shadow {{ color: {}, x: {}, y: {}, blur: {} }}",
+        option_code(color.map(rgba_code)),
+        number(x)?,
+        number(y)?,
+        number(blur)?
+    ))
+}
+
 fn refuse_shadow(
     surface: &ResolvedContainerSurface,
     program: &LoweredProgram,
@@ -926,7 +953,14 @@ fn container(
         container.surface.text_color.is_some(),
         "`text=` on a box",
     )?;
-    refuse_shadow(&container.surface, program, origin)?;
+    let shadow = shadow_code(
+        container.surface.shadow_color.as_ref(),
+        container.surface.shadow_x,
+        container.surface.shadow_y,
+        container.surface.shadow_blur,
+        program,
+        env,
+    )?;
     let key = key_code(identity, "container", origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     let content = render_node(content, program, message, env, &child_scope, slot)?;
@@ -946,7 +980,7 @@ fn container(
         .transpose()?
         .unwrap_or_else(|| style.clip.to_string());
     Ok(format!(
-        "{WIRE}::Node::Container {{ max_width: {max_width}, max_height: {max_height}, clip: {clip}, key: {key}, width: {}, height: {}, padding: {}, align_x: {}, align_y: {}, background: {}, border: {}, snap: {}, content: ::std::boxed::Box::new({content}) }}",
+        "{WIRE}::Node::Container {{ shadow: {shadow}, max_width: {max_width}, max_height: {max_height}, clip: {clip}, key: {key}, width: {}, height: {}, padding: {}, align_x: {}, align_y: {}, background: {}, border: {}, snap: {}, content: ::std::boxed::Box::new({content}) }}",
         dimension_code(
             container.width.as_ref(),
             style.width_fill,
@@ -2497,7 +2531,7 @@ fn surface(
         // Iced Shader defaults to 100x100. The host element is constrained
         // by the same dimensions, including when its provider is missing.
         format!(
-            "{WIRE}::Node::Container {{ max_width: None, max_height: None, clip: false, key: ::std::format!(\"{{}}/@bounds\", __surface_key), width: ::std::option::Option::Some({}), height: ::std::option::Option::Some({}), padding: ::std::option::Option::None, align_x: ::std::option::Option::None, align_y: ::std::option::Option::None, background: ::std::option::Option::None, border: ::std::option::Option::None, snap: ::std::option::Option::None, content: ::std::boxed::Box::new({surface}) }}",
+            "{WIRE}::Node::Container {{ shadow: Default::default(), max_width: None, max_height: None, clip: false, key: ::std::format!(\"{{}}/@bounds\", __surface_key), width: ::std::option::Option::Some({}), height: ::std::option::Option::Some({}), padding: ::std::option::Option::None, align_x: ::std::option::Option::None, align_y: ::std::option::Option::None, background: ::std::option::Option::None, border: ::std::option::Option::None, snap: ::std::option::Option::None, content: ::std::boxed::Box::new({surface}) }}",
             dimension(width)?,
             dimension(height)?,
         )

@@ -1422,6 +1422,7 @@ mod tests {
         let mut node = wire::Node::empty();
         for _ in 0..wire::MAX_DEPTH + 4 {
             node = wire::Node::Container {
+                shadow: Default::default(),
                 max_width: None,
                 max_height: None,
                 clip: false,

@@ -91,18 +91,7 @@ fn native_style(style: wire::TooltipStyle, theme: &iced::Theme) -> widget::conta
     if let Some(value) = style.border {
         apply_border(value, &mut out.border);
     }
-    if let Some(value) = style.shadow_color {
-        out.shadow.color = color(value);
-    }
-    if let Some(value) = style.shadow_x {
-        out.shadow.offset.x = value;
-    }
-    if let Some(value) = style.shadow_y {
-        out.shadow.offset.y = value;
-    }
-    if let Some(value) = style.shadow_blur {
-        out.shadow.blur_radius = value;
-    }
+    apply_shadow(style.shadow, &mut out.shadow);
     if let Some(value) = style.pixel_snap {
         out.snap = value;
     }

@@ -32,13 +32,6 @@ pub(super) fn render(
         }
     };
     let value = |value| resolved_expr_use_code(program, value, env, ValueMode::Owned);
-    let number = |optional: Option<CheckedExprUseId>| -> Result<String, Error> {
-        Ok(option_code(
-            optional
-                .map(|id| value(id).map(|value| format!("({value}) as f32")))
-                .transpose()?,
-        ))
-    };
     let border = border_code(
         &ResolvedContainerSurface {
             border_color: tooltip.border_color.clone(),
@@ -61,17 +54,21 @@ pub(super) fn render(
     let content = render_node(content, program, message, env, &child_scope, slot)?;
     let tip = render_node(tip, program, message, env, &child_scope, slot)?;
     Ok(format!(
-        "{WIRE}::Node::Tooltip {{ key: {key}, position: {WIRE}::TooltipPosition::{:?}, gap: ({}) as f32, padding: ({}) as f32, delay_ms: u64::try_from({}).unwrap_or(0), snap: {}, style: {WIRE}::TooltipStyle {{ preset: {WIRE}::TooltipPreset::{preset}, background: {background}, text: {}, border: {border}, shadow_color: {}, shadow_x: {}, shadow_y: {}, shadow_blur: {}, pixel_snap: {} }}, children: vec![{content}, {tip}] }}",
+        "{WIRE}::Node::Tooltip {{ key: {key}, position: {WIRE}::TooltipPosition::{:?}, gap: ({}) as f32, padding: ({}) as f32, delay_ms: u64::try_from({}).unwrap_or(0), snap: {}, style: {WIRE}::TooltipStyle {{ preset: {WIRE}::TooltipPreset::{preset}, background: {background}, text: {}, border: {border}, shadow: {}, pixel_snap: {} }}, children: vec![{content}, {tip}] }}",
         tooltip.position,
         value(tooltip.gap)?,
         value(tooltip.padding)?,
         value(tooltip.delay_ms)?,
         value(tooltip.snap)?,
         option_code(tooltip.text_color.as_ref().map(rgba_code)),
-        option_code(tooltip.shadow_color.as_ref().map(rgba_code)),
-        number(tooltip.shadow_x)?,
-        number(tooltip.shadow_y)?,
-        number(tooltip.shadow_blur)?,
+        shadow_code(
+            tooltip.shadow_color.as_ref(),
+            tooltip.shadow_x,
+            tooltip.shadow_y,
+            tooltip.shadow_blur,
+            program,
+            env
+        )?,
         option_code(tooltip.pixel_snap.map(value).transpose()?),
     ))
 }

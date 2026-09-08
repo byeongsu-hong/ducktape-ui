@@ -1031,6 +1031,18 @@ the column bounds its child content. Buttons support padding utilities.
 The Linear wire layout changed; these wire fields require
 host and guest rebuilds together.
 
+### Tree box shadows
+
+Boxes copy `shadow=`, `shadow-x=`, `shadow-y=` and `shadow-blur=` into the
+host's native container shadow. Signed offsets, blur and color alpha preserve
+native paint outside the box without changing layout or pointer bounds.
+Omitted fields retain native defaults. Boxes and tooltips share the shadow
+value and sanitization: offsets are finite and bounded in either direction,
+blur is nonnegative and bounded, and color channels are clamped. Other widget
+shadow options retain their existing support boundaries.
+
+The Container wire layout changed; rebuild hosts and guest bundles together.
+
 ### Tree button accessibility
 
 Tree buttons preserve optional `checked=`, `expanded=` and `description=`.

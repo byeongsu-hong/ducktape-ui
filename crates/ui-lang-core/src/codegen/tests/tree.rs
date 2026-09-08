@@ -1533,3 +1533,13 @@ fn snapshot_schema_tracks_state_shape_but_not_view_layout() {
         schema(&source.replace("lifetime retained", "lifetime mounted"))
     );
 }
+
+#[test]
+fn tree_box_shadows_copy_signed_offsets_and_blur() {
+    let source = format!(
+        "app Shadow\n{PALETTE}state\n  offset:f64 = -12.0\nview\n  box shadow=primary/50 shadow-x=offset shadow-y=6.0 shadow-blur=18.0\n    text \"Popover\"\n"
+    );
+    let generated = compile_for(&source, "shadow.ice", Target::Tree).unwrap();
+    assert!(generated.contains("shadow: ::ui_lang_guest::wire::Shadow"));
+    assert!(generated.contains("self.offset"));
+}
