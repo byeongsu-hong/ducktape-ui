@@ -26,7 +26,18 @@ on closed
 view
   col
     box #frame
-      pick choices selected #pick hint="Choose" w=180.0 menu-h=96.0 p=9.0 text-size=20.0 line-h=1.5 shape=advanced font=ui open=opened close=closed -> choose _
+      pick choices selected #pick -> choose _
+        with
+          hint="Choose"
+          w=180.0
+          menu-h=96.0
+          p=9.0
+          text-size=20.0
+          line-h=1.5
+          shape=advanced
+          font=ui
+          open=opened
+          close=closed
         active text=fg placeholder=fg handle=fg bg=bg border=fg border-w=1.0 r=8.0
         hovered bg=primary
         opened bg=danger
