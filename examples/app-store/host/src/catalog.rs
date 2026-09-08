@@ -84,9 +84,11 @@ pub(crate) fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
                 let bytes = std::fs::read(&path).ok()?;
                 (read_manifest(&bytes)?, sha256_hex(&bytes))
             };
+            let mut seen = std::collections::HashSet::new();
             let mut capabilities: Vec<_> = manifest
                 .capabilities
                 .iter()
+                .filter(|name| seen.insert(name.as_str()))
                 .map(|name| Capability { name: name.clone() })
                 .collect();
             if native && !capabilities.iter().any(|cap| cap.name == "native-code") {
@@ -473,6 +475,34 @@ mod tests {
         assert_eq!(
             catalog[0].preferred_size.unwrap().dimensions(),
             [640.5, 480.25]
+        );
+    }
+
+    #[test]
+    fn catalog_displays_each_capability_once_without_changing_artifact_identity() {
+        let bytes = component_manifest(
+            "ice.manifest.v1\nRepeated\nDescription\nstorage,clock,storage,bus,clock,\nnone",
+        );
+        let scratch = ScratchDir::new("duplicate-capabilities");
+        let path = scratch.0.join("repeated.wasm");
+        std::fs::write(&path, &bytes).unwrap();
+        let entries = scan_dir(&scratch.0);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0]
+                .capabilities
+                .iter()
+                .map(|cap| cap.name.as_str())
+                .collect::<Vec<_>>(),
+            ["storage", "clock", "bus"],
+            "display capabilities must keep only their first occurrence",
+        );
+        assert_eq!(entries[0].hash, sha256_hex(&bytes));
+        let unchanged = std::fs::read(path).unwrap();
+        assert_eq!(unchanged, bytes);
+        assert_eq!(
+            read_manifest(&unchanged).unwrap().capabilities,
+            ["storage", "clock", "storage", "bus", "clock"],
         );
     }
 

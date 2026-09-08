@@ -91,7 +91,8 @@ segmented Auto / Light / Dark switch; every guest gets a native window of
 its own, titled with the app's name, resizable and movable like any other.
 
 - **Discover** lists every module the catalog directory holds, from its
-  manifest: name, description, and a chip per capability, coloured by what
+  manifest: name, description, and one chip per distinct capability (in first
+  declaration order), coloured by what
   it reaches. Get opens the app's page with a consent prompt — every
   capability the manifest declares and what it lets the app reach, and the
   hash of the file about to be pinned — and Install there loads the module,

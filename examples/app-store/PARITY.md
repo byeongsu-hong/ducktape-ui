@@ -46,7 +46,11 @@ Mounted native and Wasm Counter tests dispatch AccessKit Click through the
 host message boundary and observe the actual counter increment. Native
 platform adapter smoke remains a separate operating-system gate.
 
-Plain headless inspection of the populated store currently encounters duplicate
-logical IDs for repeated `Chip` instances. Actual native catalog screenshots
-can be captured from the running host, but authored inspection needs uniquely
-keyed capability chips as a separate example/harness follow-up.
+Populated-store headless inspection now uses capability-name-scoped `Chip`
+instances. Display capabilities preserve first declaration order and omit repeated
+names without changing manifest bytes or artifact hashes. Actual `cargo ice
+inspect` at 1240×800 passed with all five native packages, including a copied
+Counter manifest with repeated clock/bus declarations; its JSON contains 11
+uniquely scoped chip instances and the PNG was inspected. The catalog regression
+first failed its ordered-list assertion without the display filter, then passed
+with original manifest declarations, bytes and hash preserved.
