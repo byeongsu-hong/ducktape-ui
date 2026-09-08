@@ -252,7 +252,7 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
         // rebuild, so it must not cost a recompute of the rows.
         if faulted {
             shell.publish("ended".to_string());
-        } else if changed || wake.published {
+        } else if changed || wake.published || guest.window_effects.queued() {
             shell.publish("wake".to_string());
         }
     }

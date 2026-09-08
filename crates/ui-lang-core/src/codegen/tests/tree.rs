@@ -1747,3 +1747,36 @@ fn identified_shared_tree_layouts_never_wrap_wire_nodes_in_native_containers() {
         }
     }
 }
+
+#[test]
+fn local_window_effects_use_the_guest_request_channel() {
+    for (statement, command) in [
+        ("task window focus", "WindowCommand::Focus"),
+        ("task window resize 600.5 400.25", "WindowCommand::Resize"),
+        ("task window close", "WindowCommand::Close"),
+        ("exit", "WindowCommand::Close"),
+    ] {
+        let source = format!(
+            "app WindowEffects\n{PALETTE}on mount\n  {statement}\nview\n  text \"Window\"\n"
+        );
+        compile_for(&source, "window-effects.ice", Target::Native).unwrap();
+        let tree = compile_for(&source, "window-effects.ice", Target::Tree).unwrap();
+        assert!(
+            tree.contains(command),
+            "{statement} must send a scoped guest command"
+        );
+        assert!(!tree.contains("::iced::window::oldest()"));
+        assert!(!tree.contains("::iced::exit::<"));
+    }
+}
+
+#[test]
+fn tree_window_effects_refuse_explicit_native_window_ids() {
+    let source = format!(
+        "app WindowEffects\n{PALETTE}extern crate::backend\n  pure target() -> window-id\non mount\n  task window focus target=target()\nview\n  text \"Window\"\n"
+    );
+    compile_for(&source, "window-effects.ice", Target::Native).unwrap();
+    let error = compile_for(&source, "window-effects.ice", Target::Tree).unwrap_err();
+    assert_eq!(error.code, "E190");
+    assert!(error.message.contains("own host window"));
+}

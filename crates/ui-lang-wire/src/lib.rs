@@ -66,6 +66,9 @@ pub use query::{ContainerQuery, MAX_QUERY_OPS, QueryOp};
 
 mod markdown;
 pub use markdown::MarkdownDocument;
+mod window;
+pub use window::WindowCommand;
+
 mod widget;
 pub use widget::WidgetCommand;
 

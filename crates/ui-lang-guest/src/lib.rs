@@ -38,6 +38,7 @@ pub use memo::memo_lazy;
 pub mod host;
 pub mod testing;
 pub mod widget;
+pub mod window;
 
 pub use snapshot::SnapshotApp;
 mod snapshot;

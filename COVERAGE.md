@@ -2016,3 +2016,29 @@ The owning behavioral mutation changes only `increment` from `count + 1` to
 Native generation intact and verify that an unsupported test imported from a
 fragment reports E190 at that fragment's line. Typed state, presets, dispatch,
 mounts and other authored actions remain follow-up work, not covered support.
+
+### Scoped guest window effects
+
+Direct Tree `task window focus`, `task window resize`, `task window close`, and `exit` use ID-free `host.window`
+commands. The app-store resolves only the current Surface/instance's Running
+window on its UI update thread. Resize reuses the preferred-size bounds; payloads
+are fixed-size and the guest queue is bounded. Explicit `target=` is E190. Other
+window operations and arbitrary native Task effects remain outside this support.
+
+Core `local_window_effects_use_the_guest_request_channel` checks native acceptance
+and Tree request emission without an oldest-window lookup;
+`tree_window_effects_refuse_explicit_native_window_ids` checks the boundary error.
+The wire and guest window tests cover hostile sizes/payloads, waiting for a reply,
+and observable RequestError rejection.
+
+The real `window-effects-guest` is built both as a native child and a wasm
+component. Host `bundled_window_effects_` tests drive mounted buttons, capture the
+GuestView wake, run the generated store handlers, assert the native action's guest
+window ID and 600.5×400.25 resize, then deliver the UI acknowledgement back through
+the actual guest to advance its sequential task. Close/exit never emit a close for
+the store window. The oracle ends at native-runtime submission, not OS geometry or
+focus acknowledgement. Separate assertions exercise cancellation, bounded queues,
+closed/uninstalled Running entries, and replacement instances with colliding request
+IDs. Mutations of generation checks, Surface lookup, response delivery, UI wake,
+cancellation, queue bounds, and size validation each fail the intended assertion;
+exact restoration passes the host suite. No setup/compiler failure counts as Red.

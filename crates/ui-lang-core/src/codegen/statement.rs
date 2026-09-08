@@ -703,6 +703,9 @@ pub(in crate::codegen) fn generate_statements(
                 }
                 writeln!(out, "}}{task_suffix}").unwrap();
             }
+            ResolvedStatementKind::Exit if program.target() == Target::Tree => {
+                writeln!(out, "{task_prefix}::ui_lang_guest::window::perform(::ui_lang_guest::wire::WindowCommand::Close){task_suffix}").unwrap();
+            }
             ResolvedStatementKind::Exit => {
                 writeln!(
                     out,
@@ -1297,6 +1300,30 @@ pub(in crate::codegen) fn generate_statements(
                 route,
                 ..
             } => {
+                if program.target() == Target::Tree {
+                    if target.is_some() {
+                        return Err(program.error_at_origin(
+                            "E190",
+                            statement.origin,
+                            "a view module can operate only on its own host window; omit `target`",
+                        ));
+                    }
+                    let command = match operation {
+                        ResolvedWindowOperation::Focus => Some("Focus".to_owned()),
+                        ResolvedWindowOperation::Close => Some("Close".to_owned()),
+                        ResolvedWindowOperation::Resize(width, height) => Some(format!(
+                            "Resize {{ width: ({}) as f32, height: ({}) as f32 }}",
+                            resolved_expr_use_code(program, *width, env, ValueMode::Owned)?,
+                            resolved_expr_use_code(program, *height, env, ValueMode::Owned)?,
+                        )),
+                        _ => None,
+                    };
+                    if let Some(command) = command {
+                        writeln!(out, "{task_prefix}::ui_lang_guest::window::perform(::ui_lang_guest::wire::WindowCommand::{command}){task_suffix}").unwrap();
+                        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
+                        continue;
+                    }
+                }
                 let target = target
                     .as_ref()
                     .map(|target| resolved_expr_use_code(program, *target, env, ValueMode::Owned))
