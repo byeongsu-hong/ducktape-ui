@@ -141,7 +141,7 @@ fn source_mapped_expression_origin(
             )
         },
     );
-    let descendant_source = if track_descendants {
+    let descendant_source = if track_descendants && program.target() != Target::Tree {
         "#[cfg(test)]\nlet __ice_rendered = ::ui_lang_runtime::testing::sourced(__ice_rendered, __ice_render_source_location);\n"
     } else {
         ""
