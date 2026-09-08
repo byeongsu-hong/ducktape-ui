@@ -40,7 +40,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
 | L01 | P0 · Audit | [view layout rules](../skills/design-ice-ui/references/views-and-style.md), [Item/InputGroup](../crates/ui-lang-components/src/ice/components.ice) | A label + flexible input + trailing action share a narrow parent without overlap; the action stays usable, fill/shrink ownership is explicit, and custom padding remains inside the parent. |
-| L02 | P0 · Gap | [PageHeader/Panel](../crates/ui-lang-components/src/ice/components.ice): both require description and always render its text node | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Header roles are inspectable. Verify the empty-node geometry before changing it. |
+| L02 | P0 · PR | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merge/CI pending. |
 | L03 | P0 · Audit | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
 | L04 | P0 · Audit | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
 | L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
@@ -111,6 +111,13 @@ merely because its component exists or its code compiles.
 
 - 2026-09-08: initial inventory recorded; inspected shared Ice components,
   recipes/default palette, Rust theme roles, design workflow and parity ledger.
-- 2026-09-08: C01 PR is open; CI includes successful MSRV, accessibility and
-  Windows native WGPU checks, with other jobs still running. Local evidence is
-  linked in PR #1015; it is not yet delivered to main.
+- 2026-09-08: C01 PR is open. Rust/Ice, Windows workspace, native WGPU,
+  accessibility and MSRV checks pass. App-store clipboard fixture loading fails
+  with `tick exceeded 100 ms`; performance checks remain pending. The failure
+  is unresolved and blocks delivery; the fixture does not import the changed
+  default components. Local evidence is linked in PR #1015.
+- 2026-09-08: L02 PR #1020 is open. Empty descriptions previously added
+  26.75 px in both headers; assertion-level Red/Green confirms removal.
+  A no-wrap mutation fails the long-title assertion. All three rendered
+  captures were inspected; 6 header and 324 existing showcase tests pass.
+  API diff reports two additive optional arguments and no breaking changes.
