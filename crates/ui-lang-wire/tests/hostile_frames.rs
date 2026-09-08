@@ -461,20 +461,38 @@ fn gen_svg(rng: &mut Rng) -> Node {
         vec![b'<'; len]
     });
     if rng.next_bool() {
+        let data = bytes.map(|bytes| {
+            if rng.next_bool() {
+                ImageData::Encoded(bytes)
+            } else {
+                ImageData::Rgba {
+                    width: rng.next_u64() as u32,
+                    height: rng.next_u64() as u32,
+                    pixels: bytes,
+                }
+            }
+        });
+        if rng.next_bool() {
+            return Node::ImageViewer {
+                key: gen_key(rng),
+                hash: rng.next_u64(),
+                data,
+                label: rng.next_bool().then(|| gen_string(rng)),
+                fit: None,
+                filter: ImageFilter::Nearest,
+                width: gen_opt_length(rng),
+                height: gen_opt_length(rng),
+                options: ViewerOptions {
+                    padding: gen_opt_f32(rng),
+                    scale_bounds: rng.next_bool().then(|| (gen_f32(rng), gen_f32(rng))),
+                    scale_step: gen_opt_f32(rng),
+                },
+            };
+        }
         return Node::Image {
             key: gen_key(rng),
             hash: rng.next_u64(),
-            data: bytes.map(|bytes| {
-                if rng.next_bool() {
-                    ImageData::Encoded(bytes)
-                } else {
-                    ImageData::Rgba {
-                        width: rng.next_u64() as u32,
-                        height: rng.next_u64() as u32,
-                        pixels: bytes,
-                    }
-                }
-            }),
+            data,
             label: rng.next_bool().then(|| gen_string(rng)),
             fit: None,
             rotation: Some(Rotation::Solid(gen_f32(rng))),
@@ -1567,6 +1585,33 @@ fn check_bounds(
             }
             check_color(color, ctx);
             check_length(width, ctx);
+        }
+        Node::ImageViewer {
+            data,
+            label,
+            width,
+            height,
+            options,
+            ..
+        } => {
+            if let Some(data) = data {
+                *svg_bytes += data.byte_len();
+                assert!(data.valid_rgba(), "{ctx}: invalid viewer RGBA");
+            }
+            if let Some(label) = label {
+                check_string(label, ctx, "viewer label");
+            }
+            check_length(width, ctx);
+            check_length(height, ctx);
+            if let Some(padding) = options.padding {
+                assert!(padding.is_finite() && (0.0..=PIXEL_BOUND).contains(&padding));
+            }
+            if let Some((min, max)) = options.scale_bounds {
+                assert!(min.is_finite() && max.is_finite() && min > 0.0 && max >= min);
+            }
+            if let Some(step) = options.scale_step {
+                assert!(step.is_finite() && step > 0.0);
+            }
         }
         Node::Image {
             data,

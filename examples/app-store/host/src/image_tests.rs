@@ -31,7 +31,7 @@ fn key(node: &wire::Node, suffix: &str) -> Option<String> {
     }
     node.children().iter().find_map(|node| key(node, suffix))
 }
-fn draw(ui: &mut Ui, renderer: &mut iced::Renderer) -> Vec<u8> {
+pub(super) fn draw(ui: &mut Ui, renderer: &mut iced::Renderer) -> Vec<u8> {
     ui.draw(
         renderer,
         &iced::Theme::Light,
@@ -42,7 +42,7 @@ fn draw(ui: &mut Ui, renderer: &mut iced::Renderer) -> Vec<u8> {
     );
     renderer.screenshot(Size::new(600, 600), 1.0, Color::WHITE)
 }
-fn crop(pixels: &[u8], rect: Rectangle) -> Vec<u8> {
+pub(super) fn crop(pixels: &[u8], rect: Rectangle) -> Vec<u8> {
     let mut out = Vec::new();
     for y in rect.y.floor() as usize..(rect.y + rect.height).ceil().min(600.0) as usize {
         let x = rect.x.floor() as usize;

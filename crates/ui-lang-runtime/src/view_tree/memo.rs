@@ -60,7 +60,8 @@ pub(super) fn render(
                     pictures.handles.insert(*hash, handle.clone());
                 }
             }
-            ui_lang_wire::Node::Image { hash, .. } => {
+            ui_lang_wire::Node::Image { hash, .. }
+            | ui_lang_wire::Node::ImageViewer { hash, .. } => {
                 if let Some(handle) = kept.pictures.images.get(hash) {
                     pictures.images.insert(*hash, handle.clone());
                 }

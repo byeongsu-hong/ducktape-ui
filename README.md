@@ -718,9 +718,11 @@ rotation, opacity and filtering apply there. SVG and raster caches are separate;
 RGBA dimensions participate in image identity. Relative literal paths embed at
 build time. Other path expressions are refused; an opaque runtime image handle
 containing a filesystem path emits a guest diagnostic and draws no image.
-The host never opens that path. `viewer` and native image allocation operations
-remain outside this Tree support. Rebuild hosts and guests together for the
-new wire variant.
+The host never opens that path. `viewer` uses the same copied images and native
+Iced zoom/pan widget, including fit, filtering, padding and scale bounds. Zoom and
+pan belong to the mounted widget identity and follow keyed reordering; they are
+not guest snapshot state. Native image allocation operations remain unsupported.
+Rebuild hosts and guests together for the new wire variant.
 
 The tiny-skia renderer preserves fractional destination origins when scaling
 raster images. Actual native and Wasm fixtures assert clear margins above and

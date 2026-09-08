@@ -1260,9 +1260,6 @@ fn media(
 ) -> Result<String, Error> {
     let media = program.resolved_media(id)?;
     let origin = media.origin;
-    if media.kind == ResolvedMediaKind::Viewer {
-        return Err(refused(program, origin, "media"));
-    }
     let options = &media.options;
     refuse_when(
         program,
@@ -1277,7 +1274,10 @@ fn media(
         "an svg style callback",
     )?;
     let inherit = options.svg_inherits_button_ink;
-    let bytes = if media.kind == ResolvedMediaKind::Image {
+    let bytes = if matches!(
+        media.kind,
+        ResolvedMediaKind::Image | ResolvedMediaKind::Viewer
+    ) {
         if let Some(bytes) = embedded_asset_bytes_code(program, media.source) {
             format!("::iced::advanced::image::Handle::from_bytes({bytes})")
         } else if media.source_type == Type::Image {
@@ -1367,6 +1367,42 @@ fn media(
         .opacity
         .map(|opacity| clamped_f32_code(opacity, "0.0", "1.0", program, env))
         .transpose()?;
+    if media.kind == ResolvedMediaKind::Viewer {
+        let filter = match options.filter {
+            Some(ResolvedMediaFilter::Nearest) => "Nearest",
+            _ => "Linear",
+        };
+        let padding = options
+            .padding
+            .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
+            .transpose()?;
+        let step = options
+            .scale_step
+            .map(|value| clamped_f32_code(value, "f32::EPSILON", "f32::MAX", program, env))
+            .transpose()?;
+        let bounds = options
+            .scale_bounds
+            .as_ref()
+            .map(|bounds| -> Result<String, Error> {
+                Ok(format!(
+                    "::ui_lang_runtime::viewer_scale_bounds({}, {})",
+                    resolved_media_scale_bound(&bounds.minimum, program, env)?,
+                    resolved_media_scale_bound(&bounds.maximum, program, env)?
+                ))
+            })
+            .transpose()?;
+        return Ok(format!(
+            "match {SLOTS}::image(&({bytes})) {{ Some((__hash, __data)) => {WIRE}::Node::ImageViewer {{ key: {}, hash: __hash, data: __data, label: {}, fit: {}, filter: {WIRE}::ImageFilter::{filter}, width: {}, height: {}, options: {WIRE}::ViewerOptions {{ padding: {}, scale_bounds: {}, scale_step: {} }} }}, None => {WIRE}::Node::empty() }}",
+            key_code(identity, "media", origin, scope, env, program)?,
+            option_code(label),
+            option_code(fit),
+            dimension(options.width.as_ref())?,
+            dimension(options.height.as_ref())?,
+            option_code(padding),
+            option_code(bounds),
+            option_code(step)
+        ));
+    }
     if media.kind == ResolvedMediaKind::Image {
         let filter = match options.filter {
             Some(ResolvedMediaFilter::Nearest) => "Nearest",

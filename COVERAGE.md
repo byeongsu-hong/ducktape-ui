@@ -2111,8 +2111,20 @@ Commands: `cargo test -p ui-lang-core -p ui-lang-guest -p ui-lang-wire --lib`,
 `cargo ice bundle --manifest-path examples/app-store/Cargo.toml -p app-store-image-fixture --target wasm32-unknown-unknown --out examples/app-store/target/image-fixture`,
 and in app-store `python3 scripts/build-native.py -p app-store-image-fixture --out target/image-native`
 then `cargo test -p app-store-host bundled_images_ -- --ignored`.
-Image viewer, dynamic filesystem sources, native image allocation tasks and total
+Dynamic filesystem sources, native image allocation tasks and total
 codec/process memory guarantees are not covered by this support.
+
+Copied-image viewers reuse the raster admission budget and native Iced viewer.
+`bundled_viewer_zoom_pan_and_limits_match_native_pixels` compares fit, filtering,
+padding, wheel zoom, pointer pan and scale limits against native widget pixels
+on both native-child and Wasm backends. `bundled_viewer_retains_zoom_across_frames_and_keyed_reorder`
+checks independent viewer state after a guest frame and keyed reordering.
+Commands: `cargo ice bundle --manifest-path examples/app-store/Cargo.toml -p app-store-viewer-fixture --target wasm32-unknown-unknown --no-wasm-opt --out examples/app-store/target/viewer-fixture`,
+then in app-store `python3 scripts/build-native.py -p app-store-viewer-fixture --out target/viewer-native`
+and `cargo test -p app-store-host bundled_viewer_ -- --ignored --test-threads=1`.
+Dropping wheel or cursor-move events in the host image wrapper fails the zoom
+or pan pixel assertion, respectively. Zoom and pan are mounted native widget
+state, not guest snapshot state.
 
 JPEG EXIF orientations 1 through 8 are compared byte-for-byte against Iced's
 native image loader. Omitting orientation application fails the orientation-2

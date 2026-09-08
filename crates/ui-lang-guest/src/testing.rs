@@ -80,6 +80,7 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
         | Node::Qr { .. }
         | Node::Svg { .. }
         | Node::Image { .. }
+        | Node::ImageViewer { .. }
         | Node::Slider { .. }
         | Node::Progress { .. }
         | Node::Canvas { .. }
@@ -131,6 +132,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         | Node::Qr { .. }
         | Node::Svg { .. }
         | Node::Image { .. }
+        | Node::ImageViewer { .. }
         | Node::Input { .. }
         | Node::Editor { .. }
         | Node::Space { .. }
@@ -440,6 +442,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         | Node::Qr { .. }
         | Node::Svg { .. }
         | Node::Image { .. }
+        | Node::ImageViewer { .. }
         | Node::Input { .. }
         | Node::Editor { .. }
         | Node::Space { .. }

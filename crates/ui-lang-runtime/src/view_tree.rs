@@ -38,6 +38,7 @@ mod qr;
 mod rich_text;
 mod text;
 mod tooltip;
+mod viewer;
 pub use text::register_font_family;
 mod button;
 mod canvas;
@@ -476,6 +477,7 @@ fn collect_inputs(
         | wire::Node::Text { .. }
         | wire::Node::Svg { .. }
         | wire::Node::Image { .. }
+        | wire::Node::ImageViewer { .. }
         | wire::Node::Space { .. }
         | wire::Node::Rule { .. }
         | wire::Node::Toggle { .. }
@@ -534,6 +536,11 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures, frame_pixels: &mut u
             hash,
             data: Some(data),
             ..
+        }
+        | wire::Node::ImageViewer {
+            hash,
+            data: Some(data),
+            ..
         } => into.keep_image(*hash, data, frame_pixels),
         wire::Node::Svg {
             hash,
@@ -570,6 +577,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures, frame_pixels: &mut u
         wire::Node::Button { .. }
         | wire::Node::Svg { .. }
         | wire::Node::Image { .. }
+        | wire::Node::ImageViewer { .. }
         | wire::Node::Qr { .. }
         | wire::Node::RichText { .. }
         | wire::Node::Text { .. }
@@ -1626,6 +1634,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         wire::Node::Text { .. } => text::render(node),
         wire::Node::Qr { key, code } => qr::render(key, code),
         wire::Node::Image { .. } => image::render(node, kept.pictures),
+        wire::Node::ImageViewer { .. } => viewer::render(node, kept.pictures),
         wire::Node::RichText { .. } => rich_text::render(node),
         wire::Node::Svg {
             inherit_button_ink,
