@@ -31,7 +31,7 @@ pub use wit::WIT;
 use serde::{Deserialize, Serialize};
 
 mod image;
-pub use image::{ImageData, ImageFilter};
+pub use image::{ImageData, ImageFilter, ViewerOptions, viewer_scale_bounds};
 
 mod snapshot;
 pub use snapshot::{MAX_SNAPSHOT_BYTES, Snapshot, SnapshotValue};
@@ -835,6 +835,18 @@ pub enum Node {
         width: Option<Length>,
         height: Option<Length>,
     },
+    /// A native zoom/pan viewer sharing the raster picture cache and budgets.
+    ImageViewer {
+        key: String,
+        hash: u64,
+        data: Option<ImageData>,
+        label: Option<String>,
+        fit: Option<ContentFit>,
+        filter: ImageFilter,
+        width: Option<Length>,
+        height: Option<Length>,
+        options: ViewerOptions,
+    },
     /// A vector picture. Its bytes cross ONCE: the frame that first shows a
     /// picture carries them under `hash`, and every frame after — a changed
     /// tree re-sends every node — names the hash alone. The host keeps what
@@ -1124,6 +1136,7 @@ impl Node {
             | Self::Text { key, .. }
             | Self::Svg { key, .. }
             | Self::Image { key, .. }
+            | Self::ImageViewer { key, .. }
             | Self::Input { key, .. }
             | Self::Editor { key, .. }
             | Self::Button { key, .. }
@@ -1178,6 +1191,7 @@ impl Node {
             | Self::Text { .. }
             | Self::Svg { .. }
             | Self::Image { .. }
+            | Self::ImageViewer { .. }
             | Self::Input { .. }
             | Self::Editor { .. }
             | Self::Space { .. }
@@ -1241,6 +1255,7 @@ impl Node {
             | Self::Progress { .. }
             | Self::Svg { .. }
             | Self::Image { .. }
+            | Self::ImageViewer { .. }
             | Self::Canvas { .. }
             | Self::Surface { .. } => &mut [],
         }
@@ -1284,6 +1299,7 @@ impl Node {
             | Self::Progress { .. }
             | Self::Svg { .. }
             | Self::Image { .. }
+            | Self::ImageViewer { .. }
             | Self::Canvas { .. }
             | Self::Surface { .. } => None,
         }
@@ -1975,6 +1991,20 @@ fn sanitize_node(
             }
             bound_color(color);
         }
+        Node::ImageViewer {
+            key,
+            data,
+            label,
+            options,
+            ..
+        } => {
+            claim(key, taken);
+            ImageData::sanitize(data, &mut budgets.pictures);
+            if let Some(label) = label {
+                truncate_string(label);
+            }
+            options.sanitize();
+        }
         Node::Image {
             key,
             data,
@@ -2354,6 +2384,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Button { width, height, .. }
         | Node::Svg { width, height, .. }
         | Node::Image { width, height, .. }
+        | Node::ImageViewer { width, height, .. }
         | Node::Slider { width, height, .. }
         | Node::Canvas { width, height, .. }
         | Node::Space { width, height } => vec![width, height],

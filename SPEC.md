@@ -1509,8 +1509,16 @@ by `encoded(bytes)` / `rgba(width, height, bytes)`. Tree lowering preserves
 encoded bytes or dimensions plus RGBA bytes once per typed content hash.
 Runtime filesystem `Handle::Path` values report through `host.log` and produce
 an empty node; statically visible nonembedded paths are E190. No host filesystem
-fallback exists. `viewer`, dynamic filesystem sources and image allocation
-operations are separate unsupported Tree features.
+fallback exists. Dynamic filesystem sources and image allocation operations
+remain unsupported Tree features.
+
+`viewer` accepts the same copied image sources and reuses the same raster cache.
+Its native Iced widget receives `w`, `h`, `fit`, `filter`, `p`, `min-scale`,
+`max-scale`, `scale-step` and `label`. Scale bounds use the shared native positive,
+finite, ordered normalization; omitted options retain native defaults. Native
+widget state retains zoom and pan across frames and keyed moves, but is not
+serialized into guest snapshots. Missing or rejected pixels draw an empty area
+with the requested dimensions. The host never reads an image path.
 
 SVG and raster payloads share a 1 MiB frame allowance and an 8 MiB host-session
 copied-byte allowance. Raster vector headers above 8 MiB are rejected before

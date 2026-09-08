@@ -684,6 +684,16 @@ jobs:
       - name: Verify native pick options and menu routes through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_pick_ -- --ignored
+      - name: Bundle copied-image viewer fixtures
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-viewer-fixture --target wasm32-unknown-unknown \
+            --no-wasm-opt --out examples/app-store/target/viewer-fixture
+          cd examples/app-store
+          python3 scripts/build-native.py -p app-store-viewer-fixture --out target/viewer-native
+      - name: Check native and Wasm viewer interactions
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_viewer_ -- --ignored --test-threads=1
       - name: Bundle raster image fixtures
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \

@@ -762,7 +762,7 @@ fn resolved_media_svg_style(
     Ok(format!("{}(__theme, __status{suffix})", function.rust_path))
 }
 
-fn resolved_media_scale_bound(
+pub(super) fn resolved_media_scale_bound(
     bound: &ResolvedMediaScaleBound,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,

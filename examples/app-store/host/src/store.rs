@@ -1708,3 +1708,7 @@ fn new_wasm_store() -> Store<HostState> {
 #[cfg(test)]
 #[path = "authored_backend.rs"]
 mod authored_backend;
+
+#[cfg(test)]
+#[path = "viewer_tests.rs"]
+mod viewer_tests;

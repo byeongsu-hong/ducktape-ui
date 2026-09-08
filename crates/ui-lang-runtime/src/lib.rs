@@ -3794,20 +3794,7 @@ pub fn add_gradient_stops(
         .add_stops(stops)
 }
 
-/// Converts viewer scale bounds to a finite, positive, ordered `f32` range.
-pub fn viewer_scale_bounds(min: f64, max: f64) -> (f32, f32) {
-    let positive = |value: f64| {
-        let value = value as f32;
-        if value.is_nan() {
-            f32::EPSILON
-        } else {
-            value.clamp(f32::EPSILON, f32::MAX)
-        }
-    };
-    let min = positive(min);
-    let max = positive(max);
-    (min.min(max), min.max(max))
-}
+pub use ui_lang_wire::viewer_scale_bounds;
 
 /// Converts progress inputs to a finite, ordered range and bounded value.
 /// The value one accessibility step from `value` lands on, or `None` when the

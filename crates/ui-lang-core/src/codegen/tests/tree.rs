@@ -29,6 +29,23 @@ fn tree_test_builds_keep_source_locations_without_native_element_wrappers() {
 }
 
 #[test]
+fn tree_viewer_reuses_copied_image_slots_and_native_options() {
+    let source = format!(
+        "app Viewer\n{PALETTE}state\n  pixels = rgba(1, 1, bytes(ff 00 00 ff))\nview\n  viewer pixels #photo w=80.0 h=60.0 p=3.0 fit=contain filter=nearest min-scale=0.5 max-scale=4.0 scale-step=0.25\n"
+    );
+    assert!(compile_for(&source, "viewer.ice", Target::Native).is_ok());
+    let generated = compile_for(&source, "viewer.ice", Target::Tree);
+    assert!(
+        generated.is_ok(),
+        "valid copied-image viewer must lower for Tree: {generated:?}"
+    );
+    let generated = generated.unwrap();
+    assert!(generated.contains("Node::ImageViewer"));
+    assert!(generated.contains("::image("));
+    assert!(generated.contains("ViewerOptions"));
+}
+
+#[test]
 fn tree_images_copy_encoded_and_rgba_sources_with_native_options() {
     let source = format!(
         "app Pictures\n{PALETTE}state\n  pixels = rgba(1, 1, bytes(ff 00 00 ff))\n  data = encoded(bytes(89 50 4e 47))\nview\n  col\n    image pixels w=32.0 h=24.0 fit=cover opacity=0.5 filter=nearest rotate=rotation.solid(radians(0.5))\n    image data\n"
@@ -45,18 +62,20 @@ fn tree_images_copy_encoded_and_rgba_sources_with_native_options() {
 
 #[test]
 fn tree_images_refuse_filesystem_paths_at_the_source() {
-    for (state, source) in [
-        ("", "\"/host/private.png\""),
-        ("state\n  path = \"pair.png\"\n", "path"),
-    ] {
-        let source = format!("app Pictures\n{PALETTE}{state}view\n  image {source}\n");
-        let error = compile_for(&source, "pictures.ice", Target::Tree)
-            .unwrap_err()
-            .render("pictures.ice");
-        assert!(
-            error.contains("E190") && error.contains("image read from a path"),
-            "{error}"
-        );
+    for widget in ["image", "viewer"] {
+        for (state, source) in [
+            ("", "\"/host/private.png\""),
+            ("state\n  path = \"pair.png\"\n", "path"),
+        ] {
+            let source = format!("app Pictures\n{PALETTE}{state}view\n  {widget} {source}\n");
+            let error = compile_for(&source, "pictures.ice", Target::Tree)
+                .unwrap_err()
+                .render("pictures.ice");
+            assert!(
+                error.contains("E190") && error.contains("image read from a path"),
+                "{error}"
+            );
+        }
     }
 }
 
@@ -1049,7 +1068,7 @@ const COVERAGE: &[Coverage] = &[
         "  svg \"<svg/>\" memory style=tinted(busy)\n",
         "an svg style callback",
     ),
-    refused("media: viewer", "", "  viewer picture\n", "`media`"),
+    emitted("media: viewer", "", "  viewer picture\n"),
     emitted(
         "canvas: geometry",
         "",

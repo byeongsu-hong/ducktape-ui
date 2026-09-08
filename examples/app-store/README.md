@@ -534,7 +534,7 @@ For module packaging requirements and the connected implementation phases, see
   extern's name (`clock_face` is the one this store paints, with a sweeping
   second hand the guest never ticks), given the call's copied data arguments
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
-  the host lacks renders a placeholder. Remaining refusals include image viewer and dynamic image paths,
+  the host lacks renders a placeholder. Remaining refusals include dynamic image paths,
   mounted components inside lazy or host container conditions, gradients, and
   unsupported interaction utility styles. These fail the app's build at
   its `.ice` line with E190 and need additional lowering or host contracts.

@@ -574,6 +574,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "app-store-viewer-fixture"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "app-store-widget-fixture"
 version = "0.1.0"
 dependencies = [
