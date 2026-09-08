@@ -451,6 +451,7 @@ pub(in crate::codegen) fn native_field_projection(
     ty: &Type,
     field: &str,
     code: &str,
+    target: Target,
 ) -> Option<(String, Type)> {
     let projected = match (ty, field) {
         (Type::TestTarget, field) => {
@@ -559,7 +560,14 @@ pub(in crate::codegen) fn native_field_projection(
                 "macos_command" => "macos_command",
                 _ => return None,
             };
-            (format!("({code}).{method}()"), Type::Bool)
+            let code = if target == Target::Tree
+                && matches!(field, "command" | "jump" | "macos_command")
+            {
+                format!("::ui_lang_guest::keyboard::{method}({code})")
+            } else {
+                format!("({code}).{method}()")
+            };
+            (code, Type::Bool)
         }
         (Type::Pixels | Type::Degrees | Type::Radians, "value") => {
             (format!("({code}).0 as f64"), Type::F64)

@@ -6361,6 +6361,7 @@ name = "ui-lang-wire"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "iced_core",
  "serde",
 ]
 

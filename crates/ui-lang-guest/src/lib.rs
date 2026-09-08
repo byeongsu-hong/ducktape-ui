@@ -27,6 +27,7 @@ use iced_runtime::futures::subscription::{self, Tracker};
 use iced_runtime::{Action, task};
 
 mod clipboard;
+pub mod keyboard;
 mod markdown;
 mod memo;
 pub use markdown::Markdown;
@@ -73,6 +74,7 @@ struct Task<M> {
 /// one crosses as `unchanged` and a changed one as patches against it.
 pub struct Driver<A: App> {
     slots: slots::Context,
+    window: iced::window::Id,
     app: A,
     tasks: Vec<Task<A::Message>>,
     /// Diffs the recipes `subscription` returns against the ones running,
@@ -110,12 +112,18 @@ const SUBSCRIPTION_QUEUE: usize = 100;
 
 impl<A: App> Driver<A> {
     pub fn new() -> Self {
-        let slots = slots::Context::default();
+        Self::with_macos(cfg!(target_os = "macos"))
+    }
+
+    /// The host platform selects Command/word-jump semantics before app boot.
+    pub fn with_macos(macos: bool) -> Self {
+        let slots = slots::Context::with_macos(macos);
         let _context = slots.enter();
         let (app, boot) = A::boot();
         let (subscribed, produced) = mpsc::channel(SUBSCRIPTION_QUEUE);
         let mut driver = Self {
             slots,
+            window: iced::window::Id::unique(),
             app,
             tasks: Vec::new(),
             tracker: Tracker::new(),
@@ -146,6 +154,21 @@ impl<A: App> Driver<A> {
         self.settle();
         for event in events {
             let message = match event {
+                wire::Event::Keyboard { event, captured } => {
+                    self.tracker.broadcast(subscription::Event::Interaction {
+                        window: self.window,
+                        event: iced::Event::Keyboard(event.into()),
+                        status: if captured {
+                            iced::event::Status::Captured
+                        } else {
+                            iced::event::Status::Ignored
+                        },
+                    });
+                    // Drain before the next key: Tracker channels are bounded,
+                    // and a handler can change which subscriptions are live.
+                    self.settle();
+                    None
+                }
                 wire::Event::Message(index) => slots::take_message::<A::Message>(index),
                 wire::Event::Surface { handler, value } => {
                     slots::run_handler::<wire::SurfaceValue, A::Message>(handler, value)
@@ -517,7 +540,7 @@ macro_rules! export_app {
 world view {
     import panicked: func(message: string);
 
-    export init: func();
+    export init: func(macos: bool);
     export tick: func(events: list<u8>) -> list<u8>;
 }
 ",
@@ -527,7 +550,7 @@ world view {
             struct __IceComponent;
 
             impl Guest for __IceComponent {
-                fn init() {
+                fn init(macos: bool) {
                     // A trapped instance can never be entered again, so the
                     // message leaves through the host's import before the
                     // abort that follows the hook.
@@ -544,7 +567,7 @@ world view {
                             .unwrap_or_else(|| "unknown".into());
                         panicked(&$crate::panic_line(message, &at));
                     }));
-                    super::boot_native();
+                    super::__ICE_DRIVER.with(|driver| *driver.borrow_mut() = Some($crate::Driver::with_macos(macos)));
                 }
 
                 fn tick(events: Vec<u8>) -> Vec<u8> {

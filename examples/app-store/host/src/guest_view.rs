@@ -13,6 +13,8 @@ use ui_lang_runtime::view_tree::{self, Output};
 
 use crate::store::{Guest, MountedWidgets, Surface};
 
+mod keyboard;
+
 /// The guest's window. It emits `"restart"` when the user asks for one,
 /// `"ended"` when the instance ended on its own, and `"wake"` when the tree
 /// changed or a publish must reach the other windows — all the store's
@@ -138,12 +140,14 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
         // else the local shell collected — a redraw request, a captured
         // event, an open input method — is the window's and carries over.
         let mut outputs = Vec::new();
+        let captured;
         {
             let mut local = Shell::new(&mut outputs);
             self.content.as_widget_mut().update(
                 tree, event, layout, cursor, renderer, clipboard, &mut local, viewport,
             );
-            if local.is_event_captured() {
+            captured = local.is_event_captured();
+            if captured {
                 shell.capture_event();
             }
             if local.is_layout_invalid() {
@@ -167,6 +171,13 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
             for output in outputs {
                 guest.deliver(output);
             }
+            shell.request_redraw();
+        }
+        if let Event::Keyboard(event) = event {
+            guest.pending.push(ui_lang_wire::Event::Keyboard {
+                event: event.clone().into(),
+                captured,
+            });
             shell.request_redraw();
         }
         let Event::Window(window::Event::RedrawRequested(now)) = event else {
@@ -267,6 +278,11 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
         self.content
             .as_widget_mut()
             .overlay(tree, layout, renderer, viewport, translation)
-            .map(|overlay| overlay.map(self.overlay_output.as_ref()))
+            .map(|overlay| {
+                keyboard::wrap(
+                    overlay.map(self.overlay_output.as_ref()),
+                    self.guest.clone(),
+                )
+            })
     }
 }

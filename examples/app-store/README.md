@@ -1109,3 +1109,23 @@ row snapshot. `log_timeline` borrows rows only during construction when its row
 closure returns owned elements; an `Arc<[T]>` snapshot can be borrowed the same
 way without a new API or self-referencing wrapper. Borrowing row closures keep
 their ordinary lifetime requirements.
+
+## Keyboard module views
+
+The app-store gives each guest its own window. Its native view forwards keyboard
+press/release/modifier events after widgets handle them, preserving captured
+status. Captured overlay keys are forwarded at the overlay; ignored keys reach
+the base view once. The guest runs the existing Ice keyboard subscription filters
+and reconciles them between events.
+
+Hosts call `init(macos: bool)` before the first tick; generated modifier meanings
+use the host platform even though the guest targets wasm. Shared-window hosts
+must forward only the active module's relevant keys. Rust guest externs should
+use `ui_lang_guest::keyboard::{command, jump, macos_command, command_modifiers}`
+rather than Iced's target-OS-dependent modifier methods. Rebuild host and guests
+together; the previous `init()` ABI is removed.
+
+`tests/keyboard-guest` and `bundled_keyboard_` verify actual native key delivery,
+overlay input capture, metadata, release, subscription removal and independent
+instances, with both macOS and non-macOS host initialization. A guest regression
+also sends 150 events in one batch to check bounded-channel draining.

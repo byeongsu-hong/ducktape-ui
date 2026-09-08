@@ -68,9 +68,16 @@ pub enum ClipboardTarget {
     Primary,
 }
 
+pub mod keyboard;
+
 /// Something the host tells the guest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
+    /// A keyboard interaction after the mounted native widgets handled it.
+    Keyboard {
+        event: keyboard::Event,
+        captured: bool,
+    },
     /// The user activated the widget the guest gave this message index to
     /// (a button press, an input submit). Indices are per frame: they name
     /// entries in the table the guest filled while building the tree it

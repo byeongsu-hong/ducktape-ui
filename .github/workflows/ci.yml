@@ -615,6 +615,14 @@ jobs:
       - name: Verify host container rules and native input through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_responsive_ -- --ignored
+      - name: Bundle keyboard subscription fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-keyboard-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/keyboard-fixture
+      - name: Verify native keyboard subscriptions through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_keyboard_ -- --ignored
       - name: Bundle host-encoded QR fixture
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
