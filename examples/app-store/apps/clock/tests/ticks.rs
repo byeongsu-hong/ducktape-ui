@@ -3,7 +3,7 @@
 
 use app_store_clock::{boot_native, tick_native};
 use ui_lang_guest::testing::{answer, find, has_text, item, texts};
-use ui_lang_guest::wire::{Frame, Node, Request, Rgba, SurfaceValue};
+use ui_lang_guest::wire::{Background, Frame, Node, Request, Rgba, SurfaceValue};
 
 /// 2025-01-01T13:45:00Z.
 const NOW_MS: u64 = 1_735_739_100_000;
@@ -16,7 +16,10 @@ const UPTIME_AT_ANSWER_MS: u64 = 300_000;
 /// The app's own backdrop: the root container's background.
 fn backdrop(frame: &Frame) -> Option<Rgba> {
     match frame.root.as_ref()? {
-        Node::Container { background, .. } => *background,
+        Node::Container {
+            background: Some(Background::Color(color)),
+            ..
+        } => Some(*color),
         _ => None,
     }
 }

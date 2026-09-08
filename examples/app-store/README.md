@@ -534,7 +534,7 @@ For module packaging requirements and the connected implementation phases, see
   second hand the guest never ticks), given the call's copied data arguments
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
   the host lacks renders a placeholder. Remaining refusals include dynamic image paths,
-  mounted components inside lazy or host container conditions, gradients, and
+  mounted components inside lazy or host container conditions, non-container gradients, and
   unsupported interaction utility styles. These fail the app's build at
   its `.ice` line with E190 and need additional lowering or host contracts.
   A layout's surface utilities (`@bg-…`, `@border-…`, `@r-…`) and a box's
@@ -1465,3 +1465,7 @@ uses real native window events through both installed backends, including an
 overlay capture, a nonzero guest origin, wheel units and subscription removal.
 Rebuild every host and guest together: `Frame.mouse_interest` and `Event::Mouse`
 change the wire encoding.
+
+Container backgrounds support `bg=linear(...)` in both execution backends,
+including dynamic angles, palette-stop changes and alpha scrims. Other widget
+gradients are still listed in [PARITY.md](PARITY.md).

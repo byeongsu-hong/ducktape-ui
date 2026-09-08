@@ -291,6 +291,24 @@ fn gen_radio_style(rng: &mut Rng) -> RadioStyle {
     }
 }
 
+fn gen_opt_background(rng: &mut Rng) -> Option<Background> {
+    rng.next_bool().then(|| {
+        if rng.next_bool() {
+            Background::Color(gen_opt_color(rng).unwrap_or(Rgba([0.0; 4])))
+        } else {
+            Background::Linear {
+                angle: gen_f32(rng),
+                stops: std::array::from_fn(|_| {
+                    rng.next_bool().then(|| ColorStop {
+                        offset: gen_f32(rng),
+                        color: gen_opt_color(rng).unwrap_or(Rgba([0.0; 4])),
+                    })
+                }),
+            }
+        }
+    })
+}
+
 fn gen_slider_face(rng: &mut Rng) -> Option<SliderFace> {
     rng.next_bool().then(|| SliderFace {
         rail_start: gen_opt_color(rng),
@@ -833,7 +851,7 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                 padding: gen_opt_edges(rng),
                 align_x: gen_opt_align_x(rng),
                 align_y: gen_opt_align_y(rng),
-                background: gen_opt_color(rng),
+                background: gen_opt_background(rng),
                 border: gen_opt_border(rng),
                 snap: gen_opt_bool(rng),
                 content: Box::new(node),
@@ -1248,6 +1266,29 @@ fn check_control_face(face: &Option<ControlFace>, ctx: &str) {
     check_border(&face.border, ctx);
 }
 
+fn check_background(value: &Option<Background>, ctx: &str) {
+    match value {
+        Some(Background::Color(color)) => check_color(&Some(*color), ctx),
+        Some(Background::Linear { angle, stops }) => {
+            assert!(angle.is_finite(), "{ctx}: gradient angle must be finite");
+            let mut previous = None;
+            for stop in stops.iter().flatten() {
+                assert!(
+                    stop.offset.is_finite() && (0.0..=1.0).contains(&stop.offset),
+                    "{ctx}: gradient stop must be finite and within 0..=1"
+                );
+                assert!(
+                    previous.is_none_or(|offset| stop.offset > offset),
+                    "{ctx}: gradient stops must increase"
+                );
+                previous = Some(stop.offset);
+                check_color(&Some(stop.color), ctx);
+            }
+        }
+        None => {}
+    }
+}
+
 fn check_slider_face(face: &Option<SliderFace>, ctx: &str) {
     let Some(face) = face else { return };
     check_color(&face.rail_start, ctx);
@@ -1331,7 +1372,7 @@ fn check_bounds(
             check_length(width, ctx);
             check_length(height, ctx);
             check_edges(padding, ctx);
-            check_color(background, ctx);
+            check_background(background, ctx);
             check_border(border, ctx);
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }

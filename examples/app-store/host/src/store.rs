@@ -1721,3 +1721,7 @@ mod mouse_tests;
 #[cfg(test)]
 #[path = "slider_handle_tests.rs"]
 mod slider_handle_tests;
+
+#[cfg(test)]
+#[path = "gradient_tests.rs"]
+mod gradient_tests;
