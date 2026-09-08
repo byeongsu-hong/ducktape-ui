@@ -2105,3 +2105,16 @@ pixels. Both backends failed the white-margin assertion with the original
 source-pixel integer truncation (red instead of white above y=77.6); the
 floating-point destination translation restores both. The existing complete
 scene and lifecycle test also passes with the corrected renderer.
+
+### Tree searchable combo boxes
+
+Tree combo evidence uses `view_tree::combo::tests` for actual native input,
+focused status, default Fill layout, filtered overlay selection, cumulative
+retention bounds, identical assignment, append, hide/readd and exact reload
+matching. `host/combo_tests.rs` runs a real export_app fixture as both native
+child and Wasm component, with keyboard/pointer selection, input/hover/open/close
+routes, original typed option mapping, shared App binding state, and stale old
+instance overlay rejection. Core acceptance and E190 tests cover typed generated
+routes and unsupported Rust callbacks/value parameters. Component-owned Combo
+state retains the common native E103 restriction. These checks do not claim
+platform accessibility bridge behavior or native Rust callback parity.

@@ -180,7 +180,9 @@ fn component_fields(
 fn schema_type(program: &LoweredProgram, ty: &Type, out: &mut String, seen: &mut Vec<String>) {
     write!(out, "{ty:?};").unwrap();
     match ty {
-        Type::List(inner) | Type::Option(inner) => schema_type(program, inner, out, seen),
+        Type::List(inner) | Type::Option(inner) | Type::Combo(inner) => {
+            schema_type(program, inner, out, seen)
+        }
         Type::Result(ok, err) => {
             schema_type(program, ok, out, seen);
             schema_type(program, err, out, seen);

@@ -28,6 +28,7 @@ pub(super) fn render(
         instance: kept.inputs.instance,
         fields: HashMap::new(),
         editors: HashMap::new(),
+        combos: HashMap::new(),
     };
     let mut pictures = super::Pictures::default();
     let mut surfaces = super::Surfaces::new();
@@ -42,6 +43,11 @@ pub(super) fn render(
             ui_lang_wire::Node::Input { key, .. } => {
                 if let Some(field) = kept.inputs.fields.get(key) {
                     inputs.fields.insert(key.clone(), field.clone());
+                }
+            }
+            ui_lang_wire::Node::ComboBox { state_key: key, .. } => {
+                if let Some(field) = kept.inputs.combos.get(key) {
+                    inputs.combos.insert(key.clone(), field.clone());
                 }
             }
             ui_lang_wire::Node::Editor { key, .. } => {

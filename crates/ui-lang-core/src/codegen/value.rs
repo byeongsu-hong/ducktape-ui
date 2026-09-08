@@ -66,6 +66,27 @@ pub(super) fn code(
     }
     if target == ValueTarget::Snapshot {
         match ty {
+            Type::Combo(inner) => {
+                let list = Type::List(inner.clone());
+                return Ok(if decode {
+                    let options = code(&list, "__options", true, program, target, visiting)?;
+                    format!(
+                        "(|| {{ let {v}::Record {{ name, fields }} = {value} else {{ return None; }}; if name != \"combo\" || fields.len() != 2 {{ return None; }} let mut fields = fields.into_iter(); let (name, __options) = fields.next()?; if name != \"options\" {{ return None; }} let options = ({options})?; let (name, reset) = fields.next()?; if name != \"reset\" {{ return None; }} let {v}::Bytes(reset) = reset else {{ return None; }}; let reset = u64::from_le_bytes(reset.try_into().ok()?); Some(::ui_lang_guest::Combo::restore(options, reset)) }})()"
+                    )
+                } else {
+                    let options = code(
+                        &list,
+                        &format!("({value}).options()"),
+                        false,
+                        program,
+                        target,
+                        visiting,
+                    )?;
+                    format!(
+                        "{v}::Record {{ name: \"combo\".into(), fields: vec![(\"options\".into(), {options}), (\"reset\".into(), {v}::Bytes(({value}).reset_revision().to_le_bytes().to_vec()))] }}"
+                    )
+                });
+            }
             Type::Markdown => {
                 return Ok(if decode {
                     format!(

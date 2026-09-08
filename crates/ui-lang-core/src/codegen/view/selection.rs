@@ -233,7 +233,7 @@ pub(in crate::codegen) fn render_combo_box(
     ))
 }
 
-fn resolved_combo_state<'a>(
+pub(super) fn resolved_combo_state<'a>(
     combo: &ResolvedComboBox,
     env: &'a dyn BindingEnvironment,
     program: &LoweredProgram,

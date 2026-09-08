@@ -42,6 +42,8 @@ pub use flex::{
 };
 pub use float::{FloatExpression, FloatOp, MAX_FLOAT_OPS};
 
+mod combo;
+pub use combo::{ComboIcon, ComboOptions};
 mod pick;
 pub use pick::{PickHandle, PickIcon, PickOptions};
 
@@ -378,6 +380,7 @@ pub struct ButtonStyle {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct InputFace {
+    pub icon: Option<Rgba>,
     pub background: Option<Rgba>,
     pub border: Option<Border>,
     pub value: Option<Rgba>,
@@ -437,6 +440,7 @@ impl InputStyle {
             bound_color(&mut face.background);
             bound_border(&mut face.border);
             bound_color(&mut face.value);
+            bound_color(&mut face.icon);
             bound_color(&mut face.placeholder);
             bound_color(&mut face.selection);
         }
@@ -957,6 +961,17 @@ pub enum Node {
         height: Option<Length>,
         style: SliderStyle,
     },
+    ComboBox {
+        key: String,
+        state_key: String,
+        options: Vec<String>,
+        selected: Option<u32>,
+        reset: u64,
+        placeholder: String,
+        on_select: u32,
+        width: Option<Length>,
+        settings: Box<ComboOptions>,
+    },
     PickList {
         settings: Box<PickOptions>,
         key: String,
@@ -1115,6 +1130,7 @@ impl Node {
             | Self::Radio { key, .. }
             | Self::Slider { key, .. }
             | Self::PickList { key, .. }
+            | Self::ComboBox { key, .. }
             | Self::Progress { key, .. }
             | Self::Stack { key, .. }
             | Self::Hover { key, .. }
@@ -1168,6 +1184,7 @@ impl Node {
             | Self::Radio { .. }
             | Self::Slider { .. }
             | Self::PickList { .. }
+            | Self::ComboBox { .. }
             | Self::Progress { .. }
             | Self::Canvas { .. }
             | Self::Surface { .. } => &[],
@@ -1218,6 +1235,7 @@ impl Node {
             | Self::Radio { .. }
             | Self::Slider { .. }
             | Self::PickList { .. }
+            | Self::ComboBox { .. }
             | Self::Progress { .. }
             | Self::Svg { .. }
             | Self::Image { .. }
@@ -1260,6 +1278,7 @@ impl Node {
             | Self::Radio { .. }
             | Self::Slider { .. }
             | Self::PickList { .. }
+            | Self::ComboBox { .. }
             | Self::Progress { .. }
             | Self::Svg { .. }
             | Self::Image { .. }
@@ -2172,6 +2191,27 @@ fn sanitize_node(
                 bound_border(&mut face.handle_border);
             }
         }
+        Node::ComboBox {
+            key,
+            state_key,
+            options,
+            selected,
+            placeholder,
+            settings,
+            ..
+        } => {
+            claim(key, taken);
+            spend_text(state_key, &mut budgets.text);
+            settings.sanitize(&mut budgets.text);
+            options.truncate(MAX_OPTIONS);
+            for option in options.iter_mut() {
+                spend_text(option, &mut budgets.text);
+            }
+            spend_text(placeholder, &mut budgets.text);
+            if selected.is_some_and(|index| index as usize >= options.len()) {
+                *selected = None;
+            }
+        }
         Node::PickList {
             settings,
             key,
@@ -2322,7 +2362,8 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Input { width, .. }
         | Node::Toggle { width, .. }
         | Node::Radio { width, .. }
-        | Node::PickList { width, .. } => vec![width],
+        | Node::PickList { width, .. }
+        | Node::ComboBox { width, .. } => vec![width],
         Node::Qr { .. }
         | Node::Rule { .. }
         | Node::Lazy { .. }

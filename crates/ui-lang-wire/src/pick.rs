@@ -31,12 +31,12 @@ pub struct PickIcon {
     pub shaping: Option<Shaping>,
 }
 
-fn text_size(value: &mut Option<f32>) {
+pub(super) fn text_size(value: &mut Option<f32>) {
     if let Some(value) = value {
         *value = bounded(*value).clamp(f32::EPSILON, MAX_TEXT_PIXELS);
     }
 }
-fn line_height(value: &mut Option<f32>) {
+pub(super) fn line_height(value: &mut Option<f32>) {
     if let Some(value) = value {
         *value = bounded(*value).clamp(f32::EPSILON, MAX_PIXELS / MAX_TEXT_PIXELS);
     }

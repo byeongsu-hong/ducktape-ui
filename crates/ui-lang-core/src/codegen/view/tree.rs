@@ -39,6 +39,7 @@
 use super::*;
 mod button;
 mod canvas;
+mod combo;
 mod flex;
 mod float;
 mod lists;
@@ -136,6 +137,7 @@ pub(in crate::codegen) fn render_tree_node(
             boolean(node, identity, document, message, env, scope)?
         }
         ResolvedViewKind::Slider => slider(node, identity, document, message, env, scope)?,
+        ResolvedViewKind::ComboBox => combo::render(node, identity, document, message, env, scope)?,
         ResolvedViewKind::PickList => pick_list(node, identity, document, message, env, scope)?,
         ResolvedViewKind::Progress => progress(node, identity, document, env, scope)?,
         ResolvedViewKind::ExternComponent | ResolvedViewKind::Shader => {
@@ -1410,6 +1412,17 @@ fn input_face_code(
         style.icon_color.is_some(),
         "an input icon colour",
     )?;
+    input_face_data_code(Some(style), program, env, origin)
+}
+fn input_face_data_code(
+    style: Option<&ResolvedInputStatusStyle>,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    origin: OriginId,
+) -> Result<Option<String>, Error> {
+    let Some(style) = style else {
+        return Ok(None);
+    };
     refuse_when(
         program,
         origin,
@@ -1419,7 +1432,8 @@ fn input_face_code(
     refuse_surface_extras(&style.surface, program, origin)?;
     let plain = ResolvedStyle::default();
     Ok(Some(format!(
-        "{WIRE}::InputFace {{ background: {}, border: {}, value: {}, placeholder: {}, selection: {} }}",
+        "{WIRE}::InputFace {{ icon: {}, background: {}, border: {}, value: {}, placeholder: {}, selection: {} }}",
+        option_code(style.icon_color.as_ref().map(rgba_code)),
         background_code(&style.surface, &plain, program, origin)?,
         border_code(&style.surface, &plain, program, env)?,
         option_code(style.value_color.as_ref().map(rgba_code)),
@@ -2420,47 +2434,7 @@ fn pick_list(
             border_code(&style.surface, &plain, program, env)?,
         ))))
     };
-    let menu = if pick.menu.surface.is_none()
-        && pick.menu.selected_text_color.is_none()
-        && pick.menu.selected_background.is_none()
-    {
-        option_code(None)
-    } else {
-        let (background, text, border, shadow) = match &pick.menu.surface {
-            Some(surface) => {
-                refuse_when(
-                    program,
-                    origin,
-                    surface.pixel_snap.is_some(),
-                    "`px-snap` on a menu",
-                )?;
-                (
-                    background_code(surface, &plain, program, origin)?,
-                    option_code(surface.text_color.as_ref().map(rgba_code)),
-                    border_code(surface, &plain, program, env)?,
-                    shadow_code(
-                        surface.shadow_color.as_ref(),
-                        surface.shadow_x,
-                        surface.shadow_y,
-                        surface.shadow_blur,
-                        program,
-                        env,
-                    )?,
-                )
-            }
-            None => (
-                option_code(None),
-                option_code(None),
-                option_code(None),
-                format!("{WIRE}::Shadow::default()"),
-            ),
-        };
-        option_code(Some(format!(
-            "{WIRE}::MenuFace {{ shadow: {shadow}, background: {background}, text: {text}, border: {border}, selected_text: {}, selected_background: {} }}",
-            option_code(pick.menu.selected_text_color.as_ref().map(rgba_code)),
-            plain_background_code(pick.menu.selected_background.as_ref(), program, origin)?,
-        )))
-    };
+    let menu = menu_code(&pick.menu, program, env, origin)?;
     let style = format!(
         "{WIRE}::PickListStyle {{ active: {}, hovered: {}, opened: {}, opened_hovered: {}, menu: {menu} }}",
         face(pick.styles.active.as_ref())?,
@@ -2760,4 +2734,56 @@ fn markdown_surface(
         key_code(identity, "markdown", origin, scope, env, program)?,
         arguments.join(", ")
     ))
+}
+
+fn menu_code(
+    menu: &ResolvedMenuStyle,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    origin: OriginId,
+) -> Result<String, Error> {
+    let plain = ResolvedStyle::default();
+    Ok(
+        if menu.surface.is_none()
+            && menu.selected_text_color.is_none()
+            && menu.selected_background.is_none()
+        {
+            option_code(None)
+        } else {
+            let (background, text, border, shadow) = match &menu.surface {
+                Some(surface) => {
+                    refuse_when(
+                        program,
+                        origin,
+                        surface.pixel_snap.is_some(),
+                        "`px-snap` on a menu",
+                    )?;
+                    (
+                        background_code(surface, &plain, program, origin)?,
+                        option_code(surface.text_color.as_ref().map(rgba_code)),
+                        border_code(surface, &plain, program, env)?,
+                        shadow_code(
+                            surface.shadow_color.as_ref(),
+                            surface.shadow_x,
+                            surface.shadow_y,
+                            surface.shadow_blur,
+                            program,
+                            env,
+                        )?,
+                    )
+                }
+                None => (
+                    option_code(None),
+                    option_code(None),
+                    option_code(None),
+                    format!("{WIRE}::Shadow::default()"),
+                ),
+            };
+            option_code(Some(format!(
+                "{WIRE}::MenuFace {{ shadow: {shadow}, background: {background}, text: {text}, border: {border}, selected_text: {}, selected_background: {} }}",
+                option_code(menu.selected_text_color.as_ref().map(rgba_code)),
+                plain_background_code(menu.selected_background.as_ref(), program, origin)?,
+            )))
+        },
+    )
 }

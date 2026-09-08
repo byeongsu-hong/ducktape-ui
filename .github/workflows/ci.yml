@@ -688,6 +688,18 @@ jobs:
       - name: Verify native and Wasm raster images
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_images_ -- --ignored
+
+      - name: Bundle combo fixture for native and wasm guests
+        run: |
+          (cd examples/app-store && python3 scripts/build-native.py -p app-store-combo-fixture --out target/combo-native)
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-combo-fixture --target wasm32-unknown-unknown --no-wasm-opt \
+            --out examples/app-store/target/combo-wasm
+      - name: Verify native and wasm searchable combo routes and retained state
+        working-directory: examples/app-store
+        env:
+          APP_STORE_DATA: ${{ runner.temp }}/combo-app-store-data
+        run: cargo test --locked -p app-store-host bundled_combo_ -- --ignored --test-threads=1
       - name: Bundle text layout fixture
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \

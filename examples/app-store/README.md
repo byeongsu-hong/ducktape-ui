@@ -517,12 +517,12 @@ For module packaging requirements and the connected implementation phases, see
 
 - The wire carries `box`, `mouse`, `col`/`row`, `keyed`, `lazy`, `flex`, `pin`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
   `text`, `rich-text`, `qr`, `tooltip`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
-  `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
+  `slider`, `pick`, `combo` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
   extern's name (`clock_face` is the one this store paints, with a sweeping
   second hand the guest never ticks), given the call's copied data arguments
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
-  the host lacks renders a placeholder. Remaining refusals include combo box, image viewer and dynamic image paths,
+  the host lacks renders a placeholder. Remaining refusals include image viewer and dynamic image paths,
   mounted components inside lazy or host container conditions, gradients, and
   unsupported interaction utility styles. These fail the app's build at
   its `.ice` line with E190 and need additional lowering or host contracts.
@@ -1406,3 +1406,22 @@ loading and native image allocation task effects remain separate gaps.
 The image fixture also checks fractional destination positioning independently
 of native parity: margins above and beside the image stay white while the
 interior retains the expected source colors on both backends.
+
+Tree `combo` uses the host's actual Iced ComboBox and native searchable overlay.
+Options and selected values remain typed guest data; selection and hover return
+original option indices through the guest's typed route tables. Input, open and
+close callbacks, declarative input/menu faces, typography, padding and icons cross
+as copied data. An omitted width keeps the native Fill default. Rust style
+callbacks and combo value parameters without an owned App state binding produce
+source-origin E190. Component-owned `combo` state remains the existing common
+E103 restriction, including for native compilation.
+
+The App binding identifies shared search state; widget identities keep focus
+separate. Assigning even the same options resets search, while pushing an option
+preserves it. Temporarily hiding every widget for the binding preserves search.
+Reload keeps it only when identity, reset revision and options match exactly;
+hidden bindings are checked when shown again. Stale instance overlays cannot
+send events to a replacement. Retained identities are capped by `MAX_NODES`,
+and their keys, option labels and search text share `MAX_TEXT_BYTES_PER_FRAME`.
+A combo that exceeds the retained inventory budget displays an explicit rejection
+instead of using a different or outdated state. Rebuild hosts and guests together.

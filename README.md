@@ -724,3 +724,22 @@ new wire variant.
 The tiny-skia renderer preserves fractional destination origins when scaling
 raster images. Actual native and Wasm fixtures assert clear margins above and
 beside the image, as well as its interior colors.
+
+Tree `combo` uses the host's actual Iced ComboBox and native searchable overlay.
+Options and selected values remain typed guest data; selection and hover return
+original option indices through the guest's typed route tables. Input, open and
+close callbacks, declarative input/menu faces, typography, padding and icons cross
+as copied data. An omitted width keeps the native Fill default. Rust style
+callbacks and combo value parameters without an owned App state binding produce
+source-origin E190. Component-owned `combo` state remains the existing common
+E103 restriction, including for native compilation.
+
+The App binding identifies shared search state; widget identities keep focus
+separate. Assigning even the same options resets search, while pushing an option
+preserves it. Temporarily hiding every widget for the binding preserves search.
+Reload keeps it only when identity, reset revision and options match exactly;
+hidden bindings are checked when shown again. Stale instance overlays cannot
+send events to a replacement. Retained identities are capped by `MAX_NODES`,
+and their keys, option labels and search text share `MAX_TEXT_BYTES_PER_FRAME`.
+A combo that exceeds the retained inventory budget displays an explicit rejection
+instead of using a different or outdated state. Rebuild hosts and guests together.

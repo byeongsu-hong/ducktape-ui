@@ -224,6 +224,7 @@ fn gen_button_style(rng: &mut Rng) -> ButtonStyle {
 
 fn gen_input_face(rng: &mut Rng) -> InputFace {
     InputFace {
+        icon: gen_opt_color(rng),
         background: gen_opt_color(rng),
         border: gen_opt_border(rng),
         value: gen_opt_color(rng),
@@ -1810,6 +1811,54 @@ fn check_bounds(
             check_length(height, ctx);
             for face in [&style.active, &style.hovered, &style.dragged] {
                 check_slider_face(face, ctx);
+            }
+        }
+        Node::ComboBox {
+            state_key,
+            options,
+            selected,
+            placeholder,
+            width,
+            settings,
+            ..
+        } => {
+            check_string(state_key, ctx, "combo state identity");
+            check_string(placeholder, ctx, "combo placeholder");
+            assert!(options.len() <= MAX_OPTIONS, "{ctx}: combo option budget");
+            for option in options {
+                check_string(option, ctx, "combo option");
+            }
+            if let Some(index) = selected {
+                assert!((*index as usize) < options.len());
+            }
+            check_length(width, ctx);
+            check_length(&settings.menu_height, ctx);
+            for value in [
+                settings.padding,
+                settings.icon.as_ref().map(|icon| icon.spacing),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                assert!(value.is_finite() && (0.0..=PIXEL_BOUND).contains(&value));
+            }
+            for face in [
+                Some(&settings.style.utility),
+                Some(&settings.style.active),
+                settings.style.hovered.as_ref(),
+                settings.style.focused.as_ref(),
+                settings.style.focused_hovered.as_ref(),
+                settings.style.disabled.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                check_color(&face.background, ctx);
+                check_border(&face.border, ctx);
+                check_color(&face.value, ctx);
+                check_color(&face.placeholder, ctx);
+                check_color(&face.selection, ctx);
+                check_color(&face.icon, ctx);
             }
         }
         Node::PickList {

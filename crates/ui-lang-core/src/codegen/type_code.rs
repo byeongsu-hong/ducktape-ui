@@ -63,7 +63,11 @@ fn rust_type_code_with_named(
             rust_type_code_with_named(error, target, named_rust_path)
         ),
         Type::Combo(inner) => format!(
-            "::iced::widget::combo_box::State<{}>",
+            "{}<{}>",
+            match target {
+                Target::Tree => "::ui_lang_guest::Combo",
+                Target::Native => "::iced::widget::combo_box::State",
+            },
             rust_type_code_with_named(inner, target, named_rust_path)
         ),
         Type::Animation(inner) => match inner.as_ref() {
