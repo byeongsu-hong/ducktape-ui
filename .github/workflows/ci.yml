@@ -652,6 +652,16 @@ jobs:
       - name: Verify host container rules and native input through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_responsive_ -- --ignored
+      - name: Build native and Wasm mouse subscription fixtures
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-mouse-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/mouse-wasm
+          python3 examples/app-store/scripts/build-native.py -p app-store-mouse-fixture \
+            --out examples/app-store/target/mouse-native
+      - name: Verify mouse subscriptions through both backends
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_mouse_ -- --ignored
       - name: Bundle keyboard subscription fixture
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \

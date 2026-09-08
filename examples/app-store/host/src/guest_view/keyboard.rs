@@ -1,23 +1,26 @@
-//! Captured overlay keys never reach the base widget, so forward them here.
+//! Captured overlay keys and mouse events never reach the base widget.
 use super::*;
 
 pub(super) fn wrap<'a>(
     content: overlay::Element<'a, String, iced::Theme, iced::Renderer>,
     guest: Arc<Mutex<Guest>>,
     instance: Arc<AtomicBool>,
+    origin: iced::Point,
 ) -> overlay::Element<'a, String, iced::Theme, iced::Renderer> {
-    overlay::Element::new(Box::new(Keyboard {
+    overlay::Element::new(Box::new(Inputs {
         content,
         guest,
         instance,
+        origin,
     }))
 }
-struct Keyboard<'a> {
+struct Inputs<'a> {
     content: overlay::Element<'a, String, iced::Theme, iced::Renderer>,
     guest: Arc<Mutex<Guest>>,
     instance: Arc<AtomicBool>,
+    origin: iced::Point,
 }
-impl overlay::Overlay<String, iced::Theme, iced::Renderer> for Keyboard<'_> {
+impl overlay::Overlay<String, iced::Theme, iced::Renderer> for Inputs<'_> {
     fn layout(&mut self, renderer: &iced::Renderer, bounds: Size) -> layout::Node {
         self.content.as_overlay_mut().layout(renderer, bounds)
     }
@@ -75,6 +78,16 @@ impl overlay::Overlay<String, iced::Theme, iced::Renderer> for Keyboard<'_> {
                 });
             local.request_redraw();
         }
+        if local.is_event_captured()
+            && let Event::Mouse(event) = event
+        {
+            let mut guest = self.guest.lock().expect("guest lock");
+            if Arc::ptr_eq(&guest.alive, &self.instance)
+                && mouse_events::forward(&mut guest, *event, self.origin, true)
+            {
+                local.request_redraw();
+            }
+        }
         shell.merge(local, std::convert::identity);
     }
     fn mouse_interaction(
@@ -95,7 +108,14 @@ impl overlay::Overlay<String, iced::Theme, iced::Renderer> for Keyboard<'_> {
         self.content
             .as_overlay_mut()
             .overlay(layout, renderer)
-            .map(|content| wrap(content, self.guest.clone(), self.instance.clone()))
+            .map(|content| {
+                wrap(
+                    content,
+                    self.guest.clone(),
+                    self.instance.clone(),
+                    self.origin,
+                )
+            })
     }
     fn index(&self) -> f32 {
         self.content.as_overlay().index()
@@ -162,6 +182,7 @@ mod tests {
             overlay::Element::new(Box::new(CapturingOverlay)),
             guest.clone(),
             instance,
+            iced::Point::ORIGIN,
         );
         let renderer = iced::futures::executor::block_on(
             <iced::Renderer as iced::advanced::renderer::Headless>::new(

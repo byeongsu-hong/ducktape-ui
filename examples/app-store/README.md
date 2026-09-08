@@ -277,11 +277,10 @@ A guest is ticked only when something is due for it, so Counter sits at
 0/s and Clock at 1/s; a press or a keystroke reaches the window it
 happened in, so one guest ticks instead of five; a tree that changed
 nothing crosses as a flag, and one that changed crosses as patches.
-Pointer movement reaches a guest only over a `mouse` area with a `move=`
-route, and then as one event per redraw — hover over anything else is the
-host's widgets' — so a window with the pointer moving over it costs what
-any native iced window does until the pointer is over such an area, and
-then one tick per frame. The Monitor page keeps the counters per app:
+Pointer movement crosses for a `mouse` area with a `move=` route or an
+active `subscribe mouse` / `subscribe event` listener. Subscription moves
+are reduced to the latest observation per redraw; other native hover stays
+host-side. The Monitor page keeps the counters per app:
 ticks against the redraws it slept through, how many of its frames crossed
 without their tree, and the bytes of the last whole frame beside the bytes
 of the last patch frame.
@@ -646,8 +645,8 @@ For module packaging requirements and the connected implementation phases, see
   release, and what a `mouse` area hears — its buttons, enter and exit, the
   pointer's position in its own pixels, the wheel — cross. Keyboard events
   cross after native handling, preserving captured/ignored status. Scroll
-  position, drag and drop, window focus and close requests remain host-side;
-  the pointer over anything but a `mouse` area does too.
+  position, drag and drop, window focus and close requests remain host-side.
+  Active mouse/event subscriptions also receive guest-local mouse events.
 - Checked `task widget` statements can focus a named input, move focus
   forward/backward, query focus, move/select input text and scroll/snap a
   named region. `snap-end` respects either content anchor. Requests use
@@ -678,8 +677,9 @@ For module packaging requirements and the connected implementation phases, see
   broaden this arbitrary-task boundary.
 - `every` carries no instant in a module and refuses a route that binds
   one (E190): there is no `now` to make it from. Host-delivered keyboard
-  press/release/modifier subscriptions are supported. Mouse, window and IME
-  event subscriptions and `system theme` transport remain unsupported.
+  press/release/modifier and mouse subscriptions are supported. Generic
+  `event` / `event raw` listeners receive only keyboard and mouse observations;
+  window, IME, touch and `system theme` transport remain unsupported.
 - Task fairness is fixed: 8 rounds of messages per tick, 64 poll passes
   per round. A task that produces more is cut short, and the frame says so
   (`busy`) so the host ticks the guest again at once; what it does not do
@@ -1437,3 +1437,30 @@ send events to a replacement. Retained identities are capped by `MAX_NODES`,
 and their keys, option labels and search text share `MAX_TEXT_BYTES_PER_FRAME`.
 A combo that exceeds the retained inventory budget displays an explicit rejection
 instead of using a different or outdated state. Rebuild hosts and guests together.
+
+## Mouse subscriptions in native and Wasm modules
+
+Active `mouse` and generic `event`/`event raw` subscription branches opt in
+through `ui_lang_guest::mouse::observe`. The driver evaluates its subscription
+once per reconciliation, clears old interest, and emits `Frame.mouse_interest`.
+Rust-authored subscriptions must call the helper each time the active recipe
+is returned, even if it was cached. A false condition removes interest.
+
+The host forwards mouse observations after widgets handle them, with captured
+status. Captured overlay events use the base guest's origin. Positions are
+signed logical pixels relative to the guest surface, including positions outside
+its bounds; non-finite positions/deltas are discarded. Wheel lines/pixels and
+all mouse buttons retain their metadata. App-store mounts each guest in its own
+window; hosts with multiple surfaces must choose which guest owns each observation.
+
+Only the last move before a redraw is kept, at its original position among the
+remaining events. Button, wheel, enter and leave events retain their arrival
+order. Intermediate motion is intentionally not delivered; widget routes still
+execute normally. The guest draws no pixels. Generic event listeners expose the
+keyboard+mouse subset, not native window/IME/touch parity.
+
+`bundled_mouse_native_and_wasm_deliver_local_coalesced_events_and_unsubscribe`
+uses real native window events through both installed backends, including an
+overlay capture, a nonzero guest origin, wheel units and subscription removal.
+Rebuild every host and guest together: `Frame.mouse_interest` and `Event::Mouse`
+change the wire encoding.

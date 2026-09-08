@@ -1361,6 +1361,7 @@ mod tests {
     #[test]
     fn an_unchanged_frame_is_taken_at_its_word_and_still_shaped() {
         let frame = shape(&wire::encode(&wire::Frame {
+            mouse_interest: false,
             root: Some(wire::Node::empty()),
             requests: vec![kind(wire::MAX_STRING_BYTES * 2)],
             cancels: Vec::new(),
@@ -1712,3 +1713,7 @@ mod authored_backend;
 #[cfg(test)]
 #[path = "viewer_tests.rs"]
 mod viewer_tests;
+
+#[cfg(test)]
+#[path = "mouse_tests.rs"]
+mod mouse_tests;

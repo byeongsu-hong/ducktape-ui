@@ -1307,8 +1307,14 @@ remain unchanged. Hosts and guests must rebuild together for the new ABI/event.
 
 A shared-window host must route keyboard input only to the selected module,
 never broadcast another module's or host input's text. This is a host routing
-contract; window/global subscriptions, mouse and IME subscription transport are
-not introduced here.
+contract. Tree mouse subscriptions opt in through `Frame.mouse_interest`;
+only active branches request host mouse observations. Coordinates are signed
+guest-local logical pixels and must be finite. Preserve captured status, button
+identity and wheel units. Deliver at most the latest move per redraw, leaving
+that move and all discrete events in their original relative order. Generic
+`event`/`event raw` listeners expose keyboard and mouse only; window/global,
+IME and touch subscription transport remain unsupported. This changes the wire
+encoding; rebuild native/Wasm guests and hosts together.
 
 
 ## Tree guest state snapshots

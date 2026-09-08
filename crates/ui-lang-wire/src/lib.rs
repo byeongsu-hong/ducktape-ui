@@ -92,10 +92,13 @@ pub enum ClipboardTarget {
 }
 
 pub mod keyboard;
+pub mod mouse;
 
 /// Something the host tells the guest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
+    /// A mouse interaction in logical coordinates local to the guest surface.
+    Mouse { event: mouse::Event, captured: bool },
     /// A keyboard interaction after the mounted native widgets handled it.
     Keyboard {
         event: keyboard::Event,
@@ -198,6 +201,8 @@ pub struct Request {
 /// `root` empty and `unchanged` clear.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
+    /// The current subscription requests guest-local mouse observations.
+    pub mouse_interest: bool,
     /// The tree to show. `None` with `unchanged` set means "what you have";
     /// `None` otherwise means "what you have, with `patches` applied".
     pub root: Option<Node>,
@@ -2784,6 +2789,7 @@ mod tests {
     #[test]
     fn a_frame_round_trips() {
         let frame = Frame {
+            mouse_interest: true,
             root: Some(column(vec![
                 text("hello"),
                 Node::Button {
@@ -3446,6 +3452,7 @@ mod tests {
     #[test]
     fn bytes_a_hostile_guest_could_write_are_answered_not_survived() {
         let sound = encode(&Frame {
+            mouse_interest: false,
             root: Some(column(vec![text("hello"), Node::empty()])),
             requests: vec![Request {
                 id: 7,
