@@ -17,3 +17,7 @@ serde_json = "1"
 
 [dev-dependencies]
 stats_alloc = "0.1.10"
+
+[[test]]
+name = "trace_allocations"
+harness = false
