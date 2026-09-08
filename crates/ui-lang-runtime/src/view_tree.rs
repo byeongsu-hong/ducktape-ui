@@ -940,6 +940,20 @@ fn radio_style(
 }
 
 fn apply_slider_face(face: wire::SliderFace, style: &mut widget::slider::Style) {
+    if let Some(shape) = face.handle_shape {
+        style.handle.shape = match shape {
+            wire::SliderHandleShape::Circle { radius } => {
+                widget::slider::HandleShape::Circle { radius }
+            }
+            wire::SliderHandleShape::Rectangle {
+                width,
+                border_radius,
+            } => widget::slider::HandleShape::Rectangle {
+                width,
+                border_radius: radius(border_radius),
+            },
+        };
+    }
     if let Some(fill) = face.rail_start {
         style.rail.backgrounds.0 = Background::Color(color(fill));
     }
@@ -3693,6 +3707,7 @@ mod tests {
                         height: Some(wire::Length::Fill),
                         style: wire::SliderStyle {
                             active: Some(wire::SliderFace {
+                                handle_shape: None,
                                 rail_start: Some(wire::Rgba([1.0, 0.0, 0.0, 1.0])),
                                 rail_end: None,
                                 rail_width: Some(-3.0),

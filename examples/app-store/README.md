@@ -596,7 +596,8 @@ For module packaging requirements and the connected implementation phases, see
   `snap=`) crosses as faces the host paints over its own theme. A style
   given as a Rust callback (`style=some_fn(…)`) is refused with E190, as
   are the shapes the faces have no room for: a toggler's knob border and
-  padding ratio, a slider's handle shape, a rule's `fill=`. A slider
+  padding ratio and a rule's `fill=`. Slider `handle=circle(…)` and
+  `handle=rect(…) handle-r=…` cross per active/hovered/dragged face. A slider
   carries `f64` values only.
 - Border colour, width and corner radii retain their individual absence
   on the wire. Setting only `border=…` keeps the host's width and rounding;

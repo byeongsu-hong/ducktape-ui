@@ -540,6 +540,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "app-store-slider-handles-fixture"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "app-store-surface-fixture"
 version = "0.1.0"
 dependencies = [

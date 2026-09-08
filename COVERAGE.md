@@ -2159,3 +2159,30 @@ forwarding: finite guest-local coordinates, captured status, wheel units and
 buttons, with at most the latest move per redraw. Generic event listeners carry
 keyboard+mouse only. The app-store `bundled_mouse_` test exercises both actual
 backends, overlay capture, coalescing, translation and subscription removal.
+
+### Tree slider handle faces
+
+`tree_slider_faces_carry_circle_and_rounded_rectangle_handles` accepts the
+existing native syntax for zero-radius circles and rounded rectangles on
+active, hovered and dragged faces. Its pre-fix run fails the explicit Tree
+acceptance assertion with E190 `a slider handle shape`; the native input passes.
+Wire hostile-frame tests generate both shape variants with non-finite and
+out-of-range radii and check the shared pixel bounds after sanitization.
+
+`bundled_slider_handles_match_native_faces_and_drag_routes` runs the actual
+fixture as both native child and Wasm component. It compares each interaction
+face against direct Iced slider pixels, asserts hover and drag change geometry,
+and delivers a real pointer drag through the guest route to state value 75.
+It follows native Iced's RedrawRequested status update before painting.
+The circle sequence (0/4/5 radius) matches the apple-music player use; rectangles
+exercise width and corner-radius changes independently on each face.
+Commands: bundle `app-store-slider-handles-fixture` with `--no-wasm-opt` into
+`examples/app-store/target/slider-handles-fixture`; in app-store run
+`python3 scripts/build-native.py -p app-store-slider-handles-fixture --out target/slider-handles-native`
+and `cargo test --locked -p app-store-host bundled_slider_handles_ -- --ignored --test-threads=1`.
+Red/Green mutations: omitting host shape application fails the active-circle
+pixel assertion; zeroing rectangle corners fails the active-rectangle pixels;
+dropping state faces fails hovered pixels; freezing the slide payload fails
+`Some(50.0) != Some(75.0)`. Omitting radius sanitization fails the hostile-frame
+assertion with `slider handle radius -1417 outside 0..=8192`. Each mutation is
+restored before the final checks.

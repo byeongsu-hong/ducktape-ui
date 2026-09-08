@@ -2360,18 +2360,24 @@ fn slider(
         let Some(style) = style else {
             return Ok(option_code(None));
         };
-        refuse_when(
-            program,
-            origin,
-            style.handle_shape.is_some(),
-            "a slider handle shape",
-        )?;
+        let handle_shape = style.handle_shape.as_ref().map(|shape| -> Result<String, Error> {
+            Ok(match shape {
+                ResolvedSliderHandleShape::Circle(radius) => format!(
+                    "{WIRE}::SliderHandleShape::Circle {{ radius: {} }}",
+                    clamped_f32_code(*radius, "0.0", "f32::MAX", program, env)?
+                ),
+                ResolvedSliderHandleShape::Rectangle { width, radius } => format!(
+                    "{WIRE}::SliderHandleShape::Rectangle {{ width: {width}, border_radius: {} }}",
+                    radius_code(radius, 0, program, env)?.unwrap_or_else(|| "[0.0; 4]".into())
+                ),
+            })
+        }).transpose()?;
         let rail_width = style
             .rail_width
             .map(|width| clamped_f32_code(width, "0.0", "f32::MAX", program, env))
             .transpose()?;
         Ok(option_code(Some(format!(
-            "{WIRE}::SliderFace {{ rail_start: {}, rail_end: {}, rail_width: {}, rail_border: {}, handle: {}, handle_border: {} }}",
+            "{WIRE}::SliderFace {{ rail_start: {}, rail_end: {}, rail_width: {}, rail_border: {}, handle: {}, handle_border: {}, handle_shape: {} }}",
             plain_background_code(style.rail_start.as_ref(), program, origin)?,
             plain_background_code(style.rail_end.as_ref(), program, origin)?,
             option_code(rail_width),
@@ -2390,6 +2396,7 @@ fn slider(
                 program,
                 env,
             )?,
+            option_code(handle_shape),
         ))))
     };
     let style = format!(

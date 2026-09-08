@@ -32,13 +32,20 @@ fn key(node: &wire::Node, suffix: &str) -> Option<String> {
     node.children().iter().find_map(|node| key(node, suffix))
 }
 pub(super) fn draw(ui: &mut Ui, renderer: &mut iced::Renderer) -> Vec<u8> {
+    draw_at(ui, renderer, mouse::Cursor::Unavailable)
+}
+pub(super) fn draw_at(
+    ui: &mut Ui,
+    renderer: &mut iced::Renderer,
+    cursor: mouse::Cursor,
+) -> Vec<u8> {
     ui.draw(
         renderer,
         &iced::Theme::Light,
         &iced::advanced::renderer::Style {
             text_color: Color::BLACK,
         },
-        mouse::Cursor::Unavailable,
+        cursor,
     );
     renderer.screenshot(Size::new(600, 600), 1.0, Color::WHITE)
 }

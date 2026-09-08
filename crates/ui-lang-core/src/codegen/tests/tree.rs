@@ -18,6 +18,22 @@ palette app for AppTheme
 "#;
 
 #[test]
+fn tree_slider_faces_carry_circle_and_rounded_rectangle_handles() {
+    let source = format!(
+        "app Knobs\n{PALETTE}state\n  amount = 50.0\non slide(next)\n  amount = next\nview\n  slider amount min=0.0 max=100.0 -> slide _\n    active handle=circle(0.0)\n    hovered handle=rect(12) handle-r=3.0\n    dragged handle=circle(5.0)\n"
+    );
+    compile_for(&source, "knobs.ice", Target::Native).expect("native handle shapes");
+    let tree = compile_for(&source, "knobs.ice", Target::Tree);
+    assert!(
+        tree.is_ok(),
+        "Tree must copy native slider handle shapes: {tree:?}"
+    );
+    let tree = tree.unwrap();
+    assert!(tree.contains("SliderHandleShape::Circle"));
+    assert!(tree.contains("SliderHandleShape::Rectangle"));
+}
+
+#[test]
 fn tree_test_builds_keep_source_locations_without_native_element_wrappers() {
     let generated = tree("  col\n    editor #notes <-> notes\n    button \"Remove\" -> remove 0\n");
     assert!(generated.contains("testing::push_render_source"));
@@ -1199,11 +1215,10 @@ const COVERAGE: &[Coverage] = &[
         SLIDE,
         "  slider amount min=0.0 max=100.0 -> slide _\n    active rail-start=primary rail-end=bg rail-w=3.0 rail-border=fg rail-border-w=1.0 handle-color=fg handle-border=danger handle-border-w=1.0\n    dragged rail-start=danger\n",
     ),
-    refused(
+    emitted(
         "slider: handle shape",
         SLIDE,
         "  slider amount min=0.0 max=100.0 -> slide _\n    active handle=circle(4.0)\n",
-        "a slider handle shape",
     ),
     emitted("progress: style", "", "  progress amount style=success\n"),
     emitted(
