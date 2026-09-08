@@ -118,7 +118,7 @@ pub(in crate::check) fn check_lazy_subtree(
                 .components
                 .iter()
                 .find(|component| component.name == *name)
-                .expect("component names are checked before lazy safety");
+                .ok_or_else(|| Error::new("E122", span, format!("unknown component `{name}`")))?;
             let result =
                 check_lazy_subtree(&component.root, document, components, !slots.is_empty());
             components.remove(name);

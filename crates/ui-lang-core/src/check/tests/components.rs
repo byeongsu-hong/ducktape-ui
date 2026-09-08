@@ -937,6 +937,30 @@ view
 }
 
 #[test]
+fn diagnoses_unknown_components_in_lazy_subtrees_without_panicking() {
+    for (declarations, child) in [
+        ("", "Missing"),
+        ("component Wrapper()\n  Missing\n", "Wrapper"),
+        (
+            "component Wrapper()\n  slot body\n",
+            "Wrapper\n      body:\n        Missing",
+        ),
+    ] {
+        let source = format!(
+            "app Demo\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\n{declarations}state\n  title = \"Hello\"\nview\n  lazy title as cached\n    {child}\n"
+        );
+        let result = std::panic::catch_unwind(|| analyze(&source));
+        assert!(
+            result.is_ok(),
+            "lazy checking must diagnose unknown components"
+        );
+        let error = result.unwrap().unwrap_err();
+        assert_eq!(error.code, "E122");
+        assert_eq!(error.message, "unknown component `Missing`");
+    }
+}
+
+#[test]
 fn checks_markdown_content_settings_and_links() {
     let source = r##"app Docs
 font ui family=sans
