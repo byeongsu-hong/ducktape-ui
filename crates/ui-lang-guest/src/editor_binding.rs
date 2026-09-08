@@ -85,7 +85,8 @@ impl<M: 'static> EditorTransaction<M> {
             EditorTransactionEvent::Fault { id, state, .. }
             | EditorTransactionEvent::Cancelled { id, state } => (id, state, false),
         };
-        if id.reset != state.reset
+        if !slots::editor_matches_pending(id)
+            || id.reset != state.reset
             || state.reset != editor.reset_revision()
             || state.revision < editor.observation_revision()
             || (commit && state.revision == editor.observation_revision())
@@ -99,5 +100,83 @@ impl<M: 'static> EditorTransaction<M> {
         let mapped = slots::run_handler::<EditorTransactionEvent, M>(self.map, self.event.clone());
         slots::editor_acknowledge(&self.event);
         mapped
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+
+    #[test]
+    fn an_old_retry_cannot_commit_over_the_current_pending_attempt() {
+        let context = slots::Context::default();
+        let _entered = context.enter();
+        let mut editor = Editor::new("before");
+        let current = wire::EditorTransactionId {
+            instance: 1,
+            document: "app:draft".into(),
+            reset: 0,
+            sequence: 7,
+            attempt: 2,
+            text_revision: 0,
+            revision: 0,
+        };
+        slots::editor_response(wire::EditorResponse {
+            id: current.clone(),
+            decision: wire::EditorDecision::Noop,
+        });
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let counted = calls.clone();
+        let map = slots::handler::<EditorTransactionEvent, ()>(Box::new(move |_| {
+            counted.set(counted.get() + 1);
+            None
+        }));
+        let transaction = |id, text: &str| EditorTransaction::<()> {
+            event: EditorTransactionEvent::Commit {
+                id,
+                before: wire::EditorState {
+                    text: "before".into(),
+                    ..Default::default()
+                },
+                after: wire::EditorState {
+                    text: text.into(),
+                    revision: 1,
+                    ..Default::default()
+                },
+                kind: wire::EditorEditKind::GuestPatch,
+                history: wire::EditorHistoryEffect::NewGroup,
+                input_time_ms: 1,
+            },
+            map,
+            message: std::marker::PhantomData,
+        };
+        let mut old = current.clone();
+        old.attempt = 1;
+        transaction(old, "stale").apply(&mut editor);
+        assert_eq!(
+            editor.text(),
+            "before",
+            "an old attempt must not replace document state"
+        );
+        assert_eq!(
+            calls.get(),
+            0,
+            "stale retry must not run the history reducer"
+        );
+        assert!(
+            slots::editor_pending(),
+            "current attempt remains outstanding"
+        );
+        let valid = transaction(current, "accepted");
+        valid.clone().apply(&mut editor);
+        assert_eq!(editor.text(), "accepted");
+        assert_eq!(calls.get(), 1);
+        assert!(!slots::editor_pending());
+        valid.apply(&mut editor);
+        assert_eq!(
+            calls.get(),
+            1,
+            "duplicate accepted commit does not repeat history"
+        );
     }
 }
