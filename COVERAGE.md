@@ -2314,3 +2314,22 @@ makes the wide case fail its same-line assertion (158.35 vs 95.85px). Restored
 source passes both cases with `cargo test -p showcase --test action_layout`.
 This is evidence for the explicit card pattern, not automatic reflow in default
 components or evidence for Dialog.Actions/ButtonGroup; L04 remains open.
+
+## Page viewport-inset defaults
+
+`Page(padding=24.0)` owns ordinary screen/pane outer spacing. The action-card
+fixture now uses Page and asserts viewport insets at 280/640px while retaining
+its label-reflow and keyboard/pointer contracts. Its new left-edge assertion
+fails on the previous flush-to-window view before Page is applied.
+
+`page_insets.ice` separately verifies a 12px inset on all four sides of a filling
+child and Panel's retained 20px inner padding. Explicit zero padding allows a
+filling child to meet all four viewport edges. Hardcoding Page padding to 24
+fails the 12px and zero tests (24 vs 12 and 24 vs 0); removing bottom padding
+fails the filling-child bottom assertion (300 vs 288). Mutations are restored.
+Run `cargo test -p showcase --test action_layout --test page_insets`.
+
+Captures use scale 1, en-US, Linux and reduced motion, and are stored under
+`examples/showcase/screenshots/action-layout` and `page-insets`. This establishes
+explicit Page and Panel geometry, not automatic margins on arbitrary widgets,
+system safe-area handling, or a completed audit of every surface.

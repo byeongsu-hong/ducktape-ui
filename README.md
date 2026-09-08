@@ -788,3 +788,7 @@ The [UI quality worklist](docs/ui-quality-roadmap.md) tracks default composition
 layout robustness and customization evidence separately from widget/API coverage.
 It records acceptance scenarios and focused deliveries rather than treating a
 shipped component as proof of every screen-level behavior.
+
+For ordinary screen content, the default library's `Page` supplies a customizable
+24px outer inset. Surface components retain their own interior padding; Form
+already owns its screen padding. See the [page and surface guidance](crates/ui-lang-components/README.md#page-edges-and-surface-padding).

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fingerprint": "sha256:2dda11dd1f507238ffc3b842b128cfc06a1556f50ec076f8b6d6b29eb580bbc8",
+  "fingerprint": "sha256:2dd645267a6af5e229f1b19a2b23acd94013ae7dca600edea4e50aa831c00a51",
   "language_revision": "2.0",
   "package": {
     "name": "ui-lang-components",
@@ -792,6 +792,30 @@
         "events": [],
         "default_output": "unit",
         "slots": [],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Page",
+        "props": [
+          {
+            "name": "padding",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 24.0
+            }
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
         "lifetime": "retained"
       },
       {

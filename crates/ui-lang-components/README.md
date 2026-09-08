@@ -76,6 +76,30 @@ navigation, unread append counts, and explicit resume. It does not replace
 `MessageScroller`: transcripts retain variable-height measurement, message
 anchors, prepend restoration, and jump-control behavior.
 
+## Page edges and surface padding
+
+Use `Page` once at the root of an ordinary bounded screen or pane. It fills the
+available space, paints the semantic background, and supplies 24px of outer
+padding by default:
+
+```ice
+Page
+  Panel title="Profile"
+    text "Your profile information" @body
+```
+
+`Page(padding=24.0)` accepts one content root. For multiple sections, place a
+`col w=fill gap=16.0` inside it. `Page padding=12.0` provides a denser screen;
+`Page padding=0.0` explicitly permits edge-to-edge content. Children still obey
+the constraints and size policy of their own layouts.
+
+Page owns the distance from the viewport to the content surface. Panel keeps
+its own 20px interior padding; these are different boundaries. Do not add Page
+around every card or nest it around Form, which already owns its outer padding.
+Page does not scroll or choose a readable maximum width. A long ordinary page
+can put one scroll viewport inside Page; Form provides the bounded scrolling
+composition for forms. An intentionally full-bleed region may live outside Page.
+
 ## Form defaults and customization
 
 Import `src/ice/default.ice` and declare a form with application-owned state:
