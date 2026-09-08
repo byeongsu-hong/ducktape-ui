@@ -1876,3 +1876,13 @@ incorrectly typed `init` export whose body traps if executed. Omitting the
 restoring the check passes. This establishes
 static ABI type checking, not successful instantiation or boot. The rebuilt
 window-size fixture also retains its declared native opening dimensions.
+
+
+The Unix `cargo-ice/tests/bundle_wasm_cli.rs` process test places a recording
+optimizer on a child process's PATH. The default bundle probes and executes it;
+`--no-wasm-opt` completes the same bundle path without any optimizer process.
+Ignoring the parsed flag reaches the final no-call assertion and fails; restoring
+the branch passes. Cargo and component tooling are controlled process fixtures,
+so this test establishes CLI routing and process suppression, not Wasm validity.
+The portable request unit test also checks sole-Wasm-target validation and that
+the flag is not forwarded to Cargo.

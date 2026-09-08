@@ -47,8 +47,12 @@ pub(super) fn run(root: &Path, request: &Request) -> Result<(), String> {
     create_dir(&catalog)?;
     let scratch = target_directory.join("ice-bundle").join(TARGET);
     create_dir(&scratch)?;
-    let optimizer = wasm_opt();
-    if optimizer.is_none() {
+    let optimizer = if request.no_wasm_opt {
+        None
+    } else {
+        wasm_opt()
+    };
+    if optimizer.is_none() && !request.no_wasm_opt {
         eprintln!("wasm-opt is not on PATH; components are written unoptimized");
     }
     for module in &modules {

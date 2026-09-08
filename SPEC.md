@@ -1014,6 +1014,15 @@ calls, arithmetic and lazy `derived` reads are E190: native short-circuit evalua
 whereas copying would execute them before layout. Precompute such thresholds
 explicitly in guest state. Arithmetic involving a measurement runs in the host.
 
+### Wasm bundle optimization
+
+`cargo ice bundle --target wasm32-unknown-unknown --no-wasm-opt -p PACKAGE`
+skips `wasm-opt` discovery and execution, even when an optimizer is on PATH.
+Without the flag, the existing optional optimization behavior is unchanged.
+The flag requires `wasm32-unknown-unknown` as the sole target and is not forwarded
+to Cargo. Native or mixed-target requests fail before invoking build tools.
+This option alone does not guarantee reproducible bytes across toolchains or paths.
+
 ### Desktop bundle resources
 
 `[package.metadata.ice.bundle].resources` is an array of explicit file or directory
