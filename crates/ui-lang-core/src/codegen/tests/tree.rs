@@ -18,6 +18,17 @@ palette app for AppTheme
 "#;
 
 #[test]
+fn tree_test_builds_keep_source_locations_without_native_element_wrappers() {
+    let generated = tree("  col\n    editor #notes <-> notes\n    button \"Remove\" -> remove 0\n");
+    assert!(generated.contains("testing::push_render_source"));
+    assert!(generated.contains("// __ICE_SOURCE"));
+    assert!(
+        !generated.contains("testing::sourced("),
+        "Tree test builds must not pass wire Nodes to the native Element wrapper"
+    );
+}
+
+#[test]
 fn mounted_components_build_a_tree_and_defer_their_boot_messages() {
     let source = format!(
         "app Mounted\n{PALETTE}component Counter(initial:i64)\n  lifetime mounted\n  state\n    count = 0\n  boot\n    count = initial\n  on increment\n    count = count + 1\n  col\n    text count\n    button \"Increment\" -> increment\nview\n  Counter initial=7 #counter\n"
