@@ -1245,6 +1245,14 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
                 editor_message_payload_code(program)
             )
             .unwrap();
+            if program.target() == Target::Tree {
+                writeln!(
+                    out,
+                    "{}(::std::string::String, ::ui_lang_guest::EditorTransaction<{message}>),",
+                    component_editor_transaction_variant(&component.name, &state.name)
+                )
+                .unwrap();
+            }
             if program.target() == Target::Native {
                 writeln!(
                     out,
@@ -1278,6 +1286,14 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
             editor_message_payload_code(program)
         )
         .unwrap();
+        if program.target() == Target::Tree {
+            writeln!(
+                out,
+                "{}(::ui_lang_guest::EditorTransaction<{message}>),",
+                editor_transaction_variant(&binding.name)
+            )
+            .unwrap();
+        }
         // The caret moves through accessibility, which the host owns on
         // the tree target.
         if program.target() == Target::Native {

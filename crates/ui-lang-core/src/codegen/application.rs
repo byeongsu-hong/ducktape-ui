@@ -854,6 +854,18 @@ pub(in crate::codegen) fn generate_update(
             let variant = component_editor_variant(&component.name, &state.name);
             let entry = entry("__scope");
             if program.target() == Target::Tree {
+                let transaction =
+                    component_editor_transaction_variant(&component.name, &state.name);
+                let apply = state_write_code(
+                    program,
+                    "__local",
+                    ResolvedValueRef::ComponentState(state.id),
+                    StateWrite::Mutate(format!(
+                        "let __route = __transaction.apply(&mut __local.{})",
+                        state.name
+                    )),
+                );
+                writeln!(out, "{message}::{transaction}(__scope, __transaction) => {{ {entry} {apply} __route.map_or_else(::iced::Task::none, ::iced::Task::done) }},").unwrap();
                 let write = state_write_code(
                     program,
                     "__local",
@@ -963,6 +975,17 @@ pub(in crate::codegen) fn generate_update(
     for binding in program.controlled_editor_bindings()? {
         let variant = editor_variant(&binding.name);
         if program.target() == Target::Tree {
+            let transaction = editor_transaction_variant(&binding.name);
+            let apply = state_write_code(
+                program,
+                "self",
+                ResolvedValueRef::AppState(binding.state),
+                StateWrite::Mutate(format!(
+                    "let __route = __transaction.apply(&mut self.{})",
+                    binding.name
+                )),
+            );
+            writeln!(out, "{message}::{transaction}(__transaction) => {{ {apply} __route.map_or_else(::iced::Task::none, ::iced::Task::done) }},").unwrap();
             let write = state_write_code(
                 program,
                 "self",
