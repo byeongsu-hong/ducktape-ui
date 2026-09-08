@@ -1395,3 +1395,18 @@ An identified keyed column uses its full authored scope as its wire node key;
 its row keys extend that scope. An identified lazy boundary likewise carries
 its own scope, with nested boundaries extending it. Native identity wrappers
 are emitted only for native elements, never for Tree nodes.
+
+## Native Tree guest execution
+
+`export_app!` exposes `run_native()` on native targets. Its `--manifest` mode
+writes the existing strict manifest without booting the app. `--ice-native`
+serves length-prefixed wire-encoded init, tick, snapshot and restore requests
+on stdin/stdout. Each packet is bounded to `MAX_SNAPSHOT_BYTES + 64`; snapshots
+retain their existing schema and validation. Tick roots are omitted under the
+same unchanged/patch rules as the wasm component exports. This transport is not
+an operating-system sandbox or a replacement for the native language target.
+
+The example store scans `<id>.native/{app[.exe],manifest}` without execution,
+binds both byte sequences to consent and launches the verified executable copy.
+All exchanges have a host deadline. Hosted capabilities and native widgets are
+shared with wasm; arbitrary native OS access is explicitly trusted.

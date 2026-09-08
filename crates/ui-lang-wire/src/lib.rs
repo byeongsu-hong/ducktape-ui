@@ -22,6 +22,7 @@
 //! [`sanitize`] first.
 
 pub mod manifest;
+pub mod native;
 mod wit;
 pub use wit::WIT;
 

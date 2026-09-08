@@ -17,6 +17,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod native;
+
 pub use ui_lang_wire as wire;
 pub use wit_bindgen;
 
@@ -547,6 +550,11 @@ macro_rules! export_app {
         thread_local! {
             static __ICE_DRIVER: ::std::cell::RefCell<Option<$crate::Driver<__IceApp>>> =
                 const { ::std::cell::RefCell::new(None) };
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        pub fn run_native() -> ::std::result::Result<(), ::std::string::String> {
+            $crate::native::run::<__IceApp>(&__ICE_MANIFEST_SECTION)
         }
 
         pub fn boot_native() {

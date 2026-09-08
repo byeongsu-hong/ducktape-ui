@@ -267,28 +267,17 @@ impl Candidate {
         let (snapshot, alive, ticks) = {
             let mut guest = surface.0.lock().expect("guest lock");
             ensure_settled(&guest)?;
-            arm(&mut guest.store);
-            let Guest { store, view, .. } = &mut *guest;
-            let snapshot = view
-                .call_snapshot(store)
-                .map_err(|error| first_line(&error))??;
+            let snapshot = guest.backend.snapshot()?;
             (snapshot, guest.alive.clone(), guest.ticks)
         };
         // Host bounds apply even if a hostile guest ignores the SDK codec.
         wire::Snapshot::decode(&snapshot)?;
-        arm(&mut instance.store);
         instance
-            .view
-            .call_restore(&mut instance.store, &snapshot, cfg!(target_os = "macos"))
-            .map_err(|error| first_line(&error))??;
-        arm(&mut instance.store);
+            .backend
+            .restore(&snapshot, cfg!(target_os = "macos"))?;
         let bytes = instance
-            .view
-            .call_tick(
-                &mut instance.store,
-                &wire::encode(&Vec::<wire::Event>::new()),
-            )
-            .map_err(|error| first_line(&error))?;
+            .backend
+            .tick(&wire::encode(&Vec::<wire::Event>::new()))?;
         let frame = shape(&bytes)?;
         if frame.root.is_none() {
             return Err("The replacement did not publish a complete tree".into());

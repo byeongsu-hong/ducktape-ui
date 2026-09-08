@@ -237,8 +237,7 @@ impl Restored {
     }
 }
 fn snapshot(guest: &mut Guest) -> Result<Vec<u8>, String> {
-    arm(&mut guest.store);
-    guest.view.call_snapshot(&mut guest.store).unwrap()
+    guest.backend.snapshot()
 }
 
 #[test]

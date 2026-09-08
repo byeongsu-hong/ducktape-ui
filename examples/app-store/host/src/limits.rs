@@ -39,13 +39,9 @@ pub(crate) const FUEL_WINDOW: Duration = Duration::from_secs(10);
 /// The most linear memory an app may grow to.
 pub(crate) const MEMORY_LIMIT: usize = 64 << 20;
 
-/// The largest `.wasm` file the catalog will read or the store will compile.
-/// The five demo components `cargo ice bundle` builds land between 610 KB
-/// and 626 KB; this is generous past that, not tight against it. Past this a
-/// file is left out of the catalog the same way a bad manifest is, because
-/// nothing here is sandboxed yet: `scan_catalog` reads it whole to look for
-/// the manifest section, and `Component::from_file` would run cranelift over
-/// the whole thing on the executor.
+/// The largest wasm component or native executable the catalog accepts.
+/// Metadata is checked before reading; native package reads also stop after
+/// this budget if a file grows between the metadata check and the read.
 pub(crate) const MAX_MODULE_BYTES: u64 = 64 << 20;
 
 // ---------- what a hostile guest may not do ----------

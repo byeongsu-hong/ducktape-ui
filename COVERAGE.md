@@ -1923,3 +1923,33 @@ lazy boundaries. Host tests assert those exact scoped keys while exercising
 row reordering, input/focus retention, virtual scrolling, cached routes and
 expired generations. Replacing keyed identity with an anonymous key compiles
 but fails the actual wasm host identity assertion; exact restoration passes.
+
+## Trusted native Tree backend
+
+`host/src/native_tests.rs` runs the actual packaged Counter and the actual
+`cargo ice bundle` Counter through the same mounted host UI. Native pointer
+clicks increment state, complete the host bus task, and produce identical
+colored pixels. Both currently refuse snapshots while the authored on-mount
+theme task remains active; that lifecycle gap is tracked in
+`examples/app-store/PARITY.md`. The versioned native reload fixture runs the
+existing mounted draft/focus/scroll/window/lifetime regression, including stale
+approval rejection.
+
+`host/src/native.rs` tests read-only catalog discovery with non-executable bytes,
+mandatory native-code consent, manifest and binary hash changes, actual child
+termination at the exchange deadline and verified-copy cleanup. Chaos faults
+without preventing another native app from running. Wire packet tests reject
+oversized input before reading payload bytes. These tests are registered in the
+app-store CI job alongside native package builds; wasm fixtures remain actual
+componentized artifacts.
+
+Behavior-mutation evidence for this boundary removes the relevant behavior:
+packet length validation fails before the attempted payload read; omitting
+manifest bytes from identity keeps a changed consent hash unchanged; dropping
+native message events leaves the mounted count at zero; replacing restore with
+init loses the edited draft; omitting kill leaves the actual timed-out child
+alive. Each intended assertion fails, and the restored native suite passes.
+The mounted accessibility test dispatches AccessKit Click through the mapped
+host message boundary and increments the actual native and Wasm Counter. The
+pre-fix mapping fails the accessible Click assertion; the shared runtime fix
+restores it. Operating-system bridge smoke remains a separate platform gate.

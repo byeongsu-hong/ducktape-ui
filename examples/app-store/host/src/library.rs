@@ -78,19 +78,29 @@ pub fn gauge(surface: &Surface, _generation: i64) -> Gauge {
         0 => 0,
         ticks => guest.unchanged * 100 / ticks,
     };
-    let load = match guest.load.cached {
-        true => format!("cached · {}", millis(guest.load.took)),
-        false => format!("compiled · {}", millis(guest.load.took)),
+    let native = guest.is_native();
+    let load = match (native, guest.load.cached) {
+        (_, true) => format!("cached · {}", millis(guest.load.took)),
+        (true, false) => format!("native {:.1} ms", guest.load.took.as_secs_f64() * 1000.0),
+        (false, false) => format!("compiled · {}", millis(guest.load.took)),
     };
     let sustained = guest.sustained(now);
-    let sustained = match sustained > FUEL_PER_SECOND {
-        true => format!("{}/s · throttled", thousands(sustained)),
-        false => format!("{}/s", thousands(sustained)),
+    let sustained = if native {
+        "not metered".into()
+    } else {
+        match sustained > FUEL_PER_SECOND {
+            true => format!("{}/s · throttled", thousands(sustained)),
+            false => format!("{}/s", thousands(sustained)),
+        }
     };
     Gauge {
         live: guest.fault.is_none(),
         fault: guest.fault.clone().unwrap_or_default(),
-        fuel: format!("{} fuel", thousands(guest.fuel_used)),
+        fuel: if native {
+            "native · no fuel meter".into()
+        } else {
+            format!("{} fuel", thousands(guest.fuel_used))
+        },
         tick: millis(guest.tick_time),
         rate: format!("{}/s", guest.rate(now)),
         frame: format!(

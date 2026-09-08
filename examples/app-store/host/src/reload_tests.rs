@@ -19,7 +19,10 @@ fn entry(version: u8) -> CatalogEntry {
     entry
 }
 fn running() -> Running {
-    let guest = Guest::load(&entry(1)).unwrap();
+    running_entry(entry(1))
+}
+fn running_entry(entry: CatalogEntry) -> Running {
+    let guest = Guest::load(&entry).unwrap();
     Running {
         id: "reload-fixture".into(),
         name: "Reload version 1".into(),
@@ -91,6 +94,30 @@ fn prepare(app: &Running, serial: i64) -> Reload {
 #[test]
 #[ignore = "requires two bundled reload fixtures"]
 fn bundled_reload_preserves_window_draft_focus_scroll_and_host_resources() {
+    reload_preserves_window_draft_focus_scroll_and_host_resources(false);
+}
+
+#[test]
+#[ignore = "requires two native reload fixture packages"]
+fn native_reload_preserves_window_draft_focus_scroll_and_host_resources() {
+    reload_preserves_window_draft_focus_scroll_and_host_resources(true);
+}
+
+fn reload_preserves_window_draft_focus_scroll_and_host_resources(native_backend: bool) {
+    let entry = |version| {
+        if !native_backend {
+            return entry(version);
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../target/native-reload-fixture");
+        let mut entry = crate::catalog::scan_dir(&path)
+            .into_iter()
+            .find(|entry| entry.id == format!("reload-v{version}-fixture.native"))
+            .expect("build both native reload packages first");
+        entry.id = "reload-fixture".into();
+        entry
+    };
+
     assert_ne!(
         entry(1).hash,
         entry(2).hash,
@@ -104,7 +131,7 @@ fn bundled_reload_preserves_window_draft_focus_scroll_and_host_resources() {
         entry(2).preferred_size.unwrap().dimensions(),
         [900.5, 700.25]
     );
-    let app = running();
+    let app = running_entry(entry(1));
     let guest = app.surface.0.clone();
     let mut renderer = renderer();
     let mut now = Instant::now();
@@ -142,7 +169,12 @@ fn bundled_reload_preserves_window_draft_focus_scroll_and_host_resources() {
     assert_eq!(value(&app, "/draft"), "saved draft");
     let log = guest.lock().unwrap().log_session.clone();
     let old_instance = guest.lock().unwrap().alive.clone();
-    let request = prepare(&app, 1);
+    let request = iced::futures::executor::block_on(prepare_reload(entry(2), vec![app.clone()], 1));
+    assert!(
+        finish_reload(std::slice::from_ref(&app), 2, request.clone()).is_err(),
+        "stale approval must preserve the running instance"
+    );
+    assert!(old_instance.load(Ordering::Relaxed));
     let loaded = finish_reload(std::slice::from_ref(&app), 1, request).unwrap();
     assert_eq!(loaded.surface, app.surface);
     assert_eq!(loaded.hash, entry(2).hash);
