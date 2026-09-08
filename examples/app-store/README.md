@@ -442,6 +442,13 @@ For module packaging requirements and the connected implementation phases, see
   `wrap-gap=` and `wrap-align=`. The text fixture checks resizing and a wrapped
   button route through actual wasm. Rebuild hosts and guests together.
 
+- Boxes carry `shadow=`, signed `shadow-x=`/`shadow-y=` and `shadow-blur=`
+  into native paint, sharing shadow values and sanitization with tooltips.
+  Rebuild hosts and guests together. The bundled
+  [text fixture](tests/text-guest/src/ui/app.ice) and
+  [`text_wasm_box_shadow_paints_outside_its_bounds`](host/src/text_tests.rs)
+  verify blurred, translucent shadow pixels outside the box.
+
 - Tooltips use native delayed overlays with copied position, styling and
   viewport snapping. Visible tip text supplies an accessible description;
   explicit descriptions are preserved. The text wasm fixture exercises
