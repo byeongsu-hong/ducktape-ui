@@ -2495,3 +2495,12 @@ the narrow dialog and x=422 in the wide one (previously 225.25/385.25). All 10
 narrow/wide dialog captures accompany the existing card/group captures; the
 narrow case routes Tab/Enter through the wrapped actions, while the wide case
 routes a pointer click. No caller row or fill spacer is needed.
+
+Final integration on the merged wrapping base passes the full showcase suite
+(365 tests, one existing ignored case). A freshly rebuilt component guest also
+passes both explicitly selected host tests for direct/forwarded siblings and
+independent repeated scalar/many-slot state. The former rejects an implicit
+column (1 child instead of 3); the latter previously observed scalar counters
+`[1, 1]` instead of `[1, 0]`. These are execution assertions, not generated-Rust
+string checks. The guest was rebuilt before the host runs against the current
+wire epoch; no stale fixture or timeout adjustment was used.

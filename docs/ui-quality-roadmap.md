@@ -176,3 +176,15 @@ surface-specific edge defects require their own reproductions.
   right alignment inside the dialog padding. Keyboard/pointer routes and
   explicit custom grouping pass. L04 remains PR until this component/language
   change is delivered; text alignment L07 is a separate ongoing slice.
+
+- 2026-09-08: L04 final integration passes all 365 showcase tests and both
+  freshly bundled Tree sibling/state tests. Independent final review found no
+  actionable findings. The language/component PR remains the delivery step.
+- 2026-09-08: L07 selection slice delivered in
+  [PR #1028](https://github.com/byeongsu-hong/ducktape-ui/pull/1028). Existing
+  horizontal/vertical text placement passes four native glyph-geometry tests;
+  selection now uses that same paragraph anchor. Three runtime drag/copy/
+  highlight tests pass, with independent copy and highlight assertion Reds.
+  Fixed/fill and explicit multiline shrink cases are covered. Compact button
+  defaults and rich-span decoration/link coordinates are separate active fixes;
+  soft-wrapped and justified line geometry are not newly claimed by this slice.
