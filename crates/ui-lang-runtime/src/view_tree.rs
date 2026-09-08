@@ -32,6 +32,7 @@ mod lists;
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
 mod memo;
+mod rich_text;
 mod text;
 mod tooltip;
 pub use text::register_font_family;
@@ -56,6 +57,8 @@ pub enum Output {
     /// A button was pressed or an input submitted: the guest's message
     /// table index the node carried.
     Activate(u32),
+    /// A rich text link activated the guest's String handler.
+    Link { handler: u32, text: String },
     /// A provider result; the renderer supplies the guest route, not the provider.
     Surface {
         handler: Option<u32>,
@@ -257,6 +260,10 @@ impl Inputs {
         let event = match output {
             Output::Ignore => return,
             Output::Activate(index) => wire::Event::Message(index),
+            Output::Link { handler, mut text } => {
+                wire::truncate_string(&mut text);
+                wire::Event::Input { handler, text }
+            }
             Output::Surface { handler, mut value } => {
                 let Some(handler) = handler else {
                     return;
@@ -403,6 +410,7 @@ fn collect_inputs(
             ..
         } => collect_inputs(child, into, editors),
         wire::Node::Button { .. }
+        | wire::Node::RichText { .. }
         | wire::Node::Text { .. }
         | wire::Node::Svg { .. }
         | wire::Node::Space { .. }
@@ -485,6 +493,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         } => collect_pictures(child, into),
         wire::Node::Button { .. }
         | wire::Node::Svg { .. }
+        | wire::Node::RichText { .. }
         | wire::Node::Text { .. }
         | wire::Node::Input { .. }
         | wire::Node::Editor { .. }
@@ -1484,6 +1493,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .into()
         }
         wire::Node::Text { .. } => text::render(node),
+        wire::Node::RichText { .. } => rich_text::render(node),
         wire::Node::Svg {
             inherit_button_ink,
             key,

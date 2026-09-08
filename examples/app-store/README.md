@@ -1011,7 +1011,7 @@ native UI cache. A second test clicks component-local routes inside virtual keye
 lazy rows before and after reordering, preserving sibling state and generations.
 Native tests separately count layout hits/reflows and verify
 resource release and shared text/image budgets. Other Tree refusals, including
-rich text and retained components still block larger application
+retained components still block larger application
 graphs.
 
 ```sh
@@ -1051,3 +1051,16 @@ Omitted dimensions fill available space. Nested pins retain signed local offsets
 wire sanitization bounds coordinates to ±8192 pixels and maps NaN to zero.
 The layers wasm fixture checks nested geometry and clicks before and after the
 guest moves its button. Rebuild host and guests together for this wire change.
+
+### Rich text module views
+
+`rich-text` sends one paragraph of copied spans. Literal and repeated spans keep
+named fonts, emphasis, solid highlights, padding, borders and String links.
+The host owns shaping, wrapping and link hit testing; links return through the
+component's snapshotted route, including inside a cached lazy subtree. Tooltip
+accessibility joins span fragments exactly as the paragraph displays them.
+
+Span counts share both decode and rendered-node budgets, and their text/link/font
+strings share the frame text allowance. Gradients and Rust style callbacks remain
+refused. Rebuild host and guests together. The existing text fixture bundle and
+`cargo test -p app-store-host text_wasm_ -- --ignored` verify this boundary.

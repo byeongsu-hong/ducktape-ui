@@ -716,12 +716,7 @@ const COVERAGE: &[Coverage] = &[
         "  panes #work w=fill h=80.0\n    pane first\n      text \"a\" @text-fg\n",
         "`pane grid`",
     ),
-    refused(
-        "rich text",
-        "",
-        "  rich-text\n    span \"a\"\n",
-        "`rich text`",
-    ),
+    emitted("rich text", "", "  rich-text\n    span \"a\"\n"),
     refused(
         "combo box",
         CHOOSE,
@@ -1427,4 +1422,28 @@ view
     }
     assert!(!generated.contains("::ui_lang_runtime::flex("));
     assert!(!generated.contains("::ui_lang_runtime::flex_item("));
+}
+
+#[test]
+fn rich_span_gradient_refusal_names_the_span_line() {
+    let source = format!(
+        "{HEAD}view\n  rich-text\n    span \"highlight\" bg=linear(0.0, bg@0.0, primary@1.0)\n"
+    );
+    compile(&source, "spans.ice").expect("gradient span compiles natively");
+    let line = source
+        .lines()
+        .position(|line| line.contains("span \"highlight\""))
+        .unwrap()
+        + 1;
+    let error = compile_for(&source, "spans.ice", Target::Tree)
+        .unwrap_err()
+        .render("spans.ice");
+    assert!(
+        error.contains("E190") && error.contains("a gradient background"),
+        "{error}"
+    );
+    assert!(
+        error.contains(&format!("spans.ice:{line}:")),
+        "refusal must name the span, not its paragraph: {error}"
+    );
 }

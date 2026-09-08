@@ -1432,6 +1432,28 @@ fn check_bounds(
         Node::MouseArea { content, .. } => {
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
+        Node::RichText {
+            spans,
+            size,
+            color,
+            width,
+            ..
+        } => {
+            check_pixels(size, ctx, "rich text size");
+            check_color(color, ctx);
+            check_length(width, ctx);
+            for span in spans {
+                check_string(&span.content, ctx, "span content");
+                if let Some(link) = &span.link {
+                    check_string(link, ctx, "span link");
+                }
+                check_pixels(&span.size, ctx, "span size");
+                check_color(&span.color, ctx);
+                check_color(&span.background, ctx);
+                check_edges(&span.padding, ctx);
+                check_border(&span.border, ctx);
+            }
+        }
         Node::Text {
             content,
             size,

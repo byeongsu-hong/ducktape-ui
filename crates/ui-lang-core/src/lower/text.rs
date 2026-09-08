@@ -85,7 +85,6 @@ pub(crate) struct ResolvedRichSpan {
     pub(crate) underline: Option<CheckedExprUseId>,
     pub(crate) strikethrough: Option<CheckedExprUseId>,
     pub(crate) utility_style: ResolvedStyle,
-    #[cfg(test)]
     pub(crate) origin: OriginId,
 }
 
@@ -702,7 +701,6 @@ impl Lowerer {
             underline,
             strikethrough,
             utility_style,
-            #[cfg(test)]
             origin,
         })
     }

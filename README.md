@@ -545,3 +545,6 @@ wrapping, sizing and order. See [flex module views](examples/app-store/README.md
 
 Tree `pin` copies widget-local offsets and optional dimensions to the native host.
 See [pinned module children](examples/app-store/README.md#pinned-module-children).
+
+Tree `rich-text` carries styled spans and link routes to a single native paragraph.
+See [rich text module views](examples/app-store/README.md#rich-text-module-views).

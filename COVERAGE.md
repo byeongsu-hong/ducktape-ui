@@ -1596,3 +1596,21 @@ default Shrink fails the expected 200-pixel width. The bundled layers fixture
 exercises nested positive/negative offsets, explicit dimensions, pointer routing
 and guest-driven repositioning; removing its negative offset fails at 36 vs 32.
 CI selects `store::layers_tests -- --ignored` after bundling that fixture.
+
+### Tree rich text evidence
+
+The construct table emits rich text; native and Tree targets share span-loop
+expansion. The text wasm fixture uses named fonts, highlighted/padded mentions,
+underlined links and a component event inside lazy. Native pointer clicks before
+and after host narrowing update guest link text/count, and pixel checks locate
+mention backgrounds within the paragraph. A tooltip split across adjacent spans
+retains its exact accessible description. CI's existing `text_wasm_` selection
+runs these checks after bundling the fixture.
+
+Wire tests reject aggregate span decode overflow across individually valid
+paragraphs, bound styles and share node/text budgets. Red evidence includes the
+pre-fix aggregate decode acceptance, omitted rendered span truncation and tooltip
+space insertion. Disabling native span backgrounds fails the pixel assertion;
+disabling link dispatch leaves the guest status unchanged and fails the click
+assertion. A gradient refusal test fails when attributed to the paragraph rather
+than the span. Each mutation is restored before the passing checks.

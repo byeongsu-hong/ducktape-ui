@@ -19,11 +19,33 @@ font code_medium family="Geist Mono" weight=medium
 
 state
   clicked = false
+  links = ["Open", "Read"]
+  last_link = "none"
+  link_count = 0
+on visited(value)
+  last_link = value
+  link_count = link_count + 1
 on apply
   clicked = true
 
 component KitLabel(label:str)
   text label font=display wrap=none line-h=1.5 h=44.0 align-y=center #label
+
+component RichLine(words:[str])
+  emits
+    opened(str)
+  box #paragraph w=fill
+    rich-text #rich -> emit(opened, _)
+      with
+        w=fill
+        size=16.0
+        line-h=1.5
+        wrap=word-or-glyph
+        color=fg
+      for word in words
+        span word link=word underline font=display color=fg
+        span " Mention " bg=primary px=4.0 r=4.0 font=code_medium color=bg
+        span "a paragraph that keeps one native line layout. " font=display
 
 view
   box #bounded
@@ -63,7 +85,9 @@ view
             w=100.0
             h=30.0
             bg=danger
-          text "Apply changes" @text-fg
+          rich-text
+            span "Apply"
+            span " changes"
       row #actions wrap
         with
           w=fill
@@ -87,3 +111,9 @@ view
             p=0.0
       if clicked
         text "Applied" #status
+      lazy links as words
+        RichLine words=words #message
+          events
+            opened -> visited _
+      text last_link #link-status
+      text link_count #link-count

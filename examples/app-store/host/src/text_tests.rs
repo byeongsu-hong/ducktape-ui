@@ -367,3 +367,111 @@ fn text_wasm_tooltip_delays_hides_and_describes_its_button() {
         "tip hides after leaving its content"
     );
 }
+
+#[test]
+#[ignore = "requires bundled text-fixture wasm"]
+fn text_wasm_rich_spans_wrap_and_links_survive_lazy_cache_hits() {
+    fn paragraph_key(node: &wire::Node) -> Option<String> {
+        if let wire::Node::Container { key, .. } = node
+            && key.ends_with("/paragraph")
+        {
+            return Some(key.clone());
+        }
+        node.children().iter().find_map(paragraph_key)
+    }
+    fn value(node: &wire::Node, suffix: &str) -> Option<String> {
+        if let wire::Node::Text { key, content, .. } = node
+            && key.ends_with(suffix)
+        {
+            return Some(content.clone());
+        }
+        node.children().iter().find_map(|node| value(node, suffix))
+    }
+    let guest = guest();
+    let mut renderer = renderer();
+    let mut ui = build(
+        &guest,
+        user_interface::Cache::default(),
+        &mut renderer,
+        900.0,
+    );
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now, 900.0);
+    }
+    let key = paragraph_key(guest.lock().unwrap().frame.root.as_ref().unwrap()).unwrap();
+    let wide = container_bounds(&mut ui, &renderer, &key);
+    assert!(
+        wide.width > 500.0 && wide.height >= 48.0,
+        "styled spans form a wrapping paragraph: {wide:?}"
+    );
+    ui.draw(
+        &mut renderer,
+        &iced::Theme::Light,
+        &iced::advanced::renderer::Style {
+            text_color: iced::Color::BLACK,
+        },
+        mouse::Cursor::Unavailable,
+    );
+    let pixels = renderer.screenshot(Size::new(900, 600), 1.0, iced::Color::WHITE);
+    let mut green = 0;
+    for y in wide.y.ceil() as usize..(wide.y + wide.height).floor().min(600.0) as usize {
+        for x in wide.x.ceil() as usize..(wide.x + wide.width).floor().min(900.0) as usize {
+            if pixels[(y * 900 + x) * 4..][..3] == [0, 170, 68] {
+                green += 1;
+            }
+        }
+    }
+    assert!(
+        green > 100,
+        "mention span backgrounds must paint inside the paragraph: {green}"
+    );
+    if let Ok(path) = std::env::var("ICE_RICH_CAPTURE") {
+        std::fs::write(path, &pixels).unwrap();
+    }
+    assert_eq!(
+        value(
+            guest.lock().unwrap().frame.root.as_ref().unwrap(),
+            "/link-status"
+        )
+        .as_deref(),
+        Some("none")
+    );
+    for (width, expected_count) in [(900.0, "1"), (360.0, "2")] {
+        ui = build(&guest, ui.into_cache(), &mut renderer, width);
+        let paragraph = container_bounds(&mut ui, &renderer, &key);
+        if width < 900.0 {
+            assert!(
+                paragraph.height > wide.height,
+                "one paragraph reflows at host limits"
+            );
+        }
+        let point = iced::Point::new(paragraph.x + 12.0, paragraph.y + 12.0);
+        ui.update(
+            &[
+                Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            ],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut vec![],
+        );
+        for _ in 0..3 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now, width);
+        }
+        let guard = guest.lock().unwrap();
+        let root = guard.frame.root.as_ref().unwrap();
+        assert_eq!(
+            value(root, "/link-status").as_deref(),
+            Some("Open"),
+            "native span hit testing forwards the link String through its component"
+        );
+        assert_eq!(
+            value(root, "/link-count").as_deref(),
+            Some(expected_count),
+            "cached link route fires again after unrelated guest state changes"
+        );
+    }
+}
