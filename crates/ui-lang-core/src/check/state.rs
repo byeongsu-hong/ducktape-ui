@@ -289,7 +289,9 @@ fn controlled_bindings(document: &Document, editors: bool) -> Result<ControlledO
                 ..
             } => {
                 for slot in slots {
-                    collect(&slot.content, document, editors, env, components, output)?;
+                    for content in &slot.content {
+                        collect(content, document, editors, env, components, output)?;
+                    }
                 }
                 if !components.insert(name.clone()) {
                     return Err(Error::new(

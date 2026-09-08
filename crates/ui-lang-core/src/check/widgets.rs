@@ -3,7 +3,7 @@ use crate::Warning;
 
 #[derive(Clone)]
 pub(in crate::check) struct WidgetIdSlot {
-    entries: Vec<(String, ViewNode, HashMap<String, Type>)>,
+    entries: Vec<(String, Vec<ViewNode>, HashMap<String, Type>)>,
     parent: Option<Box<Self>>,
 }
 
@@ -583,7 +583,7 @@ fn collect_widget_ids(
                 let component_slot = (!slots.is_empty()).then(|| WidgetIdSlot {
                     entries: slots
                         .iter()
-                        .map(|slot| (slot.name.clone(), (*slot.content).clone(), env.snapshot()))
+                        .map(|slot| (slot.name.clone(), slot.content.clone(), env.snapshot()))
                         .collect(),
                     parent: slot.cloned().map(Box::new),
                 });
@@ -606,17 +606,19 @@ fn collect_widget_ids(
                     && let Some((_, content, content_env)) =
                         slot.entries.iter().find(|(entry, ..)| entry == name)
                 {
-                    collect(
-                        content,
-                        content_env,
-                        document,
-                        scope,
-                        slot.parent.as_deref(),
-                        components,
-                        output,
-                        component_scopes,
-                        inspect_all,
-                    )?;
+                    for child in content {
+                        collect(
+                            child,
+                            content_env,
+                            document,
+                            scope,
+                            slot.parent.as_deref(),
+                            components,
+                            output,
+                            component_scopes,
+                            inspect_all,
+                        )?;
+                    }
                 }
             }
             ViewNode::MouseArea {
@@ -737,7 +739,9 @@ pub(in crate::check) fn unscoped_component_widget_warnings(
                     );
                 }
                 for slot in slots {
-                    visit(&slot.content, target_counts, warnings);
+                    for content in &slot.content {
+                        visit(content, target_counts, warnings);
+                    }
                 }
             }
             ViewNode::Layout { children, .. }
@@ -1185,7 +1189,9 @@ pub(in crate::check) fn static_pane_grids(
             } => collect(content, states, document, output)?,
             ViewNode::Component { slots, .. } => {
                 for slot in slots {
-                    collect(&slot.content, states, document, output)?;
+                    for content in &slot.content {
+                        collect(content, states, document, output)?;
+                    }
                 }
             }
             ViewNode::Responsive { content, .. } => match content {

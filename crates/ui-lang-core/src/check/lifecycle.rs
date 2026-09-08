@@ -182,7 +182,9 @@ impl Session<'_> {
                     self.visiting.remove(&visit_key);
                 }
                 for slot in slots {
-                    self.visit(&slot.content, risk);
+                    for content in &slot.content {
+                        self.visit(content, risk);
+                    }
                 }
             }
             ViewNode::Tooltip {

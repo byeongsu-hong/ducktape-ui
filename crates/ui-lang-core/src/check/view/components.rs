@@ -103,17 +103,27 @@ pub(in crate::check) fn infer_components_group(
                 // A slot fill is emitted inside the component's body — outside
                 // any enclosing button's generated block.
                 let _boundary = leave_button_content();
-                infer_view(
-                    &component_slot.content,
-                    env,
-                    document,
-                    signatures,
-                    &mut child_ids,
-                )?;
+                let (_, _, multiple, _) = declared_slots
+                    .iter()
+                    .find(|(name, ..)| *name == component_slot.name)
+                    .expect("checked slot declaration");
+                if !multiple && component_slot.content.len() != 1 {
+                    return Err(Error::new(
+                        "E124",
+                        &component_slot.span,
+                        format!(
+                            "component slot `{}` needs exactly one root",
+                            component_slot.name
+                        ),
+                    ));
+                }
+                for content in &component_slot.content {
+                    infer_view(content, env, document, signatures, &mut child_ids)?;
+                }
             }
-            if let Some((missing, _, _)) = declared_slots
+            if let Some((missing, _, _, _)) = declared_slots
                 .iter()
-                .find(|(declared, optional, _)| !optional && !supplied.contains(*declared))
+                .find(|(declared, optional, _, _)| !optional && !supplied.contains(*declared))
             {
                 return Err(Error::new(
                     "E124",

@@ -561,7 +561,7 @@ pub struct ComponentArg {
 #[derive(Clone, Debug)]
 pub struct ComponentSlot {
     pub name: String,
-    pub content: Box<ViewNode>,
+    pub content: Vec<ViewNode>,
     pub span: Span,
 }
 

@@ -715,7 +715,7 @@ view
         "    body:\n      text \"First\"\n      text \"Second\"",
     ))
     .unwrap_err();
-    assert_eq!(error.code, "E040");
+    assert_eq!(error.code, "E124");
     assert!(error.message.contains("slot `body` needs exactly one root"));
 
     let error = analyze(&source.replace("    slot actions", "    slot body")).unwrap_err();

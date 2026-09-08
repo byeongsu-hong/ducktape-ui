@@ -20,6 +20,7 @@ enum SnapshotChoice
 state
   active_palette:palette[ClockTheme] = ClockTheme.light
   rows:[str] = ["a", "b"]
+  slot_choice = "none"
   visible = true
   seed = 7
   fetch_visible = false
@@ -38,6 +39,9 @@ state
   modifiers:key-modifiers = key.command_modifiers()
 on report_initializations
   init_report = initializations()
+
+on choose_slot(next)
+  slot_choice = next
 
 on toggle
   visible = !visible
@@ -83,6 +87,14 @@ component Chip(label:str)
   box #root px=7.0 py=3.0
     text label size=9.0
 
+component SlotActions()
+  row #actions wrap
+    slot children*
+
+component ForwardActions()
+  SlotActions #inner
+    slot children*
+
 view
   col #root w=fill
     input "Draft" #draft <-> draft
@@ -98,3 +110,11 @@ view
       Fetch initial=seed #fetch
     for row in rows
       Chip label=row
+    ForwardActions #forward
+      button "Slot first" #first -> choose_slot "first"
+      if visible
+        button "Slot second" #second -> choose_slot "second"
+      row #group
+        text "Grouped one"
+        text "Grouped two"
+    text slot_choice #slot-choice

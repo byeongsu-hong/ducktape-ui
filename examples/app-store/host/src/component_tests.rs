@@ -555,3 +555,47 @@ fn bundled_snapshot_restore_does_not_replay_source_initializers() {
         "a fresh instance restores without executing any source initializer"
     );
 }
+
+#[test]
+#[ignore = "requires bundled component-fixture wasm"]
+fn bundled_multi_child_slots_preserve_siblings_forwarding_and_routes() {
+    fn actions(node: &wire::Node) -> Option<&wire::Node> {
+        if node
+            .key()
+            .is_some_and(|key| key.ends_with("/forward/inner/actions"))
+        {
+            return Some(node);
+        }
+        node.children().iter().find_map(|child| actions(child))
+    }
+    fn assert_children(guest: &Guest, expected: &[&str]) {
+        let node = actions(guest.frame.root.as_ref().unwrap()).expect("forwarded receiving layout");
+        let children = node.children();
+        assert_eq!(
+            children.len(),
+            expected.len(),
+            "caller roots must be direct layout siblings"
+        );
+        for (child, suffix) in children.iter().zip(expected) {
+            assert!(
+                child.key().is_some_and(|key| key.ends_with(suffix)),
+                "{:?} should end in {suffix}",
+                child.key()
+            );
+        }
+        assert_eq!(
+            children.last().unwrap().children().len(),
+            2,
+            "explicit caller row remains grouped"
+        );
+    }
+    let mut guest = guest();
+    guest.tick();
+    assert_children(&guest, &["/first", "/second", "/group"]);
+    press(&mut guest, "Slot first");
+    assert_eq!(read(&guest, "/slot-choice").as_deref(), Some("first"));
+    press(&mut guest, "Slot second");
+    assert_eq!(read(&guest, "/slot-choice").as_deref(), Some("second"));
+    press(&mut guest, "Toggle counters");
+    assert_children(&guest, &["/first", "/group"]);
+}

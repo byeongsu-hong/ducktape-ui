@@ -586,18 +586,28 @@ pub(in crate::parser) fn parse_slot(
             "slot accepts an optional name and no properties or styles",
         ));
     }
-    let (name, optional) = parts.get(1).map_or_else(
-        || Ok(("children".into(), false)),
+    let (name, optional, multiple) = parts.get(1).map_or_else(
+        || Ok(("children".into(), false, false)),
         |name| {
+            let multiple = name.ends_with('*');
+            let name = name.strip_suffix('*').unwrap_or(name);
             let (name, optional) = name
                 .strip_suffix('?')
-                .map_or((*name, false), |name| (name, true));
-            Ok::<_, Error>((identifier(name, line)?, optional))
+                .map_or((name, false), |name| (name, true));
+            if multiple && optional {
+                return Err(error(
+                    "E040",
+                    line,
+                    "slot cardinality cannot combine ? and *",
+                ));
+            }
+            Ok::<_, Error>((identifier(name, line)?, optional || multiple, multiple))
         },
     )?;
     Ok(ViewNode::Slot {
         name,
         optional,
+        multiple,
         span: Span::line(line.number),
     })
 }
