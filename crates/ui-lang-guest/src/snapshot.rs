@@ -12,7 +12,11 @@ impl<A: SnapshotApp> Driver<A> {
     /// A live one-shot task may hold a user write. Do not retire it during reload.
     pub fn snapshot(&self) -> Result<Vec<u8>, String> {
         let _context = self.slots.enter();
-        if self.busy || self.tasks.iter().any(|task| !task.subscription) || slots::has_deferred() {
+        if slots::editor_pending()
+            || self.busy
+            || self.tasks.iter().any(|task| !task.subscription)
+            || slots::has_deferred()
+        {
             return Err("guest has pending work; snapshot after it settles".into());
         }
         self.app.snapshot()

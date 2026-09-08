@@ -421,6 +421,8 @@ fn gen_editor(rng: &mut Rng) -> Node {
         reset: 0,
         revision: 0,
         options: Box::new(EditorOptions {
+            document: String::new(),
+            binding: None,
             size: gen_opt_f32(rng),
             padding: gen_opt_f32(rng),
             line_height: Some(if rng.next_bool() {
@@ -919,6 +921,7 @@ fn gen_frame_with(rng: &mut Rng, depth: usize, width: usize) -> Frame {
         .collect();
     let cancels = (0..rng.next_range(4)).map(|_| rng.next_u64()).collect();
     Frame {
+        editor_decisions: Vec::new(),
         mouse_interest: rng.next_bool(),
         root: Some(root),
         requests,

@@ -33,9 +33,11 @@ use serde::{Deserialize, Serialize};
 mod background;
 pub use background::{Background, ColorStop};
 mod editor;
-mod editor_transaction;
+pub mod editor_transaction;
 pub use editor_transaction::{
-    EditorPatch, EditorPatchError, MAX_EDITOR_PATCHES, patched_editor_text,
+    EditorBinding, EditorDecision, EditorEditKind, EditorFault, EditorHistoryEffect,
+    EditorKeyClaim, EditorKeyRequest, EditorPatch, EditorPatchError, EditorResponse,
+    EditorTransactionEvent, EditorTransactionId, MAX_EDITOR_PATCHES, patched_editor_text,
 };
 
 pub use editor::{EditorCursor, EditorPosition, EditorState, editor_lines};
@@ -127,6 +129,14 @@ pub enum Event {
     Input { handler: u32, text: String },
     /// An editor's text or cursor changed. `reset` fences document replacements;
     /// `revision` orders host observations. Caret-only changes are included.
+    EditorKeyRequest {
+        handler: u32,
+        request: EditorKeyRequest,
+    },
+    EditorTransaction {
+        handler: u32,
+        event: EditorTransactionEvent,
+    },
     Edit {
         handler: u32,
         text: String,
@@ -216,6 +226,8 @@ pub struct Request {
 /// `root` empty and `unchanged` clear.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
+    #[serde(deserialize_with = "editor_transaction::decode_responses")]
+    pub editor_decisions: Vec<EditorResponse>,
     /// The current subscription requests guest-local mouse observations.
     pub mouse_interest: bool,
     /// The tree to show. `None` with `unchanged` set means "what you have";
@@ -437,6 +449,8 @@ pub struct InputOptions {
 /// Copied native multiline editor presentation; state faces share input semantics.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EditorOptions {
+    pub document: String,
+    pub binding: Option<Box<EditorBinding>>,
     pub size: Option<f32>,
     pub padding: Option<f32>,
     pub line_height: Option<LineHeight>,
@@ -2823,6 +2837,7 @@ mod tests {
     #[test]
     fn a_frame_round_trips() {
         let frame = Frame {
+            editor_decisions: Vec::new(),
             mouse_interest: true,
             root: Some(column(vec![
                 text("hello"),
@@ -3495,6 +3510,7 @@ mod tests {
     #[test]
     fn bytes_a_hostile_guest_could_write_are_answered_not_survived() {
         let sound = encode(&Frame {
+            editor_decisions: Vec::new(),
             mouse_interest: false,
             root: Some(column(vec![text("hello"), Node::empty()])),
             requests: vec![Request {
