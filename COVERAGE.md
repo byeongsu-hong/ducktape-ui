@@ -2082,7 +2082,7 @@ complete native image scene, then clicks native buttons to change RGBA dimension
 and hide/remount the lazy picture. It also checks Resync, approved snapshot reload
 and fresh instance pixels. The intermediate hidden-node assertion proves the
 first toggle really unmounts the picture. The native comparison includes all
-neighboring images so renderer overpaint is not mistaken for a transport error.
+neighboring images and rotation options.
 
 Commands: `cargo test -p ui-lang-core -p ui-lang-guest -p ui-lang-wire --lib`,
 `cargo test -p ui-lang-wire --test hostile_frames`,
@@ -2098,8 +2098,10 @@ native image loader. Omitting orientation application fails the orientation-2
 pixel assertion. Forwarding Nearest as Linear fails the actual-Wasm native pixel
 comparison. These are behavioral Red checks, followed by exact source restoration.
 
-Known limitation: tiny-skia truncates destination origins in source-pixel units
-before scaling. The complete-scene comparator preserves this native behavior;
-it is not evidence that image ink stays inside nominal widget bounds. Correct
-positioning and its independent outside-bounds assertion belong to the separate
-renderer follow-up.
+The separate `bundled_images_keep_{native,wasm}_destination_origin` tests
+place the same fixture at a fractional horizontal origin and assert white
+margins above and beside the RGBA destination, plus red and blue interior
+pixels. Both backends failed the white-margin assertion with the original
+source-pixel integer truncation (red instead of white above y=77.6); the
+floating-point destination translation restores both. The existing complete
+scene and lifecycle test also passes with the corrected renderer.

@@ -721,6 +721,6 @@ The host never opens that path. `viewer` and native image allocation operations
 remain outside this Tree support. Rebuild hosts and guests together for the
 new wire variant.
 
-The existing tiny-skia renderer can misplace enlarged images at fractional or
-nonaligned origins. This change preserves native rendering parity; correcting
-that renderer positioning remains separate work.
+The tiny-skia renderer preserves fractional destination origins when scaling
+raster images. Actual native and Wasm fixtures assert clear margins above and
+beside the image, as well as its interior colors.

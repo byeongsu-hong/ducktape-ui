@@ -1510,8 +1510,7 @@ pixel decoding. These are admission and decoder limits, not a guarantee on total
 process memory or every codec's temporary allocations. Animations use their
 static image decoding, as the native image widget does.
 
-Known native renderer limitation: tiny-skia currently truncates raster origins
-in source-pixel units before scaling. Enlarged images at nonaligned destinations
-can paint outside their nominal widget bounds. Tree raster transport preserves
-this existing native behavior; the pixel parity tests do not establish correct
-destination positioning. Renderer position correction is a separate change.
+The tiny-skia renderer translates raster destinations in floating-point widget
+coordinates before scaling their source pixels. This preserves fractional
+origins under the existing parent transform and rotation, rather than rounding
+the destination to whole source-pixel steps.
