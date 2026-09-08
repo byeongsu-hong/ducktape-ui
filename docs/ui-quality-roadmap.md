@@ -14,7 +14,7 @@ replacement or unrelated language features. New syntax requires evidence that
 existing components, recipes and typed boundaries cannot express the contract.
 
 Inventory inspected against `origin/main` at `480a5290` (2026-09-08). The form
-slice is separately under review in [PR #1015](https://github.com/byeongsu-hong/ducktape-ui/pull/1015).
+slice was delivered in [PR #1015](https://github.com/byeongsu-hong/ducktape-ui/pull/1015).
 The existing [63-component parity ledger](../crates/ui-lang-components/docs/parity.md)
 is evidence of supplied behavior, not evidence that all default compositions
 and customizations below have been verified.
@@ -40,7 +40,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
 | L01 | P0 · Audit | [view layout rules](../skills/design-ice-ui/references/views-and-style.md), [Item/InputGroup](../crates/ui-lang-components/src/ice/components.ice) | A label + flexible input + trailing action share a narrow parent without overlap; the action stays usable, fill/shrink ownership is explicit, and custom padding remains inside the parent. |
-| L02 | P0 · PR | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merge/CI pending. |
+| L02 | P0 · Done | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merged as b709ea51. |
 | L03 | P0 · Audit | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
 | L04 | P0 · Audit | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
 | L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
@@ -60,7 +60,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
-| C01 | P0 · PR | [PR #1015](https://github.com/byeongsu-hong/ducktape-ui/pull/1015) | Default and customized fields at 360/960px; wrapping errors; no empty-help gap; short-window scroll; binding, Tab/Space/Enter and focus preserved. Local: 8 settings tests, 330 showcase tests pass; five mutation Reds; merge/CI still pending. |
+| C01 | P0 · Done | [PR #1015](https://github.com/byeongsu-hong/ducktape-ui/pull/1015) | Default and customized fields at 360/960px; wrapping errors; no empty-help gap; short-window scroll; binding, Tab/Space/Enter and focus preserved. Local: 8 settings tests, 330 showcase tests pass; five mutation Reds; merged as 607f7ce3. |
 | C02 | P1 · Audit | [Item/Attachment/Breadcrumb](../crates/ui-lang-components/src/ice/components.ice), [VirtualList](../crates/ui-lang-components/docs/virtual-list.md) | Leading visual, long content and trailing metadata/actions remain aligned; stable-key selection survives reorder/filter; optional content does not leave blank columns. |
 | C03 | P1 · Audit | [navigation examples](../examples/showcase/src/ui/components/navigation.ice), [parity navigation contracts](../crates/ui-lang-components/docs/parity.md) | A list/detail or settings screen has one obvious selected location, coherent title/actions and predictable back behavior, with a reusable default composition. |
 | C04 | P1 · Audit | [Dialog composition](../crates/ui-lang-components/src/ice/components.ice), [modal runtime contract](../crates/ui-lang-components/docs/parity.md) | A long dialog fits a small window, body scrolls as needed, actions stay reachable, focus is contained/restored and custom content preserves dismissal policy. |
@@ -111,13 +111,20 @@ merely because its component exists or its code compiles.
 
 - 2026-09-08: initial inventory recorded; inspected shared Ice components,
   recipes/default palette, Rust theme roles, design workflow and parity ledger.
-- 2026-09-08: C01 PR is open. Rust/Ice, Windows workspace, native WGPU,
+- 2026-09-08: C01 initial CI results: Rust/Ice, Windows workspace, native WGPU,
   accessibility and MSRV checks pass. App-store clipboard fixture loading fails
-  with `tick exceeded 100 ms`; performance checks remain pending. The failure
-  is unresolved and blocks delivery; the fixture does not import the changed
-  default components. Local evidence is linked in PR #1015.
-- 2026-09-08: L02 PR #1020 is open. Empty descriptions previously added
+  with `tick exceeded 100 ms`; performance checks remain pending. The fixture does not import the changed default components. The user
+  subsequently authorized high-confidence delivery without waiting for CI;
+  PR #1015 merged as 607f7ce3 using normal merge permissions. The timeout was
+  not fixed or claimed green. Local evidence is linked in PR #1015.
+- 2026-09-08: L02 PR #1020 merged as b709ea51. Empty descriptions previously added
   26.75 px in both headers; assertion-level Red/Green confirms removal.
   A no-wrap mutation fails the long-title assertion. All three rendered
   captures were inspected; 6 header and 324 existing showcase tests pass.
   API diff reports two additive optional arguments and no breaking changes.
+
+- 2026-09-08: after rebasing L02 onto the delivered form slice, all 6 header
+  and 8 settings tests pass together. Merge conflict resolutions retain both
+  documentation sections and regenerate the combined component API baseline.
+  User-authorized high-confidence merges do not wait for CI; required repository
+  protections remain in force.
