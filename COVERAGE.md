@@ -2487,3 +2487,11 @@ wrapping fails the narrow next-line assertion; inserting an implicit column
 around its slot fails the wide same-line assertion (167.10 versus 119.85).
 Both focused `action_layout` cases pass after exact restoration. This rejects
 the original caller-wrapper limitation as well as loss of default reflow.
+
+After the wrapping dependency fix in PR #1027, the unchanged Dialog.Actions
+right-edge assertions pass at both widths: the last action reaches x=236 in
+the narrow dialog and x=422 in the wide one (previously 225.25/385.25). All 10
+`multi_child_slots` tests and 5 `action_layout` tests pass together. Inspected
+narrow/wide dialog captures accompany the existing card/group captures; the
+narrow case routes Tab/Enter through the wrapped actions, while the wide case
+routes a pointer click. No caller row or fill spacer is needed.

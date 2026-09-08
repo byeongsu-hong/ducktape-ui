@@ -42,7 +42,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | L01 | P0 · Audit | [view layout rules](../skills/design-ice-ui/references/views-and-style.md), [Item/InputGroup](../crates/ui-lang-components/src/ice/components.ice) | A label + flexible input + trailing action share a narrow parent without overlap; the action stays usable, fill/shrink ownership is explicit, and custom padding remains inside the parent. |
 | L02 | P0 · Done | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merged as b709ea51. |
 | L03 | P0 · Audit | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
-| L04 | P0 · Gap | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
+| L04 | P0 · PR | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
 | L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
 | L06 | P1 · Audit | [grid/flex surface](../skills/design-ice-ui/references/extended-surface.md), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Repeated cards use a consistent minimum useful width and aspect ratio; odd item counts and narrow windows leave no clipped or zero-width cells. |
 | L07 | P0 · Audit | [text/layout emission](../crates/ui-lang-core/src/codegen/view), [text runtime](../crates/ui-lang-runtime/src) | Horizontal and vertical text alignment inside assigned bounds work independently of parent placement, including fixed/fill/shrink sizes, multiline wrapping and padding. Verify painted text geometry, not only the enclosing widget's rectangle. Added from the user's explicit two-axis text-alignment request. |
@@ -166,3 +166,13 @@ an explicit zero-inset test preserves intentional full-bleed composition.
 This edge-spacing slice does not close L01's flexible label/input/action-row
 audit. Form already owns outer padding and is not wrapped in Page. Additional
 surface-specific edge defects require their own reproductions.
+
+- 2026-09-08: L04 integration now passes after the owning Iced wrapping fix
+  [PR #1027](https://github.com/byeongsu-hong/ducktape-ui/pull/1027). All 10
+  native multi-slot tests and 5 action-layout tests pass on that merged base.
+  Dialog.Actions previously stopped at x=225.25 instead of 236 at narrow width
+  and 385.25 instead of 422 at wide width; the unchanged right-edge assertions
+  now pass. Narrow/wide captures show complete labels, default reflow and
+  right alignment inside the dialog padding. Keyboard/pointer routes and
+  explicit custom grouping pass. L04 remains PR until this component/language
+  change is delivered; text alignment L07 is a separate ongoing slice.
