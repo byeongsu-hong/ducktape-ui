@@ -297,6 +297,10 @@ with the tray as a no-op.
 boundaries — no Core syntax involved: [`VirtualList`](crates/ui-lang-components/docs/virtual-list.md),
 [`TreeView`](crates/ui-lang-components/docs/tree-view.md), [`DataGrid`](crates/ui-lang-components/docs/data-grid.md).
 
+The [default Ice components](crates/ui-lang-components/README.md) include
+`PageHeader` and `Panel` with optional descriptions: omitted help adds no blank
+row, while long titles and descriptions wrap within the available content width.
+
 ## First-class tests
 
 Tree guests can run authored presets, typed state expectations and dispatch,

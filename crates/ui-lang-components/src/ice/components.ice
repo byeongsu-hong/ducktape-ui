@@ -1,14 +1,32 @@
-component PageHeader(title:str, description:str)
+component PageHeader(title:str, description:str="")
   col #root @field
-    text title @display
-    text description @caption
+    text title #title
+      with
+        w=fill
+        wrap=word
+        @display
+    if !empty(description)
+      text description #description
+        with
+          w=fill
+          wrap=word
+          @caption
 
-component Panel(title:str, description:str)
+component Panel(title:str, description:str="")
   box #root r=11.0 @panel
     col @section
       col @field
-        text title @section_title
-        text description @caption
+        text title #title
+          with
+            w=fill
+            wrap=word
+            @section_title
+        if !empty(description)
+          text description #description
+            with
+              w=fill
+              wrap=word
+              @caption
       slot
 
 component Alert(title:str, description:str)

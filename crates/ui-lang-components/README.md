@@ -116,6 +116,23 @@ and custom geometry, a checkbox slot, narrow layouts and validation feedback.
 These are reusable Ice components, not new language keywords or automatic
 platform-native controls.
 
+## Optional header descriptions
+
+`PageHeader(title, description="")` and `Panel(title, description="")` omit the
+description node and its spacing when the description is empty. A title-only
+header therefore occupies only its title's natural height. Titles and supplied
+descriptions fill the available content width and wrap at word boundaries;
+they grow vertically instead of requiring a fixed header height.
+
+```ice
+PageHeader title="Settings"
+Panel title="Profile"
+  text "Your profile information" @body
+```
+
+Both expose `root/title` and, when present, `root/description` for semantic
+inspection. Panel retains its existing content slot and padding/section spacing.
+
 ## Rust library quick start
 
 Each component remains individually feature-gated, and enabling one also enables its internal component dependencies.

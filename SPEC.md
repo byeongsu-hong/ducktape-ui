@@ -1611,3 +1611,12 @@ Form owns vertical scrolling and bounded content width. Field accepts optional
 help and error text without allocating empty rows; TextField supplies a native
 input while keeping padding and radius customizable. The exact props and
 ownership contract are documented in `crates/ui-lang-components/README.md`.
+
+## Default header composition
+
+The shared Ice `PageHeader` and `Panel` components default `description` to the
+empty string. Empty descriptions render no node or inter-child gap; supplied
+text wraps inside the available width. Their `root/title` and optional
+`root/description` IDs identify real text nodes. This is ordinary component
+composition, not a new Core construct. Public signatures are tracked in the
+component API baseline.

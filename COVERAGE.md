@@ -2255,3 +2255,19 @@ empty help (field bottom differed from input bottom). Restored sources pass the
 same tests. PNG/JSON captures use scale 1 and the app's light palette; the wide,
 narrow and error tests pin en-US, Linux and reduced motion. Screenshots are in
 `examples/settings/screenshots`; tests render real generated native widgets.
+
+## Default header description layout
+
+`PageHeader` and `Panel` accept omitted descriptions and omit empty description
+nodes. `examples/showcase/tests/cases/ui/header_defaults.ice` drives the actual
+shared components via the `header_defaults` integration target. Before the fix,
+the intended empty-description assertions failed: PageHeader height was 53.15
+instead of 26.4 logical pixels, and Panel height was 120.60 instead of 93.85.
+Both retained an unwanted 26.75px caption line plus gap. Restored fixed sources
+pass the same assertions, including calls that omit the description argument.
+
+A 280px-wide long-copy test checks title wrapping, description/body separation
+and text containment. Removing PageHeader's word wrapping is its minimal
+counterexample. The dedicated command is `cargo test -p showcase --test
+header_defaults`; the captures render native widgets through the headless driver.
+This verifies default text layout, not automatic truncation or heading semantics.
