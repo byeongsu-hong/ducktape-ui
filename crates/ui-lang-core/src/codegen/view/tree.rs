@@ -444,6 +444,32 @@ fn bool_option_code(
     ))
 }
 
+fn container_background_code(
+    surface: &ResolvedContainerSurface,
+    style: &ResolvedStyle,
+    program: &LoweredProgram,
+    env: &dyn BindingEnvironment,
+    origin: OriginId,
+) -> Result<String, Error> {
+    if let Some(background @ ResolvedContainerBackground::Linear { .. }) = &surface.background {
+        refuse_when(
+            program,
+            origin,
+            surface.background_alpha.is_some(),
+            "a background alpha",
+        )?;
+        let native =
+            super::container::resolved_container_background_code(background, program, env)?;
+        return Ok(option_code(Some(format!(
+            "{WIRE}::Background::from({native})"
+        ))));
+    }
+    Ok(format!(
+        "({}).map({WIRE}::Background::Color)",
+        background_code(surface, style, program, origin)?
+    ))
+}
+
 fn background_code(
     surface: &ResolvedContainerSurface,
     style: &ResolvedStyle,
@@ -1037,7 +1063,7 @@ fn container(
         edges_code(&container.padding, style.padding, program, env)?,
         option_code(container.align_x.map(align_x_code)),
         option_code(container.align_y.map(align_y_code)),
-        background_code(&container.surface, style, program, origin)?,
+        container_background_code(&container.surface, style, program, env, origin)?,
         border_code(&container.surface, style, program, env)?,
         bool_option_code(container.surface.pixel_snap, program, env)?,
     ))

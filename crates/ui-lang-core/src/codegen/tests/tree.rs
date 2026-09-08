@@ -18,6 +18,19 @@ palette app for AppTheme
 "#;
 
 #[test]
+fn tree_container_linear_background_uses_native_gradient_stops() {
+    let source = format!(
+        "app Hero\n{PALETTE}view\n  box w=160.0 h=100.0 bg=linear(1.57, bg/10@0.0, primary/72@1.0)\n    text \"Hero\"\n"
+    );
+    compile_for(&source, "hero.ice", Target::Native).expect("native hero gradient");
+    let tree = compile_for(&source, "hero.ice", Target::Tree);
+    assert!(
+        tree.is_ok(),
+        "Tree must copy the native hero gradient: {tree:?}"
+    );
+}
+
+#[test]
 fn tree_slider_faces_carry_circle_and_rounded_rectangle_handles() {
     let source = format!(
         "app Knobs\n{PALETTE}state\n  amount = 50.0\non slide(next)\n  amount = next\nview\n  slider amount min=0.0 max=100.0 -> slide _\n    active handle=circle(0.0)\n    hovered handle=rect(12) handle-r=3.0\n    dragged handle=circle(5.0)\n"
@@ -1126,6 +1139,11 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  mouse press=add cursor=pointer\n    text \"a\" @text-fg\n",
         "a mouse cursor",
+    ),
+    emitted(
+        "box: linear gradient",
+        "",
+        "  box bg=linear(1.57, bg/10@0.0, primary/72@1.0)\n    text \"a\"\n",
     ),
     emitted(
         "box: px-snap",

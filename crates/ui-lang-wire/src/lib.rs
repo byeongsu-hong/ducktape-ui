@@ -30,6 +30,9 @@ pub use wit::WIT;
 
 use serde::{Deserialize, Serialize};
 
+mod background;
+pub use background::{Background, ColorStop};
+
 mod image;
 pub use image::{ImageData, ImageFilter, ViewerOptions, viewer_scale_bounds};
 
@@ -678,7 +681,7 @@ pub enum Node {
         padding: Option<Edges>,
         align_x: Option<AlignX>,
         align_y: Option<AlignY>,
-        background: Option<Rgba>,
+        background: Option<Background>,
         border: Option<Border>,
         /// Round the box to whole pixels; `None` is the host's default.
         snap: Option<bool>,
@@ -1741,7 +1744,9 @@ fn sanitize_node(
             shadow.sanitize();
             bound_edges(padding);
             bound_border(border);
-            bound_color(background);
+            if let Some(background) = background {
+                background.sanitize();
+            }
         }
         Node::Linear {
             max_width,

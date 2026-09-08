@@ -759,3 +759,9 @@ backends, overlay capture, coalescing, translation and subscription removal.
 
 Tree sliders preserve authored circle and rounded-rectangle handle shapes on
 active, hovered and dragged faces in both native-child and Wasm hosts.
+
+### Tree container gradients
+
+Container `bg=linear(...)` preserves native angle, color-stop alpha and eight-stop
+semantics in native-child and Wasm hosts. Other widget gradient fields remain
+tracked in the app-store parity ledger.

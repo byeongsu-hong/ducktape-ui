@@ -6,7 +6,7 @@ use app_store_todo::{boot_native, tick_native};
 use ui_lang_guest::testing::{
     answer, edit, find, has_text, item, keys, press, slide, texts, toggle, type_into,
 };
-use ui_lang_guest::wire::{Frame, Node, Request, Rgba};
+use ui_lang_guest::wire::{Background, Frame, Node, Request, Rgba};
 
 fn boot_with(stored: &[Item]) -> Frame {
     boot_with_notes(stored, "")
@@ -261,7 +261,10 @@ fn row_checkbox<'a>(frame: &'a Frame, label: &str) -> Option<&'a Node> {
 /// The app's own backdrop: the root container's background.
 fn backdrop(frame: &Frame) -> Option<Rgba> {
     match frame.root.as_ref()? {
-        Node::Container { background, .. } => *background,
+        Node::Container {
+            background: Some(Background::Color(color)),
+            ..
+        } => Some(*color),
         _ => None,
     }
 }

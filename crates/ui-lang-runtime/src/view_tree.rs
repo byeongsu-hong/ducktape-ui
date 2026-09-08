@@ -939,6 +939,22 @@ fn radio_style(
     resolved
 }
 
+fn container_background(value: wire::Background) -> Background {
+    match value {
+        wire::Background::Color(value) => Background::Color(color(value)),
+        wire::Background::Linear { angle, stops } => iced::gradient::Linear {
+            angle: iced::Radians(angle),
+            stops: stops.map(|stop| {
+                stop.map(|stop| iced::gradient::ColorStop {
+                    offset: stop.offset,
+                    color: color(stop.color),
+                })
+            }),
+        }
+        .into(),
+    }
+}
+
 fn apply_slider_face(face: wire::SliderFace, style: &mut widget::slider::Style) {
     if let Some(shape) = face.handle_shape {
         style.handle.shape = match shape {
@@ -1220,7 +1236,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             if let Some(align) = align_y {
                 container = container.align_y(vertical(*align));
             }
-            let background = background.map(color);
+            let background = background.map(container_background);
             let edge = edge.map(border);
             let mut shadow_value = iced::Shadow::default();
             apply_shadow(*shadow, &mut shadow_value);
@@ -1228,7 +1244,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             container = container.style(move |_theme| {
                 let default = widget::container::Style::default();
                 widget::container::Style {
-                    background: background.map(Background::Color),
+                    background,
                     border: edge.unwrap_or_default(),
                     shadow: shadow_value,
                     snap: snap.unwrap_or(default.snap),
@@ -2616,7 +2632,7 @@ mod tests {
                     padding: None,
                     align_x: None,
                     align_y: None,
-                    background: Some(wire::Rgba([1.0; 4])),
+                    background: Some(wire::Background::Color(wire::Rgba([1.0; 4]))),
                     border: None,
                     snap: None,
                     content: Box::new(wire::Node::Space {
@@ -3506,7 +3522,7 @@ mod tests {
             padding: Some(wire::Edges::all(8.0)),
             align_x: Some(wire::AlignX::Center),
             align_y: Some(wire::AlignY::Center),
-            background: Some(wire::Rgba([0.0, 0.0, 0.0, 1.0])),
+            background: Some(wire::Background::Color(wire::Rgba([0.0, 0.0, 0.0, 1.0]))),
             border: None,
             snap: Some(true),
             content: Box::new(wire::Node::Linear {

@@ -694,6 +694,16 @@ jobs:
       - name: Verify native pick options and menu routes through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_pick_ -- --ignored
+      - name: Bundle container gradient fixtures
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-gradient-fixture --target wasm32-unknown-unknown \
+            --no-wasm-opt --out examples/app-store/target/gradient-fixture
+          cd examples/app-store
+          python3 scripts/build-native.py -p app-store-gradient-fixture --out target/gradient-native
+      - name: Check native and Wasm container gradient pixels
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_container_gradients_ -- --ignored --test-threads=1
       - name: Bundle slider handle fixtures
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \

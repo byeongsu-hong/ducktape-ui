@@ -2186,3 +2186,31 @@ dropping state faces fails hovered pixels; freezing the slide payload fails
 `Some(50.0) != Some(75.0)`. Omitting radius sanitization fails the hostile-frame
 assertion with `slider handle radius -1417 outside 0..=8192`. Each mutation is
 restored before the final checks.
+
+### Tree container linear backgrounds
+
+`tree_container_linear_background_uses_native_gradient_stops` first fails the
+Tree acceptance assertion with E190 `a gradient background` while native
+compilation succeeds. Tree now reuses native gradient construction and copies
+its fixed eight stop slots. Other widgets' gradient refusals remain covered,
+including rich-span source attribution.
+
+`bundled_container_gradients_match_native_angle_alpha_palette_and_resize`
+compares real native-child and Wasm output against direct Iced linear gradients.
+Three regions reproduce the apple-music hero, frame and alpha scrim use in
+`components/library.ice:48`, `app.ice:65` and `components/library.ice:308`.
+Real Rotate and Recolor buttons update angle and the app's active typed palette;
+retained UI reconstruction at a different width checks current-bound rendering.
+The comparison asserts nonuniform pixels and matches each region independently.
+Wire hostile-frame tests cover finite angles/colors, bounded stop offsets and
+strictly increasing retained stops across all eight slots.
+
+Build `app-store-gradient-fixture` with `cargo ice bundle --manifest-path examples/app-store/Cargo.toml -p app-store-gradient-fixture --target wasm32-unknown-unknown --no-wasm-opt --out examples/app-store/target/gradient-fixture`,
+then in app-store run `python3 scripts/build-native.py -p app-store-gradient-fixture --out target/gradient-native`
+and `cargo test --locked -p app-store-host bundled_container_gradients_ -- --ignored --test-threads=1`.
+Red/Green mutations independently zero the host angle, force opaque stops,
+replace gradients with white, and freeze gradient width: they fail the frame,
+scrim, hero and resized-bound assertions respectively. Rebuilding the Wasm
+fixture with Recolor retaining the original palette fails the recolored hero
+pixels. Omitting wire background sanitization fails `gradient stop must be
+finite and within 0..=1`. All mutations are restored before final gates.

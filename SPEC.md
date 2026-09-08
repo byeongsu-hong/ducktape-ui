@@ -1576,3 +1576,15 @@ Tree slider faces carry `handle=circle(radius)` or `handle=rect(width)` with
 dragged faces overlay the active face. Omitted fields preserve that inheritance;
 an explicit zero circle radius hides the handle. Hosts bound copied radii to their pixel budget and use the native Iced handle geometry.
 Rebuild hosts and guests together: the copied slider face wire layout changes.
+
+### Tree container gradients
+
+Container `bg=linear(angle, color@offset, ...)` uses native Iced construction,
+then copies its angle and eight stop slots to the host. This preserves native
+stop insertion, duplicate offsets and overflow behavior. The host paints a
+native Iced linear gradient against the current container bounds. Stop colors
+include their authored alpha. Nonfinite angles become zero; malformed wire
+stops with nonfinite/out-of-range or nonincreasing offsets are discarded, and
+colors use the shared RGBA bounds. Control faces, other layout surfaces, rich
+spans and canvas gradients remain separate Tree gaps. Rebuild hosts and guests
+together because Container background now carries a color-or-gradient tag.
