@@ -27,9 +27,7 @@ fn guest(macos: bool) -> Arc<Mutex<Guest>> {
     ));
     {
         let mut guest = guest.lock().unwrap();
-        let Guest { view, store, .. } = &mut *guest;
-        arm(store);
-        view.call_init(store, macos).unwrap();
+        guest.backend.init(macos).unwrap();
     }
     guest
 }

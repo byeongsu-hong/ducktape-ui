@@ -6,6 +6,7 @@ mod catalog;
 mod guest_view;
 mod library;
 mod limits;
+mod native;
 mod store;
 mod surfaces;
 mod terminal;

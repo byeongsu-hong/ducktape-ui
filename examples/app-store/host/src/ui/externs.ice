@@ -21,6 +21,7 @@ extern crate::store
   sync catalog_dir() -> str
   pure find_entry(catalog:&[CatalogEntry], id:&str) -> CatalogEntry?
   pure capability_hint(name:str) -> str
+  pure is_native(entry:&CatalogEntry) -> bool
   pure short_hash(hash:str) -> str
   install_requested(request:InstallRequest) -> InstallCompletion
   sync commit_install(library:[Installed], opening:[Loaded], running:&[Running], serial:i64, completion:InstallCompletion) -> InstallCommit

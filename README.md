@@ -675,3 +675,9 @@ Tree keyed columns and lazy boundaries preserve authored `#id` directly on
 the wire node, including nested lazy and virtual keyed rows. Their descendants
 retain that scope for guest test selectors and widget operations. Identified
 Tree structures emit no native Iced container wrapper.
+
+The app-store example also packages the same Tree apps as trusted native child
+processes. Both backends share host rendering and snapshots; native executables
+require explicit OS-code trust and are not Wasm sandboxes. See the
+[native execution guide](examples/app-store/README.md#trusted-native-tree-applications)
+and [functional parity worklist](examples/app-store/PARITY.md).

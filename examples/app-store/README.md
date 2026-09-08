@@ -1,13 +1,15 @@
-# app-store — an OS-shaped host for Ice apps compiled to wasm
+# app-store — a native host for wasm and trusted native Ice apps
 
-A native Ice daemon that reads a catalog of `ice:view` components, installs
-one on Get inside a fuel and memory budget, gives it a native window of its
-own, and drops the instance when that window closes. Every app in the
-catalog is an ordinary Ice application compiled for the `tree` target: its
-view builds a widget tree the host renders with its own toolkit, and nothing
-in the language changes to make it installable. What the host adds is
-everything an app cannot do alone — time, storage, other apps, the colour
-mode — and it adds them as capabilities the app's manifest has to declare.
+A native Ice daemon that reads a catalog of sandboxed `ice:view` components
+and trusted native Tree executables. Get binds approval to the artifact's exact
+bytes; Open gives the app its own native window, and closing it ends its instance
+or process. Wasm has fuel and memory limits. Native code has your operating-system
+permissions and requires explicit trust.
+
+Every catalog app is an ordinary Ice application compiled for the `tree` target:
+its view builds a widget tree that the host renders with its own toolkit. Both
+backends share host time, storage, messaging and colour-mode protocols. Declared
+capabilities govern these protocol requests; they do not sandbox native OS calls.
 
 ![The store in light mode, with Clock, Activity and Counter open in windows of their own; three presses of Counter's + have just reached Activity over the bus](screenshots/store-light.png)
 
@@ -17,11 +19,11 @@ mode — and it adds them as capabilities the app's manifest has to declare.
 crates/ui-lang-wire/   (workspace crate) the wire: a Frame carrying the app's
                 widget tree out, meaning-level events (message 3, input 0 now
                 reads "abc") in, plus Request / Response for everything else
-crates/ui-lang-guest/  (workspace crate) what an app needs to run in wasm: a
+crates/ui-lang-guest/  (workspace crate) what a Tree app needs to run: a
                 Driver (task executor, subscription tracker, per-frame message
                 tables), `host::request` / `host::subscribe` / `host::theme`, and
-                `export_app!`, which adds the `ice:view` component exports and
-                the manifest
+                `export_app!`, which adds `ice:view` component exports, a native
+                process entry point, and the manifest
 crates/ui-lang-runtime/view_tree   (workspace crate) the host's half: the tree
                 rendered with iced's widgets, every input's text and every
                 editor's content kept host-side
@@ -406,7 +408,46 @@ the result goes through the same walk, since an inserted subtree can push
 the whole past `MAX_NODES` or `MAX_DEPTH` or reuse a key the tree already
 has, and only the whole can be checked for that.
 
+## Trusted native Tree applications
+
+![The real native host displaying all five trusted native packages](screenshots/native-catalog.png)
+
+The same five Tree apps can run as native child processes:
+
+```sh
+python3 scripts/build-native.py
+APP_STORE_CATALOG=target/app-store-native-catalog cargo run -p app-store-host
+```
+
+Run these commands in `examples/app-store`. The builder compiles trusted local
+sources and asks each executable for its static manifest before app boot. Each
+`<id>.native/` package contains `app` (`app.exe` on Windows) and `manifest`. The
+catalog reads those files without launching them. Get asks for **native-code**
+consent, and hashes both the strict manifest and executable; changing either
+requires fresh consent. The loader executes a private copy of the bytes it
+verified. Native and wasm artifacts have distinct catalog IDs.
+
+Native executables have your full operating-system permissions. They are not
+Wasm sandboxes: declared host capabilities govern protocol requests but cannot
+prevent direct native file, network, memory or process access. The host bounds
+IPC messages and gives each init/tick/snapshot/restore exchange 100 ms; a failed
+transport or deadline kills the guest process. Closing the app also kills and
+reaps it. Stdout is reserved for IPC; use stderr or `host::log` for diagnostics.
+Native monitors show elapsed time and explicitly omit Wasm fuel accounting.
+
+Both backends use the same Tree Driver, wire events, host native rendering and
+owned-state snapshot contract. Existing on-mount task streams (including the
+shipped theme stream) prevent quiescent snapshots; the parity worklist tracks
+the subscription-based follow-up. Native reload evidence uses the versioned
+reload fixtures. This does not change the separate native language
+code generator or remove existing Tree feature gaps. [The parity worklist](PARITY.md)
+tracks those user-facing gaps and their required behavior evidence.
+
 ## What is not here yet
+
+Full native/wasm parity is ongoing; see the [functional worklist](PARITY.md).
+The native process backend addresses execution, not the remaining Tree syntax,
+widget, effect, and authored-test gaps below.
 
 Catalog polling and approved in-place replacement are implemented; state-schema
 migrations and remote distribution are not. See [host replacement](#approved-host-replacement).

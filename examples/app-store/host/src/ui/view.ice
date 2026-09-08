@@ -125,12 +125,12 @@ view
                       r=14.0
                       p=20.0
                     col gap=6.0
-                      text "Every app here runs in a window of its own, inside a fuel and memory budget."
+                      text "Every app runs in its own window. Wasm apps are sandboxed; native apps require trust."
                         with
                           size=15.0
                           @text-fg
                           @font-bold
-                      text "Get one below. It opens beside this window, follows this window's colour mode, and only ever touches what its manifest declares."
+                      text "Review each app’s permissions before Get. Native executables require full operating-system trust."
                         with
                           size=12.5
                           @text-muted
@@ -181,12 +181,16 @@ view
                           size=12.0
                           font=figures
                           @text-muted
-                      text "Build the apps, then Rescan:" size=12.5 @text-muted
-                      text "cargo build -p app-store-todo -p app-store-counter -p app-store-clock -p app-store-activity -p app-store-chaos --release --target wasm32-unknown-unknown"
+                      text "Build wasm components, then Rescan:" size=12.5 @text-muted
+                      text "cargo ice bundle -p app-store-todo -p app-store-counter -p app-store-clock -p app-store-activity -p app-store-chaos --target wasm32-unknown-unknown"
                         with
                           size=11.5
                           font=figures
                           @text-fg
+                      text "For trusted native apps: python3 scripts/build-native.py, then launch this host with APP_STORE_CATALOG=target/app-store-native-catalog."
+                        with
+                          size=12.5
+                          @text-muted
                 if empty(rows.cards) && !empty(catalog)
                   text "No app matches that search." size=12.5 @text-muted
                 row #cards w=fill gap=16.0 wrap wrap-gap=16.0
@@ -252,7 +256,7 @@ view
                     size=15.0
                     @text-fg
                     @font-bold
-                text "A guest is ticked only when the store has something to deliver or its widgets asked for a frame. A frame that changed nothing crosses as a flag, one that changed as patches, and a module loaded once is kept. Fuel / s is the last ten seconds averaged; past 600M/s a guest is throttled until it is back under."
+                text "A guest is ticked only when the store has something to deliver or its widgets asked for a frame. A frame that changed nothing crosses as a flag, one that changed as patches, and a module loaded once is kept. Wasm Fuel / s averages the last ten seconds; past 600M/s a wasm guest is throttled. Native processes show elapsed time and have no fuel meter."
                   with
                     size=12.5
                     @text-muted
@@ -468,7 +472,7 @@ view
                                 with
                                   size=13.0
                                   @text-fg
-                            text "The manifest is the module's own word, unsigned. The store pins this exact file by its hash: a rebuilt one has to be reviewed again."
+                            text "The manifest is the app’s own word, unsigned. The store pins the exact artifact bytes: a rebuild or native manifest change needs fresh review."
                               with
                                 size=12.5
                                 @text-muted
@@ -573,12 +577,19 @@ view
                             size=11.0
                             @text-muted
                             @font-bold
-                        text "100M fuel per tick · 64 MB of memory · 256 requests per tick · one instance"
-                          with
-                            size=13.0
-                            font=figures
-                            @text-fg
-                        text "Past any of those the store ends the instance and says why in its window. What the app wrote to storage stays."
+                        if is_native(entry)
+                          text "Trusted native process · 100 ms exchange deadline · bounded host IPC"
+                            with
+                              size=13.0
+                              font=figures
+                              @text-fg
+                        if !is_native(entry)
+                          text "100M fuel per tick · 64 MB of memory · 256 requests per tick · one instance"
+                            with
+                              size=13.0
+                              font=figures
+                              @text-fg
+                        text "A failed or overdue exchange ends the instance. Native executables retain your full OS permissions and have no Wasm fuel or memory limit."
                           with
                             size=12.5
                             @text-muted

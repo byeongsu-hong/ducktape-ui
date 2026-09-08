@@ -1,5 +1,5 @@
-//! The catalog: every `ice:view` component in the catalog directory that
-//! carries an `ice.manifest` section, read without compiling any of them.
+//! The catalog: wasm components with an `ice.manifest` section and trusted
+//! native packages with a strict manifest. Scanning never executes an app.
 
 use crate::limits::MAX_MODULE_BYTES;
 
@@ -27,8 +27,8 @@ pub struct CatalogEntry {
     pub path: String,
     /// What the app's tile shows: the first letter of its name.
     pub mark: String,
-    /// SHA-256 of the file as scanned, in hex. The library pins it at
-    /// install and the loader checks it before anything runs.
+    /// Content identity: wasm bytes, or native manifest plus executable bytes.
+    /// The library pins it at install and the loader verifies it before launch.
     pub hash: String,
 }
 
@@ -63,13 +63,37 @@ pub(crate) fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
     let mut catalog: Vec<CatalogEntry> = entries
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "wasm"))
         .filter(|path| {
-            std::fs::metadata(path).is_ok_and(|metadata| metadata.len() <= MAX_MODULE_BYTES)
+            path.extension()
+                .is_some_and(|ext| ext == "wasm" || ext == "native")
+        })
+        .filter(|path| {
+            std::fs::metadata(path).is_ok_and(|metadata| {
+                metadata.is_dir() || (metadata.is_file() && metadata.len() <= MAX_MODULE_BYTES)
+            })
         })
         .filter_map(|path| {
-            let bytes = std::fs::read(&path).ok()?;
-            let manifest = read_manifest(&bytes)?;
+            let native = path.extension().is_some_and(|ext| ext == "native");
+            let (manifest, hash) = if native {
+                let (manifest, bytes) = native_package(&path).ok()?;
+                (
+                    ui_lang_wire::manifest::Manifest::parse(std::str::from_utf8(&manifest).ok()?)?,
+                    native_hash(&manifest, &bytes),
+                )
+            } else {
+                let bytes = std::fs::read(&path).ok()?;
+                (read_manifest(&bytes)?, sha256_hex(&bytes))
+            };
+            let mut capabilities: Vec<_> = manifest
+                .capabilities
+                .iter()
+                .map(|name| Capability { name: name.clone() })
+                .collect();
+            if native && !capabilities.iter().any(|cap| cap.name == "native-code") {
+                capabilities.push(Capability {
+                    name: "native-code".into(),
+                });
+            }
             let mark = manifest
                 .name
                 .chars()
@@ -77,23 +101,81 @@ pub(crate) fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
                 .map(|first| first.to_uppercase().to_string())
                 .unwrap_or_default();
             Some(CatalogEntry {
-                id: path.file_stem()?.to_string_lossy().into_owned(),
+                id: if native {
+                    path.file_name()?
+                } else {
+                    path.file_stem()?
+                }
+                .to_string_lossy()
+                .into_owned(),
                 name: manifest.name,
                 description: manifest.description,
                 preferred_size: manifest.preferred_size,
-                capabilities: manifest
-                    .capabilities
-                    .iter()
-                    .map(|name| Capability { name: name.clone() })
-                    .collect(),
+                capabilities,
                 path: path.to_string_lossy().into_owned(),
                 mark,
-                hash: sha256_hex(&bytes),
+                hash,
             })
         })
         .collect();
     catalog.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));
     catalog
+}
+
+pub fn is_native(entry: &CatalogEntry) -> bool {
+    std::path::Path::new(&entry.path)
+        .extension()
+        .is_some_and(|ext| ext == "native")
+}
+
+pub(crate) fn native_package(path: &std::path::Path) -> Result<(Vec<u8>, Vec<u8>), String> {
+    fn read(path: &std::path::Path, limit: u64) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+        if !metadata.is_file() || metadata.len() > limit {
+            return Err(format!(
+                "{}: expected a bounded regular file",
+                path.display()
+            ));
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .map_err(|error| error.to_string())?
+            .take(limit + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if bytes.len() as u64 > limit {
+            return Err("native package exceeds the byte budget".into());
+        }
+        Ok(bytes)
+    }
+    let manifest = read(&path.join("manifest"), 64 << 10)?;
+    if ui_lang_wire::manifest::Manifest::parse(
+        std::str::from_utf8(&manifest).map_err(|error| error.to_string())?,
+    )
+    .is_none()
+    {
+        return Err("invalid native manifest".into());
+    }
+    let bytes = read(
+        &path.join(if cfg!(windows) { "app.exe" } else { "app" }),
+        MAX_MODULE_BYTES,
+    )?;
+    Ok((manifest, bytes))
+}
+
+pub(crate) fn native_hash(manifest: &[u8], executable: &[u8]) -> String {
+    use sha2::Digest;
+    let mut digest = sha2::Sha256::new();
+    digest.update(b"ice-native\0");
+    digest.update((manifest.len() as u64).to_le_bytes());
+    digest.update(manifest);
+    digest.update(executable);
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// The content hash the catalog, the library and the loader all speak in.
@@ -134,6 +216,7 @@ pub fn filter_catalog(catalog: &[CatalogEntry], query: String) -> Vec<CatalogEnt
 /// What granting a capability lets the app do, in the user's terms.
 pub fn capability_hint(name: String) -> String {
     match name.as_str() {
+        "native-code" => "Run trusted native code with your operating-system permissions. This executable is not sandboxed; host capability restrictions do not confine its direct file, network, or process access.",
         "clipboard" => "Read and replace text in the standard and primary clipboards.",
         "clock" => "Read the host's clock, sleep, and be woken every so often.",
         "storage" => {

@@ -545,6 +545,17 @@ jobs:
             echo "::error::expected at least 5 componentized apps in the catalog, found ${#catalog[@]}"
             exit 1
           fi
+      - name: Build trusted native guest packages
+        working-directory: examples/app-store
+        run: |
+          python3 scripts/build-native.py
+          python3 scripts/build-native.py -p app-store-reload-v1-fixture -p app-store-reload-v2-fixture --out target/native-reload-fixture
+      - name: Prove native and wasm execution parity
+        working-directory: examples/app-store
+        run: |
+          cargo test --locked -p app-store-host store::native_tests:: -- --ignored
+          cargo test --locked -p app-store-host native::tests:: -- --include-ignored
+          cargo test --locked -p app-store-host native_reload_preserves -- --ignored
       - name: Lint the app-store workspace
         working-directory: examples/app-store
         run: cargo clippy --locked --workspace --tests --no-deps -- -D warnings

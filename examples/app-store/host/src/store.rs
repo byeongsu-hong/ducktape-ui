@@ -63,7 +63,7 @@ impl ViewImports for HostState {
 use crate::catalog::sha256_hex;
 pub use crate::catalog::{
     Capability, CatalogEntry, PreferredSize, StoreError, capability_hint, catalog_dir, find_entry,
-    scan_catalog, short_hash,
+    is_native, scan_catalog, short_hash,
 };
 pub use crate::guest_view::wasm_view;
 pub use crate::library::{
@@ -199,8 +199,7 @@ pub(crate) struct MountedWidgets<'a> {
 pub struct Guest {
     /// Kept whole so a faulted instance can be reloaded in place.
     entry: CatalogEntry,
-    store: Store<HostState>,
-    view: View,
+    backend: Backend,
     /// Cleared when this instance faults or drops, which is what prunes its
     /// bus subscriptions without locking the guest from inside a publish.
     pub(crate) alive: Arc<AtomicBool>,
@@ -424,16 +423,30 @@ fn component(entry: &CatalogEntry) -> Result<(Component, bool), String> {
     Ok((component, false))
 }
 
+#[path = "backend.rs"]
+mod backend;
+use backend::Backend;
+
 /// An instantiated component with no app initialization or host resources.
 struct Instance {
-    store: Store<HostState>,
-    view: View,
+    backend: Backend,
     load: Load,
 }
 
 impl Instance {
     fn new(entry: &CatalogEntry) -> Result<Self, String> {
         let path = &entry.path;
+        if crate::catalog::is_native(entry) {
+            let started = Instant::now();
+            let process = crate::native::Process::new(entry)?;
+            return Ok(Self {
+                backend: Backend::Native(process),
+                load: Load {
+                    took: started.elapsed(),
+                    cached: false,
+                },
+            });
+        }
         let engine = engine();
         let started = Instant::now();
         let (component, cached) = component(entry)?;
@@ -477,8 +490,7 @@ impl Instance {
         let view = View::instantiate(&mut store, &component, &linker)
             .map_err(|error| format!("{path}: {}", first_line(&error)))?;
         Ok(Self {
-            store,
-            view,
+            backend: Backend::Wasm { store, view },
             load: Load {
                 took: started.elapsed(),
                 cached,
@@ -488,6 +500,10 @@ impl Instance {
 }
 
 impl Guest {
+    pub(crate) fn is_native(&self) -> bool {
+        crate::catalog::is_native(&self.entry)
+    }
+
     fn load(entry: &CatalogEntry) -> Result<Self, String> {
         Self::load_with_terminal(
             entry,
@@ -499,20 +515,8 @@ impl Guest {
         entry: &CatalogEntry,
         program: Option<std::path::PathBuf>,
     ) -> Result<Self, String> {
-        let Instance {
-            mut store,
-            view,
-            load,
-        } = Instance::new(entry)?;
-        let path = &entry.path;
-        // `on mount` runs in here, so a panic in the app's boot has the same
-        // message handed over as a panic in any later tick — and the boot
-        // gets a budget of its own, not what instantiation left of one.
-        arm(&mut store);
-        if let Err(error) = view.call_init(&mut store, cfg!(target_os = "macos")) {
-            let trap = format!("{path}: init trapped: {}", first_line(&error));
-            return Err(panic_message(&mut store).unwrap_or(trap));
-        }
+        let mut instance = Instance::new(entry)?;
+        instance.backend.init(cfg!(target_os = "macos"))?;
         let terminal = if entry.capabilities.iter().any(|cap| cap.name == "terminal") {
             Some(Arc::new(std::sync::Mutex::new(
                 crate::terminal::Terminal::configured(program)?,
@@ -522,7 +526,7 @@ impl Guest {
         };
         Ok(Self::from_instance(
             entry,
-            Instance { store, view, load },
+            instance,
             terminal,
             Arc::new(crate::surfaces::log::Session::default()),
         ))
@@ -534,7 +538,7 @@ impl Guest {
         terminal: Option<Arc<Mutex<crate::terminal::Terminal>>>,
         log_session: Arc<crate::surfaces::log::Session>,
     ) -> Self {
-        let Instance { store, view, load } = instance;
+        let Instance { backend, load } = instance;
         LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
         let mut surfaces = crate::surfaces::registry(log_session.clone());
         if let Some(terminal) = &terminal {
@@ -550,8 +554,7 @@ impl Guest {
             terminal_notice: None,
             log_session,
             entry: entry.clone(),
-            store,
-            view,
+            backend,
             alive: Arc::new(AtomicBool::new(true)),
             pending: Vec::new(),
             frame: wire::Frame::default(),
@@ -1123,10 +1126,9 @@ impl Guest {
         self.sensors.ticked(&events);
         let bytes = wire::encode(&events);
         let started = Instant::now();
-        arm(&mut self.store);
         let outcome = self.tick_inner(&bytes);
         self.tick_time = started.elapsed();
-        self.fuel_used = FUEL_PER_TICK.saturating_sub(self.store.get_fuel().unwrap_or(0));
+        self.fuel_used = self.backend.fuel_used();
         match outcome {
             Ok(mut frame) => {
                 if frame.unchanged {
@@ -1164,19 +1166,17 @@ impl Guest {
             Err(error) => {
                 // With `panic = "abort"` a panic is a bare `unreachable`, so
                 // the reason is what the guest's hook parked or nothing.
-                let trap = first_line(&error);
-                let reason = panic_message(&mut self.store).unwrap_or(trap);
-                self.fault = Some(reason);
+                self.fault = Some(error);
                 self.alive.store(false, Ordering::Relaxed);
                 FAULTED.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
 
-    fn tick_inner(&mut self, bytes: &[u8]) -> wasmtime::Result<wire::Frame> {
-        let frame = self.view.call_tick(&mut self.store, bytes)?;
+    fn tick_inner(&mut self, bytes: &[u8]) -> Result<wire::Frame, String> {
+        let frame = self.backend.tick(bytes)?;
         let len = frame.len();
-        let frame = shape(&frame).map_err(wasmtime::Error::msg)?;
+        let frame = shape(&frame)?;
         if frame.root.is_some() {
             self.frame_bytes = len;
         } else if !frame.unchanged {
@@ -1668,3 +1668,7 @@ mod pick_tests;
 #[cfg(test)]
 #[path = "reload_tests.rs"]
 mod reload_tests;
+
+#[cfg(test)]
+#[path = "native_tests.rs"]
+mod native_tests;
