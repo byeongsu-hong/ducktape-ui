@@ -31,6 +31,8 @@ fn tree_editor_binding_uses_a_deferred_commit_and_logical_document_identity() {
     assert!(code.contains("EditorTransaction<"));
     assert!(code.contains(".apply(&mut self.notes)"));
     assert!(code.contains(".register("));
+    assert!(code.contains("fn(bool) -> ::ui_lang_guest::EditorBinding<::std::string::String>"));
+    assert!(!code.contains("fn __ice_map_editor_binding"));
     assert_eq!(
         code.matches("document: (\"app:notes\").to_owned()").count(),
         2

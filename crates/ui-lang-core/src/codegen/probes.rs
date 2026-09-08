@@ -321,6 +321,11 @@ pub(in crate::codegen) fn generate_extern_probes(
             )
             .unwrap(),
             ExternKind::EditorBinding => {
+                if program.target() == Target::Tree {
+                    let callback_params = item.params.iter().map(|(_, ty)| rust_type_code(program, ty)).collect::<Vec<_>>().join(", ");
+                    writeln!(out, "#[allow(dead_code)] fn __ui_lang_check_editor_binding_{}() {{ let _: fn({callback_params}) -> ::ui_lang_guest::EditorBinding<{output}> = {}; }}", item.name, item.rust_path).unwrap();
+                    continue;
+                }
                 let callback_params = std::iter::once(
                     "::iced::widget::text_editor::KeyPress".to_owned(),
                 )
@@ -413,9 +418,11 @@ pub(in crate::codegen) fn generate_editor_binding_mapper(
     program: &LoweredProgram,
     component_ids: &HashSet<ExternFnId>,
 ) {
-    if !program.extern_functions().any(|item| {
-        !component_ids.contains(&item.declaration.id) && item.kind == ExternKind::EditorBinding
-    }) {
+    if program.target() == Target::Tree
+        || !program.extern_functions().any(|item| {
+            !component_ids.contains(&item.declaration.id) && item.kind == ExternKind::EditorBinding
+        })
+    {
         return;
     }
     writeln!(
