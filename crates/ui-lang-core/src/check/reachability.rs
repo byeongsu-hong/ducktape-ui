@@ -43,6 +43,9 @@ pub(in crate::check) fn reachable_handlers(
         .collect();
     for subscription in &document.subscriptions {
         queue.push_back(subscription.route.handler.as_str());
+        if let Some(route) = &subscription.error_route {
+            queue.push_back(route.handler.as_str());
+        }
     }
     // A tray menu row is an entry point exactly like a subscription source:
     // the platform, not the view, is what calls it.

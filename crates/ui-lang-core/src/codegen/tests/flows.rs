@@ -525,3 +525,129 @@ view
     assert!(generated.contains("Task::<i64>::none()"));
     assert!(generated.contains("Vec<::std::result::Result<i64, crate::backend::AppError>>"));
 }
+
+const FALLIBLE_SUBSCRIPTION: &str = r#"app Streams
+extern crate::backend
+  AppError(message:str)
+  stream fallible() -> str ! AppError
+  pure keep(value:result[str, AppError]) -> result[str, AppError]?
+state
+  value:str = ""
+  error:str = ""
+  enabled:bool = true
+  tag:i64 = 7
+on succeeded(item)
+  value = item
+on failed(problem)
+  error = problem.message
+subscribe
+  run fallible() -> succeeded _ | failed _
+view
+  text value
+"#;
+
+#[test]
+fn lowers_fallible_subscription_routes_for_both_targets() {
+    let source = FALLIBLE_SUBSCRIPTION.replace("state\n", &format!("{HANDLER_PERF_THEME}state\n"));
+    for target in [crate::Target::Native, crate::Target::Tree] {
+        let generated = crate::compile_for(&source, "subscriptions.ice", target).unwrap();
+        assert!(
+            generated.contains("Result::Ok(__payload) => __StreamsMessage::Succeeded(__payload)")
+        );
+        assert!(
+            generated.contains("Result::Err(__payload) => __StreamsMessage::Failed(__payload)")
+        );
+        let single = source
+            .replace(
+                "on succeeded(item)\n  value = item\non failed(problem)\n  error = problem.message",
+                "on observed(result)",
+            )
+            .replace(
+                "run fallible() -> succeeded _ | failed _",
+                "run fallible() -> observed _",
+            );
+        let generated_single = crate::compile_for(&single, "subscriptions.ice", target).unwrap();
+        assert!(
+            generated_single.contains(".map(move |__value| __StreamsMessage::Observed(__value))"),
+            "one route must retain the whole Result on either target"
+        );
+        let contextual = source
+            .replace("on succeeded(item)", "on succeeded(context, item)")
+            .replace("on failed(problem)", "on failed(context, problem)")
+            .replace(
+                "run fallible() -> succeeded _ | failed _",
+                "run fallible() with=tag filter=keep when enabled -> succeeded _ _ | failed _ _",
+            );
+        let generated = crate::compile_for(&contextual, "subscriptions.ice", target).unwrap();
+        assert!(
+            generated
+                .contains(".filter_map(|__value| crate::backend::keep(__value)).with(self.tag)")
+        );
+        assert!(generated.contains("match __value.1"));
+        assert!(generated.contains(
+            "Result::Ok(__payload) => __StreamsMessage::Succeeded(__value.0, __payload)"
+        ));
+        assert!(
+            generated.contains(
+                "Result::Err(__payload) => __StreamsMessage::Failed(__value.0, __payload)"
+            )
+        );
+    }
+}
+
+#[test]
+fn subscription_failure_routes_reject_wrong_payloads_and_preserve_formatting() {
+    let source = FALLIBLE_SUBSCRIPTION.replace("state\n", &format!("{HANDLER_PERF_THEME}state\n"));
+    for (broken, code, message) in [
+        (
+            source.replace(
+                "stream fallible() -> str ! AppError",
+                "stream fallible() -> str",
+            ),
+            "E127",
+            "Result payload",
+        ),
+        (
+            source.replace("failed _", "failed tag"),
+            "E127",
+            "only accept `_`",
+        ),
+        (source.replace("failed _", "failed _ _"), "E129", "payload"),
+    ] {
+        let error = compile(&broken, "subscriptions.ice").unwrap_err();
+        assert_eq!(error.code, code, "{error}");
+        assert!(error.message.contains(message), "{error}");
+    }
+    let formatted =
+        crate::format_source(&source.replace("  run fallible()", "    run fallible()")).unwrap();
+    assert!(formatted.contains("  run fallible() -> succeeded _ | failed _\n"));
+    assert_eq!(crate::format_source(&formatted).unwrap(), formatted);
+    let checked = crate::analyze(&source).unwrap();
+    assert!(
+        !checked
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "W005" && warning.message.contains("failed"))
+    );
+}
+
+#[test]
+fn tree_timer_filter_cannot_require_an_instant_through_only_the_error_route() {
+    let source = format!(
+        r#"app Timer
+extern crate::backend
+  pure event(value:instant) -> result[i64, str]?
+{HANDLER_PERF_THEME}on elapsed
+on failed(problem)
+subscribe
+  every 1s filter=event -> elapsed | failed _
+view
+  text "Timer"
+"#
+    );
+    assert!(crate::compile_for(&source, "timer.ice", crate::Target::Native).is_ok());
+    let error = crate::compile_for(&source, "timer.ice", crate::Target::Tree)
+        .expect_err("a Tree timer filter must not receive an unavailable Instant");
+    assert_eq!(error.code, "E190");
+    assert!(error.message.contains("no instant"));
+}

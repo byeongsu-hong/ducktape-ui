@@ -88,6 +88,9 @@ fn hot_sync_call_warnings(
             | CheckedSubscriptionSource::InputMethod(_)
             | CheckedSubscriptionSource::SystemTheme => continue,
         };
+        if let Some(route) = &subscription.error_route {
+            hot.entry(route.handler).or_insert_with(|| cadence.clone());
+        }
         hot.entry(subscription.route.handler).or_insert(cadence);
     }
     // A slider routes every drag step; buttons, submits and pickers route

@@ -121,6 +121,11 @@ For example, `run every fetch(query) -> loaded(query, _)` captures `query` at
 launch, not completion; that explicit value may come from state, a derived
 value, a handler parameter, or a `let` local.
 
+Fallible subscriptions can route each item with
+`subscribe` / `run events() -> received _ | failed _`. Success and error payloads
+reach separate handlers without ending the stream. A single subscription route
+continues to receive the complete `Result` item.
+
 Every directly routed handler Future and stream names its delivery mode.
 `run every` delivers every Future completion; `stream every` delivers every
 item until that stream ends. Superseding Futures use `run latest lane=<name>`

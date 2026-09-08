@@ -590,6 +590,7 @@ pub(crate) struct ResolvedSubscription {
     pub(crate) window_id: bool,
     pub(crate) status: Option<EventStatus>,
     pub(crate) route: ResolvedSubscriptionRoute,
+    pub(crate) error_route: Option<ResolvedSubscriptionRoute>,
     pub(crate) span: Span,
     pub(crate) origin: OriginId,
 }
@@ -599,6 +600,7 @@ struct ValidatedSubscriptionContract {
     delivered_payloads: Vec<Type>,
     filter: Option<ResolvedExternContract>,
     route_args: Vec<ResolvedRouteArg>,
+    error_route_args: Option<Vec<ResolvedRouteArg>>,
 }
 
 fn extern_subscription_payload(function: &crate::hir::ExternDeclaration) -> Type {
@@ -6675,6 +6677,7 @@ impl Lowerer {
             delivered_payloads,
             filter,
             route_args,
+            error_route_args,
         } = self.validate_subscription_contract(subscription)?;
         let source = match &subscription.source {
             CheckedSubscriptionSource::Every { milliseconds } => {
@@ -6761,6 +6764,14 @@ impl Lowerer {
                 handler_name: subscription.route.handler_name.clone(),
                 args: route_args,
             },
+            error_route: subscription.error_route.as_ref().zip(error_route_args).map(
+                |(route, args)| ResolvedSubscriptionRoute {
+                    #[cfg(test)]
+                    handler: route.handler,
+                    handler_name: route.handler_name.clone(),
+                    args,
+                },
+            ),
             span: subscription.span.clone(),
             origin: subscription.origin,
         })
@@ -6999,15 +7010,59 @@ impl Lowerer {
                 "checked subscription transforms have a mismatched delivered payload contract",
             ));
         }
-        let handler = self
-            .declarations
-            .checked_handler(subscription.route.handler, span)?;
-        if subscription
-            .route
+        let mut success_payloads = delivered_payloads.clone();
+        let error_payloads = if subscription.error_route.is_some() {
+            let result_index = usize::from(subscription.context.is_some());
+            let Some(Type::Result(ok, error)) = delivered_payloads.get(result_index) else {
+                return Err(Error::new(
+                    "E196",
+                    span,
+                    "checked subscription failure route has no Result payload",
+                ));
+            };
+            if delivered_payloads.len() != result_index + 1 {
+                return Err(Error::new(
+                    "E196",
+                    span,
+                    "checked subscription failure route has extra payloads",
+                ));
+            }
+            success_payloads[result_index] = (**ok).clone();
+            let mut failures = delivered_payloads.clone();
+            failures[result_index] = (**error).clone();
+            Some(failures)
+        } else {
+            None
+        };
+        let route_args =
+            self.validate_subscription_route(&subscription.route, &success_payloads, span)?;
+        let error_route_args = subscription
+            .error_route
+            .as_ref()
+            .zip(error_payloads.as_ref())
+            .map(|(route, payloads)| self.validate_subscription_route(route, payloads, span))
+            .transpose()?;
+        Ok(ValidatedSubscriptionContract {
+            source_payloads,
+            delivered_payloads,
+            filter: filter.map(|(contract, _)| contract),
+            route_args,
+            error_route_args,
+        })
+    }
+
+    fn validate_subscription_route(
+        &self,
+        route: &crate::check::CheckedSubscriptionRoute,
+        payloads: &[Type],
+        span: &Span,
+    ) -> Result<Vec<ResolvedRouteArg>, Error> {
+        let handler = self.declarations.checked_handler(route.handler, span)?;
+        if route
             .payloads
             .iter()
             .copied()
-            .ne(0..subscription.route.payloads.len() as u32)
+            .ne(0..route.payloads.len() as u32)
         {
             return Err(Error::new(
                 "E196",
@@ -7016,8 +7071,8 @@ impl Lowerer {
             ));
         }
         if handler.owner != HandlerOwner::App
-            || handler.name != subscription.route.handler_name
-            || handler.payloads.len() != subscription.route.payloads.len()
+            || handler.name != route.handler_name
+            || handler.payloads.len() != route.payloads.len()
         {
             return Err(Error::new(
                 "E196",
@@ -7025,21 +7080,12 @@ impl Lowerer {
                 "checked subscription route has a mismatched handler contract",
             ));
         }
-        let route_args = subscription
-            .route
+        route
             .payloads
             .iter()
             .zip(&handler.payloads)
-            .map(|(index, target)| {
-                lower_typed_payload_argument(span, &delivered_payloads, *index, target)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(ValidatedSubscriptionContract {
-            source_payloads,
-            delivered_payloads,
-            filter: filter.map(|(contract, _)| contract),
-            route_args,
-        })
+            .map(|(index, target)| lower_typed_payload_argument(span, payloads, *index, target))
+            .collect::<Result<Vec<_>, _>>()
     }
 
     fn validate_subscription_arguments(
