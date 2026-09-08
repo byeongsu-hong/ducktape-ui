@@ -2717,6 +2717,14 @@ pub fn document() -> Value {
             "candidateRevision": LANGUAGE_REVISION,
             "frozen": false,
             "generative": true,
+            "subscriptionRoutes": {
+                "syntax": "subscribe / run <stream>(<args>) -> <success-handler> _ [| <failure-handler> _]",
+                "singleRoute": "receives the complete stream item, including Result<T, E>",
+                "failureRoute": "requires one Result<T, E> payload after optional filtering; Ok(T) and Err(E) route separately without ending the stream",
+                "transforms": "filter receives the original source payload; with context precedes either branch payload; when controls subscription activity",
+                "arguments": "only positional `_` payloads, or no arguments to ignore the payload",
+                "targets": ["native", "tree"],
+            },
             "deliveryLanes": {
                 "every": {
                     "future": "run every delivers every Future completion",
@@ -3153,6 +3161,31 @@ mod tests {
             );
         }
         assert_eq!(document()["language"]["revision"], "2.0");
+    }
+
+    #[test]
+    fn subscription_schema_preserves_whole_results_and_describes_failure_routes() {
+        let schema = document();
+        let routes = &schema["core"]["subscriptionRoutes"];
+        assert!(
+            routes["syntax"]
+                .as_str()
+                .unwrap()
+                .contains("[| <failure-handler> _]")
+        );
+        assert!(
+            routes["singleRoute"]
+                .as_str()
+                .unwrap()
+                .contains("Result<T, E>")
+        );
+        assert!(
+            routes["failureRoute"]
+                .as_str()
+                .unwrap()
+                .contains("without ending the stream")
+        );
+        assert_eq!(routes["targets"], json!(["native", "tree"]));
     }
 
     #[test]

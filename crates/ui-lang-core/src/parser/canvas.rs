@@ -114,14 +114,15 @@ pub(in crate::parser) fn parse_canvas_event(line: &Line) -> Result<CanvasEvent, 
         event_line.text = source.to_owned();
         event_line.track_symbols = false;
         let subscription = parse_subscription(&event_line)?;
-        if subscription.condition.is_some()
+        if subscription.error_route.is_some()
+            || subscription.condition.is_some()
             || subscription.status.is_some()
             || subscription.window_id
         {
             return Err(error(
                 "E190",
                 line,
-                "canvas events do not use subscription `when`, `status`, or `with-id` options",
+                "canvas events do not use subscription failure routes, `when`, `status`, or `with-id` options",
             ));
         }
         validate_canvas_event_source(&subscription.source, line)?;

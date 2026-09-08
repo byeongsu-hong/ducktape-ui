@@ -516,6 +516,7 @@ pub struct Subscription {
     pub condition: Option<Expr>,
     pub status: Option<EventStatus>,
     pub route: Route,
+    pub error_route: Option<Route>,
     pub span: Span,
 }
 

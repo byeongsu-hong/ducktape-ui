@@ -428,6 +428,13 @@ pub(in crate::parser) fn parse_subscription(line: &Line) -> Result<Subscription,
             "status filtering is only available on non-frame runtime events",
         ));
     }
+    let (route, error_route) = match split_top_once(route.trim(), '|') {
+        Some((success, failure)) => (
+            parse_route(success.trim(), line)?,
+            Some(parse_route(failure.trim(), line)?),
+        ),
+        None => (parse_route(route.trim(), line)?, None),
+    };
     Ok(Subscription {
         source,
         window_id,
@@ -439,7 +446,8 @@ pub(in crate::parser) fn parse_subscription(line: &Line) -> Result<Subscription,
             .map(|condition| parse_expr(condition, line))
             .transpose()?,
         status,
-        route: parse_route(route.trim(), line)?,
+        route,
+        error_route,
         span: Span::line(line.number),
     })
 }

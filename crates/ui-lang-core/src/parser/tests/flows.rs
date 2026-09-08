@@ -346,3 +346,14 @@ fn parses_pure_extern_functions() {
     .unwrap();
     assert_eq!(document.functions[0].kind, ExternKind::Pure);
 }
+
+#[test]
+fn parses_both_subscription_routes_without_changing_the_single_route() {
+    let source = "app Streams\non received(value)\non failed(error)\nsubscribe\n  run events() -> received _ | failed _\n  run events() -> received _\nview\n  text \"ready\"\n";
+    let document = parse(source).unwrap();
+    assert_eq!(document.subscriptions[0].route.handler, "received");
+    let failure = document.subscriptions[0].error_route.as_ref().unwrap();
+    assert_eq!(failure.handler, "failed");
+    assert!(matches!(failure.args.as_slice(), [RouteArg::Payload]));
+    assert!(document.subscriptions[1].error_route.is_none());
+}

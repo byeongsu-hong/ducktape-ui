@@ -493,6 +493,16 @@ rollback: effects already performed remain, detached backend work may continue,
 and already queued messages stay queued but fail the generation check. Use
 cancellation-safe or idempotent Rust boundaries when that matters.
 
+A subscription can split fallible items with
+`run events() -> received _ | failed _` inside `subscribe`. The success handler
+receives `T` and the failure handler receives `E` from `Result<T, E>`; an error
+item does not terminate the stream. A single route keeps receiving the complete
+item, including `Result<T, E>`. Filtering still runs on the original source
+payload before routing. A failure route requires the filtered item to remain a
+`Result`; `with=` context precedes the payload in both routes, and `when` keeps
+its existing activity semantics. Routes accept only `_` payloads, or no arguments
+to ignore them. Native and Tree targets use the same branch mapping.
+
 ### Identity
 
 IDs are identities, not CSS selectors. Static IDs are unique in their local
@@ -711,7 +721,7 @@ animation_setting = "easing" name
                   | "from" (bool | number)
 
 subscription_use = subscription_source ("with=" expr)? ("filter=" name)?
-                   ("status=" event_status)? ("when" expr)? "->" route
+                   ("status=" event_status)? ("when" expr)? "->" route ("|" route)?
 subscription_source
                = call | "every" duration | "repeat" call "every" duration
                | "run" call | "recipe" call

@@ -153,7 +153,29 @@ pub(in crate::codegen) fn generate_subscription(
                 "subscription transform payload shape disagrees with checked HIR",
             ));
         }
-        let route = checked_subscription_route_code(subscription, &payloads, message)?;
+        let route = if let Some(error_route) = &subscription.error_route {
+            let result = payloads.pop().ok_or_else(|| {
+                Error::new(
+                    "E196",
+                    &subscription.span,
+                    "subscription failure route has no payload",
+                )
+            })?;
+            payloads.push("__payload".into());
+            let success = checked_subscription_route_code(
+                subscription,
+                &subscription.route,
+                &payloads,
+                message,
+            )?;
+            let failure =
+                checked_subscription_route_code(subscription, error_route, &payloads, message)?;
+            format!(
+                "match {result} {{ ::std::result::Result::Ok(__payload) => {success}, ::std::result::Result::Err(__payload) => {failure} }}"
+            )
+        } else {
+            checked_subscription_route_code(subscription, &subscription.route, &payloads, message)?
+        };
         let transforms = format!("{filter}{context}");
         let condition = subscription
             .condition
@@ -524,6 +546,7 @@ fn checked_subscription_arguments(
 
 fn checked_subscription_route_code(
     subscription: &ResolvedSubscription,
+    route: &ResolvedSubscriptionRoute,
     payloads: &[String],
     message: &str,
 ) -> Result<String, Error> {
@@ -531,7 +554,7 @@ fn checked_subscription_route_code(
         handler_name,
         args: route_args,
         ..
-    } = &subscription.route;
+    } = route;
     let variant = handler_variant(handler_name);
     if route_args.is_empty() {
         return Ok(format!("{message}::{variant}"));

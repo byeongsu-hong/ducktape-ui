@@ -1686,9 +1686,9 @@ pub(crate) use facts::{
     CheckedPaneGridStyle, CheckedPaneRadius, CheckedPaneStyleSite, CheckedPaneSurface,
     CheckedPaneTemplate, CheckedPaneTitle, CheckedPaneView, CheckedPathRoot, CheckedPickList,
     CheckedProjectionKind, CheckedRichChild, CheckedRouteArgKind, CheckedStatement,
-    CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionSource, CheckedText,
-    CheckedTooltip, CheckedUnaryOperator, CheckedValueRef, CheckedView, CheckedViewExprRole,
-    CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
+    CheckedSubscription, CheckedSubscriptionExprRole, CheckedSubscriptionRoute,
+    CheckedSubscriptionSource, CheckedText, CheckedTooltip, CheckedUnaryOperator, CheckedValueRef,
+    CheckedView, CheckedViewExprRole, CheckedViewFlow, CheckedViewLocalRole, CheckedViewScope,
 };
 pub(crate) use handler::task_flow_type;
 

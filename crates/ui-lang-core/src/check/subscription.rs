@@ -451,39 +451,77 @@ pub(in crate::check) fn infer_subscriptions(
             }
             payloads.insert(0, context_ty);
         }
-        if subscription
-            .route
-            .args
-            .iter()
-            .any(|arg| !matches!(arg, RouteArg::Payload))
-        {
-            return Err(Error::new(
-                "E127",
-                &subscription.span,
-                "subscription routes only accept `_`; read other state in the handler",
-            ));
-        }
-        if subscription.route.args.is_empty() {
-            infer_route(&subscription.route, None, states, document, signatures)?;
+        let mut success_payloads = payloads.clone();
+        let error_payloads = if subscription.error_route.is_some() {
+            let result_index = usize::from(subscription.context.is_some());
+            let Some(Type::Result(ok, error)) = payloads.get(result_index) else {
+                return Err(Error::new(
+                    "E127",
+                    &subscription.span,
+                    "subscription failure routes require a Result payload after filtering",
+                ));
+            };
+            if payloads.len() != result_index + 1 {
+                return Err(Error::new(
+                    "E127",
+                    &subscription.span,
+                    "subscription failure routes require one Result payload",
+                ));
+            }
+            success_payloads[result_index] = (**ok).clone();
+            let mut failures = payloads.clone();
+            failures[result_index] = (**error).clone();
+            Some(failures)
         } else {
-            infer_ordered_payload_route(
-                &subscription.route,
-                &payloads,
-                states,
-                document,
-                signatures,
-                "subscription",
-            )?;
-        }
-        let route_handler = declarations
-            .handler_id(crate::hir::HandlerOwner::App, &subscription.route.handler)
-            .ok_or_else(|| {
-                Error::new(
-                    "E196",
-                    &subscription.route.span,
-                    "checked subscription route has no stable handler ID",
-                )
-            })?;
+            None
+        };
+        let mut check_route =
+            |route: &Route, delivered: &[Type]| -> Result<facts::CheckedSubscriptionRoute, Error> {
+                if route
+                    .args
+                    .iter()
+                    .any(|arg| !matches!(arg, RouteArg::Payload))
+                {
+                    return Err(Error::new(
+                        "E127",
+                        &route.span,
+                        "subscription routes only accept `_`; read other state in the handler",
+                    ));
+                }
+                if route.args.is_empty() {
+                    infer_route(route, None, states, document, signatures)?;
+                } else {
+                    infer_ordered_payload_route(
+                        route,
+                        delivered,
+                        states,
+                        document,
+                        signatures,
+                        "subscription",
+                    )?;
+                }
+                let handler = declarations
+                    .handler_id(crate::hir::HandlerOwner::App, &route.handler)
+                    .ok_or_else(|| {
+                        Error::new(
+                            "E196",
+                            &route.span,
+                            "checked subscription route has no stable handler ID",
+                        )
+                    })?;
+                Ok(facts::CheckedSubscriptionRoute {
+                    handler,
+                    handler_name: route.handler.clone(),
+                    payloads: (0..route.args.len() as u32).collect(),
+                })
+            };
+        let route = check_route(&subscription.route, &success_payloads)?;
+        let error_route = subscription
+            .error_route
+            .as_ref()
+            .zip(error_payloads.as_ref())
+            .map(|(route, payloads)| check_route(route, payloads))
+            .transpose()?;
         analyses.insert_subscription(
             declaration.id,
             facts::CheckedSubscriptionAnalysis {
@@ -491,9 +529,10 @@ pub(in crate::check) fn infer_subscriptions(
                 source_payloads,
                 delivered_payloads: payloads,
                 filter: filter_id,
-                route_handler,
-                route_handler_name: subscription.route.handler.clone(),
-                route_payloads: (0..subscription.route.args.len() as u32).collect(),
+                route_handler: route.handler,
+                route_handler_name: route.handler_name,
+                route_payloads: route.payloads,
+                error_route,
             },
         )?;
     }

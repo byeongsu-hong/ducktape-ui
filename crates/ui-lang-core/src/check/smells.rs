@@ -120,6 +120,10 @@ fn duplicate_subscription_warnings(document: &Document, warnings: &mut Vec<Warni
                 subscription.status,
                 &subscription.route.handler,
                 &subscription.route.args,
+                subscription
+                    .error_route
+                    .as_ref()
+                    .map(|route| (&route.handler, &route.args)),
             )
         );
         if let Some(first_line) = seen.get(&key) {

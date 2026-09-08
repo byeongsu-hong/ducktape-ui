@@ -917,6 +917,15 @@ Generated probes verify the concrete Rust signatures. Reachability is not the
 same as native coverage: a row stays partial or missing until its complete
 public behavior has direct documented Ice syntax and tests.
 
+Fallible subscription routes (`run source() -> succeeded _ | failed _`) have
+Core coverage for native and Tree branch emission, success/error payload types,
+`when` with `with` and `filter`, unchanged whole-Result delivery with one route,
+formatter round trips, failure-handler reachability, and checked-HIR handler,
+type, and payload-order invariants. Redirecting the generated Err arm to the
+success route fails the compiler's expected failure-handler assertion; exact
+restoration passes. This compiler evidence concerns generated routes, not host
+stream lifecycle or cancellation.
+
 ## Widgets and layout
 
 | iced surface | Ice status | Current representation / missing work |

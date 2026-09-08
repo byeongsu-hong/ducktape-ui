@@ -262,6 +262,7 @@ pub(crate) struct CheckedSubscription {
     pub(crate) window_id: bool,
     pub(crate) status: Option<EventStatus>,
     pub(crate) route: CheckedSubscriptionRoute,
+    pub(crate) error_route: Option<CheckedSubscriptionRoute>,
     pub(crate) span: Span,
     pub(crate) origin: OriginId,
 }
@@ -725,6 +726,7 @@ pub(crate) struct CheckedSubscriptionAnalysis {
     pub(crate) route_handler: HandlerId,
     pub(crate) route_handler_name: String,
     pub(crate) route_payloads: Vec<u32>,
+    pub(crate) error_route: Option<CheckedSubscriptionRoute>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -9087,6 +9089,7 @@ impl<'a> FactsBuilder<'a> {
                     handler_name: analysis.route_handler_name,
                     payloads: analysis.route_payloads,
                 },
+                error_route: analysis.error_route,
                 span: subscription.span.clone(),
                 origin: declaration.origin,
             });
@@ -11636,7 +11639,7 @@ impl CheckedFacts {
         for (index, subscription) in self.subscriptions.iter().enumerate() {
             writeln!(
                 output,
-                "subscription s{index} id={:?} source={:?} source_payloads={:?} delivered={:?} filter={:?} context={:?} condition={:?} route={:?} origin=o{}",
+                "subscription s{index} id={:?} source={:?} source_payloads={:?} delivered={:?} filter={:?} context={:?} condition={:?} route={:?} error_route={:?} origin=o{}",
                 subscription.id,
                 subscription.source,
                 subscription.source_payloads,
@@ -11645,6 +11648,7 @@ impl CheckedFacts {
                 subscription.context,
                 subscription.condition,
                 subscription.route,
+                subscription.error_route,
                 subscription.origin.0,
             )
             .unwrap();
@@ -12179,6 +12183,32 @@ test dynamic_targets
         assert_eq!(error.code, "E196");
         assert_eq!((error.line, error.column), (span.line, span.column));
         assert!(error.message.contains("invalid extern declaration ID"));
+    }
+
+    #[test]
+    fn fallible_subscription_routes_are_frozen_and_validate_failure_handler_contracts() {
+        let source = format!(
+            "app Fallible\nextern crate::backend\n  Failure(message:str)\n  stream events() -> i64 ! Failure\n{THEME}on received(value)\non failed(problem)\nsubscribe\n  run events() -> received _ | failed _\nview\n  text \"ready\"\n"
+        );
+        let mut checked = analyze(&source).unwrap();
+        checked.document.subscriptions[0].error_route = None;
+        let program = lower::lower(checked).unwrap();
+        assert!(
+            program.subscriptions()[0].error_route.is_some(),
+            "lowering must use retained routes"
+        );
+        for change in 0..3 {
+            let mut checked = analyze(&source).unwrap();
+            let success = checked.facts.subscriptions[0].route.clone();
+            let route = checked.facts.subscriptions[0].error_route.as_mut().unwrap();
+            match change {
+                0 => route.handler_name = "received".into(),
+                1 => route.payloads[0] = 1,
+                _ => *route = success,
+            }
+            let error = lower::lower(checked).unwrap_err();
+            assert_eq!(error.code, "E196", "{error}");
+        }
     }
 
     #[test]
@@ -12909,6 +12939,7 @@ view
                     route_handler: missing_declarations
                         .handler_id(crate::hir::HandlerOwner::App, "tick")
                         .unwrap(),
+                    error_route: None,
                     route_handler_name: "tick".into(),
                     route_payloads: vec![0],
                 },
@@ -12944,6 +12975,7 @@ view
                     route_handler: extra_declarations
                         .handler_id(crate::hir::HandlerOwner::App, "tick")
                         .unwrap(),
+                    error_route: None,
                     route_handler_name: "tick".into(),
                     route_payloads: vec![0],
                 },
