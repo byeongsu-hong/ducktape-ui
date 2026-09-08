@@ -1663,6 +1663,10 @@ mod keyboard_tests;
 mod editor_tests;
 
 #[cfg(test)]
+#[path = "editor_transactions_tests.rs"]
+mod editor_transactions_tests;
+
+#[cfg(test)]
 #[path = "combo_tests.rs"]
 mod combo_tests;
 
