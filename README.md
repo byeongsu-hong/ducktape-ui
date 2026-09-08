@@ -697,3 +697,10 @@ Tree sensors accept copied `key=` continuity values. A changed value re-arms
 the native show notification without replacing the child's widget identity.
 `bool`, `i64`, `f64` and `str` keys cross within wire budgets;
 opaque extern keys remain E190. Rebuild hosts and guests together.
+
+Direct Tree `task window focus`, `task window resize`, `task window close`, and `exit` operate on the requesting
+app's own host window through a bounded request channel. `exit` closes that guest,
+not the app-store process. The host checks current instance identity before native
+submission; explicit native window IDs are rejected. See the
+[guest task boundary](examples/app-store/README.md#tasks-and-runtime) for acknowledgement
+semantics and remaining native Task gaps.

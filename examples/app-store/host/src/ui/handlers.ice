@@ -196,6 +196,21 @@ on window_closed(id)
 // the module may be a compile, so it goes on the executor like an install and
 // comes back through here.
 on guest_changed(id, what)
+  parallel
+    task prepare_window_effects(running, id) -> window_effect_ready _
+    flow
+      from done guest_notice(id, what)
+      done -> guest_status _
+
+on window_effect_ready(effect)
+  task commit_window_effect(running, effect) -> window_effect_submitted _
+
+on window_effect_submitted(effect)
+  let submitted = complete_window_effect(running, effect)
+
+on guest_status(notice)
+  let id = notice.window
+  let what = notice.kind
   return if what == "wake"
   generation = generation + 1
   rows = build_rows(catalog, query, library, running, generation)

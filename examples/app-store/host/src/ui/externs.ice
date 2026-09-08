@@ -1,4 +1,10 @@
 extern crate::store
+  GuestNotice(window:window-id, kind:str)
+  pure guest_notice(window:window-id, kind:str) -> GuestNotice
+  WindowEffect()
+  task prepare_window_effects(running:[Running], window:window-id) -> WindowEffect
+  task commit_window_effect(running:[Running], effect:WindowEffect) -> WindowEffect
+  sync complete_window_effect(running:&[Running], effect:WindowEffect) -> bool
   Capability(name:str)
   PreferredSize()
   CatalogEntry(id:str, name:str, description:str, capabilities:[Capability], preferred_size:PreferredSize?, path:str, mark:str, hash:str)

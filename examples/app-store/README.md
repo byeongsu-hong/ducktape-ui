@@ -643,9 +643,21 @@ For module packaging requirements and the connected implementation phases, see
 
 - Task outputs and clipboard actions are executed. Clipboard access requires
   the declared capability. Checked Ice widget statements lower to the mounted
-  host channel; arbitrary native `Action::Widget` values returned by Rust
-  extern Tasks are not serialized. Those actions, and window, font, image,
-  reload and exit actions, are still dropped with a `host::log` diagnostic.
+  host channel. Direct `task window focus`, `task window resize`,
+  `task window close`, and `exit` use `host.window`; `exit` closes only that
+  guest's window. The UI thread selects the current `Running.window` using
+  Surface identity and the instance token, never an ID provided by the guest.
+  Explicit `target=` is E190 in Tree code. Resize accepts the same finite,
+  positive f32 bounds as preferred window size. The host holds at most 32
+  pending commands per guest, applies cancellation before submission, and
+  refuses stale instances. Errors appear as `RequestError` replies/logs.
+  Completion acknowledges native-runtime submission, not OS application.
+  A closed window may disappear before its acknowledgement is delivered.
+- Other direct window operations and arbitrary native `Action::Widget`,
+  `Action::Window`, font, image, system, reload and exit actions returned by
+  Rust extern Tasks remain unsupported and are dropped with a `host::log`
+  diagnostic. The direct Ice window support does not serialize native IDs or
+  broaden this arbitrary-task boundary.
 - `every` carries no instant in a module and refuses a route that binds
   one (E190): there is no `now` to make it from. Host-delivered keyboard
   press/release/modifier subscriptions are supported. Mouse, window and IME
@@ -1351,3 +1363,23 @@ Tree keyed columns and lazy boundaries preserve authored `#id` directly on
 the wire node, including nested lazy and virtual keyed rows. Their descendants
 retain that scope for guest test selectors and widget operations. Identified
 Tree structures emit no native Iced container wrapper.
+
+### Scoped window effect evidence
+
+`tests/window-effects-guest` is the same exported app in a native child and a wasm
+component. `host/src/window_effects_tests.rs` sends real mounted button input,
+passes the resulting GuestView wake through the generated store handlers, observes
+the native window action and its guest-only ID, and ticks the acknowledgement back
+into the guest until the next sequential statement updates its text. Tests also
+reject cancelled, removed, and replaced-instance requests, including a new instance
+reusing the old request ID. These are runtime-submission assertions, not a claim
+that a window manager honored focus or resize.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-window-effects-fixture --target wasm32-unknown-unknown \
+  --no-wasm-opt --out examples/app-store/target/window-effects-wasm
+cd examples/app-store
+python3 scripts/build-native.py -p app-store-window-effects-fixture --out target/window-effects-native
+APP_STORE_DATA="$(mktemp -d)" cargo test --locked -p app-store-host bundled_window_effects_ -- --ignored --test-threads=1
+```

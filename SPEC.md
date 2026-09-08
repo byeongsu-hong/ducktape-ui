@@ -1457,3 +1457,23 @@ the generator never silently drops an unsupported test. Direct `cfg(test)` build
 of a Tree guest containing authored tests explain the host harness requirement
 at the test origin. Tree stack contracts remain generated. The Native target's
 existing authored test generation and semantics are unchanged.
+
+### Scoped guest window effects
+
+For Tree applications, direct `task window focus`, `task window resize width height`,
+`task window close`, and `exit` send the closed `WindowCommand` vocabulary through
+`Request { kind: "host.window", ... }`. No window ID crosses this boundary;
+explicit `target=` is E190. `exit` means close this guest's host window, never
+terminate the host process. Native-target code generation is unchanged.
+
+Resize dimensions must satisfy `PreferredSize::new`; invalid inputs are refused
+instead of clamped. The app-store limits each guest to 32 pending commands and
+rejects malformed/trailing payloads. The UI update validates Surface identity,
+current instance token and current Running entry before submitting an Iced window
+Task. Cancellation and replacement invalidate prepared commands. Completion is an
+acknowledgement of runtime submission, not OS success, and is rechecked before a
+response can reach a guest. Rejections are explicit `RequestError` replies or logs;
+no old request ID is delivered to a replacement instance.
+
+Other direct window operations and arbitrary native Task actions are outside this
+support. No OS-theme/subscription semantics change with this boundary.

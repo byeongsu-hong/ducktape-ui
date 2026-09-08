@@ -733,6 +733,18 @@ jobs:
       - name: Verify declared initial native window size through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_preferred_size_ -- --ignored
+      - name: Bundle scoped guest window effects
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-window-effects-fixture --target wasm32-unknown-unknown \
+            --no-wasm-opt --out examples/app-store/target/window-effects-wasm
+      - name: Verify scoped window effects through native and wasm guests
+        working-directory: examples/app-store
+        env:
+          APP_STORE_DATA: ${{ runner.temp }}/app-store-window-effects-tests
+        run: |
+          python3 scripts/build-native.py -p app-store-window-effects-fixture --out target/window-effects-native
+          cargo test --locked -p app-store-host bundled_window_effects_ -- --ignored --test-threads=1
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
         run: |

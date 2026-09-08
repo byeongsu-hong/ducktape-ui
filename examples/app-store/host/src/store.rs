@@ -166,6 +166,13 @@ pub use reload::{
     restore_current,
 };
 
+#[path = "window_effects.rs"]
+mod window_effects;
+pub use window_effects::{
+    GuestNotice, WindowEffect, commit_window_effect, complete_window_effect, guest_notice,
+    prepare_window_effects,
+};
+
 // ---------- the guest ----------
 
 /// A clock subscription: one answer per period, forever.
@@ -226,6 +233,7 @@ pub struct Guest {
     due: Vec<(Instant, wire::Event)>,
     clipboard: Vec<(u64, clipboard::Command)>,
     widgets: Vec<(u64, u64, wire::WidgetCommand)>,
+    pub(crate) window_effects: window_effects::WindowEffects,
     tickers: Vec<Ticker>,
     inbox: Inbox,
     /// How many entries this guest has in the process-wide subscriber list.
@@ -569,6 +577,7 @@ impl Guest {
             due: Vec::new(),
             clipboard: Vec::new(),
             widgets: Vec::new(),
+            window_effects: Default::default(),
             tickers: Vec::new(),
             inbox: Inbox::default(),
             subscriptions: 0,
@@ -819,6 +828,7 @@ impl Guest {
 
     /// The guest stopped waiting for `id`: drop whatever the host kept for it.
     fn cancel(&mut self, id: u64) {
+        self.window_effects.cancel(id);
         self.clipboard.retain(|(pending, _)| *pending != id);
         self.widgets.retain(|(pending, _, _)| *pending != id);
         self.due.retain(
@@ -989,6 +999,11 @@ impl Guest {
                         Ok(command) => self.clipboard.push((id, command)),
                         Err(error) => self.reply(now, id, Err(error)),
                     }
+                }
+            }
+            ("host", "window") => {
+                if let Err(error) = self.window_effects.push(id, &payload) {
+                    self.reply(now, id, Err(error));
                 }
             }
             ("host", "widget") => {
