@@ -36,10 +36,6 @@ state
   active_palette:palette[CounterTheme] = CounterTheme.light
   dark = false
 
-// The colour mode is the host's: one subscription, one item per change.
-on mount
-  stream every theme_changes() -> themed _ | theme_failed _
-
 on themed(mode)
   dark = mode == "dark"
   active_palette = CounterTheme.light
@@ -65,6 +61,8 @@ on reset
 // the module has no clock, so the guest runtime asks the host's ticker for
 // the period — and switching off drops the subscription, ticker and all.
 subscribe
+  // The colour mode is the host's: one subscription, one item per change.
+  run theme_changes() -> themed _ | theme_failed _
   every 1s when auto -> elapsed
 
 on toggle_auto

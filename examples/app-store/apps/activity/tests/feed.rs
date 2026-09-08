@@ -61,3 +61,35 @@ fn the_measured_feed_height_becomes_a_visible_row_count() {
     let frame = tick_native(measure(&frame, &watch, 432.0, 1000.0));
     assert!(has_text(&frame, "6 rows visible"), "{:?}", texts(&frame));
 }
+
+#[test]
+fn feed_and_theme_are_recreated_once_after_state_transfer() {
+    use app_store_activity::{restore_native, snapshot_native};
+    boot_native();
+    let frame = tick_native(vec![]);
+    let bus = frame
+        .requests
+        .iter()
+        .find(|request| request.kind == "bus.subscribe")
+        .unwrap();
+    tick_native(vec![item(bus.id, b"counter\ncount\none")]);
+    let snapshot = snapshot_native().expect("bus and theme streams are persistent recipes");
+    restore_native(&snapshot, false).unwrap();
+    let frame = tick_native(vec![]);
+    assert_eq!(
+        frame.requests.len(),
+        2,
+        "one feed and one theme subscription"
+    );
+    let bus = frame
+        .requests
+        .iter()
+        .find(|request| request.kind == "bus.subscribe")
+        .unwrap();
+    let frame = tick_native(vec![item(bus.id, b"counter\ncount\ntwo")]);
+    assert!(
+        has_text(&frame, "2 events"),
+        "one retained and one new event"
+    );
+    assert!(frame.requests.is_empty(), "no duplicate recipes on update");
+}

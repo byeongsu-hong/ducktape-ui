@@ -33,10 +33,11 @@ state
 // at, so the app can anchor it — plus the uptime since. The colour mode is
 // a stream of the host's too.
 on mount
-  parallel
-    stream every ticks(1000) -> ticked _ | clock_failed _
-    stream every theme_changes() -> themed _ | theme_failed _
-    run every now() -> timed _ | clock_failed _
+  run every now() -> timed _ | clock_failed _
+
+subscribe
+  run ticks(1000) -> ticked _ | clock_failed _
+  run theme_changes() -> themed _ | theme_failed _
 
 on themed(mode)
   dark = mode == "dark"

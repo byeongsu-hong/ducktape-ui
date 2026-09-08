@@ -93,3 +93,34 @@ fn the_hosts_dark_mode_repaints_the_app() {
         "the app's backdrop follows the host's colour mode"
     );
 }
+
+#[test]
+fn restored_clock_resubscribes_without_repeating_its_initial_query() {
+    use app_store_clock::{restore_native, snapshot_native};
+    boot_native();
+    let frame = tick_native(vec![]);
+    let now = request_for(&frame.requests, "clock.now");
+    let mut value = NOW_MS.to_le_bytes().to_vec();
+    value.extend_from_slice(&UPTIME_AT_ANSWER_MS.to_le_bytes());
+    tick_native(vec![answer(now.id, &value)]);
+    let snapshot = snapshot_native().expect("only finite initialization blocks transfer");
+    restore_native(&snapshot, false).unwrap();
+    let frame = tick_native(vec![]);
+    assert_eq!(
+        frame.requests.len(),
+        2,
+        "restart only ticks and theme, not clock.now"
+    );
+    let ticks = request_for(&frame.requests, "clock.ticks");
+    request_for(&frame.requests, "host.theme");
+    let frame = tick_native(vec![item(ticks.id, &305_000_u64.to_le_bytes())]);
+    assert!(
+        has_text(&frame, "13:45:05 UTC"),
+        "initial wall-clock anchor survived"
+    );
+    assert!(
+        has_text(&frame, "1 ticks received"),
+        "one tick must be delivered once"
+    );
+    assert!(frame.requests.is_empty());
+}

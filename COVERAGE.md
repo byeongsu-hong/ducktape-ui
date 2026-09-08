@@ -1962,9 +1962,9 @@ manifest containing repeated `clock` and `bus` declarations.
 `host/src/native_tests.rs` runs the actual packaged Counter and the actual
 `cargo ice bundle` Counter through the same mounted host UI. Native pointer
 clicks increment state, complete the host bus task, and produce identical
-colored pixels. Both currently refuse snapshots while the authored on-mount
-theme task remains active; that lifecycle gap is tracked in
-`examples/app-store/PARITY.md`. The versioned native reload fixture runs the
+colored pixels. Both support snapshots with the shipped persistent theme
+subscription; Counter/Todo lifecycle evidence is recorded below.
+The versioned native reload fixture runs the
 existing mounted draft/focus/scroll/window/lifetime regression, including stale
 approval rejection.
 
@@ -2042,3 +2042,17 @@ closed/uninstalled Running entries, and replacement instances with colliding req
 IDs. Mutations of generation checks, Surface lookup, response delivery, UI wake,
 cancellation, queue bounds, and size validation each fail the intended assertion;
 exact restoration passes the host suite. No setup/compiler failure counts as Red.
+
+App-store persistent subscriptions:
+`theme_subscription_survives_state_transfer_and_routes_errors` checks state
+transfer and the error route. The actual native/Wasm
+`native_and_wasm_subscriptions_preserve_state_and_restart_once_on_reload` test
+preserves Counter count and Todo draft/theme across three mounted replacements,
+verifies one theme stream, and delivers subsequent theme/button events. The
+previous bundled Counter fails the intended successful-snapshot assertion with
+pending work; rebuilding the subscription sources restores Green.
+The restored Auto recipe test also verifies one timer and its cancellation;
+forcing its condition false fails the one-theme/one-timer assertion. Rebuilding
+native Counter with its theme error display suppressed fails the actual host
+error-message assertion. Both independent temporary mutations are restored
+before the final native/Wasm run.

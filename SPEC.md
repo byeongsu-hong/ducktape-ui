@@ -1477,3 +1477,7 @@ no old request ID is delivered to a replacement instance.
 
 Other direct window operations and arbitrary native Task actions are outside this
 support. No OS-theme/subscription semantics change with this boundary.
+
+App-store persistent theme, Activity bus-feed and Clock tick streams are
+subscription recipes. Snapshot restoration restarts each recipe once without
+replaying finite mount tasks; pending finite work continues to reject snapshots.

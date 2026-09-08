@@ -42,7 +42,9 @@ on mount
   parallel
     run every load_items() -> loaded _ | failed _
     run every load_notes() -> notes_loaded _ | failed _
-    stream every theme_changes() -> themed _ | theme_failed _
+
+subscribe
+  run theme_changes() -> themed _ | theme_failed _
 
 on themed(mode)
   dark = mode == "dark"

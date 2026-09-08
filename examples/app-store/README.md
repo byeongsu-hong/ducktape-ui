@@ -167,10 +167,9 @@ extern crate::host
   stream ticks(every_ms:i64) -> i64 ! ClockError
   stream theme_changes() -> str ! ClockError
 
-on mount
-  parallel
-    stream every ticks(1000) -> ticked _ | clock_failed _
-    stream every theme_changes() -> themed _ | theme_failed _
+subscribe
+  run ticks(1000) -> ticked _ | clock_failed _
+  run theme_changes() -> themed _ | theme_failed _
 
 on themed(mode)
   dark = mode == "dark"
@@ -437,12 +436,19 @@ reaps it. Stdout is reserved for IPC; use stderr or `host::log` for diagnostics.
 Native monitors show elapsed time and explicitly omit Wasm fuel accounting.
 
 Both backends use the same Tree Driver, wire events, host native rendering and
-owned-state snapshot contract. Existing on-mount task streams (including the
-shipped theme stream) prevent quiescent snapshots; the parity worklist tracks
-the subscription-based follow-up. Native reload evidence uses the versioned
-reload fixtures. This does not change the separate native language
+owned-state snapshot contract. Persistent shipped streams use subscriptions,
+so live theme, feed and ticker recipes do not prevent snapshots. Unfinished
+finite tasks still block state transfer. Native and Wasm reload evidence includes
+shipped Counter/Todo and the versioned reload fixtures. This does not change the separate native language
 code generator or remove existing Tree feature gaps. [The parity worklist](PARITY.md)
 tracks those user-facing gaps and their required behavior evidence.
+
+Persistent host streams in all five shipped apps use `subscribe run`: theme
+changes, Activity's bus feed and Clock's ticks survive state transfer as recipes.
+Counter and Todo are exercised through native and Wasm mounted reload, preserving
+count, unsaved draft and theme with exactly one restarted theme subscription.
+Finite storage/clock initialization still runs only on mount; unfinished writes
+still block reload.
 
 ## What is not here yet
 

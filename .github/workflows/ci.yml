@@ -553,6 +553,8 @@ jobs:
           python3 scripts/build-native.py
           python3 scripts/build-native.py -p app-store-reload-v1-fixture -p app-store-reload-v2-fixture --out target/native-reload-fixture
       - name: Prove native and wasm execution parity
+        env:
+          APP_STORE_DATA: ${{ runner.temp }}/app-store-native-parity
         working-directory: examples/app-store
         run: |
           cargo test --locked -p app-store-host store::native_tests:: -- --ignored

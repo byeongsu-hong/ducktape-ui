@@ -193,3 +193,75 @@ fn the_card_hears_the_pointer_and_the_wheel() {
     );
     assert!(has_text(&frame, "0"), "{:?}", texts(&frame));
 }
+
+#[test]
+fn theme_subscription_survives_state_transfer_and_routes_errors() {
+    use app_store_counter::{restore_native, snapshot_native};
+    use ui_lang_guest::testing::refuse;
+    let frame = boot();
+    let theme = frame
+        .requests
+        .iter()
+        .find(|request| request.kind == "host.theme")
+        .unwrap()
+        .id;
+    let dark = tick_native(vec![item(theme, b"dark")]);
+    assert!(
+        dark.requests.is_empty(),
+        "theme delivery must retain one subscription"
+    );
+    let snapshot = snapshot_native().expect("persistent theme stream is quiescent");
+    restore_native(&snapshot, false).unwrap();
+    let restored = tick_native(vec![]);
+    let [theme] = restored.requests.as_slice() else {
+        panic!("exactly one restored subscription: {:?}", restored.requests)
+    };
+    assert_eq!(theme.kind, "host.theme");
+    assert_eq!(
+        snapshot_native().unwrap(),
+        snapshot,
+        "restoration preserves active palette and state"
+    );
+    let failed = tick_native(vec![refuse(theme.id, "theme unavailable")]);
+    assert!(
+        has_text(&failed, "theme unavailable"),
+        "error reaches existing handler"
+    );
+    assert!(
+        failed.requests.is_empty(),
+        "ended subscription is not restarted on every tick"
+    );
+    assert!(tick_native(vec![]).requests.is_empty());
+    snapshot_native().unwrap();
+}
+
+#[test]
+fn restored_auto_subscription_is_single_and_can_be_canceled() {
+    use app_store_counter::{restore_native, snapshot_native};
+    let frame = boot();
+    tick_native(press(&frame, "Auto: off"));
+    let snapshot = snapshot_native().expect("live theme and timer recipes permit capture");
+    restore_native(&snapshot, false).unwrap();
+    let frame = tick_native(vec![]);
+    assert_eq!(frame.requests.len(), 2, "one theme stream and one timer");
+    let timer = frame
+        .requests
+        .iter()
+        .find(|request| request.kind == "clock.ticks")
+        .unwrap()
+        .id;
+    let frame = tick_native(press(&frame, "Auto: on"));
+    assert_eq!(
+        frame.cancels,
+        [timer],
+        "switching off retires the restored timer"
+    );
+    assert!(frame.requests.is_empty());
+    let frame = tick_native(vec![item(timer, &1000_u64.to_le_bytes())]);
+    assert!(
+        has_text(&frame, "0"),
+        "obsolete tick cannot increment state"
+    );
+    assert!(frame.requests.is_empty());
+    snapshot_native().unwrap();
+}
