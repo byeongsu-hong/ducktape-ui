@@ -212,7 +212,14 @@ pub fn edit(frame: &Frame, name: &str, text: &str) -> Vec<Event> {
             _ => false,
         })
     });
-    let Some(Node::Editor { on_edit, .. }) = editor else {
+    let Some(Node::Editor {
+        on_edit,
+        cursor,
+        reset,
+        revision,
+        ..
+    }) = editor
+    else {
         panic!("no editor {name:?} in {:?}", texts(frame));
     };
     let Some(handler) = on_edit else {
@@ -221,6 +228,11 @@ pub fn edit(frame: &Frame, name: &str, text: &str) -> Vec<Event> {
     vec![Event::Edit {
         handler: *handler,
         text: text.to_string(),
+        cursor: *cursor,
+        reset: *reset,
+        revision: revision
+            .checked_add(1)
+            .expect("editor observation revisions exhausted"),
     }]
 }
 

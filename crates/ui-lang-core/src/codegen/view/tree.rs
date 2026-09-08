@@ -1752,7 +1752,7 @@ fn editor(
     let constructor = match &state.state {
         Some(StateBinding::App(name)) => {
             let variant = editor_variant(name);
-            format!("{message}::{variant} as fn(::std::string::String) -> {message}")
+            format!("{message}::{variant} as fn(::ui_lang_guest::wire::EditorState) -> {message}")
         }
         Some(StateBinding::Component {
             component,
@@ -1773,10 +1773,10 @@ fn editor(
         }
     };
     let handler = handler_code(
-        "::std::string::String",
+        "::ui_lang_guest::wire::EditorState",
         message,
         &constructor,
-        "move |__sent: ::std::string::String| ::std::option::Option::Some(__route(__sent))",
+        "move |__sent: ::ui_lang_guest::wire::EditorState| ::std::option::Option::Some(__route(__sent))",
     );
     let on_edit = match editor.disabled {
         Some(disabled) => format!(
@@ -1857,13 +1857,13 @@ fn editor(
     );
     let key = key_code(identity, "editor", origin, scope, env, program)?;
     Ok(format!(
-        "{WIRE}::Node::Editor {{ options: {options}, key: {key}, placeholder: {}, text: ({}).to_string(), on_edit: {on_edit}, width: {}, height: {}, min_height: {}, max_height: {} }}",
+        "{{ let __editor = &({}); {WIRE}::Node::Editor {{ options: {options}, key: {key}, placeholder: {}, text: __editor.text(), cursor: __editor.cursor(), reset: __editor.reset_revision(), revision: __editor.observation_revision(), on_edit: {on_edit}, width: {}, height: {}, min_height: {}, max_height: {} }} }}",
+        state.code,
         editor
             .placeholder
             .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
             .transpose()?
             .unwrap_or_else(|| "::std::string::String::new()".into()),
-        state.code,
         option_code(pixels(editor.width)?),
         dimension_code(editor.height.as_ref(), false, program, env, origin)?,
         option_code(pixels(editor.min_height)?),

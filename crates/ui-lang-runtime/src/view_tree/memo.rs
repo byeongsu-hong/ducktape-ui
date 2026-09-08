@@ -28,6 +28,7 @@ pub(super) fn render(
         instance: kept.inputs.instance,
         fields: HashMap::new(),
         editors: HashMap::new(),
+        editor_revision: kept.inputs.editor_revision,
         combos: HashMap::new(),
     };
     let mut pictures = super::Pictures::default();

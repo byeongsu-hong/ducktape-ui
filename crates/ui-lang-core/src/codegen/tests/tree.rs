@@ -418,27 +418,25 @@ fn a_mouse_area_compiles_to_a_mouse_area_node_with_handler_slots() {
     );
 }
 
-/// An `editor` state field is a `String` in a view module — the host owns
-/// the `text_editor::Content` — and the `<->` binding's message carries the
-/// whole text back, like an input's.
+/// Tree editor bindings carry copied document state and fenced observations.
 #[test]
-fn an_editor_is_a_string_the_host_edits() {
+fn an_editor_carries_document_state_the_host_edits() {
     let generated = tree_with(
         "on clear\n  notes = editor(\"\")\nderived\n  lines = editor_line_count(notes)\n  second = editor_line(notes, 1)\n",
         "  col\n    editor #notes <-> notes hint=\"Write\" h=fill min-h=80.0 disabled=busy\n    text editor_text(notes) @text-fg\n    text lines @text-fg\n    button \"Clear\" -> clear\n    button \"×\" -> remove 0\n",
     );
     for expected in [
-        "notes: ::std::string::String,",
-        "__EditNotes(::std::string::String),",
+        "notes: ::ui_lang_guest::Editor,",
+        "__EditNotes(::ui_lang_guest::wire::EditorState),",
         "__DemoMessage::__EditNotes(__text) => {",
         "::ui_lang_guest::wire::Node::Editor { options:",
         "placeholder: \"Write\".to_owned()",
-        "text: (self.notes).to_string()",
-        "on_edit: if (self.busy) { ::std::option::Option::None } else { ::std::option::Option::Some(::ui_lang_guest::slots::handler::<::std::string::String, __DemoMessage>(",
+        "text: __editor.text()",
+        "on_edit: if (self.busy) { ::std::option::Option::None } else { ::std::option::Option::Some(::ui_lang_guest::slots::handler::<::ui_lang_guest::wire::EditorState, __DemoMessage>(",
         "height: ::std::option::Option::Some(::ui_lang_guest::wire::Length::Fill)",
         "min_height: ::std::option::Option::Some((80.0) as f32)",
-        "(self.notes).clone()",
-        ".split('\\n').nth(__line)",
+        "(self.notes).text()",
+        ".line(__line)",
     ] {
         assert!(
             generated.contains(expected),

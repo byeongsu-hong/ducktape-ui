@@ -85,14 +85,17 @@ pub enum Output {
     },
     /// The user did `action` in an editor: a keystroke, a paste, a click,
     /// a caret move. The host performs it on the `Content` it holds and the
-    /// guest hears the text, when it changed.
+    /// guest hears text/cursor changes fenced by the originating reset.
     EditorAction {
+        reset: u64,
         key: String,
         handler: u32,
         action: text_editor::Action,
     },
     /// Accessibility asked the editor under `key` to move its caret.
     MoveCaret {
+        reset: u64,
+        handler: Option<u32>,
         key: String,
         line: usize,
         column: usize,
@@ -157,8 +160,8 @@ pub type Surfaces = HashMap<String, Surface>;
 #[derive(Clone, Debug)]
 struct EditorField {
     content: editor::Shared,
-    /// What the guest said the text was, last frame.
-    reported: String,
+    reset: u64,
+    revision: u64,
 }
 
 /// The live text of every input and editor in a tree, by node key.
@@ -167,6 +170,7 @@ pub struct Inputs {
     instance: u64,
     fields: HashMap<String, Field>,
     editors: HashMap<String, EditorField>,
+    editor_revision: u64,
     combos: HashMap<String, combo::Field>,
 }
 
@@ -183,6 +187,7 @@ impl Default for Inputs {
             instance,
             fields: HashMap::new(),
             editors: HashMap::new(),
+            editor_revision: 0,
             combos: HashMap::new(),
         }
     }
@@ -221,27 +226,24 @@ impl Inputs {
             }
         }
         self.editors.retain(|key, _| editors.contains_key(key));
-        for (key, text) in editors {
+        for (key, state) in editors {
+            self.editor_revision = self.editor_revision.max(state.revision);
             match self.editors.get_mut(&key) {
-                Some(field) if field.reported == text => {}
+                Some(field)
+                    if field.reset > state.reset
+                        || (field.reset == state.reset && field.revision >= state.revision) => {}
                 Some(field) => {
-                    // The guest set the text — unless it is echoing what the
-                    // user typed, which the content already reads; rebuilding
-                    // it then would put the caret back at the top on every
-                    // keystroke.
-                    let mut content = lock(&field.content);
-                    if content.text() != text {
-                        *content = text_editor::Content::with_text(&text);
-                    }
-                    drop(content);
-                    field.reported = text;
+                    *lock(&field.content) = editor_content(&state);
+                    field.reset = state.reset;
+                    field.revision = state.revision;
                 }
                 None => {
                     self.editors.insert(
                         key,
                         EditorField {
-                            content: Arc::new(Mutex::new(text_editor::Content::with_text(&text))),
-                            reported: text,
+                            content: Arc::new(Mutex::new(editor_content(&state))),
+                            reset: state.reset,
+                            revision: state.revision,
                         },
                     );
                 }
@@ -284,9 +286,8 @@ impl Inputs {
     /// bound is cut, not refused, and the next render paints the cut value.
     ///
     /// An editor action is performed on the host's `Content` here, and the
-    /// guest hears the whole text only when an action changed it: a caret
-    /// move or a click is the host's alone and queues nothing, as does an
-    /// action for an editor the tree no longer has.
+    /// guest hears text and cursor when either changes. Actions for editors
+    /// that left the tree or were replaced are ignored.
     pub fn apply(&mut self, output: Output, pending: &mut Vec<wire::Event>) {
         let event = match output {
             Output::Ignore => return,
@@ -333,6 +334,7 @@ impl Inputs {
                 wire::Event::Input { handler, text }
             }
             Output::EditorAction {
+                reset,
                 key,
                 handler,
                 action,
@@ -340,11 +342,19 @@ impl Inputs {
                 let Some(field) = self.editors.get_mut(&key) else {
                     return;
                 };
+                if field.reset != reset {
+                    return;
+                }
+                // Guest snapshots are untrusted. Exhaustion rejects this action
+                // before changing Content; never panic or emit duplicate revisions.
+                let Some(revision) = self.editor_revision.checked_add(1) else {
+                    return;
+                };
                 let mut content = lock(&field.content);
-                let before = content.text();
+                let before = (content.text(), content.cursor());
                 content.perform(action);
                 let mut text = content.text();
-                if text == before {
+                if text == before.0 && content.cursor() == before.1 {
                     return;
                 }
                 // A paste past the bound is cut like an input's, at the
@@ -353,16 +363,68 @@ impl Inputs {
                     wire::truncate_string(&mut text);
                     *content = text_editor::Content::with_text(&text);
                 }
-                wire::Event::Edit { handler, text }
-            }
-            Output::MoveCaret { key, line, column } => {
-                if let Some(field) = self.editors.get(&key) {
-                    lock(&field.content).move_to(text_editor::Cursor {
-                        position: text_editor::Position { line, column },
-                        selection: None,
-                    });
+                self.editor_revision = revision;
+                field.revision = revision;
+                wire::Event::Edit {
+                    handler,
+                    text,
+                    cursor: editor_cursor(&content),
+                    reset: field.reset,
+                    revision: field.revision,
                 }
-                return;
+            }
+            Output::MoveCaret {
+                key,
+                line,
+                column,
+                reset,
+                handler,
+            } => {
+                let Some(handler) = handler else {
+                    return;
+                };
+                let Some(field) = self.editors.get_mut(&key) else {
+                    return;
+                };
+                if field.reset != reset {
+                    return;
+                }
+                let Some(revision) = self.editor_revision.checked_add(1) else {
+                    return;
+                };
+                let mut content = lock(&field.content);
+                let before = content.cursor();
+                let text = content.text();
+                let mut cursor = wire::EditorCursor {
+                    position: wire::EditorPosition {
+                        line: u32::try_from(line).unwrap_or(u32::MAX),
+                        column: u32::try_from(column).unwrap_or(u32::MAX),
+                    },
+                    selection: None,
+                };
+                cursor.clamp(&text);
+                content.perform(text_editor::Action::Move(
+                    text_editor::Motion::DocumentStart,
+                ));
+                content.move_to(text_editor::Cursor {
+                    position: text_editor::Position {
+                        line: cursor.position.line as usize,
+                        column: cursor.position.column as usize,
+                    },
+                    selection: None,
+                });
+                if content.cursor() == before {
+                    return;
+                }
+                self.editor_revision = revision;
+                field.revision = revision;
+                wire::Event::Edit {
+                    handler,
+                    text,
+                    cursor: editor_cursor(&content),
+                    reset,
+                    revision,
+                }
             }
             Output::Toggle { handler, on } => wire::Event::Toggle { handler, on },
             Output::Slide { handler, value } => wire::Event::Slide { handler, value },
@@ -432,17 +494,59 @@ fn lock(content: &editor::Shared) -> std::sync::MutexGuard<'_, text_editor::Cont
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+fn editor_cursor(content: &text_editor::Content) -> wire::EditorCursor {
+    let cursor = content.cursor();
+    let position = |p: text_editor::Position| wire::EditorPosition {
+        line: p.line as u32,
+        column: p.column as u32,
+    };
+    wire::EditorCursor {
+        position: position(cursor.position),
+        selection: cursor.selection.map(position),
+    }
+}
+
+fn editor_content(state: &wire::EditorState) -> text_editor::Content {
+    let mut content = text_editor::Content::with_text(&state.text);
+    let mut cursor = state.cursor;
+    cursor.clamp(&state.text);
+    let position = |p: wire::EditorPosition| text_editor::Position {
+        line: p.line as usize,
+        column: p.column as usize,
+    };
+    content.move_to(text_editor::Cursor {
+        position: position(cursor.position),
+        selection: cursor.selection.map(position),
+    });
+    content
+}
+
 fn collect_inputs(
     node: &wire::Node,
     into: &mut HashMap<String, String>,
-    editors: &mut HashMap<String, String>,
+    editors: &mut HashMap<String, wire::EditorState>,
 ) {
     match node {
         wire::Node::Input { key, value, .. } => {
             into.insert(key.clone(), value.clone());
         }
-        wire::Node::Editor { key, text, .. } => {
-            editors.insert(key.clone(), text.clone());
+        wire::Node::Editor {
+            key,
+            text,
+            cursor,
+            reset,
+            revision,
+            ..
+        } => {
+            editors.insert(
+                key.clone(),
+                wire::EditorState {
+                    text: text.clone(),
+                    cursor: *cursor,
+                    reset: *reset,
+                    revision: *revision,
+                },
+            );
         }
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
@@ -1820,21 +1924,35 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             placeholder,
             text,
             on_edit,
+            reset,
+            revision,
+            cursor,
             ..
         } => {
+            if inputs.editor_revision == u64::MAX || *revision == u64::MAX {
+                return widget::text("Editor observation limit reached").into();
+            }
             // A key the host has not adopted yet (a render before the frame
             // was taken in) shows the guest's text and keeps nothing.
-            let content = inputs
-                .editor(key)
-                .cloned()
-                .unwrap_or_else(|| Arc::new(Mutex::new(text_editor::Content::with_text(text))));
+            let content = inputs.editor(key).cloned().unwrap_or_else(|| {
+                Arc::new(Mutex::new(editor_content(&wire::EditorState {
+                    text: text.clone(),
+                    cursor: *cursor,
+                    reset: *reset,
+                    revision: *revision,
+                })))
+            });
             let (value, cursor) = {
                 let content = lock(&content);
                 (content.text(), content.cursor())
             };
             let move_to = {
                 let key = key.clone();
+                let reset = *reset;
+                let handler = *on_edit;
                 move |line, column| Output::MoveCaret {
+                    reset,
+                    handler,
                     key: key.clone(),
                     line,
                     column,
@@ -3188,6 +3306,9 @@ mod tests {
 
     fn editor_node(text: &str) -> wire::Node {
         wire::Node::Editor {
+            cursor: Default::default(),
+            reset: 0,
+            revision: 0,
             options: Default::default(),
             key: "App/notes".into(),
             placeholder: "Notes".into(),
@@ -3213,81 +3334,274 @@ mod tests {
     }
 
     #[test]
-    fn an_editor_action_edits_the_hosts_content_and_only_a_text_change_reaches_the_guest() {
+    fn sibling_editor_observations_sync_without_rewinding_pending_input() {
+        let first = editor_node("ab");
+        let mut second = first.clone();
+        if let wire::Node::Editor { key, .. } = &mut second {
+            *key = "App/overlay".into();
+        }
+        let tree = |first, second| wire::Node::Linear {
+            key: "root".into(),
+            axis: wire::Axis::Column,
+            spacing: None,
+            padding: None,
+            width: None,
+            height: None,
+            max_width: None,
+            clip: false,
+            wrap: None,
+            align: None,
+            background: None,
+            border: None,
+            children: vec![first, second],
+        };
+        let mut inputs = Inputs::default();
+        inputs.adopt(&tree(first.clone(), second.clone()));
+        let edit = |key: &str, c| Output::EditorAction {
+            reset: 0,
+            key: key.into(),
+            handler: 3,
+            action: text_editor::Action::Edit(text_editor::Edit::Insert(c)),
+        };
+        let Some(wire::Event::Edit {
+            text,
+            cursor,
+            revision,
+            ..
+        }) = applied(&mut inputs, edit("App/notes", 'x'))
+        else {
+            panic!("edit");
+        };
+        let echo = |mut node: wire::Node, text: &str, cursor, revision| {
+            if let wire::Node::Editor {
+                text: target,
+                cursor: caret,
+                revision: seq,
+                ..
+            } = &mut node
+            {
+                *target = text.into();
+                *caret = cursor;
+                *seq = revision;
+            }
+            node
+        };
+        inputs.adopt(&tree(
+            echo(first.clone(), &text, cursor, revision),
+            echo(second.clone(), &text, cursor, revision),
+        ));
+        assert_eq!(lock(inputs.editor("App/overlay").unwrap()).text(), "xab");
+        let Some(wire::Event::Edit {
+            text: next,
+            cursor: caret,
+            revision: newer,
+            ..
+        }) = applied(&mut inputs, edit("App/overlay", 'y'))
+        else {
+            panic!("overlay edit");
+        };
+        inputs.adopt(&tree(
+            echo(first.clone(), &text, cursor, revision),
+            echo(second.clone(), &text, cursor, revision),
+        ));
+        assert_eq!(
+            lock(inputs.editor("App/overlay").unwrap()).text(),
+            "xyab",
+            "old echo cannot rewind pending edit"
+        );
+        inputs.adopt(&tree(
+            echo(first, &next, caret, newer),
+            echo(second, &next, caret, newer),
+        ));
+        assert_eq!(
+            editor_text(&inputs),
+            "xyab",
+            "overlay edits reach the base editor"
+        );
+    }
+
+    #[test]
+    fn editor_reload_sequences_and_exhaustion_preserve_content() {
+        let mut node = editor_node("a");
+        if let wire::Node::Editor { revision, .. } = &mut node {
+            *revision = 100;
+        }
+        let mut inputs = Inputs::default();
+        inputs.adopt(&node);
+        let insert = || Output::EditorAction {
+            reset: 0,
+            key: "App/notes".into(),
+            handler: 3,
+            action: text_editor::Action::Edit(text_editor::Edit::Insert('x')),
+        };
+        assert!(
+            matches!(
+                applied(&mut inputs, insert()),
+                Some(wire::Event::Edit { revision: 101, .. })
+            ),
+            "fresh host starts above snapshotted guest observations"
+        );
+        if let wire::Node::Editor { revision, .. } = &mut node {
+            *revision = u64::MAX;
+        }
+        inputs.adopt(&node);
+        assert_eq!(editor_text(&inputs), "a");
+        assert_eq!(applied(&mut inputs, insert()), None);
+        assert_eq!(
+            editor_text(&inputs),
+            "a",
+            "exhaustion rejects before editing"
+        );
+        use iced::advanced::renderer::Headless;
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut ui = iced_test::runtime::UserInterface::build(
+            render(&node, &inputs, &Pictures::default(), &Surfaces::default()),
+            iced::Size::new(400.0, 100.0),
+            Default::default(),
+            &mut renderer,
+        );
+        #[derive(Default)]
+        struct Text(Vec<String>);
+        impl iced::advanced::widget::Operation for Text {
+            fn text(&mut self, _: Option<&widget::Id>, _: iced::Rectangle, text: &str) {
+                self.0.push(text.into());
+            }
+            fn traverse(
+                &mut self,
+                visit: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation),
+            ) {
+                visit(self);
+            }
+        }
+        let mut shown = Text::default();
+        ui.operate(&renderer, &mut shown);
+        assert_eq!(
+            shown.0,
+            ["Editor observation limit reached"],
+            "exhaustion is visible, not silent lost typing"
+        );
+    }
+
+    #[test]
+    fn editor_wire_lines_and_grapheme_positions_match_native_content() {
+        for ending in ["\n", "\r\n", "\r", "\n\r"] {
+            let text = format!("- 한글{ending}👍🏽{ending}");
+            let mut content = text_editor::Content::with_text(&text);
+            let native: Vec<_> = content.lines().map(|line| line.text.into_owned()).collect();
+            assert_eq!(wire::editor_lines(&text).collect::<Vec<_>>(), native);
+            content.perform(text_editor::Action::Move(text_editor::Motion::End));
+            assert_eq!(content.cursor().position.column, 8);
+            let mut cursor = wire::EditorCursor {
+                position: wire::EditorPosition { line: 0, column: 8 },
+                selection: None,
+            };
+            cursor.clamp(&text);
+            assert_eq!(cursor, editor_cursor(&content));
+            content.perform(text_editor::Action::Move(text_editor::Motion::Left));
+            cursor.position.column = 7;
+            cursor.clamp(&text);
+            assert_eq!(
+                cursor,
+                editor_cursor(&content),
+                "mid-scalar byte clamps to native prior grapheme"
+            );
+        }
+    }
+
+    #[test]
+    fn editor_caret_only_actions_reach_the_guest() {
+        let mut inputs = Inputs::default();
+        inputs.adopt(&editor_node("éx"));
+        let event = applied(
+            &mut inputs,
+            Output::EditorAction {
+                reset: 0,
+                key: "App/notes".into(),
+                handler: 3,
+                action: text_editor::Action::Move(text_editor::Motion::End),
+            },
+        );
+        assert!(
+            event.is_some(),
+            "a caret-only change must reach guest editor state"
+        );
+        assert_eq!(
+            lock(inputs.editor("App/notes").unwrap())
+                .cursor()
+                .position
+                .column,
+            3
+        );
+    }
+
+    #[test]
+    fn editor_echoes_preserve_caret_and_authoritative_resets_replace_it() {
         use text_editor::{Action, Edit, Motion};
         let mut inputs = Inputs::default();
         inputs.adopt(&editor_node("ab"));
-        let insert = |c| Output::EditorAction {
+        let action = |action| Output::EditorAction {
+            reset: 0,
             key: "App/notes".into(),
             handler: 3,
-            action: Action::Edit(Edit::Insert(c)),
+            action,
         };
-        // The caret starts at the top: the host's content, not the guest's.
-        assert_eq!(
-            applied(&mut inputs, insert('x')),
-            Some(wire::Event::Edit {
-                handler: 3,
-                text: "xab".into()
-            })
+        let inserted = applied(&mut inputs, action(Action::Edit(Edit::Insert('x')))).unwrap();
+        assert!(
+            matches!(inserted, wire::Event::Edit { text, cursor, reset: 0, .. }
+            if text == "xab" && cursor.position.column == 1)
         );
-        // A caret move is the host's alone.
-        assert_eq!(
-            applied(
-                &mut inputs,
-                Output::EditorAction {
-                    key: "App/notes".into(),
-                    handler: 3,
-                    action: Action::Move(Motion::End),
-                }
-            ),
-            None
-        );
-        assert_eq!(
-            applied(&mut inputs, insert('y')),
-            Some(wire::Event::Edit {
-                handler: 3,
-                text: "xaby".into()
-            })
-        );
-        // The guest has not caught up: it still reports the old text.
+        let moved = applied(&mut inputs, action(Action::Select(Motion::End))).unwrap();
+        assert!(matches!(moved, wire::Event::Edit { text, cursor, .. }
+            if text == "xab" && cursor.position.column == 3 && cursor.selection.unwrap().column == 1));
         inputs.adopt(&editor_node("ab"));
-        assert_eq!(editor_text(&inputs), "xaby");
-        // It echoes what it was told: the host's content, caret and all.
-        inputs.adopt(&editor_node("xaby"));
-        assert_eq!(editor_text(&inputs), "xaby");
         assert_eq!(
-            applied(&mut inputs, insert('z')),
-            Some(wire::Event::Edit {
-                handler: 3,
-                text: "xabyz".into()
-            })
+            editor_text(&inputs),
+            "xab",
+            "stale guest text cannot rewind typing"
         );
-        // Its handler set the text: the host follows.
-        inputs.adopt(&editor_node(""));
-        assert_eq!(editor_text(&inputs), "");
-        // Accessibility moves the caret without a word to the guest.
-        inputs.adopt(&editor_node("one\ntwo"));
+        assert!(
+            lock(inputs.editor("App/notes").unwrap())
+                .cursor()
+                .selection
+                .is_some()
+        );
+        let mut reset = editor_node("xab");
+        if let wire::Node::Editor { reset, cursor, .. } = &mut reset {
+            *reset = 1;
+            cursor.position.column = 2;
+        }
+        inputs.adopt(&reset);
+        let cursor = lock(inputs.editor("App/notes").unwrap()).cursor();
+        assert_eq!(cursor.position.column, 2, "same text reset controls caret");
+        assert_eq!(cursor.selection, None, "None must clear previous selection");
+        applied(
+            &mut inputs,
+            Output::EditorAction {
+                reset: 1,
+                key: "App/notes".into(),
+                handler: 3,
+                action: Action::Move(Motion::End),
+            },
+        );
+        inputs.adopt(&reset);
         assert_eq!(
-            applied(
-                &mut inputs,
-                Output::MoveCaret {
-                    key: "App/notes".into(),
-                    line: 1,
-                    column: 1,
-                }
-            ),
+            lock(inputs.editor("App/notes").unwrap())
+                .cursor()
+                .position
+                .column,
+            3,
+            "the same reset is applied only once"
+        );
+        inputs.adopt(&wire::Node::empty());
+        assert_eq!(
+            applied(&mut inputs, action(Action::Edit(Edit::Insert('q')))),
             None
         );
-        assert_eq!(
-            applied(&mut inputs, insert('!')),
-            Some(wire::Event::Edit {
-                handler: 3,
-                text: "one\nt!wo".into()
-            })
-        );
-        // Gone from the tree, gone from the host: an action for it is dropped.
-        inputs.adopt(&wire::Node::empty());
-        assert_eq!(applied(&mut inputs, insert('q')), None);
     }
 
     #[test]
@@ -3299,6 +3613,7 @@ mod tests {
         let event = applied(
             &mut inputs,
             Output::EditorAction {
+                reset: 0,
                 key: "App/notes".into(),
                 handler: 3,
                 action: Action::Edit(Edit::Paste(Arc::new(format!("{prefix}€€€")))),

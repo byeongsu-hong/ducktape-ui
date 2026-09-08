@@ -977,20 +977,33 @@ paint, canvas text and raster/SVG drawing remain E190 on this target.
 
 ## Declarative editors on the tree target
 
-An `editor` carries its string binding, hint, disabled state and native dimensions,
+An `editor` carries its document binding, hint, disabled state and native dimensions,
 plus copied `size=`, `p=`, relative or absolute `line-h=`, `wrap=` and `font=`.
 Omitted size and font use the guest application defaults. Declarative faces
 copy background, partial border/radius, value, placeholder and selection colors.
 The native status default is followed by active and then the applicable hovered,
-focused or disabled face; focused-hovered applies after focused. Native focus,
-selection, caret, undo and edit actions stay in the host. The guest receives the
-whole text after an edit. The owning host wrapper derives paint status from the
+focused or disabled face; focused-hovered applies after focused. Native focus and
+editing stay in the host. The guest receives text, active caret and optional
+selection anchor whenever text or cursor changes, including pointer and key
+selection without an edit. Positions use zero-based lines and UTF-8 byte columns;
+external positions clamp backward to extended grapheme boundaries. `None` means
+no selection, not an unchanged selection. The owning host wrapper derives paint status from the
 native focus state and cursor, preserving it between native widget calls.
 
 Typography, colors and font names share wire sanitization and frame budgets.
 `EditorOptions` changes the wire layout; rebuild hosts and guests together.
 Opaque Rust editor style, action, binding and highlighter callbacks, `highlight=`
-and guest caret inspection remain E190.
+remain E190. `editor_cursor_line`, `editor_cursor_column`, `editor_has_selection`,
+`editor_text`, `editor_copy`, `editor_line` and `editor_line_count` read the copied
+document state. Explicit assignment increments an authoritative reset revision,
+even for identical text. Observations carry that revision and a host sequence;
+old observations and old echoed frames cannot rewind newer state. Sibling editor
+keys bound to the same document synchronize newer observations. Snapshot restore
+retains text/caret/anchor/revisions; a fresh host seeds its sequence from them.
+Exhausted host observation counters reject edits before mutation and render an
+explicit limit placeholder. Rebuild hosts and guests together for this wire change.
+This does not provide structural pre-edit callbacks, undo grouping, or preserve
+native word/line selection modes across an authoritative document replacement.
 
 ## Native editor surfaces in the example host
 

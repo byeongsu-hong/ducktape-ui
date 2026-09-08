@@ -577,9 +577,12 @@ Secret handles, input icons, paste routes and Rust style callbacks remain
 refused.
 
 Tree editors copy size, padding, relative/absolute line height, wrapping, fonts
-and declarative status faces to the native host editor. Caret, selection and
-undo remain host-owned; disabled editors produce no edits. Rebuild hosts and
-guests together for `EditorOptions`. Native editor callbacks remain refused.
+and declarative status faces to the native host editor. The guest receives text
+and caret/selection observations, including cursor-only movement, and can inspect
+them with editor builtins. Explicit document replacements reset once; ordinary
+echoes preserve newer host edits. Positions are UTF-8 byte offsets normalized to
+grapheme boundaries. Disabled editors produce no edits. Rebuild hosts and guests
+together for this editor wire change. Native editor callbacks remain refused.
 The [bundled fixture](examples/app-store/tests/editor-guest/src/ui/app.ice)
 exercises layout, selection colors and guest-bound edits.
 

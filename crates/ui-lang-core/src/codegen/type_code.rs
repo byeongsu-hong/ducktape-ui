@@ -14,20 +14,20 @@ pub(super) fn markdown_type_code(program: &LoweredProgram) -> &'static str {
 }
 
 /// What an `editor` state field holds. A view module never holds a
-/// `text_editor::Content`: the host owns the caret, selection and undo, and
-/// the guest keeps the text alone (`ui_lang_wire::Node::Editor`).
+/// `text_editor::Content`: the host owns native interaction; the guest
+/// keeps text, cursor and revisions (`ui_lang_wire::Node::Editor`).
 pub(super) fn editor_type_code(program: &LoweredProgram) -> &'static str {
     match program.target() {
-        Target::Tree => "::std::string::String",
+        Target::Tree => "::ui_lang_guest::Editor",
         Target::Native => "::iced::widget::text_editor::Content",
     }
 }
 
 /// What an editor's message carries: the action the widget performed
-/// natively, the whole text the host now holds on the tree target.
+/// natively, the complete host observation on the tree target.
 pub(super) fn editor_message_payload_code(program: &LoweredProgram) -> &'static str {
     match program.target() {
-        Target::Tree => "::std::string::String",
+        Target::Tree => "::ui_lang_guest::wire::EditorState",
         Target::Native => "::iced::widget::text_editor::Action",
     }
 }
@@ -83,7 +83,7 @@ fn rust_type_code_with_named(
         }
         .into(),
         Type::Editor => match target {
-            Target::Tree => "::std::string::String",
+            Target::Tree => "::ui_lang_guest::Editor",
             Target::Native => "::iced::widget::text_editor::Content",
         }
         .into(),

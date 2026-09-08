@@ -613,27 +613,20 @@ For module packaging requirements and the connected implementation phases, see
   middle buttons, enter, exit, `move=`, `press-at=`, `scroll=` — but not
   `cursor=`: the pointer's shape over it is the host's, and the option is
   refused with E190.
-- An `editor` is its text in a view module: the host owns the
-  `text_editor::Content` (caret, selection, undo) and the guest's `editor`
-  state is a `String` it hears whole after every edit, like an input's. It
-  carries a hint, a width in pixels, a height and min/max heights,
-  `disabled=`, and text options (`size=`, `p=`, `line-h=`, `wrap=`, `font=`).
-  Declarative active, hovered, focused, focused-hovered and disabled faces
-  preserve native background, border/radius, value, placeholder and selection
-  colors. Hosts and guests must rebuild together for `EditorOptions`. The
-  [editor fixture](tests/editor-guest/src/ui/app.ice) and
-  [host test](host/src/editor_tests.rs) exercise native layout, selection, edits,
-  disabled state and paint through a real wasm bundle, including native edits
-  followed by caret/IME queries in the same overlay event batch. Everything requiring
-  a native callback remains E190: an `editor-action`, `editor-binding`,
-  `editor-highlighter` or `editor-style` extern and `highlight=`.
-  The caret builtins (`editor_cursor_line`, `editor_cursor_column`,
-  `editor_has_selection`) are refused too — the guest never sees the caret
-  — and, because an expression carries no origin, that E190 names the
-  builtin but not its line. `editor_line_count` and `editor_line` read the
-  string. Accessibility exports the editor's value, caret and one text run
-  per line, and `SetTextSelection` moves the host's caret without a guest
-  tick.
+- An `editor` carries text, active caret and optional selection anchor. The host
+  keeps native `Content`, while the guest reads editor text/line/cursor builtins.
+  Pointer, keyboard and accessibility cursor-only changes are delivered too.
+  Positions are zero-based lines and UTF-8 byte columns, clamped backward to
+  extended grapheme boundaries. A missing anchor explicitly clears selection.
+  Assignments reset the host document once, even for identical text; fenced host
+  observations prevent stale echoes from rewinding edits and synchronize sibling
+  editor keys. Snapshot restore includes the copied state and revisions.
+  Hint, native dimensions, disabled state, typography and status faces are copied.
+  Rebuild hosts and guests together. The [fixture](tests/editor-guest/src/ui/app.ice)
+  and [host tests](host/src/editor_tests.rs) exercise real native/Wasm editing.
+  Native editor action/binding/highlighter/style callbacks and `highlight=` stay
+  E190. Structural pre-edit handling and undo grouping remain app-owned; native
+  word/line selection modes are not copied by the cursor/anchor contract.
 - No scale factor or locale reaches the guest. The colour mode does, as a
   `host.theme` stream the app has to subscribe to and act on itself.
 - The host's accessibility tree names every node by its key, but nothing
@@ -1253,8 +1246,8 @@ recursive and secret state rejects capture whole. Limits are 8 MiB, depth 32 and
 65,536 values. Hosts drain pending UI events before capture; guest busy/deferred
 work and any active Task refuse capture, including long-running Task streams.
 Subscriptions rebuild from state after restore; routes and memo/task bookkeeping
-are fresh. Host-owned editor selection/undo, resources and native focus/scroll
-are not guest state.
+are fresh. Plain editor text/caret/anchor and revisions are guest state; native
+undo bookkeeping, resources and focus/scroll remain host-owned.
 
 The bundled component fixture tests native draft editing and counters, pending
 requests, boot suppression/remount, untouched component initials and nested data

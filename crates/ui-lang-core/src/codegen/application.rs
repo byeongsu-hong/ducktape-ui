@@ -858,7 +858,7 @@ pub(in crate::codegen) fn generate_update(
                     program,
                     "__local",
                     ResolvedValueRef::ComponentState(state.id),
-                    StateWrite::Assign("__text".into()),
+                    StateWrite::Mutate(format!("__local.{}.accept(__text)", state.name)),
                 );
                 writeln!(
                     out,
@@ -967,7 +967,7 @@ pub(in crate::codegen) fn generate_update(
                 program,
                 "self",
                 ResolvedValueRef::AppState(binding.state),
-                StateWrite::Assign("__text".into()),
+                StateWrite::Mutate(format!("self.{}.accept(__text)", binding.name)),
             );
             writeln!(
                 out,

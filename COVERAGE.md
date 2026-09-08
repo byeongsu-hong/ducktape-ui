@@ -1645,6 +1645,26 @@ Commands: `cargo test -p ui-lang-core -p ui-lang-wire -p ui-lang-runtime --lib`;
 `cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host
 editor_wasm_ -- --ignored`. CI bundles and runs the fixture explicitly.
 
+### Tree editor document observations
+
+The Tree editor state is copied text plus active caret, optional selection anchor,
+reset revision and host observation revision. Cursor-only keyboard, pointer and
+accessibility changes cross `Event::Edit`. Columns are UTF-8 byte offsets with
+external positions clamped backward to extended grapheme boundaries. Explicit
+assignment or guest `Editor::move_to` resets once; ordinary host observations do
+not. Same-reset sibling bindings synchronize newer observations, while delayed
+frames cannot rewind pending local changes. Snapshot restore preserves this data
+and a fresh host seeds its observation counter before accepting input.
+
+Runtime tests cover the pre-fix caret-only assertion failure, same-text reset,
+selection collapse, stale echo, snapshot sequence seeding and exhausted-counter
+rejection before mutation. Wire tests cover Korean, combining marks, emoji
+modifiers/ZWJ and trailing newlines. Guest tests cover reset fencing and snapshot
+round trips. The actual native/Wasm fixture drives select-all, Korean insertion,
+backward Shift selection, collapse, replacement and a guest caret command.
+Structural pre-edit callbacks, undo grouping and native word/line selection modes
+are separate contracts; this does not claim full document-editor app parity.
+
 ### Tree keyed and virtual row evidence
 
 The keyed codegen table and native configured-keyed tests cover the wire/native
