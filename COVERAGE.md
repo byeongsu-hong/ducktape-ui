@@ -781,6 +781,21 @@ Linux and Windows still exports nothing.
 | `ScrollIntoView` | every node inside a `scroll` advertises the action, identified or not. The request walks the tree when it arrives, notes each scroll around the node in order and the offset each needs — the innermost reveals the node, each outer one reveals the scroll it contains, and one already showing its target is left alone — then a second walk counts the scrolls the same way and moves each one's own state, so nothing is stored per node and no scroll needs an id. Ice tests drive it with `a11y scroll-into-view target` (an error for a target no scroll encloses) and assert it with `expect a11y target action scroll-into-view [bool]`, which runs the same walk without moving anything. Evidence: a runtime test nests an unidentified 50px scroll 300px down an unidentified 100px scroll and a button 500px down the inner one, dispatches `ScrollIntoView`, and reads the button back inside the outer viewport, while the same button with no scroll around it advertises nothing; the showcase test `accessibility_scroll_into_view_reaches_an_offscreen_control` asserts the action on `open-dialog` and its absence on a tab outside the catalog scroll, then scrolls to it. Red: with the second walk's `scroll_to` skipped the runtime test fails `still offscreen: y0: 800.0`; with the first walk never marking the target found, the showcase assertion fails at `expect a11y open_dialog action scroll-into-view` |
 | `tooltip` | the plain text inside a tip — every `text` node under it, joined by spaces, so a `Tooltip` component's `label` counts — becomes the description of the first accessible node under the tooltip that declares none, which is how a screen reader gets the help text a hover shows. The tip itself is an iced overlay no widget operation walks, so the text travels with the content in a `described` wrapper that hands it to the next semantic node and takes it back when its subtree ends. A tip with no text (an icon) describes nothing. Evidence: a runtime test puts a described button beside an undescribed sibling and reads the text off the first only; the media codegen test reads `described(` and the tip literal off a raw `tooltip`; the showcase font test asserts `expect a11y tooltip_trigger description` through the `Tooltip` component. Red: with the snapshot never taking the pending text, the runtime test fails `left: None, right: Some("Saves the document")` and the showcase expectation fails |
 
+Runtime headless tests cover a native Button through two `Element::map` calls:
+its snapshot advertises Click/Focus, Click emits the outer message exactly once,
+and Focus updates the live wrapper. Mapped slider steps and editor caret requests
+also deliver their outer messages. Tests reject stale clicks on removed or
+now-disabled controls and distinguish identical keys in two window scopes.
+Behavioral mutations that drop queued message delivery, prevent focus, remove
+the snapshot scope, or bypass disabled checks fail the corresponding assertions;
+restoration passes the runtime suite. These tests exercise native widgets and
+operations without requiring an OS accessibility adapter or a guest backend.
+The showcase mounts two borrowed-editor draft-length externs with distinct
+caller-owned semantic IDs. Its native operation regression asserts that both
+labels expose different IDs; restoring the former hardcoded ID fails that
+assertion. The full catalog capture also exercises both mapped instances, which
+previously hid their duplicate logical ID from the test driver.
+
 ### Gap: an extern's published accessibility node cannot be targeted
 
 An `extern` component may publish its own AccessKit node from inside the Rust

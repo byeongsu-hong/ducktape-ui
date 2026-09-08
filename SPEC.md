@@ -583,7 +583,13 @@ daemon, Tab traverses the window it was pressed in, and every window keeps its
 own focus.
 
 Tree construction, focus updates, duplicate-ID disambiguation, and action
-routing are deterministic across platforms. Native screen-reader export is a
+routing are deterministic across platforms. The operation-facing semantic state
+is independent of the widget message type, so mapped elements retain action
+support. Click, increment/decrement, and editor-caret requests select the live
+enabled widget, then request a redraw which emits its current typed message
+through the normal widget mapping. Removed or disabled targets emit nothing;
+window-scoped snapshots restrict these requests and focus to that window. Native
+screen-reader export is a
 separate, narrower contract: `accesskit_unix` exports a single-window Linux
 application over AT-SPI, `accesskit_windows` a single-window Windows
 application through UI Automation, and `accesskit_macos` a macOS `app` or

@@ -203,7 +203,10 @@ Visible labels are the default accessible names; explicit `label=` (and
 `description=`) override them with checked `str` expressions. A button with
 child content must declare `label=`, and an image without one is decorative.
 Enabled controls use source-order Tab focus with a visible outline; Enter/Space
-activate. Native screen-reader export covers single-window Linux, Windows, and
+activate. Accessibility click, focus, range-step, and editor-caret actions also
+cross `Element::map` and host widget message boundaries. These actions resolve
+against the live enabled control and retain the snapshot's window scope. Native
+screen-reader export covers single-window Linux, Windows, and
 macOS applications through AccessKit's AT-SPI, UI Automation, and
 NSAccessibility adapters (the Windows bootstrap holds the initial window hidden
 until the UI Automation subclass is ready, preserving queue order; macOS

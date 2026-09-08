@@ -39,6 +39,8 @@ test-runtime = [
 ]
 
 [dependencies]
+# Accessibility requests wake the live widget after their operation is applied.
+iced_runtime = "=0.14.0"
 accesskit = "=0.24.1"
 # iced's slider bounds its value by `FromPrimitive`; the accessibility step
 # helper generated sliders call converts through the same trait.

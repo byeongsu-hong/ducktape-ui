@@ -382,10 +382,10 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
           focused border=primary border-w=2.0
         // ducktape-ui#698 dogfood: two KEYED instances, and the app's own
         // handler hands each its share of what it just received.
-        ScratchPad #pad("notes") label="Notes"
+        ScratchPad #pad("notes") label="Notes" semantic_id="showcase-notes-draft-length"
           events
             submitted -> emit(scratch_submitted, _)
-        ScratchPad #pad("todo") label="To do"
+        ScratchPad #pad("todo") label="To do" semantic_id="showcase-todo-draft-length"
           events
             submitted -> emit(scratch_submitted, _)
         if !empty(scratch_note)
@@ -723,7 +723,7 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
 // ducktape-ui#697 dogfood: an editor living in retained component state.
 // The instance owns its draft — reads in the view go through a reference,
 // clearing it is a local handler write, and no app state is involved.
-component ScratchPad(label:str)
+component ScratchPad(label:str, semantic_id:str)
   lifetime retained
   emits
     submitted(str)
@@ -759,7 +759,7 @@ component ScratchPad(label:str)
       // The `&editor` extern-component gate: an instance's content handed to
       // a borrowing extern, which is where a reference-valued read used to
       // borrow through a temporary.
-      extern draft_length(body)
+      extern draft_length(body, semantic_id)
       button "Clear draft" disabled=empty(trim(editor_text(body))) @ghost_action -> clear
       // ducktape-ui handler emit dogfood: the local handler clears its own
       // draft, then hands the text up as the next update-loop message.
