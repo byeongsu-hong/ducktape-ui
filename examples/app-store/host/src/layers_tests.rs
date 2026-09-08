@@ -173,7 +173,7 @@ fn green_area(ui: &mut Ui, renderer: &mut iced::Renderer, cursor: mouse::Cursor)
         / 255
 }
 
-fn focus(ui: &mut Ui, renderer: &iced::Renderer, key: &str) -> bool {
+pub(super) fn focus(ui: &mut Ui, renderer: &iced::Renderer, key: &str) -> bool {
     view_tree::execute_widget_command(wire::WidgetCommand::Focus { target: key.into() }, |op| {
         ui.operate(renderer, op)
     })
@@ -185,7 +185,7 @@ fn focus(ui: &mut Ui, renderer: &iced::Renderer, key: &str) -> bool {
     .unwrap();
     wire::decode(&result).unwrap()
 }
-fn type_text(ui: &mut Ui, renderer: &mut iced::Renderer, text: &str) {
+pub(super) fn type_text(ui: &mut Ui, renderer: &mut iced::Renderer, text: &str) {
     ui.update(
         &[Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Character(text.into()),

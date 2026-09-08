@@ -8,6 +8,14 @@ use "theme.ice"
 
 extern crate::host
   fetch(value:i64) -> i64
+  Sample(name:str, values:[f64], optional:str?)
+  pure sample() -> Sample
+  sync initialize() -> i64
+  sync initializations() -> i64
+
+enum SnapshotChoice
+  idle
+  page(str)
 
 state
   active_palette:palette[ClockTheme] = ClockTheme.light
@@ -15,6 +23,22 @@ state
   visible = true
   seed = 7
   fetch_visible = false
+  draft = ""
+  init_stamp:i64 = initialize()
+  init_report:i64 = -1
+  choice:SnapshotChoice = SnapshotChoice.page("details")
+  fallback_choice:SnapshotChoice = SnapshotChoice.idle
+  success:result[str,str] = ok("ready")
+  failure:result[str,str] = err("offline")
+  nested:[str?] = [some("one"), none]
+  content:editor = "editor draft"
+  document:markdown = "# Heading"
+  payload = bytes(00 ff a4)
+  sample:Sample = sample()
+  modifiers:key-modifiers = key.command_modifiers()
+on report_initializations
+  init_report = initializations()
+
 on toggle
   visible = !visible
   seed = seed + 10
@@ -61,8 +85,12 @@ component Chip(label:str)
 
 view
   col #root w=fill
+    input "Draft" #draft <-> draft
+    text draft #draft-value
     button "Toggle counters" #toggle -> toggle
     button "Toggle fetch" #toggle-fetch -> toggle_fetch
+    button "Report initializations" -> report_initializations
+    text init_report #init-report
     if visible
       MountedCounter initial=seed #mounted
       RetainedCounter #retained

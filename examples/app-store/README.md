@@ -145,7 +145,7 @@ Target::Tree)`): the generated view builds `ui_lang_wire` nodes instead of
 iced widgets, and a construct the wire does not carry fails the build at
 its `.ice` line. `export_app!` implements the guest crate's `App` trait over
 the generated `__boot` / `__view` / `__update`, emits the `ice:view`
-component exports (`init`, `tick`, and the `panicked` import the guest's
+component exports (`init`, `tick`, `snapshot`, `restore`, and the `panicked` import the guest's
 panic hook calls before it aborts), and writes name,
 description and capabilities into an `ice.manifest` custom section, so the
 catalog lists the app — and shows what it will touch — by reading the
@@ -407,6 +407,10 @@ the whole past `MAX_NODES` or `MAX_DEPTH` or reuse a key the tree already
 has, and only the whole can be checked for that.
 
 ## What is not here yet
+
+Guest snapshot/restore exports are available; catalog-driven hot reload and
+transactional host replacement that preserve windows/native state are not yet
+implemented. See [guest state snapshots](#guest-state-snapshots).
 
 An honest inventory, grouped by where the work would land. Items marked
 **bug** are wrong today rather than merely absent.
@@ -1131,3 +1135,29 @@ together; the previous `init()` ABI is removed.
 overlay input capture, metadata, release, subscription removal and independent
 instances, with both macOS and non-macOS host initialization. A guest regression
 also sends 150 events in one batch to check bounded-channel draining.
+
+
+## Guest state snapshots
+
+A generated Tree guest exports `snapshot()` and `restore(bytes, macos)`, both
+returning a typed error on refusal. A replacement can restore before any `init`
+call, then tick to publish its complete tree. Restore preserves root draft data,
+retained/mounted state and mounted boot markers without replaying initializers or
+boot. A failed restore preserves the existing driver. Layout-only edits keep the
+state schema; changed state types/fields require a fresh start, with no migration.
+
+Snapshots include owned scalar/record/enum/list/option/result data, bytes, editor
+text, markdown source, palette selection and keyboard modifiers. Native/opaque,
+recursive and secret state rejects capture whole. Limits are 8 MiB, depth 32 and
+65,536 values. Hosts drain pending UI events before capture; guest busy/deferred
+work and any active Task refuse capture, including long-running Task streams.
+Subscriptions rebuild from state after restore; routes and memo/task bookkeeping
+are fresh. Host-owned editor selection/undo, resources and native focus/scroll
+are not guest state.
+
+The bundled component fixture tests native draft editing and counters, pending
+requests, boot suppression/remount, untouched component initials and nested data
+round trips with malformed-state rejection. Run its `bundled_snapshot` host tests
+after bundling `app-store-component-fixture`. This is the export boundary only:
+catalog watching, consent-aware staging and atomic host instance replacement
+remain in “What is not here yet”. Hosts and guests rebuild for the added exports.

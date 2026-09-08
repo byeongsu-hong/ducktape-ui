@@ -36,6 +36,9 @@ pub mod host;
 pub mod testing;
 pub mod widget;
 
+pub use snapshot::SnapshotApp;
+mod snapshot;
+
 /// What `export_app!` needs from the generated application.
 pub trait App: Sized + 'static {
     type Message: Clone + iced_runtime::futures::MaybeSend + 'static;
@@ -65,6 +68,8 @@ pub mod slots;
 /// through [`host::fulfill`], by its own yield, or by another task in the
 /// same pass — so a task waiting on the host costs a tick nothing.
 struct Task<M> {
+    /// Tracker runners restart from restored state; ordinary tasks must settle.
+    subscription: bool,
     woken: Arc<Woken>,
     stream: BoxStream<Action<M>>,
 }
@@ -296,6 +301,7 @@ impl<A: App> Driver<A> {
             // A subscription's stream feeds the channel, so as a task it
             // produces nothing itself: it is in the pool to be polled.
             self.tasks.push(Task {
+                subscription: true,
                 woken: Arc::new(Woken(AtomicBool::new(true))),
                 stream: iced_runtime::futures::boxed_stream(
                     iced_runtime::futures::futures::stream::once(future)
@@ -312,6 +318,7 @@ fn spawn<M: iced_runtime::futures::MaybeSend + 'static>(
 ) {
     if let Some(stream) = task::into_stream(task) {
         tasks.push(Task {
+            subscription: false,
             woken: Arc::new(Woken(AtomicBool::new(true))),
             stream,
         });
@@ -512,6 +519,11 @@ macro_rules! export_app {
             }
         }
 
+        impl $crate::SnapshotApp for __IceApp {
+            fn snapshot(&self) -> ::std::result::Result<::std::vec::Vec<u8>, ::std::string::String> { self.0.__snapshot() }
+            fn restore(bytes: &[u8]) -> ::std::result::Result<Self, ::std::string::String> { <$app>::__restore(bytes).map(Self) }
+        }
+
         const __ICE_MANIFEST: &str = concat!($name, "\n", $description, "\n" $(, $capability, ",")*);
 
         #[unsafe(link_section = "ice.manifest")]
@@ -528,6 +540,16 @@ macro_rules! export_app {
             __ICE_DRIVER.with(|driver| *driver.borrow_mut() = Some($crate::Driver::new()));
         }
 
+        pub fn snapshot_native() -> ::std::result::Result<::std::vec::Vec<u8>, ::std::string::String> {
+            __ICE_DRIVER.with(|driver| driver.borrow().as_ref().ok_or_else(|| ::std::string::String::from("initialize first"))?.snapshot())
+        }
+
+        pub fn restore_native(bytes: &[u8], macos: bool) -> ::std::result::Result<(), ::std::string::String> {
+            let candidate = $crate::Driver::from_snapshot(bytes, macos)?;
+            __ICE_DRIVER.with(|driver| *driver.borrow_mut() = Some(candidate));
+            ::std::result::Result::Ok(())
+        }
+
         pub fn tick_native(events: Vec<$crate::wire::Event>) -> $crate::wire::Frame {
             __ICE_DRIVER.with(|driver| driver.borrow_mut().as_mut().expect("boot first").tick(events))
         }
@@ -542,6 +564,8 @@ world view {
 
     export init: func(macos: bool);
     export tick: func(events: list<u8>) -> list<u8>;
+    export snapshot: func() -> result<list<u8>, string>;
+    export restore: func(state: list<u8>, macos: bool) -> result<_, string>;
 }
 ",
                 runtime_path: "::ui_lang_guest::wit_bindgen::rt",
@@ -549,8 +573,7 @@ world view {
 
             struct __IceComponent;
 
-            impl Guest for __IceComponent {
-                fn init(macos: bool) {
+            fn install_panic_hook() {
                     // A trapped instance can never be entered again, so the
                     // message leaves through the host's import before the
                     // abort that follows the hook.
@@ -567,7 +590,18 @@ world view {
                             .unwrap_or_else(|| "unknown".into());
                         panicked(&$crate::panic_line(message, &at));
                     }));
+            }
+
+            impl Guest for __IceComponent {
+                fn init(macos: bool) {
+                    install_panic_hook();
                     super::__ICE_DRIVER.with(|driver| *driver.borrow_mut() = Some($crate::Driver::with_macos(macos)));
+                }
+
+                fn snapshot() -> Result<Vec<u8>, String> { super::snapshot_native() }
+                fn restore(state: Vec<u8>, macos: bool) -> Result<(), String> {
+                    install_panic_hook();
+                    super::restore_native(&state, macos)
                 }
 
                 fn tick(events: Vec<u8>) -> Vec<u8> {

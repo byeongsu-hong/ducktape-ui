@@ -1702,3 +1702,31 @@ with the same widget identity stays at its original position. Replacing the
 production host's requested key with a missing key fails the row-150 mount
 assertion; restoration passes. Existing keyed wasm cases retain input/focus and
 bounded mounting checks.
+
+
+### Tree guest snapshots
+
+Wire tests bound bytes/depth/value count, finite values, malformed collection
+lengths and trailing data. Accepting trailing bytes fails the intended assertion.
+Core schema tests distinguish changed state types/storage modes from layout and
+initializer edits; replacing the schema hash with a constant fails the type-change
+assertion. Runtime mounted-state tests retain boot-only scopes and allow pruning
+and later remount; dropping saved boot markers fails the no-replay assertion.
+Driver tests cover quiescence, independent platform contexts, fresh routes and
+failed candidate isolation; replaying boot fails the external boot-count assertion.
+An active keyboard subscription can snapshot and restarts after restoration; the
+original shared task-pool guard failed this snapshot assertion before the fix.
+
+Actual bundled `bundled_snapshot` tests edit a native draft and component buttons,
+restore into a fresh wasm instance without init, and verify retained/mounted values
+and usable new routes. Pending requests refuse capture; completion permits it,
+restored boot emits no duplicate request, and remount emits one. Untouched retained
+state uses its saved initial value for both reading and its first event: the old
+fallback failed with 0 instead of 55. Data-shape tests round-trip bytes,
+editor/markdown source, optional/list data, success/error results, enum variants,
+nested records and palette/modifier state byte-for-byte, and reject malformed
+nested state while preserving the prior driver. Encoding bytes as an empty vector
+fails the payload assertion. Replaying source initializers during restore fails
+the external initialization-count assertion; exact restoration makes both pass.
+These tests do not prove catalog
+watching, host-window/focus/scroll preservation or transactional host replacement.

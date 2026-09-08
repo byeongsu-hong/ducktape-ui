@@ -8,4 +8,6 @@ world view {
 
     export init: func(macos: bool);
     export tick: func(events: list<u8>) -> list<u8>;
+    export snapshot: func() -> result<list<u8>, string>;
+    export restore: func(state: list<u8>, macos: bool) -> result<_, string>;
 }

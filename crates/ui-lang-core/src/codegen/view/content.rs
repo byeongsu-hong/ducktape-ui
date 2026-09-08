@@ -362,7 +362,15 @@ pub(in crate::codegen) fn render_content(
                     ComponentStorage::Stateless => unreachable!(),
                 };
                 for state in &component.states {
-                    let initial = resolved_initializer_code(&state.initializer, document)?;
+                    let initial = if document.target() == Target::Tree {
+                        format!(
+                            "self.{}.{}.clone()",
+                            component_state_initial_field(name),
+                            state.name
+                        )
+                    } else {
+                        resolved_initializer_code(&state.initializer, document)?
+                    };
                     let code = if state.ty == Type::Editor {
                         component_editor_read_code(name, &states, &scope_binding, &state.name)
                     } else {

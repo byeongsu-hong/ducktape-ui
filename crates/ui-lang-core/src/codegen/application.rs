@@ -294,163 +294,7 @@ pub(in crate::codegen) fn generate_boot(
     let accessibility_root = rust_string(program.app_name());
     let tray_init = tray_init_code(program, program.settings(), source_path);
     let tray_sync = tray_boot_sync_code(program.settings());
-    writeln!(out, "fn __state() -> Self {{").unwrap();
-    for (pane, test_only) in document_pane_grids(program) {
-        let field = pane_field(&pane.name);
-        if test_only {
-            writeln!(out, "#[cfg(test)]").unwrap();
-        }
-        writeln!(
-            out,
-            "let {field} = ::iced::widget::pane_grid::State::with_configuration({});",
-            pane_configuration_code(
-                &pane.configuration,
-                (!pane.templates.is_empty())
-                    .then(|| pane_type(&pane.name))
-                    .as_deref()
-            )
-        )
-        .unwrap();
-        let slots = pane_split_slots(&pane.configuration);
-        if slots.iter().any(Option::is_some) {
-            let slots = slots
-                .iter()
-                .map(|name| {
-                    name.map_or_else(
-                        || "::std::option::Option::None".into(),
-                        |name| format!("::std::option::Option::Some({})", rust_string(name)),
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            if test_only {
-                writeln!(out, "#[cfg(test)]").unwrap();
-            }
-            writeln!(
-                out,
-                "let {} = [{slots}].into_iter().zip({field}.layout().splits().copied()).filter_map(|(__name, __split)| __name.map(|__name| (__name, __split))).collect();",
-                pane_splits_field(&pane.name)
-            )
-            .unwrap();
-        }
-    }
-    writeln!(out, "Self {{").unwrap();
-    let accessibility_bridge = if program.settings().kind == ProgramKind::Daemon {
-        "::ui_lang_runtime::Bridge::without_native_adapter()"
-    } else {
-        "::ui_lang_runtime::Bridge::new()"
-    };
-    writeln!(out, "__ice_accessibility: {accessibility_bridge},").unwrap();
-    if program.settings().kind == ProgramKind::Daemon {
-        writeln!(
-            out,
-            "#[cfg(all(target_os = \"macos\", not(test)))]\n__ice_accessibility_windows: ::ui_lang_runtime::WindowBridges::new(),"
-        )
-        .unwrap();
-    }
-    if program.settings().kind == ProgramKind::Application {
-        writeln!(
-            out,
-            "#[cfg(all(target_os = \"windows\", not(test)))]\n__ice_accessibility_initial: ::std::option::Option::None,\n#[cfg(all(target_os = \"windows\", not(test)))]\n__ice_accessibility_pending: ::std::vec::Vec::new(),"
-        )
-        .unwrap();
-    }
-    for (lane, _, mode) in app_run_lanes(program) {
-        writeln!(out, "{}: 0,", run_lane_generation_field(lane.0 as usize)).unwrap();
-        if mode == DeliveryMode::Replace {
-            writeln!(
-                out,
-                "{}: ::std::option::Option::None,",
-                run_lane_handle_field(lane.0 as usize)
-            )
-            .unwrap();
-        }
-    }
-    for state in program.app_states() {
-        writeln!(out, "{}", source_marker(&state.span)).unwrap();
-        writeln!(
-            out,
-            "{}: {},",
-            state.name,
-            resolved_initializer_code(&state.initializer, program)?
-        )
-        .unwrap();
-        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
-    }
-    if !program.derived().is_empty() {
-        writeln!(
-            out,
-            "{DERIVED_CACHE_FIELD}: ::std::default::Default::default(),"
-        )
-        .unwrap();
-    }
-    writeln!(out, "{}", revisions_init_code(program.app_states().len())).unwrap();
-    if !program.secrets().is_empty() {
-        writeln!(
-            out,
-            "{SECRET_STORE_FIELD}: ::std::default::Default::default(),"
-        )
-        .unwrap();
-    }
-    if crate::codegen::program_has_boot(program) {
-        writeln!(
-            out,
-            "__ice_boot_queue: ::std::cell::RefCell::new(::std::vec::Vec::new()),"
-        )
-        .unwrap();
-    }
-    for component in program
-        .components()
-        .iter()
-        .filter(|component| component.storage != ComponentStorage::Stateless)
-    {
-        let initial = match component.storage {
-            ComponentStorage::Retained => "::std::collections::HashMap::new()",
-            ComponentStorage::Mounted => "::ui_lang_runtime::MountedComponentState::default()",
-            ComponentStorage::Stateless => unreachable!(),
-        };
-        writeln!(
-            out,
-            "{}: {initial},",
-            component_state_field(&component.name),
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "{}: ::std::default::Default::default(),",
-            component_state_initial_field(&component.name)
-        )
-        .unwrap();
-        for state in component
-            .states
-            .iter()
-            .filter(|state| state.ty == Type::Editor)
-        {
-            writeln!(
-                out,
-                "{}: {},",
-                component_editor_initial_field(&component.name, &state.name),
-                resolved_initializer_code(&state.initializer, program)?
-            )
-            .unwrap();
-        }
-    }
-    for (pane, test_only) in document_pane_grids(program) {
-        if test_only {
-            writeln!(out, "#[cfg(test)]").unwrap();
-        }
-        writeln!(out, "{},", pane_field(&pane.name)).unwrap();
-        if pane_split_slots(&pane.configuration)
-            .iter()
-            .any(Option::is_some)
-        {
-            if test_only {
-                writeln!(out, "#[cfg(test)]").unwrap();
-            }
-            writeln!(out, "{},", pane_splits_field(&pane.name)).unwrap();
-        }
-    }
-    writeln!(out, "}}\n}}").unwrap();
+    generate_state_constructor(out, program, None)?;
     let mount = program
         .app_handlers()
         .find(|handler| handler.name == "mount")
@@ -864,12 +708,19 @@ pub(in crate::codegen) fn generate_update(
                     component_state_type(&component.name)
                 );
             }
+            let insert = if program.target() == Target::Tree {
+                let initial = format!("self.{}", component_state_initial_field(&component.name));
+                let value = snapshot::component_state_code(program, component, Some(&initial));
+                format!("or_insert_with(|| {value})")
+            } else {
+                "or_default()".into()
+            };
             match component.storage {
                 ComponentStorage::Retained => {
-                    format!("let __local = self.{field}.entry({scope}).or_default();")
+                    format!("let __local = self.{field}.entry({scope}).{insert};")
                 }
                 ComponentStorage::Mounted => format!(
-                    "let mut __states = self.{field}.values_mut(); let __local = __states.entry({scope}).or_default();"
+                    "let mut __states = self.{field}.values_mut(); let __local = __states.entry({scope}).{insert};"
                 ),
                 ComponentStorage::Stateless => unreachable!(),
             }
@@ -1196,5 +1047,204 @@ pub(in crate::codegen) fn generate_update(
         )
         .unwrap();
     }
+    Ok(())
+}
+
+/// Restore receives every persistent field as an argument, so no source
+/// initializer or component Default executes while replacing an instance.
+pub(super) fn generate_state_constructor(
+    out: &mut String,
+    program: &LoweredProgram,
+    restored_fields: Option<&[(String, String)]>,
+) -> Result<(), Error> {
+    let restoring = restored_fields.is_some();
+    if let Some(fields) = restored_fields {
+        let parameters = fields
+            .iter()
+            .map(|(name, ty)| format!("{name}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(
+            out,
+            "#[allow(clippy::too_many_arguments)] fn __restore_state({parameters}) -> Self {{"
+        )
+        .unwrap();
+    } else {
+        writeln!(out, "fn __state() -> Self {{").unwrap();
+    }
+    for (pane, test_only) in document_pane_grids(program) {
+        let field = pane_field(&pane.name);
+        if test_only {
+            writeln!(out, "#[cfg(test)]").unwrap();
+        }
+        writeln!(
+            out,
+            "let {field} = ::iced::widget::pane_grid::State::with_configuration({});",
+            pane_configuration_code(
+                &pane.configuration,
+                (!pane.templates.is_empty())
+                    .then(|| pane_type(&pane.name))
+                    .as_deref()
+            )
+        )
+        .unwrap();
+        let slots = pane_split_slots(&pane.configuration);
+        if slots.iter().any(Option::is_some) {
+            let slots = slots
+                .iter()
+                .map(|name| {
+                    name.map_or_else(
+                        || "::std::option::Option::None".into(),
+                        |name| format!("::std::option::Option::Some({})", rust_string(name)),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if test_only {
+                writeln!(out, "#[cfg(test)]").unwrap();
+            }
+            writeln!(
+                out,
+                "let {} = [{slots}].into_iter().zip({field}.layout().splits().copied()).filter_map(|(__name, __split)| __name.map(|__name| (__name, __split))).collect();",
+                pane_splits_field(&pane.name)
+            )
+            .unwrap();
+        }
+    }
+    writeln!(out, "Self {{").unwrap();
+    let accessibility_bridge = if program.settings().kind == ProgramKind::Daemon {
+        "::ui_lang_runtime::Bridge::without_native_adapter()"
+    } else {
+        "::ui_lang_runtime::Bridge::new()"
+    };
+    writeln!(out, "__ice_accessibility: {accessibility_bridge},").unwrap();
+    if program.settings().kind == ProgramKind::Daemon {
+        writeln!(
+            out,
+            "#[cfg(all(target_os = \"macos\", not(test)))]\n__ice_accessibility_windows: ::ui_lang_runtime::WindowBridges::new(),"
+        )
+        .unwrap();
+    }
+    if program.settings().kind == ProgramKind::Application {
+        writeln!(
+            out,
+            "#[cfg(all(target_os = \"windows\", not(test)))]\n__ice_accessibility_initial: ::std::option::Option::None,\n#[cfg(all(target_os = \"windows\", not(test)))]\n__ice_accessibility_pending: ::std::vec::Vec::new(),"
+        )
+        .unwrap();
+    }
+    for (lane, _, mode) in app_run_lanes(program) {
+        writeln!(out, "{}: 0,", run_lane_generation_field(lane.0 as usize)).unwrap();
+        if mode == DeliveryMode::Replace {
+            writeln!(
+                out,
+                "{}: ::std::option::Option::None,",
+                run_lane_handle_field(lane.0 as usize)
+            )
+            .unwrap();
+        }
+    }
+    for state in program.app_states() {
+        writeln!(out, "{}", source_marker(&state.span)).unwrap();
+        writeln!(
+            out,
+            "{}: {},",
+            state.name,
+            if restoring {
+                state.name.clone()
+            } else {
+                resolved_initializer_code(&state.initializer, program)?
+            }
+        )
+        .unwrap();
+        writeln!(out, "{SOURCE_MARKER_END}").unwrap();
+    }
+    if !program.derived().is_empty() {
+        writeln!(
+            out,
+            "{DERIVED_CACHE_FIELD}: ::std::default::Default::default(),"
+        )
+        .unwrap();
+    }
+    writeln!(out, "{}", revisions_init_code(program.app_states().len())).unwrap();
+    if !program.secrets().is_empty() {
+        writeln!(
+            out,
+            "{SECRET_STORE_FIELD}: ::std::default::Default::default(),"
+        )
+        .unwrap();
+    }
+    if crate::codegen::program_has_boot(program) {
+        writeln!(
+            out,
+            "__ice_boot_queue: ::std::cell::RefCell::new(::std::vec::Vec::new()),"
+        )
+        .unwrap();
+    }
+    for component in program
+        .components()
+        .iter()
+        .filter(|component| component.storage != ComponentStorage::Stateless)
+    {
+        let initial = if restoring {
+            component_state_field(&component.name)
+        } else {
+            match component.storage {
+                ComponentStorage::Retained => "::std::collections::HashMap::new()",
+                ComponentStorage::Mounted => "::ui_lang_runtime::MountedComponentState::default()",
+                ComponentStorage::Stateless => unreachable!(),
+            }
+            .into()
+        };
+        writeln!(
+            out,
+            "{}: {initial},",
+            component_state_field(&component.name),
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "{}: {},",
+            component_state_initial_field(&component.name),
+            if restoring {
+                component_state_initial_field(&component.name)
+            } else {
+                "::std::default::Default::default()".into()
+            }
+        )
+        .unwrap();
+        for state in component
+            .states
+            .iter()
+            .filter(|state| state.ty == Type::Editor)
+        {
+            writeln!(
+                out,
+                "{}: {},",
+                component_editor_initial_field(&component.name, &state.name),
+                if restoring {
+                    component_editor_initial_field(&component.name, &state.name)
+                } else {
+                    resolved_initializer_code(&state.initializer, program)?
+                }
+            )
+            .unwrap();
+        }
+    }
+    for (pane, test_only) in document_pane_grids(program) {
+        if test_only {
+            writeln!(out, "#[cfg(test)]").unwrap();
+        }
+        writeln!(out, "{},", pane_field(&pane.name)).unwrap();
+        if pane_split_slots(&pane.configuration)
+            .iter()
+            .any(Option::is_some)
+        {
+            if test_only {
+                writeln!(out, "#[cfg(test)]").unwrap();
+            }
+            writeln!(out, "{},", pane_splits_field(&pane.name)).unwrap();
+        }
+    }
+    writeln!(out, "}}\n}}").unwrap();
     Ok(())
 }
