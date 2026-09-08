@@ -1288,3 +1288,8 @@ sending geometry to the guest. Geometry-dependent Rust calls remain E190; each
 axis permits at most 64 arithmetic operations. Rebuild hosts and guests together
 for the new wire node. The app-store float fixture checks real wasm painting at
 two viewport sizes and clicks at the translated position.
+
+Tree keyed columns and lazy boundaries preserve authored `#id` directly on
+the wire node, including nested lazy and virtual keyed rows. Their descendants
+retain that scope for guest test selectors and widget operations. Identified
+Tree structures emit no native Iced container wrapper.

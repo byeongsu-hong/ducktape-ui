@@ -165,6 +165,19 @@ fn bundled_nested_lazy_preserves_pointer_routes_on_hits_and_expires_old_generati
     for _ in 0..4 {
         ui = redraw(ui, &guest, &mut renderer, &mut now, 400.0);
     }
+    fn identified_lazy(node: &wire::Node, suffix: &str) -> bool {
+        matches!(node, wire::Node::Lazy { key, .. } if key.ends_with(suffix))
+            || node
+                .children()
+                .iter()
+                .any(|child| identified_lazy(child, suffix))
+    }
+    for suffix in ["/cached_outer", "/cached_outer/cached_inner"] {
+        assert!(
+            identified_lazy(guest.lock().unwrap().frame.root.as_ref().unwrap(), suffix),
+            "authored nested lazy IDs must cross unchanged: {suffix}"
+        );
+    }
     let initial = snapshot(&guest);
     assert_eq!(
         initial.0.len(),

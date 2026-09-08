@@ -41,7 +41,7 @@ component RowCounter(number:i64)
     local:i64 = 0
   on bump
     local = local + 1
-  lazy local by local, number as cached
+  lazy local by local, number as cached #row_memo
     col gap=4.0
       button #bump label="Increment row" -> bump
         text number
@@ -58,13 +58,13 @@ view
     text unrelated #unrelated
     text chosen #chosen
     if shown && !rows_mode
-      lazy count by count as cached
-        lazy cached as inner
+      lazy count by count as cached #cached_outer
+        lazy cached as inner #cached_inner
           col gap=4.0
             button #choose label="Choose" -> choose inner
               text inner
             extern echo(inner) #echo -> choose _
     if rows_mode
       scroll h=240.0
-        keyed number in rows by=number virtual-row=64.0
+        keyed number in rows by=number #row_entries virtual-row=64.0
           RowCounter number=number #row

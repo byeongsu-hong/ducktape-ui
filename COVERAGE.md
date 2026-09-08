@@ -1898,3 +1898,13 @@ restoring it passes. The runtime floated-overlay test also proves that the
 translated modal consumes inside clicks while its old slot dismisses; moving
 the guard outside Float fails that assertion. These are headless renderer tests,
 not platform window smoke evidence.
+
+### Tree keyed and lazy identity regression
+
+Core verifies that identified shared structures retain native wrappers only
+on the native target and emit an exact authored wire key on Tree. Actual
+keyed/lazy fixture bundles carry IDs on virtual and ordinary columns and nested
+lazy boundaries. Host tests assert those exact scoped keys while exercising
+row reordering, input/focus retention, virtual scrolling, cached routes and
+expired generations. Replacing keyed identity with an anonymous key compiles
+but fails the actual wasm host identity assertion; exact restoration passes.

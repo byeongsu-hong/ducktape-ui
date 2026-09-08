@@ -1382,3 +1382,10 @@ component, resolve imports with `Linker::instantiate_pre`, and check exports
 with the generated `ViewPre::new` without creating a store or running the guest.
 This checks required ABI types; it is not proof that instantiation, init, or boot
 will succeed. Import policy remains the host's responsibility.
+
+### Identified shared Tree structures
+
+An identified keyed column uses its full authored scope as its wire node key;
+its row keys extend that scope. An identified lazy boundary likewise carries
+its own scope, with nested boundaries extending it. Native identity wrappers
+are emitted only for native elements, never for Tree nodes.

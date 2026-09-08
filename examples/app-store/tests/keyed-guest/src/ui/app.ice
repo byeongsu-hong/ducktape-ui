@@ -57,7 +57,7 @@ view
       button "Jump" #jump -> jump
       button "Missing" #missing -> missing
     if use_plain
-      keyed number in rows by=number w=fill gap=4.0
+      keyed number in rows by=number #ordinary_entries w=fill gap=4.0
         Row number=number #ordinary_row
     if !use_plain
       scroll #list
@@ -65,7 +65,7 @@ view
           w=fill
           h=200.0
           anchor-y=keep
-        keyed number in rows by=number
+        keyed number in rows by=number #entries
           with
             virtual-row=60.0
             w=fill
