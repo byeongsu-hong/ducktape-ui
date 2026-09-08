@@ -191,11 +191,11 @@ pub(in crate::codegen) fn generate_subscription(
             ResolvedSubscriptionSource::Every { milliseconds }
                 if program.target() == Target::Tree =>
             {
-                if !subscription.route.args.is_empty() {
+                if !subscription.route.args.is_empty() || subscription.filter.is_some() {
                     return Err(Error::new(
                         "E190",
                         &subscription.span,
-                        "`every` carries no instant in a view module: a module has no clock, so route it without a payload",
+                        "`every` carries no instant in a view module: a module has no clock, so route it without a payload or filter",
                     ));
                 }
                 writeln!(out, "::ui_lang_guest::every(::std::time::Duration::from_millis({milliseconds})){transforms}.map(move |__value| {route}),").unwrap();

@@ -630,3 +630,24 @@ fn subscription_failure_routes_reject_wrong_payloads_and_preserve_formatting() {
             .any(|warning| warning.code == "W005" && warning.message.contains("failed"))
     );
 }
+
+#[test]
+fn tree_timer_filter_cannot_require_an_instant_through_only_the_error_route() {
+    let source = format!(
+        r#"app Timer
+extern crate::backend
+  pure event(value:instant) -> result[i64, str]?
+{HANDLER_PERF_THEME}on elapsed
+on failed(problem)
+subscribe
+  every 1s filter=event -> elapsed | failed _
+view
+  text "Timer"
+"#
+    );
+    assert!(crate::compile_for(&source, "timer.ice", crate::Target::Native).is_ok());
+    let error = crate::compile_for(&source, "timer.ice", crate::Target::Tree)
+        .expect_err("a Tree timer filter must not receive an unavailable Instant");
+    assert_eq!(error.code, "E190");
+    assert!(error.message.contains("no instant"));
+}

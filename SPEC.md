@@ -501,7 +501,9 @@ item, including `Result<T, E>`. Filtering still runs on the original source
 payload before routing. A failure route requires the filtered item to remain a
 `Result`; `with=` context precedes the payload in both routes, and `when` keeps
 its existing activity semantics. Routes accept only `_` payloads, or no arguments
-to ignore them. Native and Tree targets use the same branch mapping.
+to ignore them. Native and Tree targets use the same branch mapping. A Tree
+`every` cannot use a filter: its native source payload would require an `instant`
+that a view module cannot create.
 
 ### Identity
 

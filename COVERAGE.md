@@ -923,7 +923,10 @@ Core coverage for native and Tree branch emission, success/error payload types,
 formatter round trips, failure-handler reachability, and checked-HIR handler,
 type, and payload-order invariants. Redirecting the generated Err arm to the
 success route fails the compiler's expected failure-handler assertion; exact
-restoration passes. This compiler evidence concerns generated routes, not host
+restoration passes. A native-valid timer filter whose failure route alone takes
+a payload is rejected with E190 on Tree; before the source guard was fixed, its
+expected-diagnostic assertion failed because code generation incorrectly succeeded.
+This compiler evidence concerns generated routes, not host
 stream lifecycle or cancellation.
 
 ## Widgets and layout
