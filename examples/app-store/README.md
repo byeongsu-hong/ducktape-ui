@@ -944,10 +944,10 @@ cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
   -p app-store-layers-fixture --target wasm32-unknown-unknown \
   --out examples/app-store/target/layers-fixture
 cd examples/app-store
-cargo test -p app-store-host bundled_layers_ -- --ignored
+cargo test -p app-store-host store::layers_tests -- --ignored
 ```
 
-Flex and pin remain separate phase-4 prerequisites. Lazy caching is described below.
+Flex, pin and lazy caching are described below.
 Host and guests must be rebuilt together for the added wire node variants.
 
 ### Tree SVG button colors
@@ -1011,7 +1011,7 @@ native UI cache. A second test clicks component-local routes inside virtual keye
 lazy rows before and after reordering, preserving sibling state and generations.
 Native tests separately count layout hits/reflows and verify
 resource release and shared text/image budgets. Other Tree refusals, including
-pin, rich text and retained components, still block larger application
+rich text and retained components still block larger application
 graphs.
 
 ```sh
@@ -1043,3 +1043,11 @@ cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
 cd examples/app-store
 cargo test -p app-store-host store::flex_tests -- --ignored
 ```
+
+### Pinned module children
+
+`pin` sends local `x`/`y` and optional `w`/`h` to the host's native Pin widget.
+Omitted dimensions fill available space. Nested pins retain signed local offsets;
+wire sanitization bounds coordinates to ±8192 pixels and maps NaN to zero.
+The layers wasm fixture checks nested geometry and clicks before and after the
+guest moves its button. Rebuild host and guests together for this wire change.

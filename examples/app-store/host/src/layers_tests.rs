@@ -388,3 +388,65 @@ fn bundled_layers_route_top_and_reveal_buttons_and_modal_dismissal() {
         "base input resumes after modal closes"
     );
 }
+
+#[test]
+#[ignore = "requires bundled layers-fixture wasm"]
+fn bundled_pin_uses_local_coordinates_and_routes_after_moving() {
+    let mut renderer = renderer();
+    let guest = guest(Arc::new(AtomicUsize::new(0)));
+    let mut ui = build(
+        &guest,
+        user_interface::Cache::default(),
+        &mut renderer,
+        640.0,
+    );
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now, 640.0);
+    }
+    let parent = container_bounds(&mut ui, &renderer, "LayersFixture/modal/pin-parent");
+    let child = container_bounds(
+        &mut ui,
+        &renderer,
+        "LayersFixture/modal/pin-parent/pin-child",
+    );
+    assert_eq!(parent.size(), Size::new(200.0, 60.0));
+    assert_eq!(child.size(), Size::new(70.0, 28.0));
+    assert_eq!(
+        (child.x - parent.x, child.y - parent.y),
+        (32.0, 8.0),
+        "nested offsets are widget-local, including negative offsets"
+    );
+    click(&mut ui, &mut renderer, "Pinned");
+    for _ in 0..3 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now, 640.0);
+    }
+    assert!(
+        bounds(&mut ui, &mut renderer, "pinned").is_some(),
+        "positioned button must reach the guest"
+    );
+    let moved = container_bounds(
+        &mut ui,
+        &renderer,
+        "LayersFixture/modal/pin-parent/pin-child",
+    );
+    assert_eq!(
+        moved.x - child.x,
+        20.0,
+        "guest updates reposition the same child"
+    );
+    click(&mut ui, &mut renderer, "Pinned");
+    for _ in 0..3 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now, 640.0);
+    }
+    let moved_again = container_bounds(
+        &mut ui,
+        &renderer,
+        "LayersFixture/modal/pin-parent/pin-child",
+    );
+    assert_eq!(
+        moved_again.x - moved.x,
+        20.0,
+        "hit testing follows the updated position"
+    );
+}

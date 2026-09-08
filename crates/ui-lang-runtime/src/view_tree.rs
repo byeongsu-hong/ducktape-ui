@@ -378,6 +378,7 @@ fn collect_inputs(
         }
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
+        | wire::Node::Pin { content, .. }
         | wire::Node::Responsive { content, .. }
         | wire::Node::Lazy { content, .. }
         | wire::Node::MouseArea { content, .. }
@@ -458,6 +459,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         } => into.keep(*hash, bytes),
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
+        | wire::Node::Pin { content, .. }
         | wire::Node::Responsive { content, .. }
         | wire::Node::Lazy { content, .. }
         | wire::Node::MouseArea { content, .. }
@@ -1194,6 +1196,23 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             )
             .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .into()
+        }
+        wire::Node::Pin {
+            x,
+            y,
+            width,
+            height,
+            content,
+            ..
+        } => {
+            let mut pin = widget::pin(render_node(content, kept)).x(*x).y(*y);
+            if let Some(width) = width {
+                pin = pin.width(length(*width));
+            }
+            if let Some(height) = height {
+                pin = pin.height(length(*height));
+            }
+            pin.into()
         }
         wire::Node::Tooltip {
             position,
@@ -2143,6 +2162,58 @@ fn selected_children<'a>(children: &'a [wire::Node], kept: &Kept<'_>) -> Vec<&'a
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pin_keeps_default_fill_and_explicit_dimensions() {
+        use iced::advanced::{layout::Limits, renderer::Headless, widget::Tree};
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for (width, height, expected) in [
+            (None, None, iced::Size::new(200.0, 100.0)),
+            (
+                Some(wire::Length::Fixed(80.0)),
+                Some(wire::Length::Fixed(50.0)),
+                iced::Size::new(80.0, 50.0),
+            ),
+            (
+                Some(wire::Length::Shrink),
+                Some(wire::Length::Shrink),
+                iced::Size::new(20.0, 10.0),
+            ),
+        ] {
+            let node = wire::Node::Pin {
+                key: "pin".into(),
+                x: 4.0,
+                y: 6.0,
+                width,
+                height,
+                content: Box::new(wire::Node::Space {
+                    width: Some(wire::Length::Fixed(20.0)),
+                    height: Some(wire::Length::Fixed(10.0)),
+                }),
+            };
+            let mut element = render(
+                &node,
+                &Inputs::default(),
+                &Pictures::default(),
+                &Surfaces::new(),
+            );
+            let mut tree = Tree::new(&element);
+            let layout = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &Limits::new(iced::Size::ZERO, iced::Size::new(200.0, 100.0)),
+            );
+            assert_eq!(layout.size(), expected);
+            assert_eq!(
+                layout.children()[0].bounds().position(),
+                iced::Point::new(4.0, 6.0)
+            );
+        }
+    }
 
     #[test]
     fn input_styles_preserve_utility_active_focus_and_hover_precedence() {

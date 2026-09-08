@@ -7,7 +7,7 @@
 //! the parent's child list; so a `for` over a list of rows compiles to the
 //! same loop for both targets and only the row inside changes.
 //!
-//! A construct the tree does not model (`pin`, rich text, a gradient
+//! A construct the tree does not model (`float`, rich text, a gradient
 //! background...) fails the build, naming the construct and its `.ice`
 //! line, rather than rendering as something else. The host has a fixed
 //! vocabulary; a view module is written to it.
@@ -43,6 +43,7 @@ mod flex;
 mod lists;
 pub(super) use flex::item_code as flex_item_code;
 pub(super) use lists::keyed_column;
+mod pin;
 mod responsive;
 mod text;
 mod tooltip;
@@ -103,6 +104,9 @@ pub(in crate::codegen) fn render_tree_node(
             env,
             scope,
             slot,
+        )?,
+        ResolvedViewKind::Pin { content } => pin::render(
+            node, identity, *content, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::Tooltip { content, tip } => tooltip::render(
             node, identity, *content, *tip, document, message, env, scope, slot,

@@ -499,6 +499,16 @@ pub enum Node {
         #[serde(deserialize_with = "decode_children")]
         children: Vec<Node>,
     },
+    /// A child positioned in this widget's local coordinates. The host lays it out.
+    Pin {
+        key: String,
+        x: f32,
+        y: f32,
+        width: Option<Length>,
+        height: Option<Length>,
+        #[serde(deserialize_with = "decode_child")]
+        content: Box<Node>,
+    },
     /// Copied keyed rows; the host owns widget state and optional virtualization.
     KeyedColumn {
         key: String,
@@ -941,6 +951,7 @@ impl Node {
             | Self::Grid { key, .. }
             | Self::KeyedColumn { key, .. }
             | Self::Flex { key, .. }
+            | Self::Pin { key, .. }
             | Self::Responsive { key, .. }
             | Self::Lazy { key, .. }
             | Self::When { key, .. }
@@ -974,6 +985,7 @@ impl Node {
     pub fn children(&self) -> &[Node] {
         match self {
             Self::Container { content, .. }
+            | Self::Pin { content, .. }
             | Self::Responsive { content, .. }
             | Self::Lazy { content, .. }
             | Self::Sensor { child: content, .. }
@@ -1021,6 +1033,7 @@ impl Node {
     pub fn children_mut(&mut self) -> &mut [Node] {
         match self {
             Self::Container { content, .. }
+            | Self::Pin { content, .. }
             | Self::Responsive { content, .. }
             | Self::Lazy { content, .. }
             | Self::Sensor { child: content, .. }
@@ -1072,6 +1085,7 @@ impl Node {
             | Self::Tooltip { children, .. }
             | Self::Overlay { children, .. } => Some(children),
             Self::Container { .. }
+            | Self::Pin { .. }
             | Self::Responsive { .. }
             | Self::Lazy { .. }
             | Self::Sensor { .. }
@@ -1647,6 +1661,11 @@ fn sanitize_node(
             *radius = bounded(*radius);
             children.truncate(2);
         }
+        Node::Pin { key, x, y, .. } => {
+            claim(key, taken);
+            *x = finite(*x).clamp(-MAX_PIXELS, MAX_PIXELS);
+            *y = finite(*y).clamp(-MAX_PIXELS, MAX_PIXELS);
+        }
         Node::Tooltip {
             key,
             gap,
@@ -2058,6 +2077,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Linear { width, height, .. }
         | Node::Grid { width, height, .. }
         | Node::KeyedColumn { width, height, .. }
+        | Node::Pin { width, height, .. }
         | Node::Responsive { width, height, .. }
         | Node::Stack { width, height, .. }
         | Node::Hover { width, height, .. }
