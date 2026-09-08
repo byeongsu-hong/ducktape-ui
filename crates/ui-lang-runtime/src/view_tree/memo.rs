@@ -54,6 +54,11 @@ pub(super) fn render(
                     pictures.handles.insert(*hash, handle.clone());
                 }
             }
+            ui_lang_wire::Node::Image { hash, .. } => {
+                if let Some(handle) = kept.pictures.images.get(hash) {
+                    pictures.images.insert(*hash, handle.clone());
+                }
+            }
             ui_lang_wire::Node::Surface { name, .. } => {
                 if let Some(surface) = kept.surfaces.get(name) {
                     surfaces.insert(name.clone(), surface.clone());
@@ -76,7 +81,12 @@ pub(super) fn render(
         })
         .collect();
     providers.sort_unstable();
-    let mut images: Vec<_> = pictures.handles.keys().copied().collect();
+    let mut images: Vec<_> = pictures
+        .handles
+        .keys()
+        .map(|hash| (false, *hash))
+        .chain(pictures.images.keys().map(|hash| (true, *hash)))
+        .collect();
     images.sort_unstable();
     let mut values: Vec<_> = inputs
         .fields

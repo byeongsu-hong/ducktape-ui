@@ -63,10 +63,10 @@ pub(crate) fn memoize<D: Hash>(
     let (node, routes) = slots::capture(|| build(&dependency));
     // The first returned frame carries new pictures; retained hits need only hashes.
     let mut retained = node.clone();
-    retained.for_each_mut(&mut |node| {
-        if let wire::Node::Svg { bytes, .. } = node {
-            *bytes = None;
-        }
+    retained.for_each_mut(&mut |node| match node {
+        wire::Node::Svg { bytes, .. } => *bytes = None,
+        wire::Node::Image { data, .. } => *data = None,
+        _ => {}
     });
     let (generation, replaced, evicted) = {
         let mut cache = cache.borrow_mut();
@@ -175,10 +175,10 @@ mod tests {
             None,
             "a cache hit must not replay picture payload bytes"
         );
-        first.for_each_mut(&mut |node| {
-            if let wire::Node::Svg { bytes, .. } = node {
-                *bytes = None;
-            }
+        first.for_each_mut(&mut |node| match node {
+            wire::Node::Svg { bytes, .. } => *bytes = None,
+            wire::Node::Image { data, .. } => *data = None,
+            _ => {}
         });
         assert_eq!(
             first, second,

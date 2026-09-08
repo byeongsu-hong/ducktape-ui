@@ -31,6 +31,7 @@ mod lists;
 
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
+mod image;
 mod memo;
 mod pick;
 mod qr;
@@ -438,6 +439,7 @@ fn collect_inputs(
         | wire::Node::RichText { .. }
         | wire::Node::Text { .. }
         | wire::Node::Svg { .. }
+        | wire::Node::Image { .. }
         | wire::Node::Space { .. }
         | wire::Node::Rule { .. }
         | wire::Node::Toggle { .. }
@@ -457,12 +459,14 @@ fn collect_inputs(
 /// guest believes the host has.
 // ponytail: a hard cap, no eviction; an app that shows more than this in
 // distinct pictures needs a re-ask protocol (host says "miss", guest resends).
-pub const MAX_PICTURE_BYTES: usize = 8 * wire::MAX_SVG_BYTES_PER_FRAME;
+pub const MAX_PICTURE_BYTES: usize = 8 * wire::MAX_PICTURE_BYTES_PER_FRAME;
 
 /// Every picture a guest has sent, by the hash its nodes name it with.
 #[derive(Clone, Debug, Default)]
 pub struct Pictures {
     handles: HashMap<u64, widget::svg::Handle>,
+    images: HashMap<u64, Option<widget::image::Handle>>,
+    pixels: u64,
     bytes: usize,
 }
 
@@ -470,11 +474,15 @@ impl Pictures {
     /// Keeps every picture whose bytes this tree carries. Run on a frame
     /// that has passed [`wire::sanitize`], which bounds the bytes per frame.
     pub fn adopt(&mut self, root: &wire::Node) {
-        collect_pictures(root, self);
+        let mut frame_pixels = image::MAX_FRAME_PIXELS;
+        collect_pictures(root, self, &mut frame_pixels);
     }
 
     fn keep(&mut self, hash: u64, bytes: &[u8]) {
-        if self.handles.contains_key(&hash) || self.bytes + bytes.len() > MAX_PICTURE_BYTES {
+        if self.handles.contains_key(&hash)
+            || self.handles.len() + self.images.len() >= image::MAX_ENTRIES
+            || self.bytes + bytes.len() > MAX_PICTURE_BYTES
+        {
             return;
         }
         self.bytes += bytes.len();
@@ -483,8 +491,13 @@ impl Pictures {
     }
 }
 
-fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
+fn collect_pictures(node: &wire::Node, into: &mut Pictures, frame_pixels: &mut u64) {
     match node {
+        wire::Node::Image {
+            hash,
+            data: Some(data),
+            ..
+        } => into.keep_image(*hash, data, frame_pixels),
         wire::Node::Svg {
             hash,
             bytes: Some(bytes),
@@ -498,7 +511,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         | wire::Node::Lazy { content, .. }
         | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
-            collect_pictures(content, into);
+            collect_pictures(content, into, frame_pixels);
         }
         wire::Node::Linear { children, .. }
         | wire::Node::Grid { children, .. }
@@ -510,15 +523,16 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         | wire::Node::Flex { children, .. }
         | wire::Node::When { children, .. } => {
             for child in children {
-                collect_pictures(child, into);
+                collect_pictures(child, into, frame_pixels);
             }
         }
         wire::Node::Button {
             content: wire::ButtonContent::Child(child),
             ..
-        } => collect_pictures(child, into),
+        } => collect_pictures(child, into, frame_pixels),
         wire::Node::Button { .. }
         | wire::Node::Svg { .. }
+        | wire::Node::Image { .. }
         | wire::Node::Qr { .. }
         | wire::Node::RichText { .. }
         | wire::Node::Text { .. }
@@ -1570,6 +1584,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         }
         wire::Node::Text { .. } => text::render(node),
         wire::Node::Qr { key, code } => qr::render(key, code),
+        wire::Node::Image { .. } => image::render(node, kept.pictures),
         wire::Node::RichText { .. } => rich_text::render(node),
         wire::Node::Svg {
             inherit_button_ink,

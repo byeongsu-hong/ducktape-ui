@@ -17,7 +17,9 @@ lowering diagnostics; those refusals apply to both Tree execution paths.
 | Snapshot and approved reload | Native app-specific lifecycle | Shared owned-state snapshot and host replacement; shipped persistent streams use subscriptions | Preserve state and window; stale completion cannot replace live app |
 | Fault containment | Application process | Native process deadline; wasm fuel, memory and epoch limits | Chaos runaway ends while another app remains usable |
 | Accessibility | Native runtime semantics | Mapped host widgets preserve roles, names and semantic action targets | Identical mounted semantic actions and results on both backends; OS bridge smoke remains a separate platform gate |
-| Combo boxes, images, gradients | Existing native widgets/options | Tree refusals remain | Real selection/image decode/gradient pixels, not codegen strings |
+| Embedded and memory raster images | Native image widget | Copied encoded/RGBA sources, typed bounded host cache and native options | Native/Wasm pixels, dimension changes, lazy remount, Resync and reload |
+| Raster destination positioning | Existing tiny-skia source-pixel origin truncation | Same native behavior; enlarged images can paint outside nominal bounds | Separate renderer fix with outside-bounds Red/Green on native and Wasm |
+| Combo boxes, image viewer, dynamic image paths, gradients | Existing native widgets/options | Tree refusals remain | Real selection/viewer/decode/gradient pixels, not codegen strings |
 | Floating content | Native layout | Host-evaluated placement, scale, shadow and radius; bounded arithmetic | Actual bundled component tests placement, resize, pixels and translated clicks |
 | Mounted components in lazy or host-conditional containers | Native state and lifetime machinery | Tree refusals remain | Mount/unmount lifetime, cancellation, fresh routes and retained state |
 | Interaction styles and missing editor/slider/toggler/rule/scroll options | Native recipes/callbacks | Some declarative recipes exist; remaining Rust callbacks refused | Declarative recipes or host-owned semantics with equivalent states and pixels |

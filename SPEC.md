@@ -1188,7 +1188,7 @@ Tree `lazy` uses the checked native dependency/revision and `by` lowering. The
 guest caches the resulting Node and callable route snapshots per Driver, keyed
 by expression and reconciliation scope. Cache hits restore only the current
 frame's routes; removed routes expire. Cache entries keep the latest dependency
-revision and are bounded to 1024 entries. Retained SVG nodes keep hashes only;
+revision and are bounded to 1024 entries. Retained SVG and raster image nodes keep hashes only;
 new payload bytes cross in the first returned frame and are not replayed on hits. An eviction rebuild receives a
 fresh generation even when dependency values match an older entry.
 
@@ -1481,3 +1481,37 @@ support. No OS-theme/subscription semantics change with this boundary.
 App-store persistent theme, Activity bus-feed and Clock tick streams are
 subscription recipes. Snapshot restoration restarts each recipe once without
 replaying finite mount tasks; pending finite work continues to reject snapshots.
+
+### Tree raster image transport
+
+`image` accepts an embedded relative literal asset or an `image` value produced
+by `encoded(bytes)` / `rgba(width, height, bytes)`. Tree lowering preserves
+`w`, `h`, `fit`, `rotate`, `opacity`, `filter` and `label`. The guest sends copied
+encoded bytes or dimensions plus RGBA bytes once per typed content hash.
+Runtime filesystem `Handle::Path` values report through `host.log` and produce
+an empty node; statically visible nonembedded paths are E190. No host filesystem
+fallback exists. `viewer`, dynamic filesystem sources and image allocation
+operations are separate unsupported Tree features.
+
+SVG and raster payloads share a 1 MiB frame allowance and an 8 MiB host-session
+copied-byte allowance. Raster vector headers above 8 MiB are rejected before
+allocation. RGBA dimensions must be nonzero and match the exact byte length.
+The host admits at most 4,194,304 pixels per image, 8,388,608 attempted decoded pixels
+per frame, and 16,777,216 attempted raster pixels per session. Combined SVG/raster
+cache entries are capped at 8192; raster failures consume an entry and their
+copied-byte allowance. Failed pixel decoding also spends its admitted pixel allowance. Excess or malformed pictures draw empty space with their
+specified dimensions. Cache entries are retained without eviction because guests
+send each payload once. Lazy subtrees use only already admitted cache entries;
+Resync retains host pictures, and a replacement guest starts its own send history.
+
+Encoded data uses the existing image decoder formats and orientation handling.
+Decoder limits request at most 64 MiB allocation and bound dimensions before
+pixel decoding. These are admission and decoder limits, not a guarantee on total
+process memory or every codec's temporary allocations. Animations use their
+static image decoding, as the native image widget does.
+
+Known native renderer limitation: tiny-skia currently truncates raster origins
+in source-pixel units before scaling. Enlarged images at nonaligned destinations
+can paint outside their nominal widget bounds. Tree raster transport preserves
+this existing native behavior; the pixel parity tests do not establish correct
+destination positioning. Renderer position correction is a separate change.

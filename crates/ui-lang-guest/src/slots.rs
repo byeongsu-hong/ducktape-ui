@@ -10,7 +10,7 @@ struct Tables {
     deferred: Vec<Box<dyn Any>>,
     messages: Vec<Rc<dyn Any>>,
     handlers: Vec<Rc<dyn Any>>,
-    pictures: HashSet<u64>,
+    pictures: HashSet<(bool, u64)>,
     cached_messages: HashMap<u32, Rc<dyn Any>>,
     cached_handlers: HashMap<u32, Rc<dyn Any>>,
     next_cached: u32,
@@ -156,8 +156,57 @@ pub fn picture(bytes: impl AsRef<[u8]>) -> (u64, Option<Vec<u8>>) {
     let mut hasher = std::hash::DefaultHasher::new();
     bytes.hash(&mut hasher);
     let hash = hasher.finish();
-    let first = tables().borrow_mut().pictures.insert(hash);
+    let first = tables().borrow_mut().pictures.insert((false, hash));
     (hash, first.then(|| bytes.to_vec()))
+}
+
+/// Copies an in-memory raster once per driver. A path never reaches the host.
+pub fn image(
+    handle: &iced::advanced::image::Handle,
+) -> Option<(u64, Option<ui_lang_wire::ImageData>)> {
+    use iced::advanced::image::Handle;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    match handle {
+        Handle::Path(..) => {
+            crate::host::log(
+                "Tree image refused: runtime path handles are unsupported; use embedded assets, encoded(bytes), or rgba(width, height, bytes)",
+            );
+            return None;
+        }
+        Handle::Bytes(_, bytes) => {
+            0u8.hash(&mut hasher);
+            bytes.as_ref().hash(&mut hasher);
+        }
+        Handle::Rgba {
+            width,
+            height,
+            pixels,
+            ..
+        } => {
+            1u8.hash(&mut hasher);
+            width.hash(&mut hasher);
+            height.hash(&mut hasher);
+            pixels.as_ref().hash(&mut hasher);
+        }
+    }
+    let hash = hasher.finish();
+    let first = tables().borrow_mut().pictures.insert((true, hash));
+    let data = first.then(|| match handle {
+        Handle::Bytes(_, bytes) => ui_lang_wire::ImageData::Encoded(bytes.as_ref().to_vec()),
+        Handle::Rgba {
+            width,
+            height,
+            pixels,
+            ..
+        } => ui_lang_wire::ImageData::Rgba {
+            width: *width,
+            height: *height,
+            pixels: pixels.as_ref().to_vec(),
+        },
+        Handle::Path(..) => unreachable!("paths refused before recording picture history"),
+    });
+    Some((hash, data))
 }
 
 /// Registers a message in the frame currently being built.
@@ -247,6 +296,46 @@ pub(crate) fn macos() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raster_history_includes_shape_and_is_scoped_to_the_driver() {
+        let context = Context::default();
+        let _entered = context.enter();
+        let wide = iced::advanced::image::Handle::from_rgba(2, 1, vec![255; 8]);
+        let tall = iced::advanced::image::Handle::from_rgba(1, 2, vec![255; 8]);
+        let (wide_hash, data) = image(&wide).unwrap();
+        assert!(data.is_some());
+        let (tall_hash, data) = image(&tall).unwrap();
+        assert_ne!(
+            wide_hash, tall_hash,
+            "dimensions are part of the raster identity"
+        );
+        assert!(data.is_some());
+        assert!(image(&wide).unwrap().1.is_none());
+        {
+            let other = Context::default();
+            let _other = other.enter();
+            assert!(
+                image(&wide).unwrap().1.is_some(),
+                "each driver must send its own raster payload"
+            );
+        }
+        assert!(image(&wide).unwrap().1.is_none());
+        crate::host::drain_outbox();
+        assert!(
+            image(&iced::advanced::image::Handle::from_path(
+                "must-not-be-read.png"
+            ))
+            .is_none()
+        );
+        let errors = crate::host::drain_outbox();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].kind, "host.log");
+        assert!(
+            String::from_utf8_lossy(&errors[0].payload)
+                .contains("runtime path handles are unsupported")
+        );
+    }
 
     #[test]
     fn nested_contexts_restore_typed_routes_and_picture_history() {

@@ -2240,6 +2240,16 @@ fn expr_builtin_group_6(
             expr_node_code(args.value(1)?, env, context, ValueMode::Owned)?,
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
+        "encoded" if context.program.target() == Target::Tree => format!(
+            "::iced::advanced::image::Handle::from_bytes({})",
+            expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?
+        ),
+        "rgba" if context.program.target() == Target::Tree => format!(
+            "::iced::advanced::image::Handle::from_rgba({}, {}, {})",
+            node_u32_code(args.value(0)?, env, context)?,
+            node_u32_code(args.value(1)?, env, context)?,
+            expr_node_code(args.value(2)?, env, context, ValueMode::Owned)?
+        ),
         "encoded" => format!(
             "::iced::widget::image::Handle::from_bytes({})",
             expr_node_code(args.value(0)?, env, context, ValueMode::Owned)?

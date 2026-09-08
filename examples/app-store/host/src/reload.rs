@@ -227,10 +227,10 @@ fn finish(running: &[Running], serial: i64, reload: Reload) -> Result<Loaded, St
     if let Some(root) = &mut fresh.frame.root {
         fresh.inputs.adopt(root);
         fresh.pictures.adopt(root);
-        root.for_each_mut(&mut |node| {
-            if let wire::Node::Svg { bytes, .. } = node {
-                *bytes = None;
-            }
+        root.for_each_mut(&mut |node| match node {
+            wire::Node::Svg { bytes, .. } => *bytes = None,
+            wire::Node::Image { data, .. } => *data = None,
+            _ => {}
         });
     }
     // Keep the candidate's first frame requests/cancels for the first redraw,

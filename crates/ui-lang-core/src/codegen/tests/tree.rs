@@ -29,6 +29,38 @@ fn tree_test_builds_keep_source_locations_without_native_element_wrappers() {
 }
 
 #[test]
+fn tree_images_copy_encoded_and_rgba_sources_with_native_options() {
+    let source = format!(
+        "app Pictures\n{PALETTE}state\n  pixels = rgba(1, 1, bytes(ff 00 00 ff))\n  data = encoded(bytes(89 50 4e 47))\nview\n  col\n    image pixels w=32.0 h=24.0 fit=cover opacity=0.5 filter=nearest rotate=rotation.solid(radians(0.5))\n    image data\n"
+    );
+    let code = compile_for(&source, "pictures.ice", Target::Tree).unwrap_or_else(|error| {
+        panic!(
+            "Tree must copy raster images: {}",
+            error.render("pictures.ice")
+        )
+    });
+    assert!(code.contains("Node::Image"));
+    assert!(code.contains("::iced::advanced::image::Handle"));
+}
+
+#[test]
+fn tree_images_refuse_filesystem_paths_at_the_source() {
+    for (state, source) in [
+        ("", "\"/host/private.png\""),
+        ("state\n  path = \"pair.png\"\n", "path"),
+    ] {
+        let source = format!("app Pictures\n{PALETTE}{state}view\n  image {source}\n");
+        let error = compile_for(&source, "pictures.ice", Target::Tree)
+            .unwrap_err()
+            .render("pictures.ice");
+        assert!(
+            error.contains("E190") && error.contains("image read from a path"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn mounted_components_build_a_tree_and_defer_their_boot_messages() {
     let source = format!(
         "app Mounted\n{PALETTE}component Counter(initial:i64)\n  lifetime mounted\n  state\n    count = 0\n  boot\n    count = initial\n  on increment\n    count = count + 1\n  col\n    text count\n    button \"Increment\" -> increment\nview\n  Counter initial=7 #counter\n"
@@ -990,7 +1022,7 @@ const COVERAGE: &[Coverage] = &[
         FLIP,
         "  shader status_shader(1.0) w=fill h=24.0 -> flip _\n",
     ),
-    refused("media: image", "", "  image picture\n", "`media`"),
+    emitted("media: image", "", "  image picture\n"),
     refused(
         "media: svg from a path",
         "",

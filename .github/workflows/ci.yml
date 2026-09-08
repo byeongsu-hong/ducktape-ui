@@ -678,6 +678,16 @@ jobs:
       - name: Verify native pick options and menu routes through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_pick_ -- --ignored
+      - name: Bundle raster image fixtures
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-image-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/image-fixture
+          cd examples/app-store
+          python3 scripts/build-native.py -p app-store-image-fixture --out target/image-native
+      - name: Verify native and Wasm raster images
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host bundled_images_ -- --ignored
       - name: Bundle text layout fixture
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
