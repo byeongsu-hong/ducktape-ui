@@ -512,7 +512,10 @@ atomic duplicate/history rejection, explicit stream replacement, and bounded
 headless windows for 100,000 caller-owned rows. A separate ignored release
 contract measures a 100,000-row prefix validation, keyed reconciliation,
 single-row append, and inspection with p50/p95 time and allocation budgets.
-The Ducktape wrapper has a minimal-feature import/build test and inherits the
+The themed log and virtual-list wrappers test static elements built from a
+temporary row allocation, release of that allocation, and distinct row/index
+forwarding. A temporary incorrect-index mutation fails both forwarding assertions.
+The Ducktape wrapper also has a minimal-feature import/build test and inherits the
 runtime list's mounted-only AccessKit collection/item contract. This is not a
 second transcript scroller: unlike variable-height `MessageScroller`, it has
 no measurement, message anchors, prepend restoration, or built-in jump control.

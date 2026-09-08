@@ -21,15 +21,18 @@ pub use ui_lang_runtime::{
 /// visible range plus overscan invokes `view`. Append/tail policy lives in
 /// [`LogTimelineState`], while list selection, keyboard navigation, headless
 /// selectors, and accessibility semantics are delegated to the runtime list.
+///
+/// Owned row elements can outlive the input slice; borrowing row views remain
+/// supported. The theme is copied and does not constrain the element lifetime.
 #[allow(clippy::too_many_arguments)]
-pub fn log_timeline<'a, T, Key, Message>(
+pub fn log_timeline<'a, 'data, T, Key, Message>(
     state: &LogTimelineState<Key>,
-    rows: &'a [T],
+    rows: &'data [T],
     config: VirtualListConfig,
     collection_label: impl Into<String>,
     key: impl Fn(&T) -> Key,
     label: impl Fn(&T) -> String,
-    view: impl Fn(usize, &'a T, bool) -> Element<'a, Message>,
+    view: impl Fn(usize, &'data T, bool) -> Element<'a, Message>,
     on_event: impl Fn(LogTimelineEvent<Key>) -> Message + 'a,
     theme: &Theme,
 ) -> Element<'a, Message>
@@ -66,6 +69,41 @@ mod tests {
     #[derive(Debug, Clone, PartialEq)]
     enum Message {
         Timeline(LogTimelineEvent<u64>),
+    }
+
+    #[test]
+    fn owned_rows_outlive_temporary_source_and_receive_distinct_items() {
+        let rows: std::sync::Arc<[String]> = ["alpha".into(), "beta".into()].into();
+        let weak = std::sync::Arc::downgrade(&rows);
+        let config = VirtualListConfig::new(24.0).unwrap();
+        let mut state = LogTimelineState::new(VirtualListId::new("owned-rows"));
+        state.reconcile(&rows, Clone::clone, config).unwrap();
+        state.apply(
+            LogTimelineEvent::List(VirtualListEvent::ViewportChanged { height: 100.0 }),
+            config,
+        );
+        let seen = std::cell::RefCell::new(Vec::new());
+        let element: Element<'static, LogTimelineEvent<String>> = log_timeline(
+            &state,
+            &rows,
+            config,
+            "Owned rows",
+            Clone::clone,
+            Clone::clone,
+            |index, row, _| {
+                seen.borrow_mut().push((index, row.clone()));
+                iced::widget::text(row.clone()).into()
+            },
+            |event| event,
+            &LIGHT,
+        );
+        drop(rows);
+        assert!(
+            weak.upgrade().is_none(),
+            "view must not retain the source allocation"
+        );
+        assert_eq!(*seen.borrow(), [(0, "alpha".into()), (1, "beta".into())]);
+        assert!(!element.as_widget().children().is_empty());
     }
 
     #[test]
