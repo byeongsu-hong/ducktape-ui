@@ -85,6 +85,14 @@ fn single_root_slots_still_reject_siblings() {
     let error = analyze("app Single\ncomponent One()\n  slot\nview\n  One\n    text \"first\"\n    text \"second\"\n").unwrap_err();
     assert_eq!(error.code, "E124");
     assert!(error.message.contains("exactly one root"));
+    // The helper inserts ten theme lines after the app declaration.
+    assert_eq!(error.line, 15);
+    assert!(
+        error
+            .hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("wrap siblings"))
+    );
 }
 
 #[test]
@@ -125,7 +133,9 @@ view
 fn many_slots_reject_combined_cardinality_and_keep_compound_names_unambiguous() {
     for cardinality in ["children?*", "children*?"] {
         let source = format!("component Actions()\n  row\n    slot {cardinality}\n");
-        assert!(ui_lang_core::parse(&source).is_err());
+        let error = ui_lang_core::parse(&source).unwrap_err();
+        assert_eq!(error.code, "E040");
+        assert!(error.message.contains("cannot combine"));
     }
     let source = "app Compound\ncomponent Card()\n  col\n    slot Body\ncomponent Card.Body()\n  col\n    slot children*\nview\n  Card\n    Card.Body\n      text \"one\"\n      text \"two\"\n";
     compile(source, "compound.ice").unwrap();

@@ -681,7 +681,7 @@ pub(in crate::codegen) fn render_content(
             let mut content_env = ScopedBindingEnv::new(&captured);
             content_env.insert(
                 RECONCILIATION_SCOPE_BINDING.into(),
-                reconciliation_scope_binding(scope.to_owned()),
+                reconciliation_scope_binding(reconciliation_scope(scope, env).to_owned()),
             );
             let [content_view] = content.views.as_slice() else {
                 return Err(document

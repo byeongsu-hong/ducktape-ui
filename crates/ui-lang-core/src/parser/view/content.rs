@@ -589,18 +589,18 @@ pub(in crate::parser) fn parse_slot(
     let (name, optional, multiple) = parts.get(1).map_or_else(
         || Ok(("children".into(), false, false)),
         |name| {
-            let multiple = name.ends_with('*');
-            let name = name.strip_suffix('*').unwrap_or(name);
-            let (name, optional) = name
-                .strip_suffix('?')
-                .map_or((name, false), |name| (name, true));
-            if multiple && optional {
+            if name.ends_with("?*") || name.ends_with("*?") {
                 return Err(error(
                     "E040",
                     line,
                     "slot cardinality cannot combine ? and *",
                 ));
             }
+            let multiple = name.ends_with('*');
+            let name = name.strip_suffix('*').unwrap_or(name);
+            let (name, optional) = name
+                .strip_suffix('?')
+                .map_or((name, false), |name| (name, true));
             Ok::<_, Error>((identifier(name, line)?, optional || multiple, multiple))
         },
     )?;

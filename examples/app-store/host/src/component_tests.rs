@@ -599,3 +599,50 @@ fn bundled_multi_child_slots_preserve_siblings_forwarding_and_routes() {
     press(&mut guest, "Toggle counters");
     assert_children(&guest, &["/first", "/group"]);
 }
+
+#[test]
+#[ignore = "requires bundled component-fixture wasm"]
+fn bundled_repeated_slot_children_have_independent_state() {
+    fn repeater<'a>(node: &'a wire::Node, suffix: &str) -> Option<&'a wire::Node> {
+        if node.key().is_some_and(|key| key.ends_with(suffix)) {
+            return Some(node);
+        }
+        node.children()
+            .iter()
+            .find_map(|child| repeater(child, suffix))
+    }
+    fn counter_values(node: &wire::Node, values: &mut Vec<String>) {
+        if let wire::Node::Text { content, .. } = node {
+            values.push(content.clone());
+        }
+        for child in node.children() {
+            counter_values(child, values);
+        }
+    }
+    fn counter_route(node: &wire::Node) -> Option<u32> {
+        if let wire::Node::Button { on_press, .. } = node {
+            return *on_press;
+        }
+        node.children().iter().find_map(counter_route)
+    }
+    let mut guest = guest();
+    guest.tick();
+    for marker in ["/many", "/single"] {
+        let root = repeater(guest.frame.root.as_ref().unwrap(), marker).unwrap();
+        let mut values = Vec::new();
+        counter_values(root, &mut values);
+        assert_eq!(values, ["0", "0"], "both {marker} counters start at zero");
+        let route = counter_route(root).unwrap();
+        guest.pending.push(wire::Event::Message(route));
+        guest.tick();
+        assert!(guest.fault.is_none(), "{:?}", guest.fault);
+        values.clear();
+        let root = repeater(guest.frame.root.as_ref().unwrap(), marker).unwrap();
+        counter_values(root, &mut values);
+        assert_eq!(
+            values,
+            ["1", "0"],
+            "{marker} must only update its own callee iteration"
+        );
+    }
+}

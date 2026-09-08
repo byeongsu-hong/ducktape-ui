@@ -95,6 +95,27 @@ component ForwardActions()
   SlotActions #inner
     slot children*
 
+component RepeatedSlotCounter()
+  state
+    count = 0
+  on increment
+    count = count + 1
+  col
+    text count #repeated-value
+    button "Repeated increment" -> increment
+
+component RepeatSingle()
+  col #single
+    for item in [1, 2]
+      row
+        slot children
+
+component RepeatMany()
+  col #many
+    for item in [1, 2]
+      row
+        slot children*
+
 view
   col #root w=fill
     input "Draft" #draft <-> draft
@@ -118,3 +139,7 @@ view
         text "Grouped one"
         text "Grouped two"
     text slot_choice #slot-choice
+    RepeatSingle
+      RepeatedSlotCounter
+    RepeatMany
+      RepeatedSlotCounter

@@ -140,7 +140,7 @@ pub(in crate::parser) fn parse_component_children(
                 .iter()
                 .map(|child| parse_view(child))
                 .collect::<Result<_, _>>()?,
-            span: Span::line(children[0].number),
+            span: Span::line(line.number),
         }];
         return Ok((slots, event_routes));
     }

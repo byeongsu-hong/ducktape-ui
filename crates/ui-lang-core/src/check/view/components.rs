@@ -115,7 +115,8 @@ pub(in crate::check) fn infer_components_group(
                             "component slot `{}` needs exactly one root",
                             component_slot.name
                         ),
-                    ));
+                    )
+                    .hint("supply one root; wrap siblings in row or col"));
                 }
                 for content in &component_slot.content {
                     infer_view(content, env, document, signatures, &mut child_ids)?;
