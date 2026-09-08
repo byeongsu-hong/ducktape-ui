@@ -1745,3 +1745,17 @@ fails the payload assertion. Replaying source initializers during restore fails
 the external initialization-count assertion; exact restoration makes both pass.
 These tests do not prove catalog
 watching, host-window/focus/scroll preservation or transactional host replacement.
+
+### Tree scroll route evidence
+
+`scroll_offsets_follow_native_anchors_and_only_emit_on_change` drives native wheel
+input through the rendered scrollable and wire output queue. It checks start/end
+anchors, opt-in routing, absolute/relative values and unchanged viewport silence.
+The first run failed because the native no-overflow axis returned NaN; mapping
+undefined fractions to zero made the intended payload assertion pass.
+`bundled_widget_scroll_route_reports_native_viewport_offsets` exercises generated
+four-argument routing in actual wasm and compares guest state with the native
+scroll operation's position. Replacing the forwarded Y offset with zero fails
+the intended absolute-offset assertion in wasm, and restoring it passes.
+Full viewport geometry and scroll styles remain
+outside this support claim.

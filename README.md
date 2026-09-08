@@ -587,3 +587,13 @@ Tree guests export bounded `snapshot` / `restore` state transfer, including
 retained/mounted components, without replaying boot. See
 [guest snapshots](examples/app-store/README.md#guest-state-snapshots) for supported
 state, quiescence and host integration requirements.
+
+### Tree scroll offsets
+
+A Tree `scroll` supports `scroll=` with the native four-argument route:
+absolute X/Y offsets in logical pixels and anchor-relative X/Y fractions.
+The host emits the route only when the native viewport changes, including
+end-anchored scrollback. Offsets are local to the scrollable; window coordinates
+are not exposed. Missing routes produce no guest events. The full `viewport=`
+route and scroll status styles remain refused. Hosts and guests must rebuild
+for the added Scroll field and ScrollOffset event.

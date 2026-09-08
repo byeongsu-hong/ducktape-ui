@@ -532,8 +532,8 @@ For module packaging requirements and the connected implementation phases, see
   including progress bars; a plain container starts from its default border.
 - A `scroll` carries its bar options (`bar=hidden`, `bar-w=`, `bar-m=`,
   `scroller-w=`, `bar-gap=`), anchors (`anchor-y=end`, `anchor-y=keep`)
-  and `auto=`; its `scroll=` and `viewport=` routes and its status styles
-  are refused with E190.
+  and `auto=`. Its `scroll=` route reports absolute and relative X/Y offsets;
+  the full `viewport=` route and status styles are refused with E190.
 - A `mouse` area carries every route — press, release, double, right and
   middle buttons, enter, exit, `move=`, `press-at=`, `scroll=` — but not
   `cursor=`: the pointer's shape over it is the host's, and the option is
@@ -1168,3 +1168,12 @@ round trips with malformed-state rejection. Run its `bundled_snapshot` host test
 after bundling `app-store-component-fixture`. This is the export boundary only:
 catalog watching, consent-aware staging and atomic host instance replacement
 remain in “What is not here yet”. Hosts and guests rebuild for the added exports.
+
+## Scroll offset routes
+
+`scroll=handler` sends the native absolute X/Y offsets and anchor-relative X/Y
+fractions to the guest. This lets end-anchored chat scrollback request an older
+page before reaching the top. The native scrollable suppresses unchanged
+viewports; routes are opt-in and carry no window coordinates. The widget wasm
+fixture exercises a real wheel event through the native host and generated
+four-argument route. The added Scroll field/event require host and guest rebuilds.

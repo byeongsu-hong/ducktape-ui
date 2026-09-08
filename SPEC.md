@@ -1284,3 +1284,13 @@ first tick sends a complete tree and new routes. Rebuild hosts and guests for th
 extended component interface. Export support does not implement catalog watching
 or transactional host replacement: preserving host windows, native focus/scroll,
 resource/consent boundaries and rejecting stale replies remains host work.
+
+### Tree scroll offsets
+
+A Tree `scroll` supports `scroll=` with the native four-argument route:
+absolute X/Y offsets in logical pixels and anchor-relative X/Y fractions.
+The host emits the route only when the native viewport changes, including
+end-anchored scrollback. Offsets are local to the scrollable; window coordinates
+are not exposed. Missing routes produce no guest events. The full `viewport=`
+route and scroll status styles remain refused. Hosts and guests must rebuild
+for the added Scroll field and ScrollOffset event.

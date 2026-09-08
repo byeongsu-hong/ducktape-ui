@@ -32,6 +32,17 @@ state
   second = "other"
   focused = false
   pulses = 0
+  scroll_x = 0.0
+  scroll_y = 0.0
+  scroll_rx = 0.0
+  scroll_ry = 0.0
+  scroll_count = 0
+on scrolled(x, y, rx, ry)
+  scroll_x = x
+  scroll_y = y
+  scroll_rx = rx
+  scroll_ry = ry
+  scroll_count = scroll_count + 1
 on disable_filter
   filter_disabled = true
 on mount
@@ -161,7 +172,11 @@ view
     button "Snap end" #snap-end -> snap_end
     button "Scroll to" #scroll-to -> scroll_to
     button "Scroll by" #scroll-by -> scroll_by
-    scroll #list h=100.0 w=fill
+    scroll #list
+      with
+        h=100.0
+        w=fill
+        scroll=scrolled
       col
         text "Start" @text-fg
         space h=600.0
@@ -171,3 +186,8 @@ view
     if !focused
       text "unfocused" #unfocused @text-fg
     text pulses #pulses @text-fg
+    text scroll_x #scroll-x
+    text scroll_y #scroll-y
+    text scroll_rx #scroll-rx
+    text scroll_ry #scroll-ry
+    text scroll_count #scroll-count

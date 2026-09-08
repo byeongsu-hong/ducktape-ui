@@ -715,8 +715,8 @@ fn layout(
             refuse_when(
                 program,
                 origin,
-                scroll.route.is_some() || scroll.viewport_route.is_some(),
-                "a scroll route",
+                scroll.viewport_route.is_some(),
+                "a full viewport route",
             )?;
             refuse_when(
                 program,
@@ -724,6 +724,22 @@ fn layout(
                 scroll.custom_style.is_some() || !scroll.styles.is_empty(),
                 "a scroll style",
             )?;
+            let on_scroll = option_code(match &scroll.route {
+                Some(route) => Some(handler_code(
+                    "(f32, f32, f32, f32)",
+                    message,
+                    &snapshot_callback(
+                        route,
+                        "__offset: (f64, f64, f64, f64)",
+                        &["__offset.0", "__offset.1", "__offset.2", "__offset.3"],
+                        env,
+                        program,
+                        message,
+                    )?,
+                    "move |__sent: (f32, f32, f32, f32)| ::std::option::Option::Some(__route((f64::from(__sent.0), f64::from(__sent.1), f64::from(__sent.2), f64::from(__sent.3))))",
+                )),
+                None => None,
+            });
             let direction = match scroll.direction {
                 ResolvedScrollDirection::Vertical => "Vertical",
                 ResolvedScrollDirection::Horizontal => "Horizontal",
@@ -753,7 +769,7 @@ fn layout(
                     .map(|value| found || value)
             })?;
             Ok(format!(
-                "{WIRE}::Node::Scroll {{ virtual_rows: {virtual_rows}, key: {key}, direction: {WIRE}::ScrollDirection::{direction}, width: {}, height: {}, bar_hidden: {}, bar_width: {}, bar_margin: {}, scroller_width: {}, bar_spacing: {}, anchor_x: {}, anchor_y: {}, auto_scroll: ({auto_scroll}), background: {background}, border: {border}, content: ::std::boxed::Box::new({content}) }}",
+                "{WIRE}::Node::Scroll {{ on_scroll: {on_scroll}, virtual_rows: {virtual_rows}, key: {key}, direction: {WIRE}::ScrollDirection::{direction}, width: {}, height: {}, bar_hidden: {}, bar_width: {}, bar_margin: {}, scroller_width: {}, bar_spacing: {}, anchor_x: {}, anchor_y: {}, auto_scroll: ({auto_scroll}), background: {background}, border: {border}, content: ::std::boxed::Box::new({content}) }}",
                 dimension_code(
                     scroll.width.as_ref(),
                     style.width_fill,
