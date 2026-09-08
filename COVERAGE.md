@@ -926,8 +926,11 @@ success route fails the compiler's expected failure-handler assertion; exact
 restoration passes. A native-valid timer filter whose failure route alone takes
 a payload is rejected with E190 on Tree; before the source guard was fixed, its
 expected-diagnostic assertion failed because code generation incorrectly succeeded.
-This compiler evidence concerns generated routes, not host
-stream lifecycle or cancellation.
+An additional temporary Ice crate checks the `with`/`filter`/failure-route
+combination with an owned string context through real `compile_dir_for` and
+`include_app!` output against Iced: both native and wasm32 Tree Rust type-check.
+This compiler evidence concerns generated routes, not host stream lifecycle or
+cancellation.
 
 ## Widgets and layout
 
