@@ -886,6 +886,7 @@ fn gen_frame_with(rng: &mut Rng, depth: usize, width: usize) -> Frame {
         .collect();
     let cancels = (0..rng.next_range(4)).map(|_| rng.next_u64()).collect();
     Frame {
+        mouse_interest: rng.next_bool(),
         root: Some(root),
         requests,
         cancels,

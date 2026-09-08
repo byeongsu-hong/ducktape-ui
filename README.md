@@ -746,3 +746,11 @@ send events to a replacement. Retained identities are capped by `MAX_NODES`,
 and their keys, option labels and search text share `MAX_TEXT_BYTES_PER_FRAME`.
 A combo that exceeds the retained inventory budget displays an explicit rejection
 instead of using a different or outdated state. Rebuild hosts and guests together.
+
+### Tree mouse subscriptions
+
+Tree mouse subscriptions opt in per active branch and share native/Wasm host
+forwarding: finite guest-local coordinates, captured status, wheel units and
+buttons, with at most the latest move per redraw. Generic event listeners carry
+keyboard+mouse only. The app-store `bundled_mouse_` test exercises both actual
+backends, overlay capture, coalescing, translation and subscription removal.

@@ -36,6 +36,9 @@ mod clipboard;
 pub mod keyboard;
 mod markdown;
 mod memo;
+pub mod mouse;
+#[cfg(test)]
+mod mouse_tests;
 pub use markdown::Markdown;
 pub use memo::memo_lazy;
 pub mod host;
@@ -173,6 +176,21 @@ impl<A: App> Driver<A> {
         self.settle();
         for event in events {
             let message = match event {
+                wire::Event::Mouse { event, captured } => {
+                    if let Some(event) = event.sanitize() {
+                        self.tracker.broadcast(subscription::Event::Interaction {
+                            window: self.window,
+                            event: iced::Event::Mouse(event.into()),
+                            status: if captured {
+                                iced::event::Status::Captured
+                            } else {
+                                iced::event::Status::Ignored
+                            },
+                        });
+                        self.settle();
+                    }
+                    None
+                }
                 wire::Event::Keyboard { event, captured } => {
                     self.tracker.broadcast(subscription::Event::Interaction {
                         window: self.window,
@@ -289,6 +307,7 @@ impl<A: App> Driver<A> {
             self.last_root = Some(kept);
         }
         wire::Frame {
+            mouse_interest: slots::mouse_interest(),
             root: Some(root),
             patches,
             requests: host::drain_outbox(),
@@ -319,6 +338,7 @@ impl<A: App> Driver<A> {
     }
 
     fn subscribe(&mut self) {
+        slots::set_mouse_interest(false);
         let recipes = subscription::into_recipes(self.app.subscription());
         for future in self
             .tracker

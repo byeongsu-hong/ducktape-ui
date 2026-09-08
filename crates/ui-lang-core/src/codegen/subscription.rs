@@ -276,7 +276,12 @@ pub(in crate::codegen) fn generate_subscription(
                 };
                 let (filter, status) = event_status_filter(value, subscription.status);
                 let listen = if *raw { "listen_raw" } else { "listen_with" };
-                writeln!(out, "::iced::event::{listen}(|__event, {status}, __id| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
+                let (observe, end) = if program.target() == Target::Tree {
+                    ("::ui_lang_guest::mouse::observe(", ")")
+                } else {
+                    ("", "")
+                };
+                writeln!(out, "{observe}::iced::event::{listen}(|__event, {status}, __id| {{ {filter} }}){transforms}.map(move |__value| {route}){end},").unwrap();
             }
             ResolvedSubscriptionSource::Extern {
                 function,
@@ -354,7 +359,12 @@ pub(in crate::codegen) fn generate_subscription(
                     }
                 };
                 let (filter, status) = event_status_filter(filter, subscription.status);
-                writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
+                let (observe, end) = if program.target() == Target::Tree {
+                    ("::ui_lang_guest::mouse::observe(", ")")
+                } else {
+                    ("", "")
+                };
+                writeln!(out, "{observe}::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}){end},").unwrap();
             }
             ResolvedSubscriptionSource::SystemTheme => {
                 writeln!(out, "::iced::system::theme_changes().map(__ice_system_theme){transforms}.map(move |__value| {route}),").unwrap();

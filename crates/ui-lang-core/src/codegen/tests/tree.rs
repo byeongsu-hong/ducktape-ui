@@ -1876,3 +1876,27 @@ fn combo_tree_refuses_rust_style_callbacks_and_unowned_parameters() {
         assert!(error.message.contains(message), "{}", error.message);
     }
 }
+
+#[test]
+fn mouse_interest_is_constructed_inside_the_active_tree_subscription_branch() {
+    let source = format!(
+        "app Pointer\n{PALETTE}state\n  active = true\non moved(_x, _y)\non event(_event)\nsubscribe\n  mouse moved when active -> moved _ _\n  event raw when active -> event _\nview\n  text \"Pointer\"\n"
+    );
+    let generated = compile_for(&source, "pointer.ice", Target::Tree).unwrap();
+    assert_eq!(
+        generated
+            .matches(
+                "if self.active { ::iced::Subscription::batch([::ui_lang_guest::mouse::observe("
+            )
+            .count(),
+        2
+    );
+    assert_eq!(
+        generated
+            .matches("::ui_lang_guest::mouse::observe(")
+            .count(),
+        2
+    );
+    let native = compile(&source, "pointer.ice").unwrap();
+    assert!(!native.contains("::ui_lang_guest::mouse::observe("));
+}

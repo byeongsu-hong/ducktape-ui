@@ -2151,3 +2151,11 @@ instance overlay rejection. Core acceptance and E190 tests cover typed generated
 routes and unsupported Rust callbacks/value parameters. Component-owned Combo
 state retains the common native E103 restriction. These checks do not claim
 platform accessibility bridge behavior or native Rust callback parity.
+
+### Tree mouse subscriptions
+
+Tree mouse subscriptions opt in per active branch and share native/Wasm host
+forwarding: finite guest-local coordinates, captured status, wheel units and
+buttons, with at most the latest move per redraw. Generic event listeners carry
+keyboard+mouse only. The app-store `bundled_mouse_` test exercises both actual
+backends, overlay capture, coalescing, translation and subscription removal.

@@ -7,6 +7,7 @@ use std::rc::Rc;
 #[derive(Default)]
 struct Tables {
     macos: bool,
+    mouse_interest: bool,
     deferred: Vec<Box<dyn Any>>,
     messages: Vec<Rc<dyn Any>>,
     handlers: Vec<Rc<dyn Any>>,
@@ -291,6 +292,14 @@ pub(crate) fn run_handler<A: 'static, M: 'static>(index: u32, value: A) -> Optio
 
 pub(crate) fn macos() -> bool {
     tables().borrow().macos
+}
+
+pub(crate) fn set_mouse_interest(interested: bool) {
+    tables().borrow_mut().mouse_interest = interested;
+}
+
+pub(crate) fn mouse_interest() -> bool {
+    tables().borrow().mouse_interest
 }
 
 #[cfg(test)]
