@@ -42,7 +42,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | L01 | P0 · Audit | [view layout rules](../skills/design-ice-ui/references/views-and-style.md), [Item/InputGroup](../crates/ui-lang-components/src/ice/components.ice) | A label + flexible input + trailing action share a narrow parent without overlap; the action stays usable, fill/shrink ownership is explicit, and custom padding remains inside the parent. |
 | L02 | P0 · Done | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merged as b709ea51. |
 | L03 | P0 · Audit | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
-| L04 | P0 · Audit | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
+| L04 | P0 · Gap | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
 | L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
 | L06 | P1 · Audit | [grid/flex surface](../skills/design-ice-ui/references/extended-surface.md), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Repeated cards use a consistent minimum useful width and aspect ratio; odd item counts and narrow windows leave no clipped or zero-width cells. |
 
@@ -128,3 +128,24 @@ merely because its component exists or its code compiles.
   documentation sections and regenerate the combined component API baseline.
   User-authorized high-confidence merges do not wait for CI; required repository
   protections remain in force.
+
+### L04 follow-up: action layout ownership
+
+The first 280px card audit passed text containment and keyboard assertions, yet
+its first button consumed most of the row and the second label wrapped into
+three lines. Containment alone is insufficient evidence of a useful action
+layout. The explicit `row wrap` pattern in
+[`action_layout.ice`](../examples/showcase/tests/cases/ui/action_layout.ice)
+preserves natural button widths at 280px and keeps the actions together at
+640px. Its tests assert line placement, text bounds and keyboard/pointer routes.
+
+This supplies L04a (the explicit pattern and assertion-level evidence), but
+does **not** close L04. Follow-up work remains:
+
+- L04b: resolve default layout ownership. A slot accepts one root, so callers
+  currently construct the inner row. Making Card.Footer's outer row wrap cannot
+  reflow the buttons inside that caller-owned row. Determine the smallest
+  shared composition or slot contract that can own sibling arrangement before
+  adding an automatic action-layout API.
+- L04c: verify Dialog.Actions and ButtonGroup, including long labels and focus
+  order; the card test alone does not establish their behavior.

@@ -2298,3 +2298,19 @@ and text containment. Removing PageHeader's word wrapping is its minimal
 counterexample. The dedicated command is `cargo test -p showcase --test
 header_defaults`; the captures render native widgets through the headless driver.
 This verifies default text layout, not automatic truncation or heading semantics.
+
+## Explicit action-row reflow evidence
+
+`examples/showcase/tests/cases/ui/action_layout.ice` is a compiling card example
+whose caller-owned `row wrap` preserves natural action-label widths. The 280px
+case asserts separate lines, single-line labels, text containment and Tab/Enter
+activation; the 640px case asserts a shared line, horizontal separation and
+pointer activation. Both pin scale 1, en-US, Linux and reduced motion. Captures
+in `examples/showcase/screenshots/action-layout` were visually inspected.
+
+The narrow reflow assertion fails against the initial non-wrapping row even
+though its text-containment assertions pass. A temporary 140px row-width mutation
+makes the wide case fail its same-line assertion (158.35 vs 95.85px). Restored
+source passes both cases with `cargo test -p showcase --test action_layout`.
+This is evidence for the explicit card pattern, not automatic reflow in default
+components or evidence for Dialog.Actions/ButtonGroup; L04 remains open.

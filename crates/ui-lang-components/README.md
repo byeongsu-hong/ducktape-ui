@@ -251,3 +251,25 @@ cargo test --workspace --all-targets --all-features
 cargo check -p ui-lang-components --no-default-features --features button,x11
 cargo check -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features button
 ```
+
+## Action rows at narrow widths
+
+When actions should retain their natural label widths and move to the next line
+as space runs out, put wrapping on the row that directly owns the buttons:
+
+```ice
+Card.Footer
+  row wrap w=fill gap=8.0 wrap-gap=8.0
+    button "Discard all changes" @secondary_action -> cancel
+    button "Save workspace settings" @primary_action -> save
+```
+
+At 280px the demonstrated card places these actions on separate lines; at 640px
+they share one line. Wrapping preserves source order for keyboard navigation.
+The [compiling example and tests](../../examples/showcase/tests/cases/ui/action_layout.ice)
+check placement, label containment, Tab/Enter and pointer activation.
+
+The slot accepts one root: the caller owns this inner row and its reflow policy.
+Wrapping only an outer Card.Footer, Dialog.Actions or ButtonGroup container does
+not rearrange descendants inside the caller's row. This pattern demonstrates
+explicit layout; those components do not yet choose that policy automatically.
