@@ -256,6 +256,7 @@ pub(super) struct Control {
     pub composing: bool,
     pub dragging: bool,
     pub fault_reported: bool,
+    pub fault_key: Option<String>,
     pub started: Instant,
 }
 pub(super) type Shared = Arc<Mutex<Control>>;
@@ -274,6 +275,7 @@ impl Control {
             composing: false,
             dragging: false,
             fault_reported: false,
+            fault_key: None,
             started: Instant::now(),
         }
     }
@@ -454,10 +456,9 @@ pub(super) fn adopt(inputs: &mut super::Inputs, root: &wire::Node) {
         });
         if new_reset != Some(control.reset) || owner_removed {
             if let Some(request) = control.pending.clone()
-                && let Some((_, (_, binding))) = inputs
-                    .editor_bindings
-                    .iter()
-                    .find(|(_, (doc, _))| doc == document)
+                && let Some(front) = control.lane.front()
+                && let Some((doc, binding)) = inputs.editor_bindings.get(&front.input.key)
+                && doc == document
             {
                 inputs
                     .editor_notifications
@@ -482,6 +483,10 @@ pub(super) fn adopt(inputs: &mut super::Inputs, root: &wire::Node) {
             control.pending = None;
             control.committed = None;
             control.bypass_claim = false;
+            control.fault_reported = false;
+            control.fault_key = None;
+            control.composing = false;
+            control.dragging = false;
         } else {
             control.lane.remove_inputs(|input| {
                 bindings
@@ -544,11 +549,18 @@ impl super::Inputs {
         if control.fault_reported {
             return;
         }
-        let Some((key, (_, binding))) = self
-            .editor_bindings
-            .iter()
-            .find(|(_, (doc, _))| doc == document)
+        let Some(key) = control
+            .lane
+            .front()
+            .map(|front| &front.input.key)
+            .or(control.fault_key.as_ref())
         else {
+            return;
+        };
+        let Some((doc, binding)) = self.editor_bindings.get(key) else {
+            return;
+        };
+        if doc != document {
             return;
         };
         let Some(field) = self.editors.get(key) else {
@@ -971,7 +983,7 @@ mod native_tests {
                 binding: Some(Box::new(wire::EditorBinding {
                     claims: vec![],
                     on_request: 1,
-                    on_event: 2,
+                    on_event: if key == "owner" { 22 } else { 11 },
                 })),
                 ..Default::default()
             }),
@@ -1001,6 +1013,24 @@ mod native_tests {
         let shared = inputs.editor_transactions["A"].clone();
         {
             let mut control = super::super::lock(&shared);
+            control.fault_key = Some("owner".into());
+            control.lane.fail(Fault::Overflow);
+        }
+        let mut first_fault = vec![];
+        inputs.editor_fault("A", &mut first_fault);
+        assert!(
+            matches!(
+                first_fault.as_slice(),
+                [wire::Event::EditorTransaction {
+                    handler: 22,
+                    event: wire::EditorTransactionEvent::Fault { .. }
+                }]
+            ),
+            "rejected first input must retain its widget route"
+        );
+        {
+            let mut control = super::super::lock(&shared);
+            *control = Control::new(0, inputs.editor_sequence.clone());
             for (sequence, key) in [(1, "owner"), (2, "base")] {
                 control
                     .lane
@@ -1044,6 +1074,19 @@ mod native_tests {
                 input_time_ms: 0,
             });
         }
+        let mut faults = vec![];
+        super::super::lock(&shared).lane.fail(Fault::Limit);
+        inputs.editor_fault("A", &mut faults);
+        assert!(
+            matches!(
+                faults.as_slice(),
+                [wire::Event::EditorTransaction {
+                    handler: 22,
+                    event: wire::EditorTransactionEvent::Fault { .. }
+                }]
+            ),
+            "fault must return to the originating widget"
+        );
         inputs.adopt(&tree("B"));
         {
             let control = super::super::lock(&shared);
@@ -1054,8 +1097,8 @@ mod native_tests {
         assert!(matches!(
             inputs.editor_notifications.as_slice(),
             [wire::Event::EditorTransaction {
+                handler: 22,
                 event: wire::EditorTransactionEvent::Cancelled { .. },
-                ..
             }]
         ));
         let mut events = vec![];
@@ -1072,6 +1115,22 @@ mod native_tests {
             "old document cannot commit through rebound key"
         );
         assert_eq!(state(&inputs.editors["owner"]).text, "ab");
+        // An oversized first event has no accepted front, but still has an
+        // originating widget and must not pick a sibling's callback.
+        let shared = inputs.editor_transactions["B"].clone();
+        {
+            let mut control = super::super::lock(&shared);
+            control.fault_key = Some("owner".into());
+            control.lane.fail(Fault::Overflow);
+        }
+        inputs.editor_fault("B", &mut events);
+        assert!(matches!(
+            events.as_slice(),
+            [wire::Event::EditorTransaction {
+                handler: 22,
+                event: wire::EditorTransactionEvent::Fault { .. }
+            }]
+        ));
     }
 
     #[test]

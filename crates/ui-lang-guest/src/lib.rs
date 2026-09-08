@@ -221,7 +221,10 @@ impl<A: App> Driver<A> {
                     slots::run_handler::<wire::EditorKeyRequest, A::Message>(handler, request)
                 }
                 wire::Event::EditorTransaction { handler, event } => {
-                    if matches!(event, wire::EditorTransactionEvent::Cancelled { .. }) {
+                    if let wire::EditorTransactionEvent::Cancelled { id, .. } = &event {
+                        if !slots::editor_matches_pending(id) {
+                            continue;
+                        }
                         slots::editor_acknowledge(&event);
                     }
                     slots::run_handler::<wire::EditorTransactionEvent, A::Message>(handler, event)

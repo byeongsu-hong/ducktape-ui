@@ -33,8 +33,9 @@ component IndependentEditor()
     history:History = initial_history()
   on committed(outcome)
     history = record(history, outcome, draft)
-  editor #local <-> draft key-binding=keys(history) -> committed _
+  editor #local <-> draft -> committed _
     with
+      key-binding=keys(history)
       w=120.0
       min-h=30.0
       max-h=30.0
@@ -43,8 +44,9 @@ component IndependentEditor()
 
 view
   col w=260.0 gap=8.0
-    editor #document <-> draft key-binding=keys(history) -> committed _
+    editor #document <-> draft -> committed _
       with
+        key-binding=keys(history)
         w=260.0
         min-h=100.0
         max-h=140.0

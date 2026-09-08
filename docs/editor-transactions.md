@@ -68,3 +68,5 @@ is not claimed by this implementation. Key releases and modifier transitions are
 ordered with other editor events so future native integration does not lose them.
 
 Large-document product completion is tracked in [#1014](https://github.com/byeongsu-hong/ducktape-ui/issues/1014); this transaction lane alone does not make Pages replacement ready.
+
+Fault and cancellation notifications return to the widget that admitted the input, even when several widgets share a document. Cancellation carries the retired identity for mirror cleanup; its callback runs after an explicit document reset without applying the retired snapshot to the new Editor. Unmounted callbacks may be absent, but transport cancellation still releases their pending decision.

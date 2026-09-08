@@ -85,6 +85,22 @@ impl<M: 'static> EditorTransaction<M> {
             EditorTransactionEvent::Fault { id, state, .. }
             | EditorTransactionEvent::Cancelled { id, state } => (id, state, false),
         };
+        // Cancellation belongs to the retired identity, never to the current
+        // document contents. Deliver cleanup after reset without accepting its
+        // old snapshot or relaxing any Commit validation.
+        if matches!(self.event, EditorTransactionEvent::Cancelled { .. }) {
+            if !slots::editor_matches_pending(id)
+                || id.reset != state.reset
+                || state.text.len() > wire::MAX_STRING_BYTES
+                || !slots::has_handler::<EditorTransactionEvent, M>(self.map)
+            {
+                return None;
+            }
+            let mapped =
+                slots::run_handler::<EditorTransactionEvent, M>(self.map, self.event.clone());
+            slots::editor_acknowledge(&self.event);
+            return mapped;
+        }
         if !slots::editor_matches_pending(id)
             || state.text.len() > wire::MAX_STRING_BYTES
             || id.reset != state.reset
@@ -107,6 +123,54 @@ impl<M: 'static> EditorTransaction<M> {
 #[cfg(test)]
 mod retry_tests {
     use super::*;
+
+    #[test]
+    fn cancellation_after_reset_notifies_without_replacing_the_new_document() {
+        let context = slots::Context::default();
+        let _entered = context.enter();
+        let mut editor = Editor::new("old");
+        let id = wire::EditorTransactionId {
+            instance: 1,
+            document: "app:draft".into(),
+            reset: 0,
+            sequence: 7,
+            attempt: 1,
+            text_revision: 0,
+            revision: 0,
+        };
+        slots::editor_response(wire::EditorResponse {
+            id: id.clone(),
+            decision: wire::EditorDecision::Noop,
+        });
+        let calls = Rc::new(std::cell::Cell::new(0));
+        let counted = calls.clone();
+        let map = slots::handler::<EditorTransactionEvent, ()>(Box::new(move |event| {
+            assert!(matches!(event, EditorTransactionEvent::Cancelled { .. }));
+            counted.set(counted.get() + 1);
+            None
+        }));
+        editor.replace(Editor::new("new"), 0);
+        EditorTransaction::<()> {
+            event: EditorTransactionEvent::Cancelled {
+                id,
+                state: wire::EditorState {
+                    text: "old".into(),
+                    ..Default::default()
+                },
+            },
+            map,
+            message: std::marker::PhantomData,
+        }
+        .apply(&mut editor);
+        assert_eq!(
+            calls.get(),
+            1,
+            "retired identity must reach cleanup callback"
+        );
+        assert_eq!(editor.text(), "new");
+        assert_eq!(editor.reset_revision(), 1);
+        assert!(!slots::editor_pending());
+    }
 
     #[test]
     fn an_old_retry_cannot_commit_over_the_current_pending_attempt() {

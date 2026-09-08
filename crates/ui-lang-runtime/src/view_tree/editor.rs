@@ -386,12 +386,14 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                     };
                     control.next_sequence = sequence;
                     if control.lane.admit(sequence, bytes, input).is_err() {
+                        control.fault_key = Some(self.key.clone());
                         shell.publish(Output::EditorLaneFault {
                             document: self.options.document.clone(),
                         });
                     }
                 } else {
                     control.lane.fail(super::editor_transactions::Fault::Limit);
+                    control.fault_key = Some(self.key.clone());
                     shell.publish(Output::EditorLaneFault {
                         document: self.options.document.clone(),
                     });

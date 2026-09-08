@@ -1165,10 +1165,8 @@ impl Guest {
                         self.pending.push(wire::Event::Resync);
                     }
                 }
-                if accepted {
-                    if self.inputs.editor_frame(&frame, &mut self.pending) {
-                        self.frame_rev += 1;
-                    }
+                if accepted && self.inputs.editor_frame(&frame, &mut self.pending) {
+                    self.frame_rev += 1;
                 }
                 self.frame = frame;
             }
