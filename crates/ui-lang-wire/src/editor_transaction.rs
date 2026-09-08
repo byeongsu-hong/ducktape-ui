@@ -9,6 +9,7 @@ use crate::EditorCursor;
 pub struct EditorPatch {
     pub start_byte: u32,
     pub end_byte: u32,
+    #[serde(deserialize_with = "decode_replacement")]
     pub replacement: String,
 }
 
@@ -216,6 +217,7 @@ pub struct EditorBinding {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorTransactionId {
     pub instance: u64,
+    #[serde(deserialize_with = "decode_document")]
     pub document: String,
     pub reset: u64,
     pub sequence: u64,
@@ -365,4 +367,119 @@ pub(crate) fn decode_responses<'de, D: serde::Deserializer<'de>>(
         ));
     }
     Ok(responses)
+}
+
+thread_local! {
+    static REPLACEMENT_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+pub(crate) fn reset_decode_budget() {
+    REPLACEMENT_BYTES.with(|bytes| bytes.set(0));
+}
+fn decode_replacement<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    decode_text(d, crate::MAX_STRING_BYTES, true)
+}
+pub(crate) fn decode_document<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    decode_text(d, 1024, false)
+}
+fn decode_text<'de, D: serde::Deserializer<'de>>(
+    d: D,
+    limit: usize,
+    replacement: bool,
+) -> Result<String, D::Error> {
+    struct Text {
+        limit: usize,
+        replacement: bool,
+    }
+    impl<'de> serde::de::Visitor<'de> for Text {
+        type Value = String;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("bounded editor text")
+        }
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<String, E> {
+            if value.len() > self.limit {
+                return Err(E::custom("editor text limit"));
+            }
+            if self.replacement {
+                let accepted = REPLACEMENT_BYTES.with(|bytes| {
+                    match bytes
+                        .get()
+                        .checked_add(value.len())
+                        .filter(|n| *n <= crate::MAX_STRING_BYTES)
+                    {
+                        Some(next) => {
+                            bytes.set(next);
+                            true
+                        }
+                        None => false,
+                    }
+                });
+                if !accepted {
+                    return Err(E::custom("editor aggregate replacement limit"));
+                }
+            }
+            Ok(value.to_owned())
+        }
+    }
+    d.deserialize_str(Text { limit, replacement })
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    fn response(replacement: String) -> EditorResponse {
+        EditorResponse {
+            id: EditorTransactionId {
+                instance: 1,
+                document: "app:draft".into(),
+                reset: 0,
+                sequence: 1,
+                attempt: 1,
+                text_revision: 0,
+                revision: 0,
+            },
+            decision: EditorDecision::Apply {
+                patches: vec![EditorPatch {
+                    start_byte: 0,
+                    end_byte: 0,
+                    replacement,
+                }],
+                cursor: crate::EditorCursor::default(),
+                history: EditorHistoryEffect::NewGroup,
+            },
+        }
+    }
+
+    #[test]
+    fn decoder_rejects_aggregate_patch_bytes_and_resets_budget_after_failure() {
+        let mut frame = crate::Frame {
+            editor_decisions: vec![response("a".repeat(crate::MAX_STRING_BYTES / 2 + 1)); 2],
+            ..Default::default()
+        };
+        assert!(crate::decode::<crate::Frame>(&crate::encode(&frame)).is_err());
+        frame.editor_decisions = vec![response("ok".into())];
+        assert!(crate::decode::<crate::Frame>(&crate::encode(&frame)).is_ok());
+    }
+
+    #[test]
+    fn decoder_rejects_excess_claims_and_responses() {
+        let binding = EditorBinding {
+            claims: vec![
+                EditorKeyClaim {
+                    key: crate::keyboard::Key::Named(crate::keyboard::Named::Tab),
+                    modifiers: crate::keyboard::Modifiers::default(),
+                    command: false,
+                };
+                MAX_EDITOR_CLAIMS + 1
+            ],
+            on_request: 1,
+            on_event: 2,
+        };
+        assert!(crate::decode::<EditorBinding>(&crate::encode(&binding)).is_err());
+        let frame = crate::Frame {
+            editor_decisions: vec![response(String::new()); MAX_EDITOR_RESPONSES + 1],
+            ..Default::default()
+        };
+        assert!(crate::decode::<crate::Frame>(&crate::encode(&frame)).is_err());
+    }
 }

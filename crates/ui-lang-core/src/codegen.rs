@@ -934,7 +934,7 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         let clone_fields = viewed
             .iter()
             .map(|state| {
-                if state.ty == Type::Editor && program.target() == Target::Native {
+                if state.ty == Type::Editor {
                     format!("{name}: __state.{name}.text(),", name = state.name)
                 } else {
                     format!("{name}: __state.{name}.clone(),", name = state.name)

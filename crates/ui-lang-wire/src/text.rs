@@ -144,7 +144,7 @@ mod tests {
                 ..TextOptions::default()
             },
         };
-        sanitize_tree(&mut node);
+        sanitize_tree(&mut node).unwrap();
         let Node::Text { content, .. } = node else {
             panic!()
         };

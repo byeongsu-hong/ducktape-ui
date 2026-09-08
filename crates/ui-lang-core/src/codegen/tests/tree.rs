@@ -53,6 +53,14 @@ fn tree_editor_binding_captures_route_arguments_and_component_scope() {
     );
     assert!(code.contains("Clone::clone(&__route_arg_0)"));
     assert!(code.contains("__scope.clone(), __transaction"));
+    assert!(
+        code.contains("draft: __state.draft.text()"),
+        "component test state exposes editor text on Tree too"
+    );
+    assert!(
+        code.contains("&(__ice_use_scope)"),
+        "document identity borrows the live component scope"
+    );
 }
 
 #[test]

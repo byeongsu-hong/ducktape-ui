@@ -1792,7 +1792,7 @@ fn editor(
             scope,
         }) => (
             format!(
-                "::std::format!(\"component:{{:?}}\", ({}, {}, {}))",
+                "::std::format!(\"component:{{:?}}\", ({}, {}, &({})))",
                 rust_string(component),
                 rust_string(name),
                 borrowed_scope(scope)

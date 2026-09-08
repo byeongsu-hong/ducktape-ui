@@ -29,7 +29,12 @@ pub(super) fn render(
         fields: HashMap::new(),
         editors: HashMap::new(),
         editor_revision: kept.inputs.editor_revision,
+        editor_sequence: kept.inputs.editor_sequence.clone(),
         combos: HashMap::new(),
+        editor_transactions: kept.inputs.editor_transactions.clone(),
+        editor_bindings: kept.inputs.editor_bindings.clone(),
+        editor_reported: kept.inputs.editor_reported.clone(),
+        editor_notifications: Vec::new(),
     };
     let mut pictures = super::Pictures::default();
     let mut surfaces = super::Surfaces::new();
@@ -430,7 +435,7 @@ mod tests {
                 }),
                 ..Default::default()
             };
-            wire::sanitize(&mut frame);
+            wire::sanitize(&mut frame).unwrap();
             frame.root.as_ref().unwrap().children()[1].clone()
         };
         let before = node(0);

@@ -449,6 +449,7 @@ pub struct InputOptions {
 /// Copied native multiline editor presentation; state faces share input semantics.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EditorOptions {
+    #[serde(deserialize_with = "editor_transaction::decode_document")]
     pub document: String,
     pub binding: Option<Box<EditorBinding>>,
     pub size: Option<f32>,
@@ -1440,16 +1441,34 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 /// one nested deeper than this walk goes. A frame that carries `patches`
 /// instead of a tree is bounded by [`apply`], since every bound is on the
 /// tree the patches make and only the host holds it.
-pub fn sanitize(frame: &mut Frame) {
+pub fn sanitize(frame: &mut Frame) -> Result<(), &'static str> {
     if let Some(root) = &mut frame.root {
-        sanitize_tree(root);
+        sanitize_tree(root)?;
     }
     for request in &mut frame.requests {
         truncate_string(&mut request.kind);
     }
+    Ok(())
 }
 
-fn sanitize_tree(root: &mut Node) {
+// Sanitization may shorten display text, but never an authoritative document.
+fn editor_lengths(root: &Node) -> Result<Vec<usize>, &'static str> {
+    let mut pending = vec![root];
+    let mut lengths = Vec::new();
+    while let Some(node) = pending.pop() {
+        if let Node::Editor { text, .. } = node {
+            if text.len() > MAX_STRING_BYTES {
+                return Err("editor document exceeds text limit");
+            }
+            lengths.push(text.len());
+        }
+        pending.extend(node.children());
+    }
+    Ok(lengths)
+}
+
+fn sanitize_tree(root: &mut Node) -> Result<(), &'static str> {
+    let documents = editor_lengths(root)?;
     let mut budget = MAX_NODES;
     let mut budgets = Budgets {
         text: MAX_TEXT_BYTES_PER_FRAME,
@@ -1460,6 +1479,10 @@ fn sanitize_tree(root: &mut Node) {
     };
     let mut taken = Taken::new();
     sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
+    if editor_lengths(root)? != documents {
+        return Err("frame budget would truncate an editor document");
+    }
+    Ok(())
 }
 
 /// The most patches one frame may carry. A diff of a tree the host holds
@@ -1486,7 +1509,7 @@ pub fn apply(root: &mut Node, patches: Vec<Patch>) -> Result<(), &'static str> {
     for patch in patches {
         apply_one(root, patch)?;
     }
-    sanitize_tree(root);
+    sanitize_tree(root)?;
     Ok(())
 }
 
@@ -2660,6 +2683,7 @@ pub fn encoded_size<T: Serialize>(value: &T) -> u64 {
 pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, String> {
     budget::reset();
     surface::reset_decode_budget();
+    editor_transaction::reset_decode_budget();
     canvas::reset_decode_budget();
     bincode::deserialize(bytes).map_err(|error| error.to_string())
 }
@@ -2742,7 +2766,7 @@ mod tests {
             )),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let decoded = decode::<Frame>(&encode(&frame));
         assert!(decoded.is_ok(), "sanitized frame must decode: {decoded:?}");
     }
@@ -2791,7 +2815,7 @@ mod tests {
             }),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Node::Surface { name, args, .. } = frame.root.unwrap() else {
             unreachable!()
         };
@@ -3092,7 +3116,7 @@ mod tests {
                 .map(|i| keyed(&i.to_string(), "x"))
                 .collect(),
         );
-        sanitize_tree(&mut tree);
+        sanitize_tree(&mut tree).unwrap();
         assert_eq!(tree.count(), MAX_NODES);
         let mut deep = keyed("0", "leaf");
         for _ in 0..MAX_DEPTH {
@@ -3141,7 +3165,7 @@ mod tests {
             ..Frame::default()
         };
         let before = frame.clone();
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         assert_eq!(frame, before);
     }
 
@@ -3156,7 +3180,7 @@ mod tests {
             )),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Linear { children, .. }) = &frame.root else {
             panic!()
         };
@@ -3173,7 +3197,7 @@ mod tests {
     }
 
     #[test]
-    fn an_editor_spends_the_text_budget_like_an_input() {
+    fn editor_budget_exhaustion_is_an_error_instead_of_a_truncated_document() {
         let long = "x".repeat(MAX_TEXT_BYTES_PER_FRAME);
         let mut frame = Frame {
             root: Some(column(vec![
@@ -3195,27 +3219,10 @@ mod tests {
             ])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
-        let Some(Node::Linear { children, .. }) = &frame.root else {
-            panic!()
-        };
-        let Node::Editor {
-            placeholder,
-            text,
-            min_height,
-            max_height,
-            ..
-        } = &children[0]
-        else {
-            panic!()
-        };
-        assert_eq!(placeholder.len(), MAX_TEXT_BYTES_PER_FRAME);
-        assert!(text.is_empty());
-        assert_eq!((*min_height, *max_height), (Some(0.0), Some(MAX_PIXELS)));
-        let Node::Text { content, .. } = &children[1] else {
-            panic!()
-        };
-        assert!(content.is_empty());
+        assert_eq!(
+            sanitize(&mut frame),
+            Err("frame budget would truncate an editor document")
+        );
     }
 
     #[test]
@@ -3251,7 +3258,7 @@ mod tests {
             ])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Linear { children, .. }) = &frame.root else {
             panic!()
         };
@@ -3305,7 +3312,7 @@ mod tests {
             ])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let root = frame.root.unwrap();
         // A container whose child fell past the budget keeps an empty
         // stand-in, one per level at most.
@@ -3341,7 +3348,7 @@ mod tests {
             root: Some(deep),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let mut depth = 0;
         let mut node = frame.root.as_ref().unwrap();
         while let Node::Linear { children, .. } = node {
@@ -3437,7 +3444,7 @@ mod tests {
             ])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Linear { children, .. }) = &frame.root else {
             panic!()
         };
@@ -3541,7 +3548,7 @@ mod tests {
             root: Some(column(vec![text("one"), text("two"), text("three")])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Linear { children, .. }) = &frame.root else {
             panic!()
         };
@@ -3574,7 +3581,7 @@ mod tests {
             ..Frame::default()
         };
         let started = std::time::Instant::now();
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let took = started.elapsed();
         let Some(Node::Linear { children, .. }) = &frame.root else {
             panic!()
@@ -3604,7 +3611,7 @@ mod tests {
             root: Some(column(vec![sensor("first"), sensor("second")])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Linear { children, .. }) = &frame.root else {
             panic!("column retained")
         };
@@ -3649,7 +3656,7 @@ mod tests {
             }),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Sensor {
             anticipate,
             delay,
@@ -3707,7 +3714,7 @@ mod tests {
             ])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Linear { children, .. }) = &frame.root else {
             panic!()
         };
@@ -3767,7 +3774,7 @@ mod tests {
             }),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Grid {
             columns,
             fluid,
@@ -3832,7 +3839,7 @@ mod tests {
             ])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let children = frame.root.as_ref().unwrap().children();
         assert!(matches!(children[0], Node::Svg { bytes: Some(_), .. }));
         assert!(
@@ -3857,7 +3864,7 @@ mod tests {
             ])),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Linear { children, .. }) = &frame.root else {
             panic!()
         };
@@ -3891,7 +3898,7 @@ mod tests {
             root: Some(huge),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Some(Node::Text { size, width, .. }) = &frame.root else {
             panic!()
         };

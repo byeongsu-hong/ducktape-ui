@@ -25,6 +25,7 @@ pub(super) type Shared = Arc<Mutex<Content>>;
 
 pub(super) struct HostEditor {
     options: Box<wire::EditorOptions>,
+    transactions: Option<super::editor_transactions::Shared>,
     status: widget::text_editor::Status,
     key: String,
     content: Shared,
@@ -38,7 +39,11 @@ pub(super) struct HostEditor {
 }
 
 impl HostEditor {
-    pub(super) fn new(node: &wire::Node, content: Shared) -> Self {
+    pub(super) fn new(
+        node: &wire::Node,
+        content: Shared,
+        transactions: Option<super::editor_transactions::Shared>,
+    ) -> Self {
         let wire::Node::Editor {
             options,
             key,
@@ -55,6 +60,7 @@ impl HostEditor {
             unreachable!("built for an editor node")
         };
         Self {
+            transactions,
             options: options.clone(),
             status: if on_edit.is_some() {
                 widget::text_editor::Status::Active
@@ -113,6 +119,39 @@ impl HostEditor {
         }
         if let Some(max_height) = self.max_height {
             editor = editor.max_height(max_height);
+        }
+        if let (Some(binding), Some(shared)) = (&self.options.binding, &self.transactions) {
+            let key = &self.key;
+            editor = editor.key_binding(move |press| {
+                let control = super::lock(shared);
+                let native_event = iced::keyboard::Event::KeyPressed {
+                    key: press.key.clone(),
+                    modified_key: press.modified_key.clone(),
+                    physical_key: press.physical_key,
+                    modifiers: press.modifiers,
+                    text: press.text.clone(),
+                    location: iced::keyboard::Location::Standard,
+                    repeat: false,
+                };
+                let wire::keyboard::Event::Press { state, .. } = native_event.into() else {
+                    unreachable!()
+                };
+                if !control.bypass_claim
+                    && !control.composing
+                    && matches!(press.status, widget::text_editor::Status::Focused { .. })
+                    && binding
+                        .claims
+                        .iter()
+                        .any(|claim| claim.matches(&state, cfg!(target_os = "macos")))
+                {
+                    Some(widget::text_editor::Binding::Custom(Output::EditorClaim {
+                        key: key.clone(),
+                        state,
+                    }))
+                } else {
+                    widget::text_editor::Binding::from_key_press(press)
+                }
+            });
         }
         if let Some(handler) = self.on_edit {
             let key = &self.key;
@@ -267,20 +306,250 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                 self.0 = state.is_focused();
             }
         }
+        let mut replay = None;
+        if let Some(shared) = &self.transactions {
+            let mut control = super::lock(shared);
+            let now = control.now_ms();
+            control.lane.check_deadline(now);
+            if let super::editor_transactions::Phase::Decision { since_ms, .. } =
+                control.lane.phase()
+            {
+                shell.request_redraw_at(
+                    control.started
+                        + std::time::Duration::from_millis(since_ms.saturating_add(5_000)),
+                );
+            }
+            if matches!(
+                control.lane.phase(),
+                super::editor_transactions::Phase::Faulted(_)
+            ) && !control.fault_reported
+            {
+                shell.publish(Output::EditorLaneFault {
+                    document: self.options.document.clone(),
+                });
+            }
+            let focused = {
+                let content = self.lock();
+                let mut native = self.build(&content);
+                let mut focus = Focus(false);
+                native.operate(tree, layout, renderer, &mut focus);
+                focus.0
+            };
+            let relevant = match event {
+                Event::Keyboard(
+                    iced::keyboard::Event::KeyPressed { .. }
+                    | iced::keyboard::Event::KeyReleased { .. }
+                    | iced::keyboard::Event::ModifiersChanged(_),
+                ) => focused,
+                Event::InputMethod(_) => focused,
+                Event::Mouse(
+                    iced::mouse::Event::ButtonPressed(_) | iced::mouse::Event::ButtonReleased(_),
+                ) => cursor.is_over(layout.bounds()) || focused,
+                Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
+                    focused && (control.dragging || control.lane.front().is_some())
+                }
+                Event::Mouse(iced::mouse::Event::WheelScrolled { .. }) => {
+                    cursor.is_over(layout.bounds()) && control.lane.front().is_some()
+                }
+                _ => false,
+            };
+            if relevant {
+                let captured_clipboard = if matches!(event, Event::Keyboard(iced::keyboard::Event::KeyPressed { key: iced::keyboard::Key::Character(key), modifiers, .. }) if key.eq_ignore_ascii_case("v") && modifiers.command())
+                {
+                    clipboard.read(iced::advanced::clipboard::Kind::Standard)
+                } else {
+                    None
+                };
+                let bytes = captured_clipboard.as_ref().map_or(0, String::len)
+                    + match event {
+                        Event::Keyboard(iced::keyboard::Event::KeyPressed { text, .. }) => {
+                            text.as_ref().map_or(0, |s| s.len())
+                        }
+                        Event::InputMethod(
+                            iced::advanced::input_method::Event::Commit(text)
+                            | iced::advanced::input_method::Event::Preedit(text, _),
+                        ) => text.len(),
+                        _ => 0,
+                    };
+                if let Ok(previous) = control.sequences.fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |next| next.checked_add(1),
+                ) {
+                    let sequence = previous + 1;
+                    let input = super::editor_transactions::NativeInput {
+                        key: self.key.clone(),
+                        event: event.clone(),
+                        cursor,
+                        clipboard: captured_clipboard,
+                        time_ms: control.now_ms(),
+                    };
+                    control.next_sequence = sequence;
+                    if control.lane.admit(sequence, bytes, input).is_err() {
+                        shell.publish(Output::EditorLaneFault {
+                            document: self.options.document.clone(),
+                        });
+                    }
+                } else {
+                    control.lane.fail(super::editor_transactions::Fault::Limit);
+                    shell.publish(Output::EditorLaneFault {
+                        document: self.options.document.clone(),
+                    });
+                }
+                shell.capture_event();
+            }
+            if control.lane.phase() == super::editor_transactions::Phase::Ready
+                && let Some(front) = control.lane.front()
+                && front.input.key == self.key
+            {
+                replay = Some((front.sequence, front.input.clone()));
+            } else if relevant {
+                shell.request_redraw();
+                return;
+            }
+        }
+        let effective_event = replay.as_ref().map_or(event, |(_, input)| &input.event);
+        let effective_cursor = replay.as_ref().map_or(cursor, |(_, input)| input.cursor);
+        if let Some(shared) = &self.transactions {
+            let mut control = super::lock(shared);
+            match effective_event {
+                Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+                    control.dragging = true
+                }
+                Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                    control.dragging = false
+                }
+                _ => {}
+            }
+            if let Event::InputMethod(ime) = effective_event {
+                match ime {
+                    iced::advanced::input_method::Event::Preedit(text, _) => {
+                        control.composing = !text.is_empty()
+                    }
+                    iced::advanced::input_method::Event::Commit(_)
+                    | iced::advanced::input_method::Event::Closed => control.composing = false,
+                    _ => {}
+                }
+            }
+        }
+
         let status = {
             let content = self.lock();
             let mut editor = self.build(&content);
+            if self.transactions.is_some() {
+                // A guest patch may invalidate native shaping between frames.
+                // Reuse native layout before any caret/IME query or replay.
+                let _ = editor.layout(
+                    tree,
+                    renderer,
+                    &layout::Limits::new(Size::ZERO, layout.bounds().size()),
+                );
+            }
             let mut actions = Vec::new();
             let mut local = Shell::new(&mut actions);
+            struct FrozenClipboard<'a> {
+                native: &'a mut dyn Clipboard,
+                frozen: bool,
+                text: Option<String>,
+            }
+            impl Clipboard for FrozenClipboard<'_> {
+                fn read(&self, kind: iced::advanced::clipboard::Kind) -> Option<String> {
+                    if self.frozen && kind == iced::advanced::clipboard::Kind::Standard {
+                        self.text.clone()
+                    } else {
+                        self.native.read(kind)
+                    }
+                }
+                fn write(&mut self, kind: iced::advanced::clipboard::Kind, contents: String) {
+                    self.native.write(kind, contents);
+                }
+            }
+            let mut captured = FrozenClipboard {
+                native: clipboard,
+                frozen: replay.is_some()
+                    && matches!(effective_event, Event::Keyboard(iced::keyboard::Event::KeyPressed { key: iced::keyboard::Key::Character(key), modifiers, .. }) if key.eq_ignore_ascii_case("v") && modifiers.command()),
+                text: replay
+                    .as_ref()
+                    .and_then(|(_, input)| input.clipboard.clone()),
+            };
             editor.update(
-                tree, event, layout, cursor, renderer, clipboard, &mut local, viewport,
+                tree,
+                effective_event,
+                layout,
+                effective_cursor,
+                renderer,
+                &mut captured,
+                &mut local,
+                viewport,
             );
             // Hosts apply these actions immediately, including inside overlays.
             // Reflow the changed Content before the next batched caret/IME query.
             if !local.is_empty() {
                 local.invalidate_layout();
             }
-            shell.merge(local, std::convert::identity);
+            if let Some((sequence, input)) = &replay {
+                if local.is_event_captured() {
+                    shell.capture_event();
+                }
+                if local.is_layout_invalid() {
+                    shell.invalidate_layout();
+                }
+                if local.are_widgets_invalid() {
+                    shell.invalidate_widgets();
+                }
+                shell.input_method_mut().merge(local.input_method());
+                match local.redraw_request() {
+                    iced::window::RedrawRequest::NextFrame => shell.request_redraw(),
+                    iced::window::RedrawRequest::At(at) => shell.request_redraw_at(at),
+                    iced::window::RedrawRequest::Wait => {}
+                }
+                drop(local);
+                let mut native_actions = Vec::new();
+                let mut request = None;
+                for output in actions {
+                    match output {
+                        Output::EditorAction { action, .. } => native_actions.push(action),
+                        Output::EditorClaim { state, .. } => {
+                            request = Some((
+                                state,
+                                matches!(
+                                    &input.event,
+                                    Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                        repeat: true,
+                                        ..
+                                    })
+                                ),
+                            ))
+                        }
+                        _ => shell.publish(output),
+                    }
+                }
+                if native_actions.is_empty()
+                    && request.is_none()
+                    && self
+                        .transactions
+                        .as_ref()
+                        .is_none_or(|shared| super::lock(shared).pending.is_none())
+                {
+                    if let Some(shared) = &self.transactions {
+                        let mut control = super::lock(shared);
+                        let _ = control.lane.commit(*sequence);
+                        let _ = control.lane.acknowledge(*sequence);
+                    }
+                } else {
+                    shell.publish(Output::EditorBatch(super::editor_transactions::Batch {
+                        document: self.options.document.clone(),
+                        key: self.key.clone(),
+                        sequence: *sequence,
+                        reset: self.reset,
+                        actions: native_actions,
+                        request,
+                    }));
+                }
+                shell.request_redraw();
+            } else {
+                shell.merge(local, std::convert::identity);
+            }
             let mut focused = Focus(false);
             editor.operate(tree, layout, renderer, &mut focused);
             use widget::text_editor::Status;
@@ -398,7 +667,7 @@ mod tests {
         cache: user_interface::Cache,
     ) -> Ui {
         UserInterface::build(
-            HostEditor::new(node, content.clone()),
+            HostEditor::new(node, content.clone(), None),
             Size::new(200.0, 120.0),
             cache,
             renderer,
@@ -452,6 +721,8 @@ mod tests {
             min_height: None,
             max_height: None,
             options: Box::new(wire::EditorOptions {
+                document: String::new(),
+                binding: None,
                 size: Some(20.0),
                 padding: Some(7.0),
                 line_height: Some(wire::LineHeight::Absolute(30.0)),
@@ -474,7 +745,7 @@ mod tests {
         };
         let content = Arc::new(Mutex::new(Content::with_text("ab\ncd")));
         let mut element: Element<'_, Output, iced::Theme, iced::Renderer> =
-            HostEditor::new(&node, content.clone()).into();
+            HostEditor::new(&node, content.clone(), None).into();
         let mut tree = Tree::new(&element);
         let bounds = element.as_widget_mut().layout(
             &mut tree,
@@ -570,6 +841,33 @@ mod tests {
             "Z",
             "typing replaces the native selection"
         );
+        struct PasteClipboard;
+        impl Clipboard for PasteClipboard {
+            fn read(&self, _: iced::advanced::clipboard::Kind) -> Option<String> {
+                Some("한".into())
+            }
+            fn write(&mut self, _: iced::advanced::clipboard::Kind, _: String) {}
+        }
+        ui = build(&node, &content, &mut renderer, ui.into_cache());
+        let mut pasted = vec![];
+        ui.update(
+            &[key("v", modifiers)],
+            inside,
+            &mut renderer,
+            &mut PasteClipboard,
+            &mut pasted,
+        );
+        for message in pasted {
+            let Output::EditorAction { action, .. } = message else {
+                panic!("native paste route")
+            };
+            content.lock().unwrap().perform(action);
+        }
+        assert_eq!(
+            content.lock().unwrap().text(),
+            "Z한",
+            "unbound editor reads the native clipboard"
+        );
         if let wire::Node::Editor { on_edit, .. } = &mut node {
             *on_edit = None;
         }
@@ -585,7 +883,7 @@ mod tests {
             0,
             "disabled editor emits no edits"
         );
-        assert_eq!(content.lock().unwrap().text(), "Z");
+        assert_eq!(content.lock().unwrap().text(), "Z한");
         let pixels = paint(&mut ui, &mut renderer, inside);
         assert_eq!(
             &pixels[(5 * 200 + 100) * 4..][..3],
@@ -617,6 +915,8 @@ mod tests {
                 min_height: None,
                 max_height: None,
                 options: Box::new(wire::EditorOptions {
+                    document: String::new(),
+                    binding: None,
                     size: Some(20.0),
                     padding: Some(5.0),
                     line_height: Some(wire::LineHeight::Relative(1.5)),
@@ -631,7 +931,7 @@ mod tests {
                 }),
             };
             let mut editor: Element<'_, Output, iced::Theme, iced::Renderer> =
-                HostEditor::new(&node, Arc::new(Mutex::new(Content::with_text(text)))).into();
+                HostEditor::new(&node, Arc::new(Mutex::new(Content::with_text(text))), None).into();
             let mut tree = Tree::new(&editor);
             editor
                 .as_widget_mut()

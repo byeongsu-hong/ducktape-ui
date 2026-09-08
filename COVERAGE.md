@@ -919,7 +919,7 @@ Ice 2.0 Preview has thirty-four checked Rust boundaries:
 | `themer name(args) -> Event` | factory returning `Option<Theme>`, `Element<'static, Event, Theme>`, and optional Theme-dependent text/background callbacks | native alternate `Theme: Base` subtrees inside the default-Theme app, including `Themer::new`, default Theme fallback, event mapping, `text_color`, and `background` |
 | `window name(args)` | `fn(&dyn iced::window::Window, ...) -> Output` | exact typed access to native window/display handles and other callback-only window behavior through `window::run` |
 | `markdown-viewer name(args)` | `fn(...) -> impl for<'a> markdown::Viewer<'a, Event>` | native custom rendering of every Markdown item through `view_with` while preserving checked link-event routing |
-| `editor-binding name(args)` | `fn(text_editor::KeyPress, ...) -> Option<text_editor::Binding<Event>>` | native custom key mapping across every built-in Binding plus typed custom application routes |
+| `editor-binding name(args)` | Native: `fn(text_editor::KeyPress, ...) -> Option<text_editor::Binding<Event>>`; Tree: `fn(...) -> ui_lang_guest::EditorBinding<Event>` | Native custom key mapping; Tree bounded claims, ordered native fallback/atomic guest patches and post-commit authored routes |
 | `editor-action name()` | `fn(&mut text_editor::Content, text_editor::Action)` | in-place native edit observation for bounded history and dirty tracking without per-key document copies |
 | `editor-highlighter name(args)` | generic adapter from plain `TextEditor` to default `Element` | stock native `highlight_with` access to arbitrary Highlighter settings, highlights, iterators, Theme-aware colors, and fonts; layouts that need mixed metrics or decorations use a custom widget such as the runtime `RichTextEditor` |
 | `editor-style name(args)` | `fn(&Theme, text_editor::Status, ...) -> text_editor::Style` | native theme/status-aware runtime editor style callbacks, equivalent to the default Theme's advanced class representation |
@@ -1664,6 +1664,33 @@ round trips. The actual native/Wasm fixture drives select-all, Korean insertion,
 backward Shift selection, collapse, replacement and a guest caret command.
 Structural pre-edit callbacks, undo grouping and native word/line selection modes
 are separate contracts; this does not claim full document-editor app parity.
+
+### Tree editor transaction evidence
+
+`tests/editor-transactions-guest` and the actual host test
+`editor_transactions_native_and_wasm_order_input_and_unify_guest_history` run the
+same generated application as a native subprocess and a Wasm module. Native Iced
+input drives Tab patches followed by typing, guest-owned grouped undo/redo,
+Noop exactly-once acknowledgment, native Enter, queued caret movement, captured
+Korean paste and queued IME preedit/commit. Assertions cover exact text, byte
+caret, commit count, state acceptance before the authored route, distinct empty
+component documents and one app state rendered under two widget keys.
+
+Excluding release/modifier events from the ordered lane changes the actual
+status assertion from Captured to Ignored; restoring admission passes.
+The clipboard-reread mutation reaches the intended assertion with `LATEx` instead
+of `한x`; restoring admission-time clipboard capture passes. The owning runtime
+rebinding test rejects a pending widget key moving to another logical document:
+a key-only membership mutation retains `owner` instead of the expected `base`.
+The guest retry test rejects an old attempt before state/history acceptance;
+removing the full-id guard produces `stale` instead of `before`. Wire tests bound
+claims, responses, aggregate replacement bytes, grapheme/paired-line-ending
+patch endpoints and final cursors. These are framework transaction semantics;
+full Pages list/fence/markdown history policy remains an application reducer.
+
+CI builds both artifacts with `cargo ice bundle` and `scripts/build-native.py`
+and selects the ignored actual test explicitly. The wire and host integration
+contract is [documented here](docs/editor-transactions.md).
 
 ### Tree keyed and virtual row evidence
 

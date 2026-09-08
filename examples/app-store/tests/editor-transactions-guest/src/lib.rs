@@ -81,6 +81,15 @@ mod fixture {
                 command: false,
             })
             .collect::<Vec<_>>();
+        // A structural commit opens a minimal command menu. The next queued
+        // F2 must see the post-commit reducer's claims, not admission-time args.
+        if history.last_kind == "GuestPatch" {
+            claims.push(EditorKeyClaim {
+                key: Key::Named(Named::F2),
+                modifiers: bare,
+                command: false,
+            });
+        }
         for shift in [false, true] {
             claims.push(EditorKeyClaim {
                 key: Key::Character("z".into()),
@@ -111,7 +120,7 @@ mod fixture {
                     }
                 }
                 Key::Named(Named::Enter) => EditorDecision::DefaultEditorAction,
-                Key::Named(Named::Backspace) => EditorDecision::Noop,
+                Key::Named(Named::Backspace | Named::F2) => EditorDecision::Noop,
                 Key::Character(ref key) if key == "z" => {
                     let redo = request.key.modifiers.shift;
                     let saved = if redo {

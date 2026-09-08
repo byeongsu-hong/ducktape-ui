@@ -22,7 +22,7 @@ fn build(
 ) -> Ui {
     UserInterface::build(
         wasm_view(Surface(guest.clone()), false),
-        Size::new(300.0, 320.0),
+        Size::new(300.0, 480.0),
         cache,
         renderer,
     )
@@ -61,14 +61,15 @@ fn send(
     clipboard: &mut Clipboard,
     point: Point,
     event: Event,
-) {
+) -> iced::event::Status {
     ui.update(
         &[event],
         mouse::Cursor::Available(point),
         renderer,
         clipboard,
         &mut vec![],
-    );
+    )
+    .1[0]
 }
 fn key(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Event {
     let text = match &key {
@@ -374,6 +375,29 @@ fn editor_transactions_native_and_wasm_order_input_and_unify_guest_history() {
         ] {
             send(&mut ui, &mut renderer, &mut clipboard, point, event);
         }
+        for event in [
+            Event::Keyboard(keyboard::Event::ModifiersChanged(
+                keyboard::Modifiers::SHIFT,
+            )),
+            Event::Keyboard(keyboard::Event::KeyReleased {
+                key: keyboard::Key::Character("x".into()),
+                modified_key: keyboard::Key::Character("x".into()),
+                physical_key: keyboard::key::Physical::Unidentified(
+                    keyboard::key::NativeCode::Unidentified,
+                ),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::SHIFT,
+            }),
+            Event::Keyboard(keyboard::Event::ModifiersChanged(
+                keyboard::Modifiers::empty(),
+            )),
+        ] {
+            assert_eq!(
+                send(&mut ui, &mut renderer, &mut clipboard, point, event),
+                iced::event::Status::Captured,
+                "release and modifier transitions join the pending editor lane"
+            );
+        }
         // Paste owns its admission-time bytes; delayed replay must not reread it.
         clipboard.0 = "LATE".into();
         ui = settle(ui, &guest, &mut renderer, &mut now, &mut clipboard);
@@ -388,6 +412,140 @@ fn editor_transactions_native_and_wasm_order_input_and_unify_guest_history() {
         );
         assert_eq!(state(&guest).cursor.selection, None);
         assert_eq!(commits(&guest) - before_burst, 4);
+        let before_ime = commits(&guest);
+        use iced::advanced::input_method::Event as Ime;
+        for event in [
+            named(Named::Tab),
+            Event::InputMethod(Ime::Opened),
+            Event::InputMethod(Ime::Preedit("글".into(), Some(0..3))),
+            Event::InputMethod(Ime::Preedit(String::new(), None)),
+            Event::InputMethod(Ime::Commit("글".into())),
+            Event::InputMethod(Ime::Closed),
+        ] {
+            send(&mut ui, &mut renderer, &mut clipboard, point, event);
+        }
+        ui = settle(ui, &guest, &mut renderer, &mut now, &mut clipboard);
+        assert_eq!(
+            state(&guest).text,
+            "      abx\n한글x",
+            "IME commit follows pending structural key exactly once"
+        );
+        assert_eq!(
+            commits(&guest) - before_ime,
+            2,
+            "preedit lifecycle is not a text/history commit"
+        );
+        assert_eq!(
+            state(&guest).cursor.position,
+            wire::EditorPosition { line: 1, column: 6 }
+        );
+        fn sibling_key(node: &wire::Node) -> Option<String> {
+            if node
+                .key()
+                .is_some_and(|key| key.ends_with("/same-document"))
+            {
+                return node.key().map(str::to_owned);
+            }
+            node.children().iter().find_map(sibling_key)
+        }
+        let sibling = sibling_key(guest.lock().unwrap().frame.root.as_ref().unwrap()).unwrap();
+        let mut sibling_bounds = Bounds(sibling, None);
+        ui.operate(&renderer, &mut sibling_bounds);
+        let sibling_point = sibling_bounds.1.unwrap().center();
+        for button in [
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            send(
+                &mut ui,
+                &mut renderer,
+                &mut clipboard,
+                sibling_point,
+                Event::Mouse(button),
+            );
+        }
+        ui = settle(ui, &guest, &mut renderer, &mut now, &mut clipboard);
+        clipboard.0 = "shared".into();
+        let before_sibling = commits(&guest);
+        let selection_pixels = |ui: &mut Ui, renderer: &mut iced::Renderer| {
+            ui.draw(
+                renderer,
+                &iced::Theme::Light,
+                &iced::advanced::renderer::Style {
+                    text_color: iced::Color::BLACK,
+                },
+                mouse::Cursor::Unavailable,
+            );
+            renderer
+                .screenshot(Size::new(300, 480), 1.0, iced::Color::WHITE)
+                .chunks_exact(4)
+                .filter(|pixel| pixel[..3] == [255, 0, 0])
+                .count()
+        };
+        let before_selection = selection_pixels(&mut ui, &mut renderer);
+        send(
+            &mut ui,
+            &mut renderer,
+            &mut clipboard,
+            sibling_point,
+            key(keyboard::Key::Character("a".into()), command),
+        );
+        ui = settle(ui, &guest, &mut renderer, &mut now, &mut clipboard);
+        assert!(
+            selection_pixels(&mut ui, &mut renderer) > before_selection + 20,
+            "native selection paint follows queued shared-document caret state"
+        );
+        send(
+            &mut ui,
+            &mut renderer,
+            &mut clipboard,
+            sibling_point,
+            key(keyboard::Key::Character("v".into()), command),
+        );
+        ui = settle(ui, &guest, &mut renderer, &mut now, &mut clipboard);
+        assert_eq!(
+            state(&guest).text,
+            "shared",
+            "a rendering without claims shares document history and queue"
+        );
+        assert_eq!(commits(&guest) - before_sibling, 2);
+        // Return to the binding-bearing rendering. Its first commit changes
+        // claims; the queued F2 is consumed only by the new factory value.
+        for button in [
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            send(
+                &mut ui,
+                &mut renderer,
+                &mut clipboard,
+                point,
+                Event::Mouse(button),
+            );
+        }
+        ui = settle(ui, &guest, &mut renderer, &mut now, &mut clipboard);
+        let before_claim_change = commits(&guest);
+        send(
+            &mut ui,
+            &mut renderer,
+            &mut clipboard,
+            point,
+            named(Named::Tab),
+        );
+        send(
+            &mut ui,
+            &mut renderer,
+            &mut clipboard,
+            point,
+            named(Named::F2),
+        );
+        ui = settle(ui, &guest, &mut renderer, &mut now, &mut clipboard);
+        assert_eq!(state(&guest).text, "  shared");
+        assert_eq!(
+            commits(&guest) - before_claim_change,
+            2,
+            "second queued key sees claims updated by the first commit reducer"
+        );
         drop(ui);
     }
 }

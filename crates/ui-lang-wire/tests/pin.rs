@@ -19,7 +19,7 @@ fn pin_preserves_local_offsets_and_bounds_untrusted_coordinates() {
             root: Some(pin(x, y)),
             ..Frame::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let node: Node = decode(&encode(&frame.root.unwrap())).unwrap();
         assert_eq!(node.key(), Some("pin"));
         assert_eq!(node.children().len(), 1);

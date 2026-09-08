@@ -86,6 +86,7 @@ impl<M: 'static> EditorTransaction<M> {
             | EditorTransactionEvent::Cancelled { id, state } => (id, state, false),
         };
         if !slots::editor_matches_pending(id)
+            || state.text.len() > wire::MAX_STRING_BYTES
             || id.reset != state.reset
             || state.reset != editor.reset_revision()
             || state.revision < editor.observation_revision()

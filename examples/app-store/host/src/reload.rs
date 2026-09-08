@@ -248,6 +248,9 @@ fn finish(running: &[Running], serial: i64, reload: Reload) -> Result<Loaded, St
 }
 
 fn ensure_settled(guest: &Guest) -> Result<(), String> {
+    if guest.inputs.editor_transactions_pending() {
+        return Err("editor input is pending; reload after it settles".into());
+    }
     if guest.fault.is_some()
         || guest.staged_frame
         || !guest.pending.is_empty()

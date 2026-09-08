@@ -795,6 +795,7 @@ impl Guest {
                     .and_then(|terminal| terminal.lock().expect("host terminal").next_poll()),
             )
             .chain(self.frame.busy.then_some(now))
+            .chain((!self.pending.is_empty() || self.inputs.editor_wants_redraw()).then_some(now))
             .chain((!self.widgets.is_empty()).then_some(now))
             .min()
     }
@@ -1136,6 +1137,7 @@ impl Guest {
                 } else if frame.root.is_none() {
                     self.patched += 1;
                 }
+                let mut accepted = true;
                 match merge(&mut self.frame.root, &mut frame) {
                     Ok(false) => {}
                     Ok(true) => {
@@ -1153,12 +1155,19 @@ impl Guest {
                             });
                         }
                     }
-                    // The window is blank for a tick and the guest hears
-                    // that it must send the tree whole.
+                    // Retain the last accepted tree while requesting a whole
+                    // replacement; an invalid patch cannot erase an editor.
                     Err(refused) => {
+                        accepted = false;
+                        frame.root = self.frame.root.take();
                         eprintln!("[{}] patch refused: {refused}", self.entry.id);
                         self.frame_rev += 1;
                         self.pending.push(wire::Event::Resync);
+                    }
+                }
+                if accepted {
+                    if self.inputs.editor_frame(&frame, &mut self.pending) {
+                        self.frame_rev += 1;
                     }
                 }
                 self.frame = frame;
@@ -1190,7 +1199,7 @@ impl Guest {
 /// it as is, a frame without a tree patches it, a frame with one replaces
 /// it. `Ok(true)` is a tree the window has to rebuild for. `Err` is a
 /// patch the held tree cannot take, or no held tree to patch — `frame` is
-/// then left with no tree, and the guest has to be asked for a whole one.
+/// then left with no new tree, while `held` remains intact for resync.
 fn merge(held: &mut Option<wire::Node>, frame: &mut wire::Frame) -> Result<bool, &'static str> {
     if frame.unchanged {
         frame.root = held.take();
@@ -1200,8 +1209,9 @@ fn merge(held: &mut Option<wire::Node>, frame: &mut wire::Frame) -> Result<bool,
         return Ok(true);
     }
     let patches = std::mem::take(&mut frame.patches);
-    let mut root = held.take().ok_or("no tree to patch")?;
+    let mut root = held.as_ref().ok_or("no tree to patch")?.clone();
     wire::apply(&mut root, patches)?;
+    *held = None;
     frame.root = Some(root);
     Ok(true)
 }
@@ -1254,7 +1264,7 @@ fn shape(bytes: &[u8]) -> Result<wire::Frame, String> {
     }
     // Every frame, tree or no tree: an unchanged one still carries request
     // kinds the host formats into refusals and shows.
-    wire::sanitize(&mut frame);
+    wire::sanitize(&mut frame).map_err(str::to_owned)?;
     Ok(frame)
 }
 
@@ -1316,6 +1326,66 @@ fn first_line(error: &wasmtime::Error) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn oversized_editor_frames_and_patches_preserve_the_accepted_document() {
+        let editor = |text: String| wire::Node::Editor {
+            key: "document".into(),
+            text,
+            placeholder: String::new(),
+            cursor: Default::default(),
+            reset: 0,
+            revision: 0,
+            options: Default::default(),
+            on_edit: Some(1),
+            width: None,
+            height: None,
+            min_height: None,
+            max_height: None,
+        };
+        let original = editor("keep the complete document".into());
+        let mut inputs = Inputs::default();
+        inputs.adopt(&original);
+        let oversized = editor("x".repeat(wire::MAX_STRING_BYTES + 1));
+        let full = wire::Frame {
+            root: Some(oversized.clone()),
+            ..Default::default()
+        };
+        assert!(
+            shape(&wire::encode(&full))
+                .unwrap_err()
+                .contains("editor document")
+        );
+        let mut held = Some(original.clone());
+        let mut frame = wire::Frame {
+            patches: vec![wire::Patch::Replace {
+                path: vec![],
+                node: oversized,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            merge(&mut held, &mut frame),
+            Err("editor document exceeds text limit")
+        );
+        assert_eq!(held, Some(original));
+        assert!(frame.root.is_none());
+        let mut events = vec![];
+        inputs.apply(
+            Output::EditorAction {
+                reset: 0,
+                key: "document".into(),
+                handler: 1,
+                action: iced::widget::text_editor::Action::Move(
+                    iced::widget::text_editor::Motion::Right,
+                ),
+            },
+            &mut events,
+        );
+        assert!(
+            matches!(events.as_slice(), [wire::Event::Edit { text, .. }] if text == "keep the complete document")
+        );
+    }
+
     fn kind(bytes: usize) -> wire::Request {
         wire::Request {
             id: 1,
@@ -1361,6 +1431,7 @@ mod tests {
     #[test]
     fn an_unchanged_frame_is_taken_at_its_word_and_still_shaped() {
         let frame = shape(&wire::encode(&wire::Frame {
+            editor_decisions: Vec::new(),
             mouse_interest: false,
             root: Some(wire::Node::empty()),
             requests: vec![kind(wire::MAX_STRING_BYTES * 2)],
@@ -1465,7 +1536,8 @@ mod tests {
             ..wire::Frame::default()
         };
         assert_eq!(merge(&mut held, &mut bad), Err("a path to no node"));
-        assert!(bad.root.is_none() && held.is_none());
+        assert!(bad.root.is_none());
+        assert_eq!(held, Some(column(vec![label("b", "two!")])));
         // With nothing held, patches have nothing to build on.
         assert_eq!(
             merge(&mut None, &mut wire::Frame::default()),

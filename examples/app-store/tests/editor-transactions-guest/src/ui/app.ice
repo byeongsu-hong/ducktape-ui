@@ -27,7 +27,7 @@ on committed(outcome)
   history = record(history, outcome, draft)
 
 component IndependentEditor()
-  lifetime mounted
+  lifetime retained
   state
     draft:editor = editor("")
     history:History = initial_history()

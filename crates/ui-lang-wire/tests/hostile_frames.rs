@@ -2252,8 +2252,9 @@ fn random_trees_come_out_of_sanitize_inside_every_bound() {
                 assert!(names_the_door, "{ctx}: unexpected refusal: {message}");
             }
             Ok(mut decoded) => {
-                sanitize(&mut decoded);
-                check_frame(&decoded, &ctx);
+                if sanitize(&mut decoded).is_ok() {
+                    check_frame(&decoded, &ctx);
+                }
             }
         }
     }
@@ -2339,8 +2340,9 @@ fn mutated_bytes_never_panic() {
             }));
             match outcome {
                 Ok(Ok(mut decoded)) => {
-                    sanitize(&mut decoded);
-                    check_frame(&decoded, &ctx);
+                    if sanitize(&mut decoded).is_ok() {
+                        check_frame(&decoded, &ctx);
+                    }
                 }
                 Ok(Err(_)) => {}
                 Err(payload) => panic!("{ctx}: decode panicked: {}", payload_message(&payload)),
@@ -2369,7 +2371,9 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
             let mut rng = Rng::new(seed);
             let (depth, width) = (rng.skewed(MAX_DEPTH, 3), rng.skewed(64, 2));
             let mut frame = gen_frame_with(&mut rng, depth, width);
-            sanitize(&mut frame);
+            if sanitize(&mut frame).is_err() {
+                return;
+            }
             let mut root = frame
                 .root
                 .take()
@@ -2382,7 +2386,16 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
                 // Paths are drawn against the tree as the patches so far
                 // leave it, so a well-behaved sequence applies whole and
                 // a hostile one is refused somewhere along it.
-                let applied = ui_lang_wire::apply(&mut staged, vec![patch.clone()]);
+                let mut candidate = staged.clone();
+                let applied = ui_lang_wire::apply(&mut candidate, vec![patch.clone()]);
+                if matches!(
+                    applied,
+                    Err("editor document exceeds text limit"
+                        | "frame budget would truncate an editor document")
+                ) {
+                    continue;
+                }
+                staged = candidate;
                 assert!(
                     hostile || applied.is_ok(),
                     "{ctx}: a well-behaved patch was refused: {applied:?}\n{patch:#?}"
@@ -2408,8 +2421,14 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
             };
             let outcome = ui_lang_wire::apply(&mut root, decoded.patches);
             assert!(
-                hostile || outcome.is_ok(),
-                "{ctx}: a well-behaved sequence was refused: {outcome:?}"
+                hostile
+                    || outcome.is_ok()
+                    || matches!(
+                        outcome,
+                        Err("editor document exceeds text limit"
+                            | "frame budget would truncate an editor document")
+                    ),
+                "{ctx}: a structurally valid sequence was refused: {outcome:?}"
             );
             match outcome {
                 Ok(()) => {
@@ -2426,6 +2445,8 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
                         "a list edit on no list",
                         "props of another arity",
                         "more patches than the host applies",
+                        "editor document exceeds text limit",
+                        "frame budget would truncate an editor document",
                     ]
                     .contains(&refused);
                     assert!(named, "{ctx}: unexpected refusal: {refused}");
@@ -2459,18 +2480,32 @@ fn a_diff_applied_to_the_old_tree_is_the_new_tree_for_random_pairs() {
             let tree = |rng: &mut Rng| {
                 let (depth, width) = (rng.skewed(MAX_DEPTH / 2, 3), rng.skewed(48, 2));
                 let mut frame = gen_frame_with(rng, depth, width);
-                sanitize(&mut frame);
-                frame.root.take().expect("a root")
+                sanitize(&mut frame).ok()?;
+                frame.root.take()
             };
-            let mut old = tree(&mut rng);
+            let Some(mut old) = tree(&mut rng) else {
+                return;
+            };
             let mut new = match rng.next_range(8) {
-                0 => tree(&mut rng),
+                0 => {
+                    let Some(tree) = tree(&mut rng) else {
+                        return;
+                    };
+                    tree
+                }
                 _ => {
                     let mut edited = old.clone();
                     for _ in 0..1 + rng.next_range(EDITS_PER_PAIR) {
                         let patch = gen_patch(&mut rng, &edited, false);
-                        ui_lang_wire::apply(&mut edited, vec![patch])
-                            .unwrap_or_else(|refused| panic!("{ctx}: {refused}"));
+                        let mut candidate = edited.clone();
+                        match ui_lang_wire::apply(&mut candidate, vec![patch]) {
+                            Ok(()) => edited = candidate,
+                            Err(
+                                "editor document exceeds text limit"
+                                | "frame budget would truncate an editor document",
+                            ) => {}
+                            Err(refused) => panic!("{ctx}: {refused}"),
+                        }
                     }
                     edited
                 }
@@ -2579,9 +2614,11 @@ fn sanitize_is_idempotent() {
         let seed = SEED ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         let ctx = format!("seed={seed:#x} tree={i}");
         let mut once = build_frame(seed, i);
-        sanitize(&mut once);
+        if sanitize(&mut once).is_err() {
+            continue;
+        }
         let mut twice = once.clone();
-        sanitize(&mut twice);
+        sanitize(&mut twice).unwrap();
         assert_eq!(once, twice, "{ctx}: sanitize is not idempotent");
     }
 }
