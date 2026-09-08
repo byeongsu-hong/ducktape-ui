@@ -1445,6 +1445,13 @@ loop limit still applies. Host and guest must rebuild for the new reset field.
 and generates a Rust test file in `OUT_DIR`, returning its path. The host includes
 it under `cfg(test)` in a module supplying `__ice_tree_test_driver(Config, test_id, fingerprint)`, which
 returns the existing runtime semantic `Driver` for a mounted guest Program.
+Typed steps additionally call
+`__ice_tree_test_step(&mut Driver<P>, test_id: u32, step_id: u32, Location) -> ()`.
+This adapter forwards the checked IDs to the same guest instance and reports any
+guest error as a test failure at the supplied source `Location`. It redraws before
+and after the step, publishing dispatch changes to mounted widgets before the
+next rendered UI assertion. The app-store host's authored test adapter implements
+both hooks.
 Generated tests are ignored by default because they require separately built
 guest packages; host CI must explicitly execute them. No test command or export
 is added to production guest artifacts.

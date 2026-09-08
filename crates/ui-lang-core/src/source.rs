@@ -122,6 +122,9 @@ pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
 
 /// Generate authored Tree tests for inclusion in a native host's `cfg(test)` module.
 /// The module supplies `__ice_tree_test_driver(Config, test_id, fingerprint)` using its real guest backend.
+/// Typed steps call `__ice_tree_test_step(&mut Driver<P>, test_id: u32, step_id: u32,
+/// Location) -> ()`; the adapter forwards to that guest, reports errors at Location,
+/// and redraws before and after the step to synchronize mounted widgets.
 pub fn compile_tree_tests_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
     let path = path.as_ref();
     let analysis = analyze_file_graph(path)?;

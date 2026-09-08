@@ -160,6 +160,10 @@ pub fn compile_dir_for(path: impl AsRef<Path>, target: Target) -> Result<(), Err
 
 /// Generate Tree UI tests for a native host. Include the returned file only under
 /// `cfg(test)` in a module supplying `__ice_tree_test_driver(Config, test_id, fingerprint)`.
+/// Typed steps also require `__ice_tree_test_step(&mut Driver<P>, test_id: u32,
+/// step_id: u32, Location) -> ()`. It forwards the step to the same guest,
+/// reports guest errors at Location, and redraws before and after the step so
+/// state changes reach mounted widgets before the next UI assertion.
 /// Generated tests are ignored until explicitly run with built guest packages.
 pub fn compile_tree_tests(path: impl AsRef<Path>) -> Result<PathBuf, Error> {
     compile_tree_test_sidecar(path.as_ref(), false)
