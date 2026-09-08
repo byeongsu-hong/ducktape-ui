@@ -12,6 +12,7 @@ fn guest() -> Arc<Mutex<Guest>> {
     let bytes = std::fs::read(&path).expect("bundle editor fixture first");
     Arc::new(Mutex::new(
         Guest::load(&CatalogEntry {
+            preferred_size: None,
             id: "editor-fixture".into(),
             name: "Editor fixture".into(),
             description: String::new(),

@@ -7,12 +7,30 @@ use crate::limits::MAX_MODULE_BYTES;
 /// wasm32-unknown-unknown` writes for this workspace.
 const DEFAULT_CATALOG_DIR: &str = "target/app-store-catalog";
 
-/// The custom section `export_app!` writes: `name\ndescription\ncap,cap,`.
+/// The versioned five-line section written by `export_app!`.
 const MANIFEST_SECTION: &str = "ice.manifest";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Capability {
     pub name: String,
+}
+
+/// A finite positive logical size, bounded like wire geometry. Private bits
+/// keep equality and hashing exact without admitting NaN or signed zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PreferredSize([u32; 2]);
+
+impl PreferredSize {
+    pub fn new(width: f32, height: f32) -> Option<Self> {
+        [width, height]
+            .iter()
+            .all(|value| value.is_finite() && *value > 0.0 && *value <= 8192.0)
+            .then_some(Self([width.to_bits(), height.to_bits()]))
+    }
+
+    pub fn size(self) -> iced::Size {
+        iced::Size::new(f32::from_bits(self.0[0]), f32::from_bits(self.0[1]))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -21,6 +39,7 @@ pub struct CatalogEntry {
     pub name: String,
     pub description: String,
     pub capabilities: Vec<Capability>,
+    pub preferred_size: Option<PreferredSize>,
     pub path: String,
     /// What the app's tile shows: the first letter of its name.
     pub mark: String,
@@ -53,7 +72,7 @@ pub async fn scan_catalog() -> Vec<CatalogEntry> {
 /// The scan itself, over a directory named directly rather than through the
 /// `APP_STORE_CATALOG` env var — so a test can point it at a scratch
 /// directory without touching process-global state.
-fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
+pub(crate) fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -77,6 +96,7 @@ fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
                 id: path.file_stem()?.to_string_lossy().into_owned(),
                 name: manifest.name,
                 description: manifest.description,
+                preferred_size: manifest.preferred_size,
                 capabilities: manifest
                     .capabilities
                     .iter()
@@ -145,6 +165,7 @@ struct Manifest {
     name: String,
     description: String,
     capabilities: Vec<String>,
+    preferred_size: Option<PreferredSize>,
 }
 
 /// What a manifest may say about itself. The catalog is read before anything
@@ -170,35 +191,66 @@ fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
     else {
         return None;
     };
+    let mut manifest = None;
     for payload in payloads {
-        if let Ok(wasmparser::Payload::CustomSection(section)) = payload
+        if let wasmparser::Payload::CustomSection(section) = payload.ok()?
             && section.name() == MANIFEST_SECTION
         {
-            let text = std::str::from_utf8(section.data()).ok()?;
-            let mut lines = text.lines();
-            let name = lines.next()?.to_string();
-            let description = lines.next()?.to_string();
-            let capabilities = lines
-                .next()
-                .unwrap_or_default()
-                .split(',')
-                .filter(|capability| !capability.is_empty())
-                .map(str::to_string)
-                .collect();
-            let manifest = Manifest {
-                name,
-                description,
-                capabilities,
-            };
-            return manifest.within_bounds().then_some(manifest);
+            if manifest.is_some() {
+                return None;
+            }
+            manifest = Some(Manifest::parse(std::str::from_utf8(section.data()).ok()?)?);
         }
     }
-    None
+    manifest
 }
 
 impl Manifest {
+    fn parse(text: &str) -> Option<Self> {
+        if text.len() > 1024 || text.chars().any(|c| c.is_control() && c != '\n') {
+            return None;
+        }
+        let mut lines = text.split('\n');
+        if lines.next()? != "ice.manifest.v1" {
+            return None;
+        }
+        let name = lines.next()?.to_owned();
+        let description = lines.next()?.to_owned();
+        let caps = lines.next()?;
+        let capabilities = if caps.is_empty() {
+            Vec::new()
+        } else {
+            let caps = caps.strip_suffix(',')?;
+            if caps.split(',').any(str::is_empty) {
+                return None;
+            }
+            caps.split(',').map(str::to_owned).collect()
+        };
+        let preferred_size = match lines.next()? {
+            "none" => None,
+            value => {
+                let (width, height) = value.split_once(',')?;
+                Some(PreferredSize::new(
+                    width.parse().ok()?,
+                    height.parse().ok()?,
+                )?)
+            }
+        };
+        if lines.next().is_some() {
+            return None;
+        }
+        let manifest = Self {
+            name,
+            description,
+            capabilities,
+            preferred_size,
+        };
+        manifest.within_bounds().then_some(manifest)
+    }
+
     fn within_bounds(&self) -> bool {
-        self.name.len() <= MAX_NAME_BYTES
+        !self.name.is_empty()
+            && self.name.len() <= MAX_NAME_BYTES
             && self.description.len() <= MAX_DESCRIPTION_BYTES
             && self.capabilities.len() <= MAX_CAPABILITIES
             && self
@@ -212,6 +264,170 @@ impl Manifest {
 mod tests {
     use super::*;
     use std::fs::File;
+
+    #[test]
+    #[ignore = "requires bundled window-size-fixture wasm"]
+    fn bundled_preferred_size_reaches_initial_native_open() {
+        use iced::futures::{StreamExt, executor::block_on};
+        use iced_test::runtime::{Action, task, window};
+
+        let directory =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/window-size-fixture");
+        let entries = scan_dir(&directory);
+        assert_eq!(entries.len(), 1, "bundle the window-size fixture first");
+        let entry = entries.into_iter().next().unwrap();
+        assert_eq!(
+            entry.preferred_size.unwrap().size(),
+            iced::Size::new(640.5, 480.25)
+        );
+        let loaded = block_on(crate::store::install_app(entry)).expect("instantiate sized guest");
+        let saved = crate::library::Placement {
+            id: loaded.id.clone(),
+            x: -12.5,
+            y: 18.25,
+            w: 920.5,
+            h: 680.25,
+            placed: true,
+        };
+        for (placements, expected) in [
+            (vec![], iced::Size::new(640.5, 480.25)),
+            (vec![saved], iced::Size::new(920.5, 680.25)),
+        ] {
+            let placements = crate::library::prepare_window(placements, &Some(loaded.clone()));
+            let mut actions = task::into_stream(crate::library::open_guest(
+                Some(loaded.clone()),
+                placements.clone(),
+            ))
+            .unwrap();
+            let Some(Action::Window(window::Action::Open(id, settings, reply))) =
+                block_on(actions.next())
+            else {
+                panic!("first action must open the native window")
+            };
+            assert_eq!(
+                settings.size, expected,
+                "size must be correct before the first frame"
+            );
+            assert_eq!(settings.min_size, Some(iced::Size::new(320.0, 240.0)));
+            if expected.width == 920.5 {
+                assert!(
+                    matches!(settings.position, iced::window::Position::Specific(p) if p == iced::Point::new(-12.5, 18.25))
+                );
+            }
+            // Mount the actual guest at the geometry supplied to native open.
+            use iced::advanced::{renderer::Headless, widget::Operation};
+            struct Containers(Vec<iced::Rectangle>);
+            impl Operation for Containers {
+                fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+                    visit(self);
+                }
+                fn container(&mut self, _: Option<&iced::widget::Id>, bounds: iced::Rectangle) {
+                    self.0.push(bounds);
+                }
+            }
+            let mut renderer = block_on(<iced::Renderer as Headless>::new(
+                iced::Font::DEFAULT,
+                iced::Pixels(16.0),
+                Some("tiny-skia"),
+            ))
+            .expect("headless renderer");
+            let mut ui = iced_test::runtime::UserInterface::build(
+                crate::store::wasm_view(loaded.surface.clone(), false),
+                settings.size,
+                iced_test::runtime::user_interface::Cache::default(),
+                &mut renderer,
+            );
+            for frame in 0..4 {
+                ui.update(
+                    &[iced::Event::Window(iced::window::Event::RedrawRequested(
+                        std::time::Instant::now() + std::time::Duration::from_secs(frame),
+                    ))],
+                    iced::mouse::Cursor::Unavailable,
+                    &mut renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut vec![],
+                );
+                ui = iced_test::runtime::UserInterface::build(
+                    crate::store::wasm_view(loaded.surface.clone(), false),
+                    settings.size,
+                    ui.into_cache(),
+                    &mut renderer,
+                );
+            }
+            let mut bounds = Containers(vec![]);
+            ui.operate(&renderer, &mut bounds);
+            assert!(
+                bounds.0.iter().any(|rect| rect.size() == expected),
+                "guest fills initial native geometry: {:?}",
+                bounds.0
+            );
+            let running = vec![crate::library::Running {
+                id: loaded.id.clone(),
+                name: loaded.name.clone(),
+                surface: loaded.surface.clone(),
+                window: id,
+            }];
+            if !placements[0].placed {
+                let resized =
+                    crate::library::resized(placements.clone(), &running, id, 700.0, 500.0);
+                assert!(!resized[0].placed, "resize cannot invent a known position");
+                let resized_dir = ScratchDir::new("preferred-size-resize");
+                crate::library::save_placements_in(&resized, &resized_dir.0);
+                let saved = std::fs::read_to_string(resized_dir.0.join("windows")).unwrap();
+                assert!(!saved.is_empty(), "resize-only geometry must be persisted");
+                let restored = saved
+                    .lines()
+                    .map(|line| crate::library::parse_placement(line).unwrap())
+                    .collect();
+                let mut resized_open =
+                    task::into_stream(crate::library::open_guest(Some(loaded.clone()), restored))
+                        .unwrap();
+                let Some(Action::Window(window::Action::Open(_, settings, _))) =
+                    block_on(resized_open.next())
+                else {
+                    panic!("resized reopen")
+                };
+                assert_eq!(settings.size, iced::Size::new(700.0, 500.0));
+                assert!(matches!(settings.position, iced::window::Position::Default));
+            }
+            let moved = crate::library::moved(placements, &running, id, 25.5, 36.25);
+            assert_eq!(
+                (moved[0].w, moved[0].h),
+                (expected.width as f64, expected.height as f64),
+                "a move without a resize must preserve declared dimensions"
+            );
+            let saved_dir = ScratchDir::new("preferred-size-placement");
+            assert!(!crate::library::save_placements_in(&moved, &saved_dir.0));
+            let restored = std::fs::read_to_string(saved_dir.0.join("windows"))
+                .unwrap()
+                .lines()
+                .map(|line| crate::library::parse_placement(line).unwrap())
+                .collect();
+            let mut reopen =
+                task::into_stream(crate::library::open_guest(Some(loaded.clone()), restored))
+                    .unwrap();
+            let Some(Action::Window(window::Action::Open(_, reopened, _))) =
+                block_on(reopen.next())
+            else {
+                panic!("reopen uses native Open")
+            };
+            assert_eq!(
+                reopened.size, expected,
+                "saved move preserves the original size on reopen"
+            );
+            assert!(
+                matches!(reopened.position, iced::window::Position::Specific(p) if p == iced::Point::new(25.5, 36.25))
+            );
+            reply.send(id).expect("window opened");
+            assert!(
+                matches!(block_on(actions.next()), Some(Action::Output(opened)) if opened == id)
+            );
+            assert!(
+                block_on(actions.next()).is_none(),
+                "no post-open resize or move"
+            );
+        }
+    }
 
     /// A scratch directory under the OS temp dir, named for the test that
     /// owns it and removed when the guard drops — nothing here survives a
@@ -245,18 +461,115 @@ mod tests {
             .find(|path| path.extension().is_some_and(|ext| ext == "wasm"))
     }
 
-    // The scanner only needs a valid component header and manifest custom section;
-    // loading executable guest code is a separate boundary.
-    fn component_manifest(description: &str) -> Vec<u8> {
-        let manifest = format!("Sample\n{description}\nclock,storage,");
+    // Claim: untrusted module metadata has one strict current format and a
+    // finite positive bounded preferred size. Dropping those guards is Red.
+    #[test]
+    fn manifest_format_and_preferred_size_are_strict() {
+        let good = "ice.manifest.v1\nSized\nDescription\nclock,storage,\n640.5,480.25";
+        let parsed = Manifest::parse(good).unwrap();
+        assert_eq!(
+            parsed.preferred_size.unwrap().size(),
+            iced::Size::new(640.5, 480.25)
+        );
+        assert_eq!(parsed.capabilities, ["clock", "storage"]);
+        assert!(
+            Manifest::parse("ice.manifest.v1\nDefault\n\n\nnone")
+                .unwrap()
+                .preferred_size
+                .is_none()
+        );
+        for invalid in [
+            "Sized\nDescription\nclock,", // no legacy format
+            "ice.manifest.v2\nSized\nDescription\n\nnone",
+            "ice.manifest.v1\nSized\nDescription\n\nnone\nextra",
+            "ice.manifest.v1\nSized\nDescription\nclock\nnone",
+            "ice.manifest.v1\nSized\nDescription\nclock,,\nnone",
+        ] {
+            assert!(
+                Manifest::parse(invalid).is_none(),
+                "accepted malformed manifest: {invalid}"
+            );
+        }
+        for invalid in [
+            "NaN,500",
+            "inf,500",
+            "-inf,500",
+            "0,500",
+            "-0,500",
+            "-1,500",
+            "8192.01,500",
+            "1e40,500",
+            "1e-50,500",
+            "500,0",
+            "1,2,3",
+        ] {
+            assert!(
+                Manifest::parse(&format!("ice.manifest.v1\nSized\nDescription\n\n{invalid}"))
+                    .is_none(),
+                "accepted {invalid}"
+            );
+        }
+        assert!(PreferredSize::new(8192.0, f32::MIN_POSITIVE).is_some());
+        assert!(PreferredSize::new(f32::from_bits(1), 1.0).is_some());
+        use std::hash::{Hash, Hasher};
+        let value = PreferredSize::new(640.5, 480.25).unwrap();
+        let mut hashes = [
+            std::collections::hash_map::DefaultHasher::new(),
+            std::collections::hash_map::DefaultHasher::new(),
+        ];
+        value.hash(&mut hashes[0]);
+        parsed.preferred_size.unwrap().hash(&mut hashes[1]);
+        assert_eq!(hashes[0].finish(), hashes[1].finish());
+    }
+
+    fn component_manifest(text: &str) -> Vec<u8> {
+        fn leb(mut value: usize, out: &mut Vec<u8>) {
+            while value >= 128 {
+                out.push((value as u8) | 128);
+                value >>= 7;
+            }
+            out.push(value as u8);
+        }
+        let mut bytes = b"\0asm\x0d\0\x01\0".to_vec();
         let mut section = vec![MANIFEST_SECTION.len() as u8];
         section.extend_from_slice(MANIFEST_SECTION.as_bytes());
-        section.extend_from_slice(manifest.as_bytes());
-        assert!(section.len() < 128);
-        let mut bytes = b"\0asm\x0d\0\x01\0".to_vec();
-        bytes.extend_from_slice(&[0, section.len() as u8]);
+        section.extend_from_slice(text.as_bytes());
+        bytes.push(0);
+        leb(section.len(), &mut bytes);
         bytes.extend(section);
         bytes
+    }
+
+    #[test]
+    fn catalog_requires_one_valid_current_manifest() {
+        let valid = component_manifest("ice.manifest.v1\nSized\nDescription\n\n640.5,480.25");
+        assert_eq!(
+            read_manifest(&valid)
+                .unwrap()
+                .preferred_size
+                .unwrap()
+                .size(),
+            iced::Size::new(640.5, 480.25)
+        );
+        let mut duplicate = valid.clone();
+        duplicate.extend_from_slice(&valid[8..]);
+        assert!(read_manifest(&duplicate).is_none());
+        let mut malformed = valid.clone();
+        malformed.extend_from_slice(&[0, 127]);
+        assert!(read_manifest(&malformed).is_none());
+        let scratch = ScratchDir::new("preferred-size");
+        std::fs::write(scratch.0.join("sized.wasm"), valid).unwrap();
+        std::fs::write(
+            scratch.0.join("legacy.wasm"),
+            component_manifest("Legacy\nDescription\n"),
+        )
+        .unwrap();
+        let catalog = scan_dir(&scratch.0);
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(
+            catalog[0].preferred_size.unwrap().size(),
+            iced::Size::new(640.5, 480.25)
+        );
     }
 
     #[test]
@@ -264,7 +577,11 @@ mod tests {
         let scratch = ScratchDir::new("catalog_changes");
         assert!(scan_dir(&scratch.0).is_empty());
         let path = scratch.0.join("sample.wasm");
-        std::fs::write(&path, component_manifest("First build")).unwrap();
+        std::fs::write(
+            &path,
+            component_manifest("ice.manifest.v1\nSample\nFirst build\nclock,storage,\nnone"),
+        )
+        .unwrap();
         let initial = scan_dir(&scratch.0);
         assert_eq!(initial.len(), 1);
         let pins = vec![crate::library::Installed {
@@ -274,7 +591,11 @@ mod tests {
         assert!(crate::library::pinned(&pins, &initial[0]));
         assert_eq!(scan_dir(&scratch.0), initial, "unchanged scan is equal");
 
-        std::fs::write(&path, component_manifest("Second build")).unwrap();
+        std::fs::write(
+            &path,
+            component_manifest("ice.manifest.v1\nSample\nSecond build\nclock,storage,\nnone"),
+        )
+        .unwrap();
         let changed = scan_dir(&scratch.0);
         assert_eq!(changed.len(), 1);
         assert_ne!(changed[0].hash, initial[0].hash);
@@ -292,7 +613,13 @@ mod tests {
     fn equal_names_have_stable_catalog_order() {
         let scratch = ScratchDir::new("equal_names");
         for id in ["z", "a"] {
-            std::fs::write(scratch.0.join(format!("{id}.wasm")), component_manifest(id)).unwrap();
+            std::fs::write(
+                scratch.0.join(format!("{id}.wasm")),
+                component_manifest(&format!(
+                    "ice.manifest.v1\nSample\n{id}\nclock,storage,\nnone"
+                )),
+            )
+            .unwrap();
         }
         let entries = scan_dir(&scratch.0);
         assert_eq!(

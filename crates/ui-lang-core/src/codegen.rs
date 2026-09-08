@@ -1416,6 +1416,29 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     writeln!(out, "{phase}").unwrap();
     generate_boot(&mut out, program, &message, source_path)?;
     if program.target() == Target::Tree {
+        let window = &program.settings().primary_window;
+        if let Some((width, height)) = window.size
+            && [width as f32, height as f32]
+                .iter()
+                .any(|value| !value.is_finite() || *value <= 0.0 || *value > 8192.0)
+        {
+            return Err(program.error_at_origin(
+                "E190",
+                window.field_origins["size"],
+                "a view module's preferred window size must have finite positive f32 dimensions at most 8192 logical pixels",
+            ));
+        }
+        let preferred_size = program
+            .settings()
+            .primary_window
+            .size
+            .map(|(width, height)| format!("{},{}", width as f32, height as f32))
+            .unwrap_or_else(|| "none".into());
+        writeln!(
+            out,
+            "pub(crate) const __PREFERRED_WINDOW_SIZE: &'static str = {preferred_size:?};"
+        )
+        .unwrap();
         snapshot::generate(&mut out, program)?;
     }
     generate_tray(&mut out, program, &message)?;

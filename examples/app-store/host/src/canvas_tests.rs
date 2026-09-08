@@ -24,6 +24,7 @@ fn guest() -> Arc<Mutex<Guest>> {
         .collect();
     Arc::new(Mutex::new(
         Guest::load(&CatalogEntry {
+            preferred_size: None,
             id: "canvas-fixture".into(),
             name: "Canvas fixture".into(),
             description: String::new(),

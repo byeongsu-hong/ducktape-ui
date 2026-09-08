@@ -36,6 +36,7 @@ fn load(allowed: bool) -> Guest {
         .join("../target/clipboard-fixture/app_store_clipboard_fixture.wasm");
     let bytes = std::fs::read(&path).expect("bundle clipboard fixture first");
     Guest::load(&CatalogEntry {
+        preferred_size: None,
         id: "clipboard-fixture".into(),
         name: "Clipboard fixture".into(),
         description: String::new(),

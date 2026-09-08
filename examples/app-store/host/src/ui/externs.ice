@@ -1,13 +1,14 @@
 extern crate::store
   Capability(name:str)
-  CatalogEntry(id:str, name:str, description:str, capabilities:[Capability], path:str, mark:str, hash:str)
+  PreferredSize()
+  CatalogEntry(id:str, name:str, description:str, capabilities:[Capability], preferred_size:PreferredSize?, path:str, mark:str, hash:str)
   Installed(id:str, hash:str)
   Surface()
-  Loaded(id:str, name:str, hash:str, surface:Surface)
+  Loaded(id:str, name:str, hash:str, surface:Surface, preferred_size:PreferredSize?)
   Reload()
   InstallRequest(entry:CatalogEntry, serial:i64)
   InstallCompletion(serial:i64)
-  InstallCommit(library:[Installed], opening:[Loaded], status:str, open:bool)
+  InstallCommit(library:[Installed], opening:[Loaded], status:str, open:Loaded?)
   ReloadCommit(library:[Installed], running:[Running], status:str)
   Running(id:str, name:str, surface:Surface, window:window-id)
   StoreError(message:str)
@@ -40,6 +41,8 @@ extern crate::store
   pure in_library(library:&[Installed], id:str) -> bool
   pure pinned(library:&[Installed], entry:&CatalogEntry) -> bool
   pure changed(library:&[Installed], entry:&CatalogEntry) -> bool
+  pure prepare_window(placements:[Placement], app:&Loaded?) -> [Placement]
+  task open_guest(app:Loaded?, placements:[Placement]) -> window-id
   pure enqueue(opening:[Loaded], app:Loaded) -> [Loaded]
   pure attach_window(running:[Running], opening:&[Loaded], window:window-id) -> [Running]
   pure drop_first(opening:[Loaded]) -> [Loaded]
@@ -57,8 +60,6 @@ extern crate::store
   pure library_hint(library:&[Installed]) -> str
   sync remembered_placements() -> [Placement]
   sync save_placements(placements:&[Placement]) -> bool
-  pure no_placement() -> Placement
-  pure placement_at(placements:&[Placement], running:&[Running], window:window-id) -> Placement
   pure moved(placements:[Placement], running:&[Running], window:window-id, x:f64, y:f64) -> [Placement]
   pure resized(placements:[Placement], running:&[Running], window:window-id, w:f64, h:f64) -> [Placement]
   pure escape_press(id:window-id, value:event) -> window-id?

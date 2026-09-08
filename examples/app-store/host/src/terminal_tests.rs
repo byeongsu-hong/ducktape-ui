@@ -26,6 +26,7 @@ fn guest(program: Option<std::path::PathBuf>, allowed: bool) -> Arc<Mutex<Guest>
     Arc::new(Mutex::new(
         Guest::load_with_terminal(
             &CatalogEntry {
+                preferred_size: None,
                 id: "terminal-fixture".into(),
                 name: "Terminal fixture".into(),
                 description: String::new(),

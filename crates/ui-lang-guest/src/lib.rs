@@ -482,12 +482,19 @@ pub fn panic_line(message: &str, at: &str) -> String {
     line
 }
 
-pub const fn manifest_bytes<const N: usize>(text: &str) -> [u8; N] {
+/// Concatenates the versioned manifest prefix and generated window size at compile time.
+pub const fn manifest_bytes<const N: usize>(text: &str, preferred_size: &str) -> [u8; N] {
     let bytes = text.as_bytes();
+    let size = preferred_size.as_bytes();
+    assert!(N == bytes.len() + size.len());
     let mut out = [0u8; N];
     let mut i = 0;
     while i < N {
-        out[i] = bytes[i];
+        out[i] = if i < bytes.len() {
+            bytes[i]
+        } else {
+            size[i - bytes.len()]
+        };
         i += 1;
     }
     out
@@ -500,7 +507,8 @@ pub const fn manifest_bytes<const N: usize>(text: &str) -> [u8; N] {
 /// `$name` and `$description` are what the host lists; the capabilities are the
 /// request kinds the app will make (`host.echo`, `clock.sleep`...), which
 /// the host checks every request against. They land in the `ice.manifest`
-/// custom section, readable without instantiating the module.
+/// custom section, followed by the generated primary window size in the strict
+/// five-line `ice.manifest.v1` format, readable without instantiating the module.
 ///
 /// `boot_native` and `tick_native` drive the same app in an ordinary test.
 #[macro_export]
@@ -534,12 +542,12 @@ macro_rules! export_app {
             fn restore(bytes: &[u8]) -> ::std::result::Result<Self, ::std::string::String> { <$app>::__restore(bytes).map(Self) }
         }
 
-        const __ICE_MANIFEST: &str = concat!($name, "\n", $description, "\n" $(, $capability, ",")*);
+        const __ICE_MANIFEST: &str = concat!("ice.manifest.v1\n", $name, "\n", $description, "\n" $(, $capability, ",")*, "\n");
 
         #[unsafe(link_section = "ice.manifest")]
         #[used]
-        static __ICE_MANIFEST_SECTION: [u8; __ICE_MANIFEST.len()] =
-            $crate::manifest_bytes(__ICE_MANIFEST);
+        static __ICE_MANIFEST_SECTION: [u8; __ICE_MANIFEST.len() + <$app>::__PREFERRED_WINDOW_SIZE.len()] =
+            $crate::manifest_bytes(__ICE_MANIFEST, <$app>::__PREFERRED_WINDOW_SIZE);
 
         thread_local! {
             static __ICE_DRIVER: ::std::cell::RefCell<Option<$crate::Driver<__IceApp>>> =

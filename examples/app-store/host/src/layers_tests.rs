@@ -26,6 +26,7 @@ fn guest(live: Arc<AtomicUsize>) -> Arc<Mutex<Guest>> {
         .map(|b| format!("{b:02x}"))
         .collect();
     let mut guest = Guest::load(&CatalogEntry {
+        preferred_size: None,
         id: "layers-fixture".into(),
         name: "Layers fixture".into(),
         description: String::new(),

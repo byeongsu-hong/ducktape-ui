@@ -143,6 +143,7 @@ mod tests {
             let bytes = std::fs::read(&path).expect("bundle both reload fixtures first");
             iced::futures::executor::block_on(crate::store::install_app(
                 crate::store::CatalogEntry {
+                    preferred_size: None,
                     id: "overlay-reload".into(),
                     name: "Overlay reload".into(),
                     description: String::new(),

@@ -18,7 +18,6 @@ state
   // once a second while anything runs, and when a window closes.
   placements:[Placement] = remembered_placements()
   placements_dirty = false
-  placing:Placement = no_placement()
   page = "discover"
   selected = ""
   // The app whose Uninstall is waiting for a second word, on its detail page.
