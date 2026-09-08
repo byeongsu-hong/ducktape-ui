@@ -565,6 +565,21 @@ fn apply_border(border: wire::Border, resolved: &mut iced::Border) {
     }
 }
 
+fn apply_shadow(shadow: wire::Shadow, out: &mut iced::Shadow) {
+    if let Some(value) = shadow.color {
+        out.color = color(value);
+    }
+    if let Some(value) = shadow.x {
+        out.offset.x = value;
+    }
+    if let Some(value) = shadow.y {
+        out.offset.y = value;
+    }
+    if let Some(value) = shadow.blur {
+        out.blur_radius = value;
+    }
+}
+
 fn horizontal(align: wire::AlignX) -> Horizontal {
     match align {
         wire::AlignX::Left => Horizontal::Left,
@@ -1064,6 +1079,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         }
 
         wire::Node::Container {
+            shadow,
             max_width,
             max_height,
             clip,
@@ -1104,12 +1120,15 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             }
             let background = background.map(color);
             let edge = edge.map(border);
+            let mut shadow_value = iced::Shadow::default();
+            apply_shadow(*shadow, &mut shadow_value);
             let snap = *snap;
             container = container.style(move |_theme| {
                 let default = widget::container::Style::default();
                 widget::container::Style {
                     background: background.map(Background::Color),
                     border: edge.unwrap_or_default(),
+                    shadow: shadow_value,
                     snap: snap.unwrap_or(default.snap),
                     ..default
                 }
@@ -2398,6 +2417,94 @@ mod tests {
         }
     }
 
+    // Claim: copied box shadows paint outside the box with native offset, blur, and alpha.
+    // Counterexample: omitting the shadow leaves the sampled exterior pixels white.
+    #[test]
+    fn container_shadows_paint_offset_blur_and_transparency() {
+        use iced::advanced::renderer::Headless;
+        use iced_test::runtime::{UserInterface, user_interface};
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for (x, y, blur, alpha, sample_x, sample_y) in [
+            (12.0, 0.0, 0.0, 0.5, 55, 40),
+            (-12.0, 0.0, 0.0, 0.5, 23, 40),
+            (0.0, 12.0, 0.0, 0.5, 40, 55),
+            (0.0, -12.0, 0.0, 0.5, 40, 23),
+            (12.0, 0.0, 8.0, 0.5, 64, 40),
+            (12.0, 0.0, 0.0, 0.0, 55, 40),
+        ] {
+            let node = wire::Node::Pin {
+                key: "position".into(),
+                x: 30.0,
+                y: 30.0,
+                width: None,
+                height: None,
+                content: Box::new(wire::Node::Container {
+                    shadow: wire::Shadow {
+                        color: Some(wire::Rgba([1.0, 0.0, 0.0, alpha])),
+                        x: Some(x),
+                        y: Some(y),
+                        blur: Some(blur),
+                    },
+                    max_width: None,
+                    max_height: None,
+                    clip: false,
+                    key: "shadow".into(),
+                    width: Some(wire::Length::Fixed(20.0)),
+                    height: Some(wire::Length::Fixed(20.0)),
+                    padding: None,
+                    align_x: None,
+                    align_y: None,
+                    background: Some(wire::Rgba([1.0; 4])),
+                    border: None,
+                    snap: None,
+                    content: Box::new(wire::Node::Space {
+                        width: None,
+                        height: None,
+                    }),
+                }),
+            };
+            let mut ui = UserInterface::build(
+                render(
+                    &node,
+                    &Inputs::default(),
+                    &Pictures::default(),
+                    &Surfaces::new(),
+                ),
+                iced::Size::new(100.0, 100.0),
+                user_interface::Cache::default(),
+                &mut renderer,
+            );
+            ui.draw(
+                &mut renderer,
+                &iced::Theme::Light,
+                &iced::advanced::renderer::Style {
+                    text_color: iced::Color::BLACK,
+                },
+                iced::mouse::Cursor::Unavailable,
+            );
+            let pixels = renderer.screenshot(iced::Size::new(100, 100), 1.0, iced::Color::WHITE);
+            let pixel = &pixels[(sample_y * 100 + sample_x) * 4..][..3];
+            if alpha == 0.0 {
+                assert_eq!(pixel, &[255, 255, 255], "transparent shadow paints nothing");
+            } else {
+                assert!(
+                    pixel[0] > pixel[1] && pixel[1] > 0 && pixel[1] < 255,
+                    "offset={x}, blur={blur}: translucent red shadow outside box, got {pixel:?}"
+                );
+            }
+            assert_eq!(
+                &pixels[(40 * 100 + 40) * 4..][..3],
+                &[255, 255, 255],
+                "box face covers its shadow"
+            );
+        }
+    }
+
     #[test]
     fn wrapping_rows_and_columns_reflow_at_host_limits() {
         use iced::advanced::{layout::Limits, renderer::Headless, widget::Tree};
@@ -2799,6 +2906,7 @@ mod tests {
                 (wire::Length::Fixed(0.0), 0.0, Size::ZERO),
             ] {
                 let node = wire::Node::Container {
+                    shadow: Default::default(),
                     max_width: None,
                     max_height: None,
                     clip: false,
@@ -3137,6 +3245,7 @@ mod tests {
     #[test]
     fn every_node_kind_renders() {
         let tree = wire::Node::Container {
+            shadow: Default::default(),
             max_width: None,
             max_height: None,
             clip: false,

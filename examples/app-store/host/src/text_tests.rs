@@ -521,3 +521,48 @@ fn text_wasm_rich_spans_wrap_and_links_survive_lazy_cache_hits() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires bundled text-fixture wasm"]
+fn text_wasm_box_shadow_paints_outside_its_bounds() {
+    let guest = guest();
+    let mut renderer = renderer();
+    let mut ui = build(
+        &guest,
+        user_interface::Cache::default(),
+        &mut renderer,
+        900.0,
+    );
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now, 900.0);
+    }
+    fn shadow_key(node: &wire::Node) -> Option<String> {
+        if let wire::Node::Container { shadow, key, .. } = node
+            && shadow.color.is_some()
+        {
+            return Some(key.clone());
+        }
+        node.children().iter().find_map(shadow_key)
+    }
+    let key =
+        shadow_key(guest.lock().unwrap().frame.root.as_ref().unwrap()).expect("copied box shadow");
+    let bounds = container_bounds(&mut ui, &renderer, &key);
+    assert_eq!(bounds.size(), Size::new(20.0, 20.0));
+    ui.draw(
+        &mut renderer,
+        &iced::Theme::Light,
+        &iced::advanced::renderer::Style {
+            text_color: iced::Color::BLACK,
+        },
+        mouse::Cursor::Unavailable,
+    );
+    let pixels = renderer.screenshot(Size::new(900, 600), 1.0, iced::Color::WHITE);
+    let x = (bounds.x + 34.0) as usize;
+    let y = (bounds.y + 10.0) as usize;
+    let pixel = &pixels[(y * 900 + x) * 4..][..3];
+    assert!(
+        pixel[0] > pixel[1] && pixel[1] > 0 && pixel[1] < 255,
+        "blurred translucent red shadow outside the box, got {pixel:?}"
+    );
+}

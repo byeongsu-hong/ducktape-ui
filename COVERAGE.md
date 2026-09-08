@@ -1453,6 +1453,21 @@ a bounded settings column, clipped rows/columns and the existing clipped box;
 raster bounds in the real host. Native clipping changes the paint viewport,
 not event routing. Linear wire fields require a joint host/guest rebuild.
 
+### Tree box shadow evidence
+
+`tree_box_shadows_copy_signed_offsets_and_blur` checks box shadow lowering.
+`container_shadows_paint_offset_blur_and_transparency` samples real native
+pixels outside the box for positive/negative offsets, blur and translucent
+color, checks transparent shadows leave white pixels, and checks the box face
+covers the shadow. Omitting the forwarded container shadow makes its intended
+exterior-color assertion fail; restoring it passes. Wire tests and hostile
+frame generation check signed offsets, nonfinite values, blur and color bounds.
+The actual `app-store-text-fixture` wasm and
+`text_wasm_box_shadow_paints_outside_its_bounds` cover the lowering-to-host
+boundary with a blurred, translucent shadow. Existing tooltip wasm tests also
+exercise the shared shadow representation. Container wire additions require
+hosts and guests to be rebuilt together.
+
 ### Tree button accessibility
 
 Tree buttons preserve optional `checked=`, `expanded=` and `description=`.

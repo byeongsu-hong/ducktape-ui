@@ -707,10 +707,12 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                     background: gen_opt_color(rng),
                     text: gen_opt_color(rng),
                     border: gen_opt_border(rng),
-                    shadow_color: gen_opt_color(rng),
-                    shadow_x: gen_opt_f32(rng),
-                    shadow_y: gen_opt_f32(rng),
-                    shadow_blur: gen_opt_f32(rng),
+                    shadow: Shadow {
+                        color: gen_opt_color(rng),
+                        x: gen_opt_f32(rng),
+                        y: gen_opt_f32(rng),
+                        blur: gen_opt_f32(rng),
+                    },
                     pixel_snap: gen_opt_bool(rng),
                 },
                 children: vec![node, gen_leaf(rng)],
@@ -741,6 +743,12 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                 content: Box::new(node),
             },
             0 => Node::Container {
+                shadow: Shadow {
+                    color: gen_opt_color(rng),
+                    x: gen_opt_f32(rng),
+                    y: gen_opt_f32(rng),
+                    blur: gen_opt_f32(rng),
+                },
                 max_width: None,
                 max_height: None,
                 clip: false,
@@ -1218,6 +1226,7 @@ fn check_bounds(
     }
     match node {
         Node::Container {
+            shadow,
             width,
             height,
             padding,
@@ -1227,6 +1236,11 @@ fn check_bounds(
             snap: _,
             ..
         } => {
+            check_color(&shadow.color, ctx);
+            check_pixels(&shadow.blur, ctx, "box shadow blur");
+            for value in [shadow.x, shadow.y].into_iter().flatten() {
+                assert!(value.is_finite() && (-PIXEL_BOUND..=PIXEL_BOUND).contains(&value));
+            }
             check_length(width, ctx);
             check_length(height, ctx);
             check_edges(padding, ctx);
@@ -1261,10 +1275,10 @@ fn check_bounds(
             assert!(*delay_ms <= 60_000);
             check_color(&style.background, ctx);
             check_color(&style.text, ctx);
-            check_color(&style.shadow_color, ctx);
+            check_color(&style.shadow.color, ctx);
             check_border(&style.border, ctx);
-            check_pixels(&style.shadow_blur, ctx, "tooltip blur");
-            for value in [style.shadow_x, style.shadow_y].into_iter().flatten() {
+            check_pixels(&style.shadow.blur, ctx, "tooltip blur");
+            for value in [style.shadow.x, style.shadow.y].into_iter().flatten() {
                 assert!(value.is_finite() && value.abs() <= PIXEL_BOUND);
             }
             assert!(children.len() <= 2);

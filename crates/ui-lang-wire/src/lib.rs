@@ -255,6 +255,29 @@ pub struct Border {
     pub radius: Option<[f32; 4]>,
 }
 
+/// Optional native shadow fields; omission retains the host style.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Shadow {
+    pub color: Option<Rgba>,
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    pub blur: Option<f32>,
+}
+
+impl Shadow {
+    fn sanitize(&mut self) {
+        bound_color(&mut self.color);
+        bound_optional(&mut self.blur);
+        for value in [&mut self.x, &mut self.y].into_iter().flatten() {
+            *value = if value.is_finite() {
+                value.clamp(-MAX_PIXELS, MAX_PIXELS)
+            } else {
+                0.0
+            };
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum AlignX {
     Left,
@@ -556,6 +579,7 @@ pub enum Node {
         children: Vec<Node>,
     },
     Container {
+        shadow: Shadow,
         max_width: Option<f32>,
         max_height: Option<f32>,
         clip: bool,
@@ -1556,6 +1580,7 @@ fn sanitize_node(
     }
     match node {
         Node::Container {
+            shadow,
             max_width,
             max_height,
             key,
@@ -1567,6 +1592,7 @@ fn sanitize_node(
             claim(key, taken);
             bound_optional(max_width);
             bound_optional(max_height);
+            shadow.sanitize();
             bound_edges(padding);
             bound_border(border);
             bound_color(background);
@@ -2388,6 +2414,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn shadow_sanitization_preserves_signed_offsets_and_bounds_untrusted_values() {
+        let mut shadow = Shadow {
+            color: Some(Rgba([f32::NAN, -1.0, 2.0, 0.5])),
+            x: Some(-12.0),
+            y: Some(f32::INFINITY),
+            blur: Some(-1.0),
+        };
+        shadow.sanitize();
+        assert_eq!(
+            shadow,
+            Shadow {
+                color: Some(Rgba([0.0, 0.0, 1.0, 0.5])),
+                x: Some(-12.0),
+                y: Some(0.0),
+                blur: Some(0.0)
+            }
+        );
+        shadow.x = Some(-f32::MAX);
+        shadow.y = Some(f32::MAX);
+        shadow.blur = Some(f32::MAX);
+        shadow.sanitize();
+        assert_eq!(
+            (shadow.x, shadow.y, shadow.blur),
+            (Some(-MAX_PIXELS), Some(MAX_PIXELS), Some(MAX_PIXELS))
+        );
+    }
+
     fn column(children: Vec<Node>) -> Node {
         Node::Linear {
             max_width: None,
@@ -2630,6 +2684,7 @@ mod tests {
             keyed("b", "two"),
             keyed("c", "three"),
             Node::Container {
+                shadow: Default::default(),
                 max_width: None,
                 max_height: None,
                 clip: false,
@@ -2650,6 +2705,7 @@ mod tests {
             keyed("a", "one!"),
             keyed("d", "four"),
             Node::Container {
+                shadow: Default::default(),
                 max_width: None,
                 max_height: None,
                 clip: false,

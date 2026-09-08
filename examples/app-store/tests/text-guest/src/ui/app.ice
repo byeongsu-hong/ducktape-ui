@@ -135,3 +135,13 @@ view
           h=20.0
           clip=true
         text "Row content extending past its parent" wrap=none size=28.0
+      box #shadowed
+        with
+          w=20.0
+          h=20.0
+          bg=bg
+          shadow=danger/50
+          shadow-x=12.0
+          shadow-y=0.0
+          shadow-blur=8.0
+        space
