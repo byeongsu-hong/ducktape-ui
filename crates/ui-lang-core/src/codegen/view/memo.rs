@@ -21,6 +21,7 @@ pub(in crate::codegen) fn component_use_memo_reads(
     component: &ComponentContract,
     component_env: &dyn BindingEnvironment,
     use_env: &dyn BindingEnvironment,
+    slots: Option<&SlotContext>,
 ) -> Result<BTreeSet<String>, String> {
     let mut fold = MemoFold {
         program,
@@ -30,15 +31,15 @@ pub(in crate::codegen) fn component_use_memo_reads(
     };
     let markers = fold.arguments(call, use_env)?;
     for slot in &call.slots {
-        if let Some(content) = slot.content {
-            fold.view(content, use_env)?;
+        for &content in &slot.content {
+            fold.view(content, use_env, slots)?;
         }
     }
     let mut body_env = ScopedBindingEnv::new(component_env);
     for (key, marker) in markers {
         body_env.insert(key, marker);
     }
-    fold.view(component.root, &body_env)?;
+    fold.view(component.root, &body_env, None)?;
     Ok(fold.reads)
 }
 
@@ -122,7 +123,12 @@ impl MemoFold<'_> {
         Ok(markers)
     }
 
-    fn view(&mut self, id: ViewId, env: &dyn BindingEnvironment) -> Result<(), String> {
+    fn view(
+        &mut self,
+        id: ViewId,
+        env: &dyn BindingEnvironment,
+        slots: Option<&SlotContext>,
+    ) -> Result<(), String> {
         let program = self.program;
         let view = program
             .resolved_view(id)
@@ -133,6 +139,19 @@ impl MemoFold<'_> {
                 kind_name(view),
                 where_is(program, view)
             ));
+        }
+        // Forwarded content is captured in the caller. Its reads and nested
+        // stateful components still determine whether this receiving use can
+        // cache its subtree. Body slots were already covered at their call.
+        if let ResolvedViewKind::Slot { slot: slot_id, .. } = &view.kind {
+            if let Some(context) = slots
+                && let Some(content) = context.entries.iter().find(|entry| entry.slot == *slot_id)
+            {
+                for &child in &content.views {
+                    self.view(child, &content.env, context.parent.as_deref())?;
+                }
+            }
+            return Ok(());
         }
         self.subtree.insert(id);
         for expression in program.expression_uses_of_view(id) {
@@ -184,11 +203,11 @@ impl MemoFold<'_> {
             self.depth += 1;
             let markers = self.arguments(call, env)?;
             for slot in &call.slots {
-                if let Some(content) = slot.content {
-                    self.view(content, env)?;
+                for &content in &slot.content {
+                    self.view(content, env, slots)?;
                 }
             }
-            self.view(component.root, &markers)?;
+            self.view(component.root, &markers, None)?;
             self.depth -= 1;
             return Ok(());
         }
@@ -196,7 +215,7 @@ impl MemoFold<'_> {
             .resolved_view_children(view)
             .map_err(|error| error.to_string())?
         {
-            self.view(child, env)?;
+            self.view(child, env, slots)?;
         }
         Ok(())
     }

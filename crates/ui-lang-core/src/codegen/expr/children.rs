@@ -12,6 +12,34 @@ pub(in crate::codegen) fn render_children(
     for child in children {
         let view = document.resolved_view(*child)?;
         match &view.kind {
+            ResolvedViewKind::Slot {
+                slot: slot_id,
+                multiple: true,
+                ..
+            } => {
+                let Some(context) = slot else {
+                    continue;
+                };
+                let Some(content) = context.entries.iter().find(|entry| entry.slot == *slot_id)
+                else {
+                    continue;
+                };
+                let captured = SlotRecordingEnv::new(&content.env, content.recorder.as_ref());
+                let mut content_env = ScopedBindingEnv::new(&captured);
+                content_env.insert(
+                    RECONCILIATION_SCOPE_BINDING.into(),
+                    reconciliation_scope_binding(reconciliation_scope(scope, env).to_owned()),
+                );
+                render_children(
+                    out,
+                    &content.views,
+                    document,
+                    message,
+                    &content_env,
+                    scope,
+                    context.parent.as_deref(),
+                )?;
+            }
             ResolvedViewKind::If { children } => {
                 if render_container_condition(
                     out, *child, children, document, message, env, scope, slot,

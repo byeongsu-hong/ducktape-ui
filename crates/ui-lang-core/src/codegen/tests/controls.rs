@@ -638,7 +638,10 @@ view
             "::iced::widget::grid(__children).height(::iced::Length::FillPortion(2)).fluid(((self.fluid_width) as f32).max(f32::EPSILON).min(f32::MAX))"
         ));
     assert!(generated.contains(
-        ".grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed(((self.fluid_width) as f32).max(f32::EPSILON).min(f32::MAX)))"
+        "let __ice_min_cell = ((self.fluid_width) as f32).max(f32::EPSILON).min(f32::MAX);"
+    ));
+    assert!(generated.contains(
+        ".grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed(__ice_min_cell))"
     ));
     assert!(generated.contains(".wrap(::ui_lang_runtime::FlexWrap::Wrap)"));
     assert!(generated.contains("::iced::widget::vertical_slider"));

@@ -809,3 +809,9 @@ Tree display text retains the existing 64 KiB aggregate budget. Actual sanitizer
 loss now produces a typed report on full frames and applied patches; app-store
 logs it once per module installation generation. Producer reports remain distinct
 from host observations. Editable `Editor` document loss still rejects the frame.
+
+Components can own the layout of caller content with `slot children*`, accepting
+zero or more direct siblings. `Card.Footer`, `Dialog.Actions` and `ButtonGroup`
+use this contract to arrange ordinary caller buttons; an explicit caller layout
+remains one custom group. See the [component library](crates/ui-lang-components/README.md)
+and [slot contract](SPEC.md#component-slot-cardinality).

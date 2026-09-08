@@ -86,7 +86,7 @@ pub fn analyze(mut document: Document) -> Result<CheckedDocument, Error> {
     ))
 }
 
-pub(crate) fn component_slots(node: &ViewNode) -> Vec<(&str, bool, &Span)> {
+pub(crate) fn component_slots(node: &ViewNode) -> Vec<(&str, bool, bool, &Span)> {
     declarations::slots(node)
 }
 
@@ -374,7 +374,7 @@ fn check(
         env.extend(
             slots(&component.root)
                 .into_iter()
-                .map(|(name, _, _)| (format!("\0slot-provided:{name}"), Type::Bool)),
+                .map(|(name, _, _, _)| (format!("\0slot-provided:{name}"), Type::Bool)),
         );
         env.insert(component_context_key(&component.name), Type::Unit);
         env.insert(
@@ -1153,7 +1153,9 @@ pub(crate) fn handler_emit_targets(
                 // Slot content is authored at the call site, so nested calls
                 // inside it belong to the CURRENT scope, not the callee's.
                 for slot in slots {
-                    walk_calls(&slot.content, scope, output);
+                    for content in &slot.content {
+                        walk_calls(content, scope, output);
+                    }
                 }
             }
             ViewNode::Layout { children, .. }

@@ -198,6 +198,7 @@ pub(crate) struct CheckedComponentSlot {
     pub(crate) view: ViewId,
     pub(crate) name: String,
     pub(crate) optional: bool,
+    pub(crate) multiple: bool,
     pub(crate) origin: OriginId,
 }
 
@@ -10728,7 +10729,9 @@ impl<'a> FactsBuilder<'a> {
                     }
                 }
                 for slot in slots {
-                    self.lower_view_expression_tree(&slot.content, env)?;
+                    for content in &slot.content {
+                        self.lower_view_expression_tree(content, env)?;
+                    }
                 }
                 self.lower_component_call_route_facts(
                     view, call, component, name, events, route, env, span,
@@ -11382,7 +11385,7 @@ impl<'a> FactsBuilder<'a> {
             }
 
             let mut checked = Vec::with_capacity(source_slots.len());
-            for (index, (name, optional, span)) in source_slots.into_iter().enumerate() {
+            for (index, (name, optional, multiple, span)) in source_slots.into_iter().enumerate() {
                 record_fact_metric!(self.facts.metrics.component_slot_index_visits += 1);
                 let id = ComponentSlotId {
                     component: component_id,
@@ -11419,6 +11422,7 @@ impl<'a> FactsBuilder<'a> {
                     view,
                     name: name.to_owned(),
                     optional,
+                    multiple,
                     origin: declaration.origin,
                 });
             }

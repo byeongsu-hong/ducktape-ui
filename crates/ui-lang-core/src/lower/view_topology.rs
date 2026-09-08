@@ -159,6 +159,7 @@ pub(crate) enum ResolvedViewKind {
         slot: ComponentSlotId,
         name: String,
         optional: bool,
+        multiple: bool,
     },
     ExternComponent,
     Themer,
@@ -634,6 +635,7 @@ impl Lowerer {
                         contract.id == checked.id
                             && contract.name == checked.name
                             && contract.optional == checked.optional
+                            && contract.multiple == checked.multiple
                             && contract.origin == checked.origin
                     })
                     .ok_or_else(|| {
@@ -646,6 +648,7 @@ impl Lowerer {
                     slot: contract.id,
                     name: contract.name.clone(),
                     optional: contract.optional,
+                    multiple: contract.multiple,
                 }
             }
             ViewNode::ExternComponent { .. } => ResolvedViewKind::ExternComponent,
@@ -951,7 +954,7 @@ impl LoweredProgram {
                 .component_call_by_id(*call)?
                 .slots
                 .iter()
-                .filter_map(|slot| slot.content)
+                .flat_map(|slot| slot.content.iter().copied())
                 .collect(),
             ResolvedViewKind::Text
             | ResolvedViewKind::RichText
@@ -1031,12 +1034,16 @@ impl LoweredProgram {
                 slot,
                 ref name,
                 optional,
+                multiple,
             } => self
                 .components
                 .get(slot.component.0 as usize)
                 .and_then(|component| component.slots.get(slot.index as usize))
                 .filter(|contract| {
-                    contract.id == slot && contract.name == *name && contract.optional == optional
+                    contract.id == slot
+                        && contract.name == *name
+                        && contract.optional == optional
+                        && contract.multiple == multiple
                 })
                 .map(|_| ())
                 .ok_or_else(|| {

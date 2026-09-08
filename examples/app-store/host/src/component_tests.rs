@@ -555,3 +555,94 @@ fn bundled_snapshot_restore_does_not_replay_source_initializers() {
         "a fresh instance restores without executing any source initializer"
     );
 }
+
+#[test]
+#[ignore = "requires bundled component-fixture wasm"]
+fn bundled_multi_child_slots_preserve_siblings_forwarding_and_routes() {
+    fn actions(node: &wire::Node) -> Option<&wire::Node> {
+        if node
+            .key()
+            .is_some_and(|key| key.ends_with("/forward/inner/actions"))
+        {
+            return Some(node);
+        }
+        node.children().iter().find_map(|child| actions(child))
+    }
+    fn assert_children(guest: &Guest, expected: &[&str]) {
+        let node = actions(guest.frame.root.as_ref().unwrap()).expect("forwarded receiving layout");
+        let children = node.children();
+        assert_eq!(
+            children.len(),
+            expected.len(),
+            "caller roots must be direct layout siblings"
+        );
+        for (child, suffix) in children.iter().zip(expected) {
+            assert!(
+                child.key().is_some_and(|key| key.ends_with(suffix)),
+                "{:?} should end in {suffix}",
+                child.key()
+            );
+        }
+        assert_eq!(
+            children.last().unwrap().children().len(),
+            2,
+            "explicit caller row remains grouped"
+        );
+    }
+    let mut guest = guest();
+    guest.tick();
+    assert_children(&guest, &["/first", "/second", "/group"]);
+    press(&mut guest, "Slot first");
+    assert_eq!(read(&guest, "/slot-choice").as_deref(), Some("first"));
+    press(&mut guest, "Slot second");
+    assert_eq!(read(&guest, "/slot-choice").as_deref(), Some("second"));
+    press(&mut guest, "Toggle counters");
+    assert_children(&guest, &["/first", "/group"]);
+}
+
+#[test]
+#[ignore = "requires bundled component-fixture wasm"]
+fn bundled_repeated_slot_children_have_independent_state() {
+    fn repeater<'a>(node: &'a wire::Node, suffix: &str) -> Option<&'a wire::Node> {
+        if node.key().is_some_and(|key| key.ends_with(suffix)) {
+            return Some(node);
+        }
+        node.children()
+            .iter()
+            .find_map(|child| repeater(child, suffix))
+    }
+    fn counter_values(node: &wire::Node, values: &mut Vec<String>) {
+        if let wire::Node::Text { content, .. } = node {
+            values.push(content.clone());
+        }
+        for child in node.children() {
+            counter_values(child, values);
+        }
+    }
+    fn counter_route(node: &wire::Node) -> Option<u32> {
+        if let wire::Node::Button { on_press, .. } = node {
+            return *on_press;
+        }
+        node.children().iter().find_map(counter_route)
+    }
+    let mut guest = guest();
+    guest.tick();
+    for marker in ["/many", "/single"] {
+        let root = repeater(guest.frame.root.as_ref().unwrap(), marker).unwrap();
+        let mut values = Vec::new();
+        counter_values(root, &mut values);
+        assert_eq!(values, ["0", "0"], "both {marker} counters start at zero");
+        let route = counter_route(root).unwrap();
+        guest.pending.push(wire::Event::Message(route));
+        guest.tick();
+        assert!(guest.fault.is_none(), "{:?}", guest.fault);
+        values.clear();
+        let root = repeater(guest.frame.root.as_ref().unwrap(), marker).unwrap();
+        counter_values(root, &mut values);
+        assert_eq!(
+            values,
+            ["1", "0"],
+            "{marker} must only update its own callee iteration"
+        );
+    }
+}

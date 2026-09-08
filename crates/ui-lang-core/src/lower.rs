@@ -458,6 +458,7 @@ struct ComponentSlotContract {
     id: ComponentSlotId,
     name: String,
     optional: bool,
+    multiple: bool,
     origin: OriginId,
 }
 #[derive(Clone, Debug)]
@@ -1561,7 +1562,8 @@ pub(crate) struct ResolvedSlot {
     pub(crate) name: String,
     #[cfg(test)]
     pub(crate) optional: bool,
-    pub(crate) content: Option<ViewId>,
+    pub(crate) content: Vec<ViewId>,
+    pub(crate) multiple: bool,
 }
 #[derive(Clone, Debug)]
 pub(crate) enum ComponentScope {
@@ -7426,6 +7428,7 @@ impl Lowerer {
                     id: checked.id,
                     name: checked.name.clone(),
                     optional: checked.optional,
+                    multiple: checked.multiple,
                     origin: checked.origin,
                 });
             }
@@ -9372,15 +9375,18 @@ impl Lowerer {
                     outer_component,
                 )?;
                 for slot in slots {
-                    self.lower_view(&slot.content, outer_component)?;
+                    for content in &slot.content {
+                        self.lower_view(content, outer_component)?;
+                    }
                 }
             }
             ViewNode::Slot {
                 name,
                 optional,
+                multiple,
                 span,
             } => {
-                self.lower_component_slot(name, *optional, span, outer_component)?;
+                self.lower_component_slot(name, *optional, *multiple, span, outer_component)?;
             }
             ViewNode::If {
                 condition,
@@ -9781,6 +9787,7 @@ impl Lowerer {
         &self,
         name: &str,
         optional: bool,
+        multiple: bool,
         span: &Span,
         outer_component: Option<ComponentId>,
     ) -> Result<(), Error> {
@@ -9803,6 +9810,7 @@ impl Lowerer {
             || checked.view != view
             || checked.name != name
             || checked.optional != optional
+            || checked.multiple != multiple
             || declaration.origin != checked.origin
         {
             return Err(self.invariant_at_origin(
@@ -10200,18 +10208,19 @@ impl Lowerer {
                 name: declared.name.clone(),
                 #[cfg(test)]
                 optional: declared.optional,
+                multiple: declared.multiple,
                 content: supplied
-                    .map(|slot| {
-                        self.declarations
-                            .view_id(slot.content.span())
-                            .ok_or_else(|| {
-                                self.invariant(
-                                    &slot.span,
-                                    "component slot content has no shared view ID",
-                                )
-                            })
+                    .into_iter()
+                    .flat_map(|slot| &slot.content)
+                    .map(|content| {
+                        self.declarations.view_id(content.span()).ok_or_else(|| {
+                            self.invariant(
+                                content.span(),
+                                "component slot content has no shared view ID",
+                            )
+                        })
                     })
-                    .transpose()?,
+                    .collect::<Result<_, _>>()?,
             });
         }
 
@@ -18952,7 +18961,7 @@ view
             nested
                 .slots
                 .iter()
-                .filter(|slot| slot.content.is_some())
+                .filter(|slot| !slot.content.is_empty())
                 .count(),
             2
         );
@@ -18972,12 +18981,12 @@ view
         assert!(
             root.slots
                 .iter()
-                .any(|slot| { slot.name == "Leading" && slot.optional && slot.content.is_none() })
+                .any(|slot| { slot.name == "Leading" && slot.optional && slot.content.is_empty() })
         );
         assert!(
             root.slots
                 .iter()
-                .any(|slot| slot.name == "Body" && slot.content.is_some())
+                .any(|slot| slot.name == "Body" && !slot.content.is_empty())
         );
         let output = program
             .calls

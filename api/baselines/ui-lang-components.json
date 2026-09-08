@@ -1,6 +1,6 @@
 {
-  "schema_version": 1,
-  "fingerprint": "sha256:2dd645267a6af5e229f1b19a2b23acd94013ae7dca600edea4e50aa831c00a51",
+  "schema_version": 2,
+  "fingerprint": "sha256:1542be682a498cdce3849d39f694edd499dd499dfc63b3e08f99bc10774824ec",
   "language_revision": "2.0",
   "package": {
     "name": "ui-lang-components",
@@ -290,7 +290,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -326,7 +327,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": false,
+            "multiple": true
           }
         ],
         "lifetime": "retained"
@@ -339,15 +341,18 @@
         "slots": [
           {
             "name": "Body",
-            "required": true
+            "required": true,
+            "multiple": false
           },
           {
             "name": "Footer",
-            "required": true
+            "required": true,
+            "multiple": false
           },
           {
             "name": "Header",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -360,20 +365,33 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
       },
       {
         "name": "Card.Footer",
-        "props": [],
+        "props": [
+          {
+            "name": "gap",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 9.0
+            }
+          }
+        ],
         "events": [],
         "default_output": "unit",
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": false,
+            "multiple": true
           }
         ],
         "lifetime": "retained"
@@ -386,7 +404,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -428,7 +447,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -441,28 +461,43 @@
         "slots": [
           {
             "name": "Actions",
-            "required": true
+            "required": true,
+            "multiple": false
           },
           {
             "name": "Body",
-            "required": true
+            "required": true,
+            "multiple": false
           },
           {
             "name": "Header",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
       },
       {
         "name": "Dialog.Actions",
-        "props": [],
+        "props": [
+          {
+            "name": "gap",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 8.0
+            }
+          }
+        ],
         "events": [],
         "default_output": "unit",
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": false,
+            "multiple": true
           }
         ],
         "lifetime": "retained"
@@ -475,7 +510,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -488,7 +524,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -552,7 +589,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -586,7 +624,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -637,7 +676,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -650,7 +690,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -685,7 +726,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -729,7 +771,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -813,7 +856,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -870,7 +914,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -891,7 +936,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -1005,7 +1051,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -1040,7 +1087,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"
@@ -1139,7 +1187,8 @@
         "slots": [
           {
             "name": "children",
-            "required": true
+            "required": true,
+            "multiple": false
           }
         ],
         "lifetime": "retained"

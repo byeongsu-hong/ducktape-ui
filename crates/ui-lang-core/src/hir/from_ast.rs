@@ -1071,7 +1071,7 @@ pub fn for_each_child<'a>(node: &'a ViewNode, visit: &mut impl FnMut(&'a ViewNod
             .for_each(visit),
         ViewNode::Component { slots, .. } => slots
             .iter()
-            .map(|slot| slot.content.as_ref())
+            .flat_map(|slot| slot.content.iter())
             .for_each(visit),
         ViewNode::Responsive { content, .. } => match content {
             ResponsiveContent::Size { content, .. } => visit(content),

@@ -838,7 +838,7 @@ fn construct_schema(item: &Completion) -> Value {
         ),
         "slot" => details(
             &["component-view"],
-            "slot [<Name>[?]]",
+            "slot [<Name>[?|*]]",
             leaf(),
             no_binding(),
             no_route(),
