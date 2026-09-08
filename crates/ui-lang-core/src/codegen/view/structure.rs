@@ -136,7 +136,16 @@ pub(in crate::codegen) fn render_structure(
         ResolvedViewKind::KeyedColumn { child } => {
             let program = document;
             let keyed = program.resolved_keyed_column(node)?;
-            render_keyed_column(keyed, *child, document, message, env, &child_scope, slot)
+            render_keyed_column(
+                keyed,
+                identity,
+                *child,
+                document,
+                message,
+                env,
+                &child_scope,
+                slot,
+            )
         }
         ResolvedViewKind::Lazy { child } => {
             let program = document;
@@ -362,7 +371,13 @@ pub(in crate::codegen) fn render_structure(
         }
         _ => return Ok(None),
     }?;
-    Ok(Some(identify_rendered(rendered, identity, message)?))
+    // Shared Tree keyed/lazy emitters already put identity on their wire node.
+    // Only native elements can be wrapped in an Iced identity container.
+    Ok(Some(if document.target() == Target::Tree {
+        rendered
+    } else {
+        identify_rendered(rendered, identity, message)?
+    }))
 }
 
 /// The owned clone of the enclosing component's scope that

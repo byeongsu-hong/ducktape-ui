@@ -121,6 +121,7 @@ pub(in crate::codegen) fn render_table(
 #[allow(clippy::too_many_arguments)]
 pub(in crate::codegen) fn render_keyed_column(
     keyed: &ResolvedKeyedColumn,
+    identity: Option<&ResolvedViewIdentity>,
     child: ViewId,
     document: &LoweredProgram,
     message: &str,
@@ -170,7 +171,7 @@ pub(in crate::codegen) fn render_keyed_column(
         "{{ let mut __children: ::std::vec::Vec<_> = ::std::vec::Vec::new(); for {item_name} in {items}{iterate} {{ let __key = {key}; let __ice_key_recon = format!(\"{{}}/key({{}})\", {recon_base}, __key); let _ = &__ice_key_recon; let __child: __IceElement<'_, {message}> = {child}; __children.push((__key, __child)); }}"
     );
     if program.target() == Target::Tree {
-        return tree::keyed_column(keyed, program, env, scope, code);
+        return tree::keyed_column(keyed, identity, program, env, scope, code);
     }
     code.push_str(" let __child_count = __children.len(); let __children = __children.into_iter().map(|(__key, __child)| (__key, ::ui_lang_runtime::bounded_fill_element(__child, __child_count, false))).collect::<::std::vec::Vec<_>>();");
     let spacing = keyed

@@ -2,12 +2,13 @@ use super::*;
 
 pub(in crate::codegen::view) fn keyed_column(
     keyed: &ResolvedKeyedColumn,
+    identity: Option<&ResolvedViewIdentity>,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
     scope: &str,
     mut body: String,
 ) -> Result<String, Error> {
-    let key = key_code(None, "keyed", keyed.origin, scope, env, program)?;
+    let key = key_code(identity, "keyed", keyed.origin, scope, env, program)?;
     let pixels = |value: Option<CheckedExprUseId>| -> Result<String, Error> {
         Ok(option_code(
             value

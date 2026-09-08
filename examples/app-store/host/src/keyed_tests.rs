@@ -177,6 +177,24 @@ fn keyed_input_and_focus(ordinary: bool) {
             ui = redraw(ui, &guest, &mut renderer, &mut now, 640.0);
         }
     }
+    fn identified_column(node: &wire::Node, suffix: &str) -> bool {
+        matches!(node, wire::Node::KeyedColumn { key, .. } if key.ends_with(suffix))
+            || node
+                .children()
+                .iter()
+                .any(|child| identified_column(child, suffix))
+    }
+    assert!(
+        identified_column(
+            guest.lock().unwrap().frame.root.as_ref().unwrap(),
+            if ordinary {
+                "/ordinary_entries"
+            } else {
+                "/list/entries"
+            }
+        ),
+        "the authored column ID must be the exact wire node identity"
+    );
     let all = inputs(&guest);
     assert_eq!(all.len(), 3);
     let key = all

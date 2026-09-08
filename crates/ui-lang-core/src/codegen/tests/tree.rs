@@ -1720,3 +1720,26 @@ fn tree_preferred_size_rejects_out_of_bounds_at_declaration() {
         format!("app Sized\n  window\n    size 8192 8192\n{PALETTE}view\n  text \"Sized\"\n");
     assert!(compile_for(&source, "sized.ice", Target::Tree).is_ok());
 }
+
+#[test]
+fn identified_shared_tree_layouts_never_wrap_wire_nodes_in_native_containers() {
+    for view in [
+        "  keyed item in [1, 2] by=item #entries\n    text item\n",
+        "  lazy 1 as cached #cached\n    text cached\n",
+    ] {
+        let source = format!("app Demo\n{PALETTE}view\n{view}");
+        let native = compile(&source, "identity.ice").unwrap();
+        assert!(native.contains("container(__identified)"));
+        let tree = compile_for(&source, "identity.ice", Target::Tree).unwrap();
+        assert!(
+            !tree.contains("container(__identified)"),
+            "Tree identities belong to wire nodes, not native wrappers"
+        );
+        if view.contains("keyed") {
+            assert!(
+                tree.contains("Node::KeyedColumn { key: __ice_node_scope.clone()"),
+                "keyed identity must be the node's exact key"
+            );
+        }
+    }
+}
