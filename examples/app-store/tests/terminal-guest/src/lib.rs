@@ -19,23 +19,22 @@ pub mod data {
             let bytes = answer.map_err(|message| TerminalError { message })?;
             let value = ui_lang_wire::decode::<SurfaceValue>(&bytes)
                 .map_err(|message| TerminalError { message })?;
-            if let SurfaceValue::Record { name, fields } = value {
-                if name == "TerminalNotice" {
-                    if let [
-                        (running, SurfaceValue::Bool(r)),
-                        (title, SurfaceValue::Str(t)),
-                        (attention, SurfaceValue::Bool(a)),
-                    ] = fields.as_slice()
-                    {
-                        if running == "running" && title == "title" && attention == "attention" {
-                            return Ok(TerminalNotice {
-                                running: *r,
-                                title: t.clone(),
-                                attention: *a,
-                            });
-                        }
-                    }
-                }
+            if let SurfaceValue::Record { name, fields } = value
+                && name == "TerminalNotice"
+                && let [
+                    (running, SurfaceValue::Bool(r)),
+                    (title, SurfaceValue::Str(t)),
+                    (attention, SurfaceValue::Bool(a)),
+                ] = fields.as_slice()
+                && running == "running"
+                && title == "title"
+                && attention == "attention"
+            {
+                return Ok(TerminalNotice {
+                    running: *r,
+                    title: t.clone(),
+                    attention: *a,
+                });
             }
             Err(TerminalError {
                 message: "invalid terminal notice".into(),
