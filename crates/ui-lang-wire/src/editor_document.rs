@@ -1,11 +1,69 @@
 //! Revisioned document transfer, independent of display text and native layout.
 use serde::{Deserialize, Serialize};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::EditorCursor;
 
 pub const MAX_EDITOR_DOCUMENT_BYTES: usize = 1_048_576;
 pub const MAX_EDITOR_CHUNK_BYTES: usize = 65_536;
 pub const MAX_EDITOR_CHUNKS: usize = MAX_EDITOR_DOCUMENT_BYTES / MAX_EDITOR_CHUNK_BYTES;
+
+pub(crate) fn native_editor_boundaries(text: &str) -> impl Iterator<Item = usize> + '_ {
+    text.grapheme_indices(true)
+        .map(|(at, _)| at)
+        .chain(std::iter::once(text.len()))
+        .filter(|at| {
+            !(*at > 0
+                && *at < text.len()
+                && matches!(&text.as_bytes()[at - 1..=*at], b"\r\n" | b"\n\r"))
+        })
+}
+
+/// The smallest changed span whose endpoints native Content can select.
+/// Walk boundaries without allocating an index for every byte of a long line.
+pub fn editor_changed_span(
+    before: &str,
+    after: &str,
+) -> Result<Vec<crate::EditorPatch>, crate::EditorPatchError> {
+    if before.len() > MAX_EDITOR_DOCUMENT_BYTES || after.len() > MAX_EDITOR_DOCUMENT_BYTES {
+        return Err(crate::EditorPatchError::Limit);
+    }
+    if before == after {
+        return Ok(vec![]);
+    }
+    let mut start = 0;
+    for (old_end, new_end) in native_editor_boundaries(before)
+        .skip(1)
+        .zip(native_editor_boundaries(after).skip(1))
+    {
+        if before[start..old_end] != after[start..new_end] {
+            break;
+        }
+        start = old_end;
+    }
+    let suffix = before.as_bytes()[start..]
+        .iter()
+        .rev()
+        .zip(after.as_bytes()[start..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut old_bounds = native_editor_boundaries(before).filter(|at| *at >= before.len() - suffix);
+    let mut new_bounds = native_editor_boundaries(after).filter(|at| *at >= after.len() - suffix);
+    let mut old_end = old_bounds.next().expect("document end is a boundary");
+    let mut new_end = new_bounds.next().expect("document end is a boundary");
+    while before.len() - old_end != after.len() - new_end {
+        if before.len() - old_end > after.len() - new_end {
+            old_end = old_bounds.next().expect("document end is a boundary");
+        } else {
+            new_end = new_bounds.next().expect("document end is a boundary");
+        }
+    }
+    Ok(vec![crate::EditorPatch {
+        start_byte: start as u32,
+        end_byte: old_end as u32,
+        replacement: after[start..new_end].to_owned(),
+    }])
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorDocumentRef {
@@ -263,6 +321,59 @@ fn decode_chunk<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Er
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_one_mib_document_sends_only_the_changed_byte_and_caret_sends_nothing() {
+        let before = "a".repeat(MAX_EDITOR_DOCUMENT_BYTES - 1);
+        let mut after = before.clone();
+        let at = MAX_EDITOR_DOCUMENT_BYTES / 2;
+        after.insert(at, 'X');
+        let patches = editor_changed_span(&before, &after).unwrap();
+        assert_eq!(
+            patches,
+            vec![crate::EditorPatch {
+                start_byte: at as u32,
+                end_byte: at as u32,
+                replacement: "X".into(),
+            }]
+        );
+        assert!(editor_changed_span(&after, &after).unwrap().is_empty());
+        let mut observed = before;
+        for patch in patches.iter().rev() {
+            observed.replace_range(
+                patch.start_byte as usize..patch.end_byte as usize,
+                &patch.replacement,
+            );
+        }
+        assert_eq!(observed, after);
+    }
+
+    #[test]
+    fn minimal_spans_preserve_combining_emoji_and_paired_line_endings() {
+        for (before, after, start, end, replacement) in [
+            ("Ae\u{301}Z", "AeZ", 1, 4, "e"),
+            ("A👍🏽Z", "A👍Z", 1, 9, "👍"),
+            ("a\r\nb", "a\rX\nb", 1, 3, "\rX\n"),
+            ("a\n\rb", "a\nX\rb", 1, 3, "\nX\r"),
+            ("", "한", 0, 0, "한"),
+            ("한", "", 0, 3, ""),
+        ] {
+            let patches = editor_changed_span(before, after).unwrap();
+            assert_eq!(
+                patches,
+                vec![crate::EditorPatch {
+                    start_byte: start,
+                    end_byte: end,
+                    replacement: replacement.into(),
+                }],
+                "{before:?} -> {after:?}"
+            );
+            assert_eq!(
+                crate::patched_editor_text(before, &patches, EditorCursor::default()).unwrap(),
+                after
+            );
+        }
+    }
 
     fn metadata(len: usize) -> (EditorTransferId, EditorDocumentRef) {
         (

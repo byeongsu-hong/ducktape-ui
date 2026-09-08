@@ -1,6 +1,5 @@
 //! Atomic editor patch validation shared by native and guest transaction lanes.
 use serde::{Deserialize, Serialize};
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::EditorCursor;
 
@@ -33,29 +32,23 @@ pub fn patched_editor_text(
     }
     // Native selection positions cannot address the middle of a grapheme
     // or either two-byte line terminator accepted by Content.
-    let boundaries: Vec<_> = text
-        .grapheme_indices(true)
-        .map(|(at, _)| at)
-        .chain(std::iter::once(text.len()))
-        .filter(|at| {
-            !(*at > 0
-                && *at < text.len()
-                && matches!(&text.as_bytes()[at - 1..=*at], b"\r\n" | b"\n\r"))
-        })
-        .collect();
+    let mut boundaries = crate::editor_document::native_editor_boundaries(text).peekable();
     let mut previous_end = 0;
     let mut removed = 0;
     let mut inserted = 0usize;
     for patch in patches {
         let start = patch.start_byte as usize;
         let end = patch.end_byte as usize;
-        if start < previous_end
-            || start > end
-            || end > text.len()
-            || boundaries.binary_search(&start).is_err()
-            || boundaries.binary_search(&end).is_err()
-        {
+        if start < previous_end || start > end || end > text.len() {
             return Err(EditorPatchError::Range);
+        }
+        for at in [start, end] {
+            while boundaries.peek().is_some_and(|next| *next < at) {
+                boundaries.next();
+            }
+            if boundaries.peek() != Some(&at) {
+                return Err(EditorPatchError::Range);
+            }
         }
         previous_end = end;
         removed += end - start;
