@@ -24,7 +24,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const USAGE: &str = "cargo ice bundle -p <package>... [--target <triple>]... [--manifest-path <Cargo.toml>] [--out <dir>]";
+const USAGE: &str = "cargo ice bundle -p <package>... [--target <triple>]... [--manifest-path <Cargo.toml>] [--out <dir>] [--no-wasm-opt]";
 const DEFAULT_MINIMUM_SYSTEM_VERSION: &str = "11.0";
 
 /// macOS kills an app the moment it reaches a protected resource whose reason
@@ -122,6 +122,7 @@ struct Request {
     targets: Vec<String>,
     manifest_path: Option<String>,
     out: Option<PathBuf>,
+    no_wasm_opt: bool,
 }
 
 impl Request {
@@ -130,6 +131,7 @@ impl Request {
         let mut targets = Vec::new();
         let mut manifest_path = None;
         let mut out = None;
+        let mut no_wasm_opt = false;
         let mut remaining = args.iter();
         while let Some(argument) = remaining.next() {
             let mut value = || {
@@ -143,6 +145,7 @@ impl Request {
                 "--target" => targets.push(value()?),
                 "--manifest-path" => manifest_path = Some(value()?),
                 "--out" => out = Some(PathBuf::from(value()?)),
+                "--no-wasm-opt" => no_wasm_opt = true,
                 _ => return Err(format!("unexpected argument `{argument}`; {USAGE}")),
             }
         }
@@ -157,11 +160,15 @@ impl Request {
         {
             return Err("cargo ice bundle was given the same --target twice".into());
         }
+        if no_wasm_opt && targets != [wasm::TARGET] {
+            return Err(format!("--no-wasm-opt requires --target {}", wasm::TARGET));
+        }
         Ok(Self {
             packages,
             targets,
             manifest_path,
             out,
+            no_wasm_opt,
         })
     }
 
@@ -889,6 +896,7 @@ mod tests {
                     targets: Vec::new(),
                     manifest_path: None,
                     out: None,
+                    no_wasm_opt: false,
                 }
             ),
             [Path::new("/workspace/target/release/showcase")]
@@ -901,6 +909,7 @@ mod tests {
                     targets: vec!["aarch64-apple-darwin".into(), "x86_64-apple-darwin".into()],
                     manifest_path: None,
                     out: None,
+                    no_wasm_opt: false,
                 }
             ),
             [
@@ -1055,6 +1064,7 @@ mod tests {
                 targets: Vec::new(),
                 manifest_path: None,
                 out: None,
+                no_wasm_opt: false,
             }
         );
         let wasm = parse(&[
@@ -1125,6 +1135,38 @@ mod tests {
     }
 
     #[test]
+    fn disabling_wasm_optimization_requires_only_the_wasm_target() {
+        let parse = |args: &[&str]| {
+            Request::parse(&args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        let request = parse(&["-p", "fixture", "--target", wasm::TARGET, "--no-wasm-opt"]).unwrap();
+        assert!(request.no_wasm_opt);
+        assert!(
+            !build_arguments(&request)
+                .iter()
+                .any(|arg| arg == "--no-wasm-opt")
+        );
+        for targets in [
+            vec![],
+            vec!["--target", "x86_64-unknown-linux-gnu"],
+            vec![
+                "--target",
+                wasm::TARGET,
+                "--target",
+                "x86_64-unknown-linux-gnu",
+            ],
+        ] {
+            let mut args = vec!["-p", "fixture", "--no-wasm-opt"];
+            args.extend(targets);
+            assert!(
+                parse(&args)
+                    .unwrap_err()
+                    .contains("--no-wasm-opt requires --target")
+            );
+        }
+    }
+
+    #[test]
     fn the_build_is_locked_and_release() {
         assert_eq!(
             build_arguments(&Request {
@@ -1132,6 +1174,7 @@ mod tests {
                 targets: vec!["aarch64-apple-darwin".into()],
                 manifest_path: None,
                 out: None,
+                no_wasm_opt: false,
             }),
             [
                 "build",
