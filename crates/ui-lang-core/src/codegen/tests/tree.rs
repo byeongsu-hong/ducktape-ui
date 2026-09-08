@@ -1544,7 +1544,8 @@ fn tree_editor_copies_presentation_and_all_status_faces() {
     );
     let generated = compile_for(&source, "editor.ice", Target::Tree).unwrap();
     for expected in [
-        "EditorOptions",
+        "::std::boxed::Box::new(::ui_lang_guest::wire::EditorOptions",
+        "..::std::default::Default::default()",
         "LineHeight::Relative",
         "Wrapping::Word",
         "Geist Mono",

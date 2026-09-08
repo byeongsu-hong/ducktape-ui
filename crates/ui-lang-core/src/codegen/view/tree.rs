@@ -1672,9 +1672,9 @@ fn editor(
     };
     let styles = &editor.styles;
     let active = input_face_code(styles.active.as_ref(), program, env, origin)?
-        .unwrap_or_else(|| "Default::default()".into());
+        .unwrap_or_else(|| "::std::default::Default::default()".into());
     let style = format!(
-        "{WIRE}::InputStyle {{ active: {active}, hovered: {}, focused: {}, focused_hovered: {}, disabled: {}, ..Default::default() }}",
+        "{WIRE}::InputStyle {{ active: {active}, hovered: {}, focused: {}, focused_hovered: {}, disabled: {}, ..::std::default::Default::default() }}",
         option_code(input_face_code(
             styles.hovered.as_ref(),
             program,
@@ -1727,7 +1727,7 @@ fn editor(
             .map(|value| format!("{:?}f32", value.min(f64::from(f32::MAX))))
     }));
     let options = format!(
-        "Box::new({WIRE}::EditorOptions {{ size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
+        "::std::boxed::Box::new({WIRE}::EditorOptions {{ size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
         option_code(pixels(editor.padding)?)
     );
     let key = key_code(identity, "editor", origin, scope, env, program)?;

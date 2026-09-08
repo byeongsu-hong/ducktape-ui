@@ -1,4 +1,4 @@
-app EditorFixture
+app Box
   title "Editor fixture"
   id "dev.ice.editor-fixture"
 
