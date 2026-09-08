@@ -214,3 +214,8 @@ extern/data contracts still need their own implementation or host integration.
 Tree QR codes now carry data and encoding options to the host's native QR
 widget, including runtime strings and binary payloads. The bundled QR fixture
 checks native pixel parity and guest updates; see [QR module views](README.md#qr-module-views).
+
+The Node/log host slot can now use the existing `log_timeline` with a borrowed
+`Arc<[T]>` snapshot and a row closure returning owned `Element<'static, _>`. The
+rows and returned element have independent lifetimes; the source need not be
+retained when rows render owned values. The retained log example uses this path.

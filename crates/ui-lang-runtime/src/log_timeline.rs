@@ -372,15 +372,19 @@ fn first_history_change<Key: Eq>(previous: &[Key], current: &[Key]) -> Option<us
 /// Row mounting, stable keyed identity, pointer selection, keyboard navigation,
 /// native scrolling, headless selectors, and AccessKit list semantics are
 /// supplied by [`virtual_list`]. The caller owns `rows` and all row payloads.
+///
+/// The source slice is borrowed only while constructing mounted rows. If `view`
+/// returns owned elements, the resulting element can be `'static` even when the
+/// slice came from a temporary `Arc<[T]>`. Borrowing row views remain supported.
 #[allow(clippy::too_many_arguments)]
-pub fn log_timeline<'a, T, Key, Message, Theme, Renderer>(
+pub fn log_timeline<'a, 'data, T, Key, Message, Theme, Renderer>(
     state: &LogTimelineState<Key>,
-    rows: &'a [T],
+    rows: &'data [T],
     config: VirtualListConfig,
     collection_label: impl Into<String>,
     key: impl Fn(&T) -> Key,
     label: impl Fn(&T) -> String,
-    view: impl Fn(usize, &'a T, bool) -> Element<'a, Message, Theme, Renderer>,
+    view: impl Fn(usize, &'data T, bool) -> Element<'a, Message, Theme, Renderer>,
     on_event: impl Fn(LogTimelineEvent<Key>) -> Message + 'a,
 ) -> Element<'a, Message, Theme, Renderer>
 where
@@ -752,5 +756,62 @@ mod tests {
         assert_eq!(selected.size_of_set(), Some(100));
         assert_eq!(selected.is_selected(), Some(true));
         assert_eq!(list.active_descendant(), Some(*selected_id));
+    }
+    #[test]
+    fn owned_row_elements_outlive_the_source_arc_without_retaining_all_rows() {
+        let rows: std::sync::Arc<[u64]> = (0..100).collect::<Vec<_>>().into();
+        let weak = std::sync::Arc::downgrade(&rows);
+        let state = measured_state(&rows);
+        let element: Element<'static, Message, Theme, iced_test::renderer::Renderer> = log_timeline(
+            &state,
+            &rows,
+            config(),
+            "Owned log",
+            |row| *row,
+            |row| format!("Line {row}"),
+            |_, row, _| iced::widget::text(row.to_string()).into(),
+            Message::Timeline,
+        );
+        drop(rows);
+        assert!(
+            weak.upgrade().is_none(),
+            "the native view need not retain the source allocation"
+        );
+        let mut renderer = iced_test::futures::futures::executor::block_on(
+            <iced_test::renderer::Renderer as renderer::Headless>::new(
+                Font::DEFAULT,
+                Pixels(16.0),
+                None,
+            ),
+        )
+        .unwrap();
+        let mut ui = UserInterface::build(
+            element,
+            Size::new(240.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        #[derive(Default)]
+        struct Texts(Vec<String>);
+        impl Operation for Texts {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+                visit(self);
+            }
+            fn text(&mut self, _: Option<&iced::widget::Id>, _: iced::Rectangle, text: &str) {
+                self.0.push(text.into());
+            }
+        }
+        let mut texts = Texts::default();
+        ui.operate(&renderer, &mut texts);
+        assert!(
+            texts.0.iter().any(|text| text == "98"),
+            "native row text survives dropping the source Arc: {:?}",
+            texts.0
+        );
+        assert_eq!(
+            texts.0.len(),
+            state.mounted_range(config()).len(),
+            "only mounted rows create native children"
+        );
     }
 }

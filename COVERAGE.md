@@ -1648,3 +1648,10 @@ assertion (33 instead of 32). Truncating an over-budget payload fails the
 whole-payload assertion (`Some([97, 98])` instead of `None`). The frame test also
 checks the shared text-byte budget and sanitization idempotence; focused tests
 cover invalid versions, payload size, empty codes and bounded dimensions.
+
+The log timeline owned-row regression constructs a static native Element from
+an `Arc<[u64]>`, drops the Arc, then checks native row text and bounded mounted
+child count. Existing borrowed-row accessibility tests remain. Changing the
+production row-view call to pass the first item for every row fails the expected
+`98` text assertion; restoring it passes. The app-store retained log surface
+uses the same static-element path without a self-referencing owner.

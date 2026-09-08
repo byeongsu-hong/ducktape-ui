@@ -58,44 +58,36 @@ pub(super) fn provider(session: Arc<Session>) -> ui_lang_runtime::view_tree::Sur
     })
 }
 
-#[ouroboros::self_referencing]
 struct RenderedLog {
     rows: Vec<Row>,
-    #[borrows(rows)]
-    #[not_covariant]
-    element: Element<'this, LogTimelineEvent<u64>>,
+    element: Element<'static, LogTimelineEvent<u64>>,
 }
 fn render(rows: Vec<Row>, timeline: &LogTimelineState<u64>) -> RenderedLog {
-    RenderedLogBuilder {
-        rows,
-        element_builder: |rows| {
-            widget::container(widget::column![
-                widget::button("Resume tail").on_press(LogTimelineEvent::ResumeTail),
-                log_timeline(
-                    timeline,
-                    rows,
-                    config(),
-                    "Session log",
-                    |row| row.id,
-                    |row| row.text.clone(),
-                    |_, row, selected| widget::text(if selected {
-                        format!("> {}", row.text)
-                    } else {
-                        row.text.clone()
-                    })
-                    .size(14)
-                    .width(Length::Fill)
-                    .wrapping(iced::advanced::text::Wrapping::None)
-                    .into(),
-                    std::convert::identity
-                ),
-            ])
-            .height(240)
+    let element = widget::container(widget::column![
+        widget::button("Resume tail").on_press(LogTimelineEvent::ResumeTail),
+        log_timeline(
+            timeline,
+            &rows,
+            config(),
+            "Session log",
+            |row| row.id,
+            |row| row.text.clone(),
+            |_, row, selected| widget::text(if selected {
+                format!("> {}", row.text)
+            } else {
+                row.text.clone()
+            })
+            .size(14)
             .width(Length::Fill)
-            .into()
-        },
-    }
-    .build()
+            .wrapping(iced::advanced::text::Wrapping::None)
+            .into(),
+            std::convert::identity
+        ),
+    ])
+    .height(240)
+    .width(Length::Fill)
+    .into();
+    RenderedLog { rows, element }
 }
 struct LogView {
     session: Arc<Session>,
@@ -126,7 +118,7 @@ impl LogView {
         if data.next == self.revision {
             return false;
         }
-        let old = self.rendered.borrow_rows();
+        let old = &self.rendered.rows;
         let removed = old
             .iter()
             .take_while(|row| data.rows.first().is_none_or(|first| row.id < first.id))
@@ -140,7 +132,7 @@ impl LogView {
         true
     }
     fn rebuild(&mut self) {
-        self.rendered = render(self.rendered.borrow_rows().clone(), &self.timeline);
+        self.rendered = render(self.rendered.rows.clone(), &self.timeline);
         self.notice_pending = true;
     }
     fn notice(&self) -> Value {
@@ -163,30 +155,23 @@ impl LogView {
                     "offset".into(),
                     Value::F64(f64::from(self.timeline.scroll_offset())),
                 ),
-                (
-                    "rows".into(),
-                    Value::I64(self.rendered.borrow_rows().len() as i64),
-                ),
+                ("rows".into(), Value::I64(self.rendered.rows.len() as i64)),
             ],
         }
     }
 }
 impl Widget<Value, iced::Theme, iced::Renderer> for LogView {
     fn tag(&self) -> tree::Tag {
-        self.rendered
-            .with_element(|element| element.as_widget().tag())
+        self.rendered.element.as_widget().tag()
     }
     fn state(&self) -> tree::State {
-        self.rendered
-            .with_element(|element| element.as_widget().state())
+        self.rendered.element.as_widget().state()
     }
     fn children(&self) -> Vec<Tree> {
-        self.rendered
-            .with_element(|element| element.as_widget().children())
+        self.rendered.element.as_widget().children()
     }
     fn diff(&self, tree: &mut Tree) {
-        self.rendered
-            .with_element(|element| element.as_widget().diff(tree));
+        self.rendered.element.as_widget().diff(tree);
     }
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fill, Length::Fixed(240.0))
@@ -198,10 +183,11 @@ impl Widget<Value, iced::Theme, iced::Renderer> for LogView {
         limits: &layout::Limits,
     ) -> layout::Node {
         self.sync();
-        self.rendered.with_element_mut(|element| {
-            element.as_widget().diff(tree);
-            element.as_widget_mut().layout(tree, renderer, limits)
-        })
+        self.rendered.element.as_widget().diff(tree);
+        self.rendered
+            .element
+            .as_widget_mut()
+            .layout(tree, renderer, limits)
     }
     fn draw(
         &self,
@@ -213,11 +199,10 @@ impl Widget<Value, iced::Theme, iced::Renderer> for LogView {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.rendered.with_element(|element| {
-            element
-                .as_widget()
-                .draw(tree, renderer, theme, style, layout, cursor, viewport)
-        });
+        self.rendered
+            .element
+            .as_widget()
+            .draw(tree, renderer, theme, style, layout, cursor, viewport);
     }
     fn operate(
         &mut self,
@@ -226,11 +211,10 @@ impl Widget<Value, iced::Theme, iced::Renderer> for LogView {
         renderer: &iced::Renderer,
         operation: &mut dyn Operation,
     ) {
-        self.rendered.with_element_mut(|element| {
-            element
-                .as_widget_mut()
-                .operate(tree, layout, renderer, operation)
-        });
+        self.rendered
+            .element
+            .as_widget_mut()
+            .operate(tree, layout, renderer, operation);
     }
     fn mouse_interaction(
         &self,
@@ -240,11 +224,10 @@ impl Widget<Value, iced::Theme, iced::Renderer> for LogView {
         viewport: &Rectangle,
         renderer: &iced::Renderer,
     ) -> mouse::Interaction {
-        self.rendered.with_element(|element| {
-            element
-                .as_widget()
-                .mouse_interaction(tree, layout, cursor, viewport, renderer)
-        })
+        self.rendered
+            .element
+            .as_widget()
+            .mouse_interaction(tree, layout, cursor, viewport, renderer)
     }
     fn update(
         &mut self,
@@ -271,11 +254,9 @@ impl Widget<Value, iced::Theme, iced::Renderer> for LogView {
             let mut events = Vec::new();
             {
                 let mut local = Shell::new(&mut events);
-                self.rendered.with_element_mut(|element| {
-                    element.as_widget_mut().update(
-                        tree, event, layout, cursor, renderer, clipboard, &mut local, viewport,
-                    )
-                });
+                self.rendered.element.as_widget_mut().update(
+                    tree, event, layout, cursor, renderer, clipboard, &mut local, viewport,
+                );
                 if local.is_event_captured() {
                     shell.capture_event();
                 }

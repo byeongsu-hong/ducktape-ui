@@ -1103,3 +1103,9 @@ and matrix; Overflow removes the oversized codes. CI bundles and runs
 ![QR fixture: normal, fixed-version and binary Micro codes](docs/tree-qr.png)
 
 Captured on Linux with TinySkia, Light theme, at 600×600 in the default state.
+
+The retained log surface now builds an owned native Element directly from its
+row snapshot. `log_timeline` borrows rows only during construction when its row
+closure returns owned elements; an `Arc<[T]>` snapshot can be borrowed the same
+way without a new API or self-referencing wrapper. Borrowing row closures keep
+their ordinary lifetime requirements.
