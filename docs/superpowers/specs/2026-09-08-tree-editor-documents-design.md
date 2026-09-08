@@ -69,7 +69,8 @@ history serialized bytes, using inverse/forward patches where useful; no host
 history or grouping. This is not a new claim that arbitrary application state
 fits 8 MiB. Snapshot validates the final complete encoding and fails atomically
 when other state consumes the remainder. Never silently trim history at snapshot.
-The 64 MiB Wasm memory limiter remains a final sandbox bound; fixture measurements
+History must be snapshot-owned application state, not only a retained closure or
+slot-table cache. The 64 MiB Wasm memory limiter remains a final sandbox bound; fixture measurements
 must include live mirrors, staging, before/after patch temporaries and snapshot
 encoding, not just text payload lengths.
 
@@ -130,6 +131,22 @@ identity and mirror revisions first. The guest-local callback gets a borrowed
 EditorStateView containing the mirror's text plus cursor/revisions; only the
 transport type is text-free. Use a retained typed borrowed callback adapter,
 not Any boxes containing borrowed state or an extra persistent text clone.
+
+The local callback boundary is explicit:
+
+```
+EditorStateView<'a> { text: &'a str, cursor, reset, text_revision, revision }
+guest::EditorKeyRequest<'a> { id: &'a EditorTransactionId,
+  state: EditorStateView<'a>, key: &'a KeyState, repeat, input_time_ms }
+EditorBinding::new(claims,
+  decide: impl for<'a> Fn(guest::EditorKeyRequest<'a>) -> EditorDecision,
+  on_event: impl for<'a> Fn(guest::EditorTransactionEvent<'a>) -> Option<P>)
+```
+
+The local Commit variant has borrowed before/after EditorStateView and patch
+slice plus the same id/kind/history/time fields. Local Fault/Cancelled expose
+identity/current metadata, not a falsely current text value. These are guest-only
+Rust views; no references or borrowed strings are serialized across WIT.
 
 For Commit, validate the entire patch batch against the mirror, construct the
 new value, then accept it and invoke on_event with local borrowed before/after
