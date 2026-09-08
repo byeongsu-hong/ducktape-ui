@@ -3058,6 +3058,7 @@ mod tests {
 
     fn editor_node(text: &str) -> wire::Node {
         wire::Node::Editor {
+            options: Default::default(),
             key: "App/notes".into(),
             placeholder: "Notes".into(),
             text: text.into(),

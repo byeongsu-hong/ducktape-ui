@@ -1600,3 +1600,7 @@ mod qr_tests;
 #[cfg(test)]
 #[path = "keyboard_tests.rs"]
 mod keyboard_tests;
+
+#[cfg(test)]
+#[path = "editor_tests.rs"]
+mod editor_tests;

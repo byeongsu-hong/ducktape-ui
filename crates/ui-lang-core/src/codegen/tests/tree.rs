@@ -340,7 +340,7 @@ fn an_editor_is_a_string_the_host_edits() {
         "notes: ::std::string::String,",
         "__EditNotes(::std::string::String),",
         "__DemoMessage::__EditNotes(__text) => {",
-        "::ui_lang_guest::wire::Node::Editor { key:",
+        "::ui_lang_guest::wire::Node::Editor { options:",
         "placeholder: \"Write\".to_owned()",
         "text: (self.notes).to_string()",
         "on_edit: if (self.busy) { ::std::option::Option::None } else { ::std::option::Option::Some(::ui_lang_guest::slots::handler::<::std::string::String, __DemoMessage>(",
@@ -865,18 +865,12 @@ const COVERAGE: &[Coverage] = &[
         "  editor <-> notes style=editor_surface(busy)\n",
         "a style on an editor",
     ),
-    refused(
+    emitted(
         "editor: status style",
         "",
         "  editor <-> notes\n    active bg=bg\n",
-        "a style on an editor",
     ),
-    refused(
-        "editor: text option",
-        "",
-        "  editor <-> notes size=14.0\n",
-        "this editor option",
-    ),
+    emitted("editor: text option", "", "  editor <-> notes size=14.0\n"),
     refused("themer", "", "  themer alternate_panel(true)\n", "`themer`"),
     emitted(
         "shader",
@@ -1541,4 +1535,22 @@ fn tree_box_shadows_copy_signed_offsets_and_blur() {
     let generated = compile_for(&source, "shadow.ice", Target::Tree).unwrap();
     assert!(generated.contains("shadow: ::ui_lang_guest::wire::Shadow"));
     assert!(generated.contains("self.offset"));
+}
+
+#[test]
+fn tree_editor_copies_presentation_and_all_status_faces() {
+    let source = format!(
+        "app Edit\n{PALETTE}font code family=\"Geist Mono\"\nstate\n  draft:editor = editor(\"text\")\nview\n  editor <-> draft hint=\"File contents\" size=12.0 line-h=1.3 p=6.6 wrap=word font=code\n    active bg=bg border=fg border-w=1.0 r=8.0 value=fg placeholder=primary selection=fg/18\n    hovered bg=primary\n    focused border=danger\n    focused-hovered value=primary\n    disabled bg=danger\n"
+    );
+    let generated = compile_for(&source, "editor.ice", Target::Tree).unwrap();
+    for expected in [
+        "::std::boxed::Box::new(::ui_lang_guest::wire::EditorOptions",
+        "..::std::default::Default::default()",
+        "LineHeight::Relative",
+        "Wrapping::Word",
+        "Geist Mono",
+        "focused_hovered:",
+    ] {
+        assert!(generated.contains(expected), "missing {expected}");
+    }
 }
