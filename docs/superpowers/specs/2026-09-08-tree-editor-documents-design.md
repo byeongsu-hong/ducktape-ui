@@ -1,6 +1,7 @@
 # Revisioned editor documents
 
-Status: proposed for root review; no implementation/build yet.
+Status: reviewed design direction; resource proposals remain subject to measurement.
+No implementation/build yet.
 Base: origin/main 480a5290. Integration base must include the final transaction
 lane (#4) and protocol manifest work. Issue: #1014.
 
@@ -25,12 +26,16 @@ design uses its declared contract and structural APIs, not temporary guard value
   Preserve per-widget Content projections for independent widths/styles/scroll.
 - wire/snapshot.rs:7 has an 8 MiB aggregate bound; guest/snapshot.rs rejects pending
   transactions and restores into an independent driver without boot.
-- Ducktape origin/dev 58372599d, crates/views/pages/src/editor.rs:100–101 currently
-  permits 200 history snapshots / 16 MiB. That exceeds the whole snapshot budget.
+- Ducktape #1993 reduces the Pages history byte cap from 16 MiB to 2 MiB
+  (merged as e3aad2d59). History remains guest-owned; this change
+  does not by itself guarantee the entire application snapshot fits 8 MiB.
 
 ## Limits and ownership
 
-Proposed hard framework bounds (root approval required):
+The 1 MiB document requirement is agreed. The existing 8 MiB aggregate snapshot
+limit stays unchanged. Other numbers below are proposed implementation caps,
+subject to measurement and final implementation review; they are not measured
+support claims.
 
 | Resource | Bound per guest instance |
 | --- | --- |
@@ -64,9 +69,10 @@ required for this protocol. Validate projection byte reservations before view
 materialization; excess projections reject the candidate frame without changing
 the logical document or previous accepted tree.
 
-History policy remains application-owned. Proposal to consumer: <= 2 MiB total
-history serialized bytes, using inverse/forward patches where useful; no host
-history or grouping. This is not a new claim that arbitrary application state
+History policy remains application-owned. Ducktape #1993 now caps Pages history
+at 2 MiB; serialization overhead must still be charged by the aggregate snapshot
+check. Inverse/forward patches may reduce history cost, but this design adds no
+host history or grouping. This is not a claim that arbitrary application state
 fits 8 MiB. Snapshot validates the final complete encoding and fails atomically
 when other state consumes the remainder. Never silently trim history at snapshot.
 History must be snapshot-owned application state, not only a retained closure or
