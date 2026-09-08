@@ -187,6 +187,19 @@ Rust text-style call.
 Text expressions may be `str`, numbers, booleans, or other checker-supported
 display values. Do not call `.toString()`.
 
+Alignment on a text is its own vocabulary and its own box:
+
+- `align-x=default|left|center|right|justified` and
+  `align-y=top|center|bottom` place the glyphs **inside the text's own
+  bounds**. A parent's `align=` uses `start|center|end` and places the whole
+  text among its siblings; the two do not substitute for each other.
+- Alignment needs room to spare. A `shrink` text is exactly as wide and tall
+  as its glyphs, so `align-x`/`align-y` move nothing — give it `w=`/`h=` first.
+  The one exception is a multi-line `shrink` text, where `align-x` ranks the
+  lines against the widest one without moving the box.
+- Canvas `text` takes the same two properties but anchors around the `x=`/`y=`
+  point it is given rather than inside a widget box.
+
 ### Input
 
 ```ice
