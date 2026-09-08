@@ -386,8 +386,10 @@ selection and scroll/snap statements emit `host.widget` requests containing
 no native widget Id or operation object crosses. The host waits for the
 requesting frame to be mounted and traverses only that guest's widgets and
 overlays. Focused queries return bool (false for a missing target); mutations
-acknowledge unit, preserving sequential Task ordering. Widget selectors and
-virtual-row scrolling are rejected with E190 on this target. Native extern
+acknowledge unit, preserving sequential Task ordering. `scroll-to-key` copies the row identity as the same bool/integer/float bits
+used by virtual columns and invokes native measured-row reveal. Missing keys
+do nothing. Widget selectors and explicit host-window targets are rejected
+with E190 on this target. Native extern
 Tasks returning opaque widget operations are outside this lowering contract.
 
 Host surface registries may bind host-owned sessions per guest instance.
@@ -1103,7 +1105,8 @@ occurrences in order. Hosts move widget state with those occurrences on arbitrar
 permutations and discard removed rows. `virtual-row=` on keyed and ordinary
 columns uses native host viewport observation, measured heights and deferred
 offscreen diffing. The guest supplies children and an estimate, never coordinates
-or layout callbacks. Selector-based scroll-to-key actions remain unsupported.
+or layout callbacks. `scroll-to-key` targets the named scroll and lands the
+first virtual column containing that key at the measured row top.
 
 ## Tree lazy subtrees
 

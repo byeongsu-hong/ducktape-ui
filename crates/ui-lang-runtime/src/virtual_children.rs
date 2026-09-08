@@ -490,13 +490,20 @@ impl Operation for SyncAfterWheel {
 /// stops moving, so the frame that draws has the row's measured top at the
 /// viewport's top. A key the column does not hold does nothing.
 pub fn scroll_to_key<Message: Send + 'static>(target: Id, key: u64) -> iced::Task<Message> {
-    iced::advanced::widget::operate(ScrollToKey {
+    iced::advanced::widget::operate(scroll_to_key_operation::<Message>(target, key))
+}
+
+pub(crate) fn scroll_to_key_operation<T: 'static>(
+    target: Id,
+    key: u64,
+) -> impl Operation<T> + 'static {
+    ScrollToKey {
         target,
         key,
         origin: None,
         entering: false,
         offset: None,
-    })
+    }
 }
 
 struct ScrollToKey {

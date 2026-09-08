@@ -83,11 +83,18 @@ pub(super) fn tree_widget_task(
             offset(*x)?,
             offset(*y)?
         ),
-        O::Find { .. } | O::ScrollToKey { .. } => {
+        O::ScrollToKey { target: id, key } => {
+            let key = resolved_expr_use_code(program, *key, env, ValueMode::Owned)?;
+            format!(
+                "ScrollToKey {{ target: {}, key: ::ui_lang_guest::wire::ListKey::from({key}).virtual_key() }}",
+                target(id)?
+            )
+        }
+        O::Find { .. } => {
             return Err(program.error_at_origin(
                 "E190",
                 origin,
-                "widget selectors and virtual row operations are not available in a view module",
+                "widget selectors are not available in a view module",
             ));
         }
     };

@@ -562,3 +562,6 @@ the source rows. See [the log surface](examples/app-store/README.md#retained-hos
 Tree keyboard subscriptions receive host-delivered press/release/modifier events
 with native captured/ignored status. Hosts initialize guests with their macOS
 modifier convention; see [keyboard module views](examples/app-store/README.md#keyboard-module-views).
+
+Tree `task widget scroll-to-key` reveals a keyed virtual row inside the requesting
+guest, using the host’s native measured-row positioning.
