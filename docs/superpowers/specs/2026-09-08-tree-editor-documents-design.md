@@ -3,11 +3,11 @@
 Status: reviewed design direction; resource proposals remain subject to measurement.
 No implementation/build yet.
 Base: origin/main 480a5290. Integration base must include the final transaction
-lane (#4) and protocol manifest work. Issue: #1014.
+lane (#1019) and protocol manifest work. Issue: #1014.
 
 ## Current boundaries inspected
 
-The live #4 worktree is being edited, including temporary Red mutations. This
+The live #1019 worktree is being edited, including temporary Red mutations. This
 design uses its declared contract and structural APIs, not temporary guard values.
 
 - wire/editor_transaction.rs: EditorKeyRequest.state is the complete EditorState;
@@ -186,7 +186,7 @@ On same-document mirror mismatch, suspend the existing admitted key and pull the
 current host document to the guest through the same chunk assembler. Host input
 for that document remains held, while unrelated editors render and run. Atomic
 mirror install/ack precedes retry with the same sequence and incremented attempt.
-Retain #4's retry/deadline bounds; stale transfer or mismatch never means fallback.
+Retain #1019's retry/deadline bounds; stale transfer or mismatch never means fallback.
 
 ## Restore, instance isolation and external props
 
@@ -199,8 +199,10 @@ init; failure preserves the current instance and assets.
 A replacement guest starts a fresh document-session identity, even when its host
 Surface and native Inputs are retained. Reject queued old-session chunks/replies.
 Candidate preparation must complete its referenced document transfers before
-claiming a fully validated first frame or installing the new instance. Up to
-16 bounded local ticks per full document may be needed; the old guest remains
+claiming a fully validated first frame or installing the new instance. A full
+document needs at most 16 payload chunks plus bounded handshake ticks for
+Begin/Complete and acknowledgments. The total preparation deadline must account
+for those handshake ticks as well as payload delivery; the old guest remains
 installed throughout. Do not claim a reference-only first frame is complete.
 No automatic old-session byte aliasing or duplicate decoder is introduced.
 
