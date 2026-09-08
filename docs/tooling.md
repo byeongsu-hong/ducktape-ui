@@ -382,6 +382,10 @@ component slot. A `slot children*` has `required: false, multiple: true`;
 single-root slots have `multiple: false`. Readers reject other fingerprint
 versions; regenerate artifacts with the current command. The independent diff
 report format remains version 1.
+When a pull request changes the fingerprint schema, CI cannot compare the
+reviewed base with the new reader. It requires the existing
+`api-breaking-approved` decision for that head after reviewing the public source
+diff. Same-schema comparisons still validate the base and classify API changes.
 
 ## lsp
 

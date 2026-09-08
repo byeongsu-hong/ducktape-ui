@@ -99,9 +99,25 @@ jobs:
             exit 1
           fi
           git show "$ICE_API_BASE_SHA:$base_paths" > "$baseline"
-          cargo ice api diff "$baseline" "$baseline" > /dev/null
-          if cargo ice api diff "$baseline" "$current"; then
-            exit 0
+          schemas_match="$(python3 - "$baseline" "$current" <<'PY'
+          import json, sys
+          versions = [json.load(open(path))["schema_version"] for path in sys.argv[1:]]
+          if any(type(version) is not int or version <= 0 for version in versions):
+              raise SystemExit("API fingerprint schema versions must be positive integers")
+          print("true" if versions[0] == versions[1] else "false")
+          PY
+          )"
+          if [[ "$schemas_match" == "true" ]]; then
+            cargo ice api diff "$baseline" "$baseline" > /dev/null
+            if cargo ice api diff "$baseline" "$current"; then
+              exit 0
+            fi
+          else
+            # A new fingerprint format has no legacy reader. The reviewed base
+            # cannot be compared by this tool; use the existing breaking-change
+            # decision for this head rather than treating incompatibility as an
+            # empty diff or weakening the tool's strict schema validation.
+            echo "::notice::API fingerprint schema changed; review the public source diff and approve this head as a breaking change"
           fi
           if [[ "$ICE_API_ACCEPT_BREAKING" != "true" ]]; then
             echo "::error::breaking Ice API changes require a maintainer to apply or reapply the api-breaking-approved label after the latest commit"
