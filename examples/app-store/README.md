@@ -573,9 +573,9 @@ For module packaging requirements and the connected implementation phases, see
   extern Tasks are not serialized. Those actions, and window, font, image,
   reload and exit actions, are still dropped with a `host::log` diagnostic.
 - `every` carries no instant in a module and refuses a route that binds
-  one (E190): there is no `now` to make it from. Every other subscription
-  source that is a toolkit's — keyboard, mouse, window events, `system
-  theme` — is not the wire's either.
+  one (E190): there is no `now` to make it from. Host-delivered keyboard
+  press/release/modifier subscriptions are supported. Mouse, window and IME
+  event subscriptions and `system theme` transport remain unsupported.
 - Task fairness is fixed: 8 rounds of messages per tick, 64 poll passes
   per round. A task that produces more is cut short, and the frame says so
   (`busy`) so the host ticks the guest again at once; what it does not do
