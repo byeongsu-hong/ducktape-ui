@@ -23,6 +23,10 @@
 
 #[cfg(feature = "authored-tests")]
 pub mod authored;
+/// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
+/// This is independent of WIT signatures and the manifest text format.
+pub const WIRE_EPOCH: u32 = 1;
+
 pub mod manifest;
 pub mod native;
 mod wit;

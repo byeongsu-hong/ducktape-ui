@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn catalog_requires_one_valid_current_manifest() {
-        let valid = component_manifest("ice.manifest.v1\nSized\nDescription\n\n640.5,480.25");
+        let valid = component_manifest("ice.manifest.v2\nSized\nDescription\n\n640.5,480.25\n1");
         assert_eq!(
             read_manifest(&valid)
                 .unwrap()
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn catalog_displays_each_capability_once_without_changing_artifact_identity() {
         let bytes = component_manifest(
-            "ice.manifest.v1\nRepeated\nDescription\nstorage,clock,storage,bus,clock,\nnone",
+            "ice.manifest.v2\nRepeated\nDescription\nstorage,clock,storage,bus,clock,\nnone\n1",
         );
         let scratch = ScratchDir::new("duplicate-capabilities");
         let path = scratch.0.join("repeated.wasm");
@@ -516,7 +516,7 @@ mod tests {
         let path = scratch.0.join("sample.wasm");
         std::fs::write(
             &path,
-            component_manifest("ice.manifest.v1\nSample\nFirst build\nclock,storage,\nnone"),
+            component_manifest("ice.manifest.v2\nSample\nFirst build\nclock,storage,\nnone\n1"),
         )
         .unwrap();
         let initial = scan_dir(&scratch.0);
@@ -530,7 +530,7 @@ mod tests {
 
         std::fs::write(
             &path,
-            component_manifest("ice.manifest.v1\nSample\nSecond build\nclock,storage,\nnone"),
+            component_manifest("ice.manifest.v2\nSample\nSecond build\nclock,storage,\nnone\n1"),
         )
         .unwrap();
         let changed = scan_dir(&scratch.0);
@@ -553,7 +553,7 @@ mod tests {
             std::fs::write(
                 scratch.0.join(format!("{id}.wasm")),
                 component_manifest(&format!(
-                    "ice.manifest.v1\nSample\n{id}\nclock,storage,\nnone"
+                    "ice.manifest.v2\nSample\n{id}\nclock,storage,\nnone\n1"
                 )),
             )
             .unwrap();

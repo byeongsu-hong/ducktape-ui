@@ -22,11 +22,27 @@ impl PreferredSize {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Manifest {
+    pub wire_epoch: u32,
     pub name: String,
     pub description: String,
     pub capabilities: Vec<String>,
     pub preferred_size: Option<PreferredSize>,
 }
+
+/// A valid manifest requests a payload protocol this host does not implement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProtocolMismatch {
+    pub guest: u32,
+    pub host: u32,
+}
+
+impl std::fmt::Display for ProtocolMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "wire epoch guest {}, host {}", self.guest, self.host)
+    }
+}
+
+impl std::error::Error for ProtocolMismatch {}
 
 /// What a manifest may say about itself. The catalog is read before anything
 /// is installed, and the store shapes every field of every entry on every
@@ -78,9 +94,9 @@ pub(crate) fn read_manifest_with(
 }
 
 impl Manifest {
-    /// Parses the strict five-line `ice.manifest.v1` text and its bounds.
+    /// Parses the strict six-line `ice.manifest.v2` text and its bounds.
     pub fn parse(text: &str) -> Option<Self> {
-        Self::parse_with_header(text, "ice.manifest.v1")
+        Self::parse_with_header(text, "ice.manifest.v2")
     }
 
     pub(crate) fn parse_with_header(text: &str, header: &str) -> Option<Self> {
@@ -113,16 +129,34 @@ impl Manifest {
                 )?)
             }
         };
+        let epoch = lines.next()?;
+        let wire_epoch = epoch.parse::<u32>().ok()?;
+        if wire_epoch == 0 || wire_epoch.to_string() != epoch {
+            return None;
+        }
         if lines.next().is_some() {
             return None;
         }
         let manifest = Self {
+            wire_epoch,
             name,
             description,
             capabilities,
             preferred_size,
         };
         manifest.within_bounds().then_some(manifest)
+    }
+
+    /// Reject a different payload protocol before executing or restoring a guest.
+    pub fn check_wire_protocol(&self) -> Result<(), ProtocolMismatch> {
+        if self.wire_epoch == crate::WIRE_EPOCH {
+            Ok(())
+        } else {
+            Err(ProtocolMismatch {
+                guest: self.wire_epoch,
+                host: crate::WIRE_EPOCH,
+            })
+        }
     }
 
     fn within_bounds(&self) -> bool {
@@ -140,11 +174,59 @@ impl Manifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn manifest_requires_an_explicit_canonical_wire_epoch() {
+        let current = "ice.manifest.v2\nSized\nDescription\nclock,\nnone\n1";
+        assert!(
+            Manifest::parse(current).is_some(),
+            "current epoch manifest rejected"
+        );
+        assert!(Manifest::parse("ice.manifest.v1\nSized\nDescription\nclock,\nnone").is_none());
+        for epoch in ["", "0", "01", "+1", "-1", " 1", "1 ", "4294967296"] {
+            assert!(
+                Manifest::parse(&format!("ice.manifest.v2\nSized\n\n\nnone\n{epoch}")).is_none(),
+                "accepted {epoch:?}"
+            );
+        }
+        assert!(
+            Manifest::parse("ice.manifest.v2\nSized\n\n\nnone\n2").is_some(),
+            "unsupported is distinct from malformed"
+        );
+    }
+
+    #[test]
+    fn wire_protocol_mismatch_reports_both_epochs() {
+        let current = Manifest::parse(&format!(
+            "ice.manifest.v2\nApp\n\n\nnone\n{}",
+            crate::WIRE_EPOCH
+        ))
+        .unwrap();
+        assert_eq!(current.check_wire_protocol(), Ok(()));
+        let mut other = current;
+        other.wire_epoch = crate::WIRE_EPOCH + 1;
+        let mismatch = other.check_wire_protocol().unwrap_err();
+        assert_eq!(
+            mismatch,
+            ProtocolMismatch {
+                guest: crate::WIRE_EPOCH + 1,
+                host: crate::WIRE_EPOCH
+            }
+        );
+        assert_eq!(
+            mismatch.to_string(),
+            format!(
+                "wire epoch guest {}, host {}",
+                crate::WIRE_EPOCH + 1,
+                crate::WIRE_EPOCH
+            )
+        );
+    }
+
     #[cfg(feature = "manifest")]
     #[test]
     fn extraction_rejects_duplicate_and_truncated_sections() {
         let mut bytes = b"\0asm\x0d\0\x01\0".to_vec();
-        let text = b"ice.manifest.v1\nSized\n\n\n640.5,480.25";
+        let text = b"ice.manifest.v2\nSized\n\n\n640.5,480.25\n1";
         let mut section = vec![
             0,
             (1 + MANIFEST_SECTION.len() + text.len()) as u8,
@@ -182,12 +264,12 @@ mod tests {
     // finite positive bounded preferred size. Dropping those guards is Red.
     #[test]
     fn manifest_format_and_preferred_size_are_strict() {
-        let good = "ice.manifest.v1\nSized\nDescription\nclock,storage,\n640.5,480.25";
+        let good = "ice.manifest.v2\nSized\nDescription\nclock,storage,\n640.5,480.25\n1";
         let parsed = Manifest::parse(good).unwrap();
         assert_eq!(parsed.preferred_size.unwrap().dimensions(), [640.5, 480.25]);
         assert_eq!(parsed.capabilities, ["clock", "storage"]);
         assert!(
-            Manifest::parse("ice.manifest.v1\nDefault\n\n\nnone")
+            Manifest::parse("ice.manifest.v2\nDefault\n\n\nnone\n1")
                 .unwrap()
                 .preferred_size
                 .is_none()
@@ -195,9 +277,9 @@ mod tests {
         for invalid in [
             "Sized\nDescription\nclock,", // no legacy format
             "ice.manifest.v2\nSized\nDescription\n\nnone",
-            "ice.manifest.v1\nSized\nDescription\n\nnone\nextra",
-            "ice.manifest.v1\nSized\nDescription\nclock\nnone",
-            "ice.manifest.v1\nSized\nDescription\nclock,,\nnone",
+            "ice.manifest.v2\nSized\nDescription\n\nnone\nextra\n1",
+            "ice.manifest.v2\nSized\nDescription\nclock\nnone\n1",
+            "ice.manifest.v2\nSized\nDescription\nclock,,\nnone\n1",
         ] {
             assert!(
                 Manifest::parse(invalid).is_none(),
@@ -218,8 +300,10 @@ mod tests {
             "1,2,3",
         ] {
             assert!(
-                Manifest::parse(&format!("ice.manifest.v1\nSized\nDescription\n\n{invalid}"))
-                    .is_none(),
+                Manifest::parse(&format!(
+                    "ice.manifest.v2\nSized\nDescription\n\n{invalid}\n1"
+                ))
+                .is_none(),
                 "accepted {invalid}"
             );
         }

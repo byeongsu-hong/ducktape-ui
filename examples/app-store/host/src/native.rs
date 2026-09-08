@@ -29,6 +29,7 @@ impl Process {
             entry,
             "--ice-native",
             native_package(std::path::Path::new(&entry.path))?,
+            ui_lang_wire::manifest::Manifest::parse,
         )
     }
 
@@ -41,6 +42,7 @@ impl Process {
                 std::path::Path::new(&entry.path),
                 ui_lang_wire::authored::parse_manifest,
             )?,
+            ui_lang_wire::authored::parse_manifest,
         )
     }
 
@@ -48,10 +50,15 @@ impl Process {
         entry: &CatalogEntry,
         argument: &str,
         (manifest, bytes): (Vec<u8>, Vec<u8>),
+        parse_manifest: fn(&str) -> Option<ui_lang_wire::manifest::Manifest>,
     ) -> Result<Self, String> {
         if native_hash(&manifest, &bytes) != entry.hash {
             return Err("native package changed since consent; Rescan, then Get it again".into());
         }
+        parse_manifest(std::str::from_utf8(&manifest).map_err(|error| error.to_string())?)
+            .ok_or_else(|| "invalid native manifest".to_owned())?
+            .check_wire_protocol()
+            .map_err(|error| error.to_string())?;
         // Launch precisely the bytes just verified, not a mutable catalog path.
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|error| error.to_string())?;
@@ -159,6 +166,54 @@ impl Drop for Process {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn wire_epoch_mismatch_rejects_native_before_launch() {
+        let mut random = [0; 16];
+        getrandom::fill(&mut random).unwrap();
+        let directory = Directory(std::env::temp_dir().join(format!(
+            "ice-native-protocol-{:032x}",
+            u128::from_le_bytes(random)
+        )));
+        let package = directory.0.join("probe.native");
+        std::fs::create_dir_all(&package).unwrap();
+        let marker = directory.0.join("launched");
+        let executable = format!(
+            "#!/bin/sh\nprintf launched > '{}'\n",
+            marker.to_string_lossy().replace('\'', "'\"'\"'")
+        );
+        std::fs::write(package.join("app"), executable).unwrap();
+        let manifest = |epoch| format!("ice.manifest.v2\nProbe\n\n\nnone\n{epoch}");
+        std::fs::write(
+            package.join("manifest"),
+            manifest(ui_lang_wire::WIRE_EPOCH + 1),
+        )
+        .unwrap();
+        let entry = crate::catalog::scan_dir(&directory.0).remove(0);
+        let error = Process::new(&entry)
+            .err()
+            .expect("incompatible native process launched");
+        assert_eq!(
+            error,
+            format!(
+                "wire epoch guest {}, host {}",
+                ui_lang_wire::WIRE_EPOCH + 1,
+                ui_lang_wire::WIRE_EPOCH
+            )
+        );
+        assert!(!marker.exists(), "incompatible executable ran");
+
+        std::fs::write(package.join("manifest"), manifest(ui_lang_wire::WIRE_EPOCH)).unwrap();
+        let entry = crate::catalog::scan_dir(&directory.0).remove(0);
+        let mut process = Process::new(&entry).unwrap();
+        assert!(process.child.wait().unwrap().success());
+        assert_eq!(
+            std::fs::read_to_string(marker).unwrap(),
+            "launched",
+            "compatible control must really execute"
+        );
+    }
+
     #[test]
     fn native_catalog_reads_without_execution_and_binds_manifest_and_binary() {
         let mut random = [0; 16];
@@ -169,7 +224,7 @@ mod tests {
         )));
         let package = directory.0.join("probe.native");
         std::fs::create_dir_all(&package).unwrap();
-        let manifest = b"ice.manifest.v1\nProbe\nCatalog test\n\n640.5,480.25";
+        let manifest = b"ice.manifest.v2\nProbe\nCatalog test\n\n640.5,480.25\n1";
         // Intentionally not executable code: scanning cannot launch it.
         std::fs::write(package.join("manifest"), manifest).unwrap();
         let executable = package.join(if cfg!(windows) { "app.exe" } else { "app" });
@@ -191,7 +246,7 @@ mod tests {
         assert_eq!(entry.preferred_size.unwrap().dimensions(), [640.5, 480.25]);
         std::fs::write(
             package.join("manifest"),
-            b"ice.manifest.v1\nProbe\nChanged consent\nclock,\nnone",
+            b"ice.manifest.v2\nProbe\nChanged consent\nclock,\nnone\n1",
         )
         .unwrap();
         let changed = crate::catalog::scan_dir(&directory.0);

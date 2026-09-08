@@ -24,7 +24,7 @@ impl Backend {
         if crate::catalog::is_native(entry) {
             return crate::native::Process::new_authored(entry).map(Self::Native);
         }
-        let (component, _) = component(entry)?;
+        let (component, _) = super::component_with_manifest(entry, wire::authored::read_manifest)?;
         let mut store = new_wasm_store();
         let mut linker = Linker::new(engine());
         bindings::View::add_to_linker::<HostState, wasmtime::component::HasSelf<HostState>>(

@@ -650,9 +650,9 @@ open/close routes. See [pick module options](examples/app-store/README.md#pick-m
 ### Guest preferred window size
 
 Tree compilation carries the primary `window size` into the versioned
-`ice.manifest.v1` custom section without another `export_app!` argument. The
-strict five fields are version, name, description, comma-terminated capabilities
-(or empty), and `none` or `width,height`. There is no legacy fallback.
+`ice.manifest.v2` custom section without another `export_app!` argument. The
+strict six fields are version, name, description, comma-terminated capabilities
+(or empty), `none` or `width,height`, and the canonical positive wire epoch. There is no legacy fallback.
 The app-store catalog accepts finite positive f32 dimensions up to 8192 logical
 pixels; Tree rejects declarations outside that range at the `size` source line,
 without changing native-target limits. Saved placement takes precedence over the declaration, then the host
@@ -670,7 +670,7 @@ Hosts can consume the Ice view contract without a graphics dependency through
 `ui-lang-wire`. `WIT` exposes the canonical text; `with_view_wit!(callback)`
 passes that same literal to a local macro for Wasmtime or wit-bindgen's `inline`
 option. `export_app!` retains its four arguments and the same `ice:view` ABI.
-`manifest::Manifest::parse` reads the strict five-line metadata;
+`manifest::Manifest::parse` reads the strict six-line metadata;
 `manifest::PreferredSize::dimensions` returns `[f32; 2]`. The optional `manifest`
 feature adds `manifest::read_manifest` for extracting exactly one manifest from
 component bytes, including nested core modules. Neither the default dependency
@@ -681,6 +681,15 @@ component, resolve imports with `Linker::instantiate_pre`, and check exports
 with the generated `ViewPre::new` without creating a store or running the guest.
 This checks required ABI types; it is not proof that instantiation, init, or boot
 will succeed. Import policy remains the host's responsibility.
+
+`WIRE_EPOCH` identifies the exact serialized tree/event/frame protocol. After
+verifying artifact bytes, call `Manifest::check_wire_protocol()` before any
+instantiation, native child launch, init, or restore. A mismatch reports
+`wire epoch guest N, host M`; app-store rejects the candidate and keeps a running
+instance unchanged. The epoch is independent of the manifest format and WIT
+signatures. Request capability declarations remain permissions, not renderer
+feature negotiation. Any serialized shape change requires a new epoch; no old
+decoder or implicit compatibility range is supported.
 
 ### Tree float placement
 

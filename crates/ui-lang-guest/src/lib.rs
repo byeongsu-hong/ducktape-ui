@@ -542,20 +542,28 @@ pub fn panic_line(message: &str, at: &str) -> String {
     line
 }
 
-/// Concatenates the versioned manifest prefix and generated window size at compile time.
+/// Appends the generated window size and current wire epoch at compile time.
 pub const fn manifest_bytes<const N: usize>(text: &str, preferred_size: &str) -> [u8; N] {
     let bytes = text.as_bytes();
     let size = preferred_size.as_bytes();
-    assert!(N == bytes.len() + size.len());
+    assert!(N == bytes.len() + size.len() + 1 + wire::WIRE_EPOCH.ilog10() as usize + 1);
     let mut out = [0u8; N];
     let mut i = 0;
-    while i < N {
+    while i < bytes.len() + size.len() {
         out[i] = if i < bytes.len() {
             bytes[i]
         } else {
             size[i - bytes.len()]
         };
         i += 1;
+    }
+    out[i] = b'\n';
+    let mut epoch = wire::WIRE_EPOCH;
+    let mut end = N;
+    while end > i + 1 {
+        end -= 1;
+        out[end] = b'0' + (epoch % 10) as u8;
+        epoch /= 10;
     }
     out
 }
@@ -567,8 +575,8 @@ pub const fn manifest_bytes<const N: usize>(text: &str, preferred_size: &str) ->
 /// `$name` and `$description` are what the host lists; the capabilities are the
 /// request kinds the app will make (`host.echo`, `clock.sleep`...), which
 /// the host checks every request against. They land in the `ice.manifest`
-/// custom section, followed by the generated primary window size in the strict
-/// five-line `ice.manifest.v1` format, readable without instantiating the module.
+/// custom section, followed by the generated primary window size and wire epoch in the strict
+/// six-line `ice.manifest.v2` format, readable without instantiating the module.
 ///
 /// `boot_native` and `tick_native` drive the same app in an ordinary test.
 #[macro_export]
@@ -625,7 +633,7 @@ macro_rules! __export_app {
 
         #[unsafe(link_section = "ice.manifest")]
         #[used]
-        static __ICE_MANIFEST_SECTION: [u8; __ICE_MANIFEST.len() + <$app>::__PREFERRED_WINDOW_SIZE.len()] =
+        static __ICE_MANIFEST_SECTION: [u8; __ICE_MANIFEST.len() + <$app>::__PREFERRED_WINDOW_SIZE.len() + 2 + $crate::wire::WIRE_EPOCH.ilog10() as usize] =
             $crate::manifest_bytes(__ICE_MANIFEST, <$app>::__PREFERRED_WINDOW_SIZE);
 
         thread_local! {
@@ -991,10 +999,10 @@ pub use combo::Combo;
 #[macro_export]
 macro_rules! __manifest_header {
     (production) => {
-        "ice.manifest.v1\n"
+        "ice.manifest.v2\n"
     };
     (test) => {
-        "ice.test.manifest.v1\n"
+        "ice.test.manifest.v2\n"
     };
 }
 #[doc(hidden)]
