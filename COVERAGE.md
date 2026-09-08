@@ -2398,8 +2398,8 @@ defects on `y`/`padding.top`.
 `vendor/iced_widget` carries the published 0.14.2 sources (`Cargo.toml`,
 `.cargo_vcs_info.json`, `src`, `assets`, copied unmodified from the crates.io
 registry checkout) with `[patch.crates-io]` pointing at it, following the
-existing `iced_winit`/`iced_tiny_skia` vendoring. Only `src/row.rs` and
-`src/column.rs` differ: each records its wrapped line ranges as it produces
+existing `iced_winit`/`iced_tiny_skia` vendoring. The wrapping patch changes `src/row.rs` and
+`src/column.rs`: each records its wrapped line ranges as it produces
 them, resolves the size before aligning, measures line extents from the content
 origin, and falls back to the intrinsic size when an unbounded `Fill` resolves
 to infinity. A `Fill` child still spans its line, and a wrapping row under a
