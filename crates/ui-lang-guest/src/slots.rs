@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 #[derive(Default)]
 struct Tables {
+    macos: bool,
     deferred: Vec<Box<dyn Any>>,
     messages: Vec<Rc<dyn Any>>,
     handlers: Vec<Rc<dyn Any>>,
@@ -94,6 +95,13 @@ thread_local! {
 }
 
 impl Context {
+    pub(crate) fn with_macos(macos: bool) -> Self {
+        Self(Rc::new(RefCell::new(Tables {
+            macos,
+            ..Tables::default()
+        })))
+    }
+
     pub(crate) fn enter(&self) -> Guard {
         Guard(CURRENT.with(|current| current.replace(self.clone())))
     }
@@ -230,6 +238,10 @@ pub(crate) fn run_handler<A: 'static, M: 'static>(index: u32, value: A) -> Optio
         .cloned()?
     };
     handler.downcast_ref::<Box<dyn Fn(A) -> Option<M>>>()?(value)
+}
+
+pub(crate) fn macos() -> bool {
+    tables().borrow().macos
 }
 
 #[cfg(test)]

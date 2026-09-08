@@ -1655,3 +1655,22 @@ child count. Existing borrowed-row accessibility tests remain. Changing the
 production row-view call to pass the first item for every row fails the expected
 `98` text assertion; restoring it passes. The app-store retained log surface
 uses the same static-element path without a self-referencing owner.
+
+### Tree keyboard evidence
+
+The keyboard wasm fixture is driven through native UserInterface keyboard and
+pointer events. It verifies ignored and captured subscription routes, overlay
+input text, exact-once delivery, subscription removal, complete key metadata,
+release, and host-platform modifier behavior before boot and during events.
+Two instances establish delivery isolation. Wire codec tests round-trip mixed
+logical/modified/physical/native codes, Unicode, repeat and every modifier mix.
+
+Before the bridge, native Escape left the actual wasm count at 0 instead of 1.
+Broadcasting an entire batch before settling lost 49 of 150 keyboard events;
+settling after each broadcast restores all events and lets the first event
+remove its subscription before later events.
+
+Forcing non-macOS command modifiers fails the boot assertion (`CTRL` instead of
+`LOGO`). Disabling captured-overlay forwarding fails the actual wasm count
+assertion (0 instead of 1) while native input still accepts the text. Both
+mutations are restored and the corresponding tests pass.

@@ -468,7 +468,7 @@ impl Guest {
         // message handed over as a panic in any later tick — and the boot
         // gets a budget of its own, not what instantiation left of one.
         arm(&mut store);
-        if let Err(error) = view.call_init(&mut store) {
+        if let Err(error) = view.call_init(&mut store, cfg!(target_os = "macos")) {
             let trap = format!("{path}: init trapped: {}", first_line(&error));
             return Err(panic_message(&mut store).unwrap_or(trap));
         }
@@ -1593,3 +1593,7 @@ mod component_tests;
 #[cfg(test)]
 #[path = "qr_tests.rs"]
 mod qr_tests;
+
+#[cfg(test)]
+#[path = "keyboard_tests.rs"]
+mod keyboard_tests;

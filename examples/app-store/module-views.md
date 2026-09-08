@@ -219,3 +219,10 @@ The Node/log host slot can now use the existing `log_timeline` with a borrowed
 `Arc<[T]>` snapshot and a row closure returning owned `Element<'static, _>`. The
 rows and returned element have independent lifetimes; the source need not be
 retained when rows render owned values. The retained log example uses this path.
+
+Keyboard input uses host-scoped wire events with final native captured/ignored
+status, consumed by the existing guest subscription tracker. The example gives
+one guest the entire guest window; a Ducktape shared-window host must target
+only the active/focused module. `init(macos: bool)` supplies modifier semantics
+before boot. Native Rust extern modifier helpers need guest-aware equivalents.
+Window, mouse and IME subscription transport remain separate work.

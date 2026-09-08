@@ -558,3 +558,7 @@ host. See [QR module views](examples/app-store/README.md#qr-module-views).
 Native `log_timeline` and `virtual_list` accept temporary row slices when the row
 closure returns owned elements, allowing static host surfaces without retaining
 the source rows. See [the log surface](examples/app-store/README.md#retained-host-session-fixture).
+
+Tree keyboard subscriptions receive host-delivered press/release/modifier events
+with native captured/ignored status. Hosts initialize guests with their macOS
+modifier convention; see [keyboard module views](examples/app-store/README.md#keyboard-module-views).

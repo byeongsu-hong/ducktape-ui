@@ -55,7 +55,8 @@ fn a_bundled_guest_receives_typed_surface_events_and_patches_its_view() {
     let mut store = Store::new(&engine, Host);
     store.set_fuel(100_000_000).unwrap();
     let view = View::instantiate(&mut store, &component, &linker).unwrap();
-    view.call_init(&mut store).unwrap();
+    view.call_init(&mut store, cfg!(target_os = "macos"))
+        .unwrap();
     let mut root = Node::empty();
     let mut tick = |events: Vec<Event>| {
         store.set_fuel(100_000_000).unwrap();

@@ -1210,3 +1210,24 @@ Native `log_timeline` and `virtual_list` separate the source-slice lifetime from
 the returned element lifetime. An owned row view permits a static surface from
 a temporary slice (including an `Arc<[T]>`); a borrowing row view still ties its
 elements to the source naturally. Only mounted row views are constructed.
+
+## Tree keyboard subscriptions
+
+A host delivers `wire::Event::Keyboard` after its mounted native widgets process
+the event, including its captured/ignored status. The guest broadcasts to its
+existing Iced subscription tracker and settles after each event, so filters,
+`when` conditions and subscription removal keep their native ordering and a
+burst cannot overflow the tracker's queue before it is polled. Key, modified
+key, physical/native code, location, modifiers, text and repeat cross as data.
+
+`ice:view` now exports `init(macos: bool)` and `tick`. The host supplies platform
+semantics before boot. Tree `key.command_modifiers()` and modifier `.command`,
+`.jump` and `.macos_command` projections use this per-instance setting. Guest
+Rust externs must use `ui_lang_guest::keyboard` helpers for these meanings;
+Iced's own Rust methods still use the compiler target OS. Other modifier bits
+remain unchanged. Hosts and guests must rebuild together for the new ABI/event.
+
+A shared-window host must route keyboard input only to the selected module,
+never broadcast another module's or host input's text. This is a host routing
+contract; window/global subscriptions, mouse and IME subscription transport are
+not introduced here.

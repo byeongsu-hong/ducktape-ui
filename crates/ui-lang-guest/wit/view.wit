@@ -6,6 +6,6 @@ world view {
     // message has to leave first.
     import panicked: func(message: string);
 
-    export init: func();
+    export init: func(macos: bool);
     export tick: func(events: list<u8>) -> list<u8>;
 }

@@ -13,7 +13,7 @@ rust-version.workspace = true
 # `advanced` is what the generated app's `Task`/`Theme` code names.
 iced = { version = "=0.14.0", default-features = false, features = ["advanced", "markdown"] }
 iced_runtime = "=0.14.0"
-ui-lang-wire.workspace = true
+ui-lang-wire = { workspace = true, features = ["iced"] }
 wit-bindgen = "0.61"
 
 [lints]

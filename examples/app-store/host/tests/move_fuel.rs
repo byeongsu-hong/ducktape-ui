@@ -48,7 +48,8 @@ impl Guest {
         linker.define_unknown_imports_as_traps(component).unwrap();
         let view = View::instantiate(&mut store, component, &linker).unwrap();
         store.set_fuel(FUEL).unwrap();
-        view.call_init(&mut store).unwrap();
+        view.call_init(&mut store, cfg!(target_os = "macos"))
+            .unwrap();
         let mut guest = Self {
             store,
             view,

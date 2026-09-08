@@ -2051,6 +2051,7 @@ fn expr_builtin_group_5(
                 )
             }
             "key.native_unidentified" => "::iced::keyboard::key::Physical::Unidentified(::iced::keyboard::key::NativeCode::Unidentified)".into(),
+            "key.command_modifiers" if context.program.target() == Target::Tree => "::ui_lang_guest::keyboard::command_modifiers()".into(),
             "key.command_modifiers" => "::iced::keyboard::Modifiers::COMMAND".into(),
             "key.native" => {
                 let platform = context
@@ -2467,9 +2468,12 @@ fn resolved_path_code(
                 owned_projection = true;
             }
             ResolvedProjectionKind::Native => {
-                if let Some((native, _)) =
-                    native_field_projection(&projection.input, &projection.field, &code)
-                {
+                if let Some((native, _)) = native_field_projection(
+                    &projection.input,
+                    &projection.field,
+                    &code,
+                    program.target(),
+                ) {
                     code = native;
                     owned_projection = true;
                 } else {

@@ -335,6 +335,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "app-store-keyboard-fixture"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "app-store-keyed-fixture"
 version = "0.1.0"
 dependencies = [
@@ -4732,6 +4743,7 @@ name = "ui-lang-wire"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "iced_core",
  "serde",
 ]
 
