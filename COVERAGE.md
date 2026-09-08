@@ -25,6 +25,16 @@ counts toward the row below.
 
 Editor diagnostics use open buffers throughout every open app root's import
 graph and fall back to disk when a buffer closes.
+Generated symbol and fragment-file identities survive checkout relocation on the
+same filesystem.
+`generated_names_are_identical_across_checkout_roots_and_distinguish_fragments`
+checks two actual source graphs, same-stem local/shared imports, and direct Core
+compilation without Cargo setup. Its pre-fix assertion failed on both the lint
+macro and fragment names. Actual `cargo ice bundle --no-wasm-opt` components
+built from identical two-root fixtures also differed before the fix; the same
+pinned compiler and remap settings are used for the restored equality check.
+This is an identifier determinism contract, not a cross-toolchain byte guarantee.
+
 The shared process-local `AnalysisDb` keys parsed files by canonical path and
 SHA-256 content hash. It records direct and reverse imports, invalidates only
 reverse-dependent checked roots, retains failed roots and unresolved import
