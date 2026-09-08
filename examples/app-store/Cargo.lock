@@ -414,6 +414,7 @@ dependencies = [
  "ui-lang-components",
  "ui-lang-runtime",
  "ui-lang-wire",
+ "wasmparser 0.251.0",
  "wasmtime",
  "wat",
 ]

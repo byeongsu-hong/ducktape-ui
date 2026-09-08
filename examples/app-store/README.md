@@ -1320,9 +1320,9 @@ cargo test -p app-store-host bundled_pick_ -- --ignored
 
 ### Preferred window size evidence
 
-`ice.manifest.v1` has exactly five newline-separated fields: format version,
+`ice.manifest.v2` has exactly six newline-separated fields: format version,
 name, description, comma-terminated capabilities (or an empty line), and
-`none` or `width,height`. Width and height preserve f32 fractions and must be
+`none` or `width,height`, and the canonical positive decimal wire epoch. Width and height preserve f32 fractions and must be
 finite, positive and at most 8192 logical pixels. Tree reports an E190 diagnostic
 at `window size` for values outside this range (including f32 underflow); native
 target limits are unchanged. Malformed, duplicate and old
@@ -1355,7 +1355,7 @@ Hosts can consume the Ice view contract without a graphics dependency through
 `ui-lang-wire`. `WIT` exposes the canonical text; `with_view_wit!(callback)`
 passes that same literal to a local macro for Wasmtime or wit-bindgen's `inline`
 option. `export_app!` retains its four arguments and the same `ice:view` ABI.
-`manifest::Manifest::parse` reads the strict five-line metadata;
+`manifest::Manifest::parse` reads the strict six-line metadata;
 `manifest::PreferredSize::dimensions` returns `[f32; 2]`. The optional `manifest`
 feature adds `manifest::read_manifest` for extracting exactly one manifest from
 component bytes, including nested core modules. Neither the default dependency
@@ -1366,6 +1366,15 @@ component, resolve imports with `Linker::instantiate_pre`, and check exports
 with the generated `ViewPre::new` without creating a store or running the guest.
 This checks required ABI types; it is not proof that instantiation, init, or boot
 will succeed. Import policy remains the host's responsibility.
+
+`WIRE_EPOCH` identifies the exact serialized tree/event/frame protocol. After
+verifying artifact bytes, call `Manifest::check_wire_protocol()` before any
+instantiation, native child launch, init, or restore. A mismatch reports
+`wire epoch guest N, host M`; app-store rejects the candidate and keeps a running
+instance unchanged. The epoch is independent of the manifest format and WIT
+signatures. Request capability declarations remain permissions, not renderer
+feature negotiation. Any serialized shape change requires a new epoch; no old
+decoder or implicit compatibility range is supported.
 
 ### Tree float placement
 
@@ -1467,3 +1476,23 @@ change the wire encoding.
 Container backgrounds support `bg=linear(...)` in both execution backends,
 including dynamic angles, palette-stop changes and alpha scrims. Other widget
 gradients are still listed in [PARITY.md](PARITY.md).
+
+### Wire epoch admission evidence
+
+A valid manifest may declare an unsupported epoch so that the catalog can still
+show its metadata. Installation and hot reload check the manifest of the exact
+hash-verified artifact before execution. Rejection reports
+`wire epoch guest N, host M`; a running guest retains its instance, draft and
+artifact hash. The native launch sentinel and Wasm core-start trap tests verify
+that incompatible packages do not execute. The actual SDK fixtures exercise
+initial loading and replacement separately on both backends.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-reload-v1-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/reload-v1-fixture --no-wasm-opt
+python3 examples/app-store/scripts/build-native.py \
+  -p app-store-reload-v1-fixture --out examples/app-store/target/native-reload-fixture
+cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host \
+  wire_epoch -- --include-ignored
+```

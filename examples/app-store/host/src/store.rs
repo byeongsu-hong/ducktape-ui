@@ -397,17 +397,19 @@ fn deadline_epochs() -> u64 {
     (deadline.div_ceil(epoch)) as u64
 }
 
-/// The components loaded this run, by content hash. Reopening, restarting
-/// or reinstalling an app that was loaded once is then an instantiation —
-/// under a millisecond — and a component rebuilt meanwhile hashes
-/// differently, which is refused before it gets here.
+/// Cache compiled components by content hash. Every opening still verifies the
+/// artifact bytes and their manifest; a cache hit only avoids recompilation.
 fn component(entry: &CatalogEntry) -> Result<(Component, bool), String> {
+    component_with_manifest(entry, wire::manifest::read_manifest)
+}
+
+fn component_with_manifest(
+    entry: &CatalogEntry,
+    read_manifest: fn(&[u8]) -> Option<wire::manifest::Manifest>,
+) -> Result<(Component, bool), String> {
     static COMPONENTS: OnceLock<Mutex<HashMap<String, Component>>> = OnceLock::new();
     let path = &entry.path;
     let components = COMPONENTS.get_or_init(Mutex::default);
-    if let Some(component) = components.lock().expect("component cache").get(&entry.hash) {
-        return Ok((component.clone(), true));
-    }
     // The catalog already left an oversized file out, but the path a guest
     // is loaded from is not necessarily one the catalog just scanned — an
     // app reopened after its file grew past the scan that found it, say —
@@ -426,6 +428,13 @@ fn component(entry: &CatalogEntry) -> Result<(Component, bool), String> {
         return Err(format!(
             "{path}: changed on disk since the catalog was scanned; Rescan, then Get it again"
         ));
+    }
+    read_manifest(&bytes)
+        .ok_or_else(|| format!("{path}: invalid view manifest"))?
+        .check_wire_protocol()
+        .map_err(|error| error.to_string())?;
+    if let Some(component) = components.lock().expect("component cache").get(&entry.hash) {
+        return Ok((component.clone(), true));
     }
     let component = Component::new(engine(), &bytes).map_err(|error| format!("{path}: {error}"))?;
     components
@@ -1799,3 +1808,7 @@ mod slider_handle_tests;
 #[cfg(test)]
 #[path = "gradient_tests.rs"]
 mod gradient_tests;
+
+#[cfg(test)]
+#[path = "protocol_tests.rs"]
+mod protocol_tests;

@@ -37,7 +37,7 @@ world view {
 
 /// Explicit opt-in parser: the production parser rejects this artifact kind.
 pub fn parse_manifest(text: &str) -> Option<crate::manifest::Manifest> {
-    crate::manifest::Manifest::parse_with_header(text, "ice.test.manifest.v1")
+    crate::manifest::Manifest::parse_with_header(text, "ice.test.manifest.v2")
 }
 
 #[cfg(feature = "manifest")]

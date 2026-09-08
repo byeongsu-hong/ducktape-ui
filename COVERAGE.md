@@ -1929,9 +1929,9 @@ declarative options; Rust style callbacks and gradient backgrounds remain refuse
 ### Guest preferred window size
 
 Tree compilation carries the primary `window size` into the versioned
-`ice.manifest.v1` custom section without another `export_app!` argument. The
-strict five fields are version, name, description, comma-terminated capabilities
-(or empty), and `none` or `width,height`. There is no legacy fallback.
+`ice.manifest.v2` custom section without another `export_app!` argument. The
+strict six fields are version, name, description, comma-terminated capabilities
+(or empty), `none` or `width,height`, and the canonical positive wire epoch. There is no legacy fallback.
 The app-store catalog accepts finite positive f32 dimensions up to 8192 logical
 pixels; Tree rejects declarations outside that range at the `size` source line,
 without changing native-target limits. Saved placement takes precedence over the declaration, then the host
@@ -2314,3 +2314,27 @@ makes the wide case fail its same-line assertion (158.35 vs 95.85px). Restored
 source passes both cases with `cargo test -p showcase --test action_layout`.
 This is evidence for the explicit card pattern, not automatic reflow in default
 components or evidence for Dialog.Actions/ButtonGroup; L04 remains open.
+
+### Tree wire protocol admission
+
+`ice.manifest.v2` and `ice.test.manifest.v2` include a canonical positive
+`wire_epoch`, emitted from `ui_lang_wire::WIRE_EPOCH`. Static format parsing
+accepts a well-formed different epoch; `Manifest::check_wire_protocol` rejects
+it before execution with `wire epoch guest N, host M`. Wasm and native loaders
+check the manifest attached to hash-verified bytes. The same admission protects
+hot reload before snapshot or candidate restore. Required renderer features and
+permission declarations remain separate; no optional negotiation is claimed.
+
+Owning tests: `manifest_requires_an_explicit_canonical_wire_epoch`,
+`wire_protocol_mismatch_reports_both_epochs`,
+`wire_epoch_mismatch_rejects_native_before_launch`, and the actual SDK package
+`wire_epoch_{wasm,native}_{install,reload}_rejects_before_execution`. These four
+require the reload-v1 Wasm/native packages. They preserve an edited draft,
+instance identity, snapshot and hash after rejection and then edit again.
+
+Red evidence: replacing the shared epoch equality with `true` makes the wire
+mismatch assertion fail, launches the native sentinel, initializes both SDK
+packages, and successfully replaces both running guests where rejection was
+required. The production-WIT Wasm sentinel instead executes `unreachable`.
+Restoring the equality passes the same six host assertions, including all four
+explicitly selected native/Wasm package tests (skip 0).
