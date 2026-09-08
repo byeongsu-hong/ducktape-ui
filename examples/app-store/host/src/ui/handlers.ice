@@ -1,11 +1,11 @@
-// The store window first; then the colour mode; then, one load at a time,
-// every app that had a window when the store last exited.
+// Open the store immediately; restore remembered apps after the first scan.
 on mount
+  catalog_scanning = true
   rows = build_rows(catalog, query, library, running, generation)
   parallel
     task window open store -> store_opened _
     task system theme -> system_theme _
-    stream every restore_running(catalog, library) -> instantiated _ | install_failed _
+    run every scan_catalog() -> catalog_scanned _
 
 on store_opened(id)
   store_window = some(id)
@@ -34,14 +34,22 @@ on show_details(id)
   page = "detail"
   consenting = ""
 
-// A module dropped into the catalog directory while the store runs is only a
-// file read away, so the list is not fixed at start; the directory itself is
-// read again with it.
+// Both the timer and the Rescan button use one in-flight scan. Completion
+// always clears the guard, including the empty/missing-directory result.
 on rescan
+  return if catalog_scanning
   catalog_path = catalog_dir()
-  catalog = scan_catalog()
-  status = ""
+  catalog_scanning = true
+  run every scan_catalog() -> catalog_scanned _
+
+on catalog_scanned(next)
+  catalog_scanning = false
+  return if catalog_ready && catalog == next
+  catalog = next
   rows = build_rows(catalog, query, library, running, generation)
+  return if catalog_ready
+  catalog_ready = true
+  stream every restore_running(catalog, library) -> instantiated _ | install_failed _
 
 // The search box is bound to `query`; its change route is what refreshes
 // the rows, since a binding alone runs no handler.
@@ -60,13 +68,37 @@ on ask_consent(id)
 on decline
   consenting = ""
 
-// Get and Open are one path: load the module, then give it a window. Get
-// also pins the app in the library, which Open finds it already in.
+// Get replaces an existing instance in its window, or loads a new one.
+// Each request invalidates any older staged replacement.
 on install(entry)
   consenting = ""
-  return if is_running(running, entry.id)
+  reload_serial = reload_serial + 1
   status = installing_label(entry)
-  run every install_app(entry) -> instantiated _ | install_failed _
+  parallel
+    flow
+      from done install_request(entry, reload_serial)
+      done -> install_new _
+    flow
+      from done install_request(entry, reload_serial)
+      done -> install_running _
+
+on install_new(request)
+  return if request.serial != reload_serial || is_running(running, request.entry.id)
+  run every install_requested(request) -> install_completed _
+
+on install_running(request)
+  return if request.serial != reload_serial || !is_running(running, request.entry.id)
+  run every prepare_reload(request.entry, running, request.serial) -> reload_prepared _
+
+// Commit on the window update thread using the current running list and token.
+on reload_prepared(candidate)
+  return if !reload_current(candidate, reload_serial)
+  let committed = commit_reload(library, running, reload_serial, candidate)
+  library = committed.library
+  running = committed.running
+  status = committed.status
+  generation = generation + 1
+  rows = build_rows(catalog, query, library, running, generation)
 
 // Open runs only the module that was consented to: a rebuilt one is named
 // in the status line and gets nothing until it is reviewed and got again.
@@ -74,10 +106,23 @@ on launch(entry)
   return if is_running(running, entry.id)
   status = opening_label(library, entry)
   return if !pinned(library, entry)
-  run every install_app(entry) -> instantiated _ | install_failed _
+  reload_serial = reload_serial + 1
+  run every install_requested(install_request(entry, reload_serial)) -> install_completed _
 
+// Only a current completion may pin or enter the native window queue.
+on install_completed(completion)
+  return if completion.serial != reload_serial
+  let committed = commit_install(library, opening, running, reload_serial, completion)
+  library = committed.library
+  opening = committed.opening
+  status = committed.status
+  rows = build_rows(catalog, query, library, running, generation)
+  return if !committed.open
+  task window open guest -> guest_opened _
+
+// Startup restoration intentionally delivers every remembered app.
 on instantiated(app)
-  library = add_to_library(library, app.id, app.hash)
+  return if !restore_current(library, opening, running, app)
   opening = enqueue(opening, app)
   status = ""
   rows = build_rows(catalog, query, library, running, generation)
@@ -112,6 +157,7 @@ on install_failed(error)
 // instance, so Quit only asks for the close.
 on quit(id)
   return if !is_running(running, id)
+  reload_serial = reload_serial + 1
   task window close target=window_of(running, id)
 
 // Uninstall is asked twice: the first press opens the app's detail page
@@ -126,6 +172,7 @@ on keep
   removing = ""
 
 on uninstall(id)
+  reload_serial = reload_serial + 1
   removing = ""
   library = remove_from_library(library, id)
   rows = build_rows(catalog, query, library, running, generation)
@@ -139,6 +186,7 @@ on raise_app(id)
 // A guest's window closed: its instance goes with it. The store's own window
 // closing is the end of the store.
 on window_closed(id)
+  reload_serial = reload_serial + 1
   running = drop_window(running, id)
   generation = generation + 1
   rows = build_rows(catalog, query, library, running, generation)
@@ -181,6 +229,7 @@ on focus_search(id)
   task widget focus #root/store/topbar/search
 
 subscribe
+  every 1s -> rescan
   system theme -> system_theme _
   window closed with-id -> window_closed _
   window moved with-id -> guest_moved _ _ _

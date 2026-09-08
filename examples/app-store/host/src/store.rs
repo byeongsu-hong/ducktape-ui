@@ -66,9 +66,9 @@ pub use crate::library::{
     attach_window, build_rows, changed, drop_first, drop_window, empty_rows, enqueue, escape_page,
     escape_press, gauge, gauge_of, in_library, installing_label, is_guest, is_running, is_window,
     library_hint, meter, moved, no_placement, opening_label, pinned, placement_at,
-    remembered_library, remembered_placements, remove_from_library, resized, restore_running,
-    running_count, running_label, save_placements, search_hint, search_press, surface_at,
-    window_of, window_title,
+    remembered_library, remembered_placements, remove_from_library, renamed_running, resized,
+    restore_running, running_count, running_label, save_placements, search_hint, search_press,
+    surface_at, window_of, window_title,
 };
 
 use crate::capabilities::{Inbox, bus, clipboard, clock, host, storage};
@@ -81,8 +81,8 @@ use crate::limits::{
     TICK_DEADLINE,
 };
 
-/// The host-side handle the view holds. Identity is the instance: two
-/// surfaces compare equal only when they are the same guest.
+/// The host-side handle the view holds. Equality follows the shared slot,
+/// which remains stable when its guest instance is replaced.
 #[derive(Clone, Debug)]
 pub struct Surface(pub(crate) Arc<Mutex<Guest>>);
 
@@ -148,6 +148,14 @@ pub async fn install_app(entry: CatalogEntry) -> Result<Loaded, StoreError> {
     })
 }
 
+#[path = "reload.rs"]
+mod reload;
+pub use reload::{
+    InstallCommit, InstallCompletion, InstallRequest, Reload, ReloadCommit, commit_install,
+    commit_reload, install_request, install_requested, prepare_reload, reload_current,
+    restore_current,
+};
+
 // ---------- the guest ----------
 
 /// A clock subscription: one answer per period, forever.
@@ -189,7 +197,7 @@ pub struct Guest {
     view: View,
     /// Cleared when this instance faults or drops, which is what prunes its
     /// bus subscriptions without locking the guest from inside a publish.
-    alive: Arc<AtomicBool>,
+    pub(crate) alive: Arc<AtomicBool>,
     pub(crate) pending: Vec<wire::Event>,
     /// The last frame, its `root` kept across `unchanged` ticks and patched
     /// in place by a frame that carries patches instead of a tree.
@@ -197,6 +205,7 @@ pub struct Guest {
     /// Bumped when `frame.root` changes: the widget rebuilds when it sees a
     /// number it has not rendered.
     pub(crate) frame_rev: u64,
+    staged_frame: bool,
     /// The live text of every input in the tree — the host's, not the
     /// guest's.
     pub(crate) inputs: Inputs,
@@ -409,18 +418,15 @@ fn component(entry: &CatalogEntry) -> Result<(Component, bool), String> {
     Ok((component, false))
 }
 
-impl Guest {
-    fn load(entry: &CatalogEntry) -> Result<Self, String> {
-        Self::load_with_terminal(
-            entry,
-            std::env::var_os("ICE_TERMINAL_PROGRAM").map(Into::into),
-        )
-    }
+/// An instantiated component with no app initialization or host resources.
+struct Instance {
+    store: Store<HostState>,
+    view: View,
+    load: Load,
+}
 
-    fn load_with_terminal(
-        entry: &CatalogEntry,
-        program: Option<std::path::PathBuf>,
-    ) -> Result<Self, String> {
+impl Instance {
+    fn new(entry: &CatalogEntry) -> Result<Self, String> {
         let path = &entry.path;
         let engine = engine();
         let started = Instant::now();
@@ -464,6 +470,35 @@ impl Guest {
             .map_err(|error| error.to_string())?;
         let view = View::instantiate(&mut store, &component, &linker)
             .map_err(|error| format!("{path}: {}", first_line(&error)))?;
+        Ok(Self {
+            store,
+            view,
+            load: Load {
+                took: started.elapsed(),
+                cached,
+            },
+        })
+    }
+}
+
+impl Guest {
+    fn load(entry: &CatalogEntry) -> Result<Self, String> {
+        Self::load_with_terminal(
+            entry,
+            std::env::var_os("ICE_TERMINAL_PROGRAM").map(Into::into),
+        )
+    }
+
+    fn load_with_terminal(
+        entry: &CatalogEntry,
+        program: Option<std::path::PathBuf>,
+    ) -> Result<Self, String> {
+        let Instance {
+            mut store,
+            view,
+            load,
+        } = Instance::new(entry)?;
+        let path = &entry.path;
         // `on mount` runs in here, so a panic in the app's boot has the same
         // message handed over as a panic in any later tick — and the boot
         // gets a budget of its own, not what instantiation left of one.
@@ -479,8 +514,22 @@ impl Guest {
         } else {
             None
         };
+        Ok(Self::from_instance(
+            entry,
+            Instance { store, view, load },
+            terminal,
+            Arc::new(crate::surfaces::log::Session::default()),
+        ))
+    }
+
+    fn from_instance(
+        entry: &CatalogEntry,
+        instance: Instance,
+        terminal: Option<Arc<Mutex<crate::terminal::Terminal>>>,
+        log_session: Arc<crate::surfaces::log::Session>,
+    ) -> Self {
+        let Instance { store, view, load } = instance;
         LIVE_INSTANCES.fetch_add(1, Ordering::Relaxed);
-        let log_session = Arc::new(crate::surfaces::log::Session::default());
         let mut surfaces = crate::surfaces::registry(log_session.clone());
         if let Some(terminal) = &terminal {
             surfaces.insert(
@@ -488,7 +537,7 @@ impl Guest {
                 crate::terminal::provider(terminal.clone()),
             );
         }
-        Ok(Self {
+        Self {
             surfaces,
             terminal,
             terminal_subscriptions: Vec::new(),
@@ -501,6 +550,7 @@ impl Guest {
             pending: Vec::new(),
             frame: wire::Frame::default(),
             frame_rev: 0,
+            staged_frame: false,
             inputs: Inputs::default(),
             pictures: Pictures::default(),
             due: Vec::new(),
@@ -521,10 +571,7 @@ impl Guest {
             fuel_used: 0,
             tick_time: Duration::ZERO,
             resting_until: None,
-            load: Load {
-                took: started.elapsed(),
-                cached,
-            },
+            load,
             ticks: 0,
             skipped: 0,
             unchanged: 0,
@@ -533,7 +580,7 @@ impl Guest {
             patch_bytes: 0,
             recent: VecDeque::new(),
             sensors: SensorLoop::default(),
-        })
+        }
     }
 
     /// The host's colour mode, as the window showing this guest has it. A
@@ -607,7 +654,7 @@ impl Guest {
                 published: false,
             };
         }
-        if self.quiet(now) {
+        if !self.staged_frame && self.quiet(now) {
             self.skipped += 1;
             return self.wake(now);
         }
@@ -617,9 +664,11 @@ impl Guest {
         // Run the frame already mounted before a busy guest publishes its
         // successor, or a timer could forever supersede boot-time focus.
         self.execute_widgets(now, &mut widgets, &mut operations_left);
-        self.deliver_due(now);
-        self.tick();
-        self.ticks += 1;
+        if !std::mem::take(&mut self.staged_frame) {
+            self.deliver_due(now);
+            self.tick();
+            self.ticks += 1;
+        }
         self.recent.push_back((now, self.fuel_used));
         while self
             .recent
@@ -1608,3 +1657,7 @@ mod editor_tests;
 #[cfg(test)]
 #[path = "pick_tests.rs"]
 mod pick_tests;
+
+#[cfg(test)]
+#[path = "reload_tests.rs"]
+mod reload_tests;

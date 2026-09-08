@@ -1785,8 +1785,27 @@ nested records and palette/modifier state byte-for-byte, and reject malformed
 nested state while preserving the prior driver. Encoding bytes as an empty vector
 fails the payload assertion. Replaying source initializers during restore fails
 the external initialization-count assertion; exact restoration makes both pass.
-These tests do not prove catalog
-watching, host-window/focus/scroll preservation or transactional host replacement.
+The separate `bundled_reload_` host suite loads two distinct versioned wasm
+artifacts and exercises mounted draft editing, focus/scroll preservation, stable
+Surface/window identity, no repeated initialization or boot, and restarted
+subscriptions. It verifies wrong-hash and schema-mismatch errors, unchanged pins
+on failure, stale request/edit/closed-window refusal and stale install completion
+rejection before pinning or opening. Startup completion checks current consent
+and duplicate pending windows; accepting a removed pin fails its refusal assertion.
+Catalog unit tests observe add/change/remove,
+stable ordering and unchanged consent hashes; they do not simulate filesystem
+watch notifications (the host uses asynchronous periodic scans).
+
+Native host tests also exercise a staged raw frame containing requests and their
+same-frame cancellations, removal of a terminal provider, and captured overlay
+keyboard forwarding before and after an instance swap. Reversing request/cancel
+order leaks a ticker and fails; copying the removed provider fails; disabling the
+overlay generation guard fails with a new pending key. Replacing failure reasons
+with a generic message fails the cause-specific error assertion. Disabling the
+install serial guard restores an obsolete pin and fails. The direct native input
+guard mutation fails the stale-key assertion. Each production mutation was
+restored and the actual wasm suite passed. These tests use a headless native
+renderer, not an operating-system window-manager focus automation test.
 
 ### Tree scroll route evidence
 

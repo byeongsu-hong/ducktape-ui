@@ -44,7 +44,9 @@ pub fn catalog_dir() -> String {
 /// costs a hundred file reads, not a hundred cranelift runs. A file past
 /// [`MAX_MODULE_BYTES`] is left out before it is read at all, the same way a
 /// bad manifest leaves a module out.
-pub fn scan_catalog() -> Vec<CatalogEntry> {
+///
+/// Polled by the host executor; filesystem reads never run in an Ice handler.
+pub async fn scan_catalog() -> Vec<CatalogEntry> {
     scan_dir(std::path::Path::new(&catalog_dir()))
 }
 
@@ -86,7 +88,7 @@ fn scan_dir(dir: &std::path::Path) -> Vec<CatalogEntry> {
             })
         })
         .collect();
-    catalog.sort_by(|a, b| a.name.cmp(&b.name));
+    catalog.sort_by(|a, b| (&a.name, &a.id).cmp(&(&b.name, &b.id)));
     catalog
 }
 
@@ -241,6 +243,65 @@ mod tests {
             .flatten()
             .map(|entry| entry.path())
             .find(|path| path.extension().is_some_and(|ext| ext == "wasm"))
+    }
+
+    // The scanner only needs a valid component header and manifest custom section;
+    // loading executable guest code is a separate boundary.
+    fn component_manifest(description: &str) -> Vec<u8> {
+        let manifest = format!("Sample\n{description}\nclock,storage,");
+        let mut section = vec![MANIFEST_SECTION.len() as u8];
+        section.extend_from_slice(MANIFEST_SECTION.as_bytes());
+        section.extend_from_slice(manifest.as_bytes());
+        assert!(section.len() < 128);
+        let mut bytes = b"\0asm\x0d\0\x01\0".to_vec();
+        bytes.extend_from_slice(&[0, section.len() as u8]);
+        bytes.extend(section);
+        bytes
+    }
+
+    #[test]
+    fn catalog_scans_detect_add_change_remove_without_moving_consent_pins() {
+        let scratch = ScratchDir::new("catalog_changes");
+        assert!(scan_dir(&scratch.0).is_empty());
+        let path = scratch.0.join("sample.wasm");
+        std::fs::write(&path, component_manifest("First build")).unwrap();
+        let initial = scan_dir(&scratch.0);
+        assert_eq!(initial.len(), 1);
+        let pins = vec![crate::library::Installed {
+            id: initial[0].id.clone(),
+            hash: initial[0].hash.clone(),
+        }];
+        assert!(crate::library::pinned(&pins, &initial[0]));
+        assert_eq!(scan_dir(&scratch.0), initial, "unchanged scan is equal");
+
+        std::fs::write(&path, component_manifest("Second build")).unwrap();
+        let changed = scan_dir(&scratch.0);
+        assert_eq!(changed.len(), 1);
+        assert_ne!(changed[0].hash, initial[0].hash);
+        assert_eq!(changed[0].description, "Second build");
+        assert!(crate::library::changed(&pins, &changed[0]));
+        assert_eq!(pins[0].hash, initial[0].hash);
+
+        std::fs::write(scratch.0.join("partial.wasm"), b"incomplete").unwrap();
+        assert_eq!(scan_dir(&scratch.0), changed);
+        std::fs::remove_file(path).unwrap();
+        assert!(scan_dir(&scratch.0).is_empty());
+    }
+
+    #[test]
+    fn equal_names_have_stable_catalog_order() {
+        let scratch = ScratchDir::new("equal_names");
+        for id in ["z", "a"] {
+            std::fs::write(scratch.0.join(format!("{id}.wasm")), component_manifest(id)).unwrap();
+        }
+        let entries = scan_dir(&scratch.0);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.id.as_str())
+                .collect::<Vec<_>>(),
+            ["a", "z"]
+        );
     }
 
     #[test]

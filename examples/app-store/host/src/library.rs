@@ -34,6 +34,16 @@ pub struct Running {
     pub window: iced::window::Id,
 }
 
+/// Update the approved app label without replacing its window or Surface.
+pub fn renamed_running(mut running: Vec<Running>, loaded: &Loaded) -> Vec<Running> {
+    for app in &mut running {
+        if app.id == loaded.id && app.surface == loaded.surface {
+            app.name.clone_from(&loaded.name);
+        }
+    }
+    running
+}
+
 /// What a running guest costs, read off its instance and formatted for the
 /// store's cards and monitor. Empty strings where there is nothing to say.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
