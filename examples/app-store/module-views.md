@@ -8,7 +8,7 @@ rendering, devices, credentials and network access remain host responsibilities.
 
 This inventory was refreshed on 2026-09-08 against Ducktape's clean `dev`
 checkout `06e0378b4022a43effead97a700c0669a4d17d9c` and Ice main
-`90391f5f30b8a3e8517b5d9dc238d288fe3319bc`. Ducktape's inspected integration
+`3f608c59f31d7607b076bdcc9cc57e1f28280029`. Ducktape's inspected integration
 branch `379cc7067` pins Ice `fad0aa32`; its changes are not counted as deployed
 mainline behavior. This is a source audit, not a fresh execution of Ducktape's
 tests or proof that its native daemon compiles for wasm. Ducktape is not modified
@@ -27,7 +27,7 @@ typed-root compile and execution of its real workflows.
 | Chat and DMs: `screens/chat.ice`, `components/chat.ice`, `components/dm.ice` | data contract for `rich_composer(&editor, ...) -> ComposerEvent`; guest-local widget paths instead of native `window=` targets | chat queries/submissions and live deltas; navigation, clipboard and notifications through host capabilities |
 | Huddle: `components/huddle.ice`, `extern/call.ice` | native video surface providers and call capability integration | host-owned call session and media; cancellation, mute/camera/screen requests and detached windows remain host responsibilities |
 | Pages: `screens/pages.ice`, `extern/editor.ice` | `page_document(&editor, ..., &[PageBlock], &[str]) -> PageEvent` buffer/action boundary; page menus, history and comments | load/save and dirty-buffer conflict handling; preserve rich editing behavior |
-| Forge: `screens/forge.ice`, `components/forge.ice` | rich composer, application markdown/code/picture surfaces and `scroll-to-key` (PR #977 pending at this audit) | repository data, links and file assets; native git work and HTTP fetching stay host-side |
+| Forge: `screens/forge.ice`, `components/forge.ice` | rich composer, application markdown/code/picture surfaces and guest-local `scroll-to-key` routing (implemented in #977) | repository data, links and file assets; native git work and HTTP fetching stay host-side |
 | Files: `screens/storage.ice` (`FilesScreen`) | editor and application picture/markdown/code surface integration | file listing/read/write/history and dropped-file access; a guest path is not authority to read host files |
 | Agent UI: `screens/shell.ice` | rich composer and `agent_terminal_surface(&AgentTerminalSession)` resource adapter | agent streams; terminal process/session state remains host-owned |
 | Governance: `screens/governance.ice` | separate `crates/views/governance` guest and native mount exist; module-artifact ownership remains | proposal intents return to existing host authorization/signing handlers |
