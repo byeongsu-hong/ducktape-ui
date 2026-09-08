@@ -1647,3 +1647,29 @@ content. Page does not own scrolling or maximum content width. Form already
 provides its own outer padding and should not be nested inside Page merely to
 obtain a screen inset. This is ordinary library composition, not implicit margin
 on every widget or a new Core construct.
+
+### Display text budget diagnostics
+
+The tree wire keeps its 64 KiB per-string limit and 64 KiB aggregate shaped-text
+budget. Display strings may be shortened to fit; an `Editor` document exceeding
+its per-document limit or losing bytes to the aggregate budget rejects the frame
+instead. Editor placeholders are display strings. Document occurrences still
+consume the aggregate budget; shared document storage is a separate feature.
+
+`sanitize(Frame)` and `apply(Node, patches)` return a fixed-size `SanitizeReport`
+from the actual before/after sanitizer pass. `display_text_truncated` covers
+visible text, rich spans, control labels/options/placeholders and accessibility
+labels; metadata such as font family names is not itself display text. Intentional
+patch removal happens before measurement and does not produce a truncation report.
+A producer that sanitizes before encoding retains its report in
+`Frame.upstream_sanitization`. Receivers independently validate full frames and
+applied patch results and distinguish their own observations from this advisory
+producer report.
+
+A host retains loss reports alongside its accepted tree through patches and
+unchanged frames: freeing budget cannot reconstruct bytes already removed.
+A new complete, untruncated tree clears that tree's loss status. The app-store
+host logs `module`, installation `generation`, the fixed reason
+`display_text_truncated`, and `origin=host|producer-reported`, without message or
+document contents. Each origin is logged once per successful instance installation;
+a failed reload candidate does not change that generation or warning state.

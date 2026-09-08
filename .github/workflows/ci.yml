@@ -704,6 +704,27 @@ jobs:
       - name: Check ordered editor transactions and guest history
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host editor_transactions_native_and_wasm_order_input_and_unify_guest_history -- --ignored --test-threads=1
+      - name: Bundle text budget fixtures for native and Wasm
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-text-budget-fixture --target wasm32-unknown-unknown \
+            --no-wasm-opt --out examples/app-store/target/text-budget-fixture
+          cd examples/app-store
+          python3 scripts/build-native.py -p app-store-text-budget-fixture --out target/text-budget-native
+      - name: Check display truncation reports and reload preservation
+        working-directory: examples/app-store
+        run: |
+          cargo test --locked -p app-store-host display_diagnostics -- --include-ignored --test-threads=1 --nocapture 2>&1 | tee text-budget-report.log
+          python3 - <<'PYTHON'
+          import re
+          from pathlib import Path
+          lines = re.findall(r"module=(\S+) generation=(\d+) reason=display_text_truncated origin=(\S+)", Path("text-budget-report.log").read_text())
+          assert len(lines) == 4, lines
+          assert len({generation for _, generation, _ in lines}) == 4, lines
+          assert all(origin == "host" for _, _, origin in lines), lines
+          for module in ("app_store_text_budget_fixture", "text-budget-fixture.native"):
+              assert sum(item[0] == module for item in lines) == 2, lines
+          PYTHON
       - name: Bundle container gradient fixtures
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \

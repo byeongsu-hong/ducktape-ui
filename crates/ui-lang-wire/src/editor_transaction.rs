@@ -453,6 +453,7 @@ mod protocol_tests {
     #[test]
     fn decoder_rejects_aggregate_patch_bytes_and_resets_budget_after_failure() {
         let mut frame = crate::Frame {
+            upstream_sanitization: Default::default(),
             editor_decisions: vec![response("a".repeat(crate::MAX_STRING_BYTES / 2 + 1)); 2],
             ..Default::default()
         };
@@ -477,6 +478,7 @@ mod protocol_tests {
         };
         assert!(crate::decode::<EditorBinding>(&crate::encode(&binding)).is_err());
         let frame = crate::Frame {
+            upstream_sanitization: Default::default(),
             editor_decisions: vec![response(String::new()); MAX_EDITOR_RESPONSES + 1],
             ..Default::default()
         };

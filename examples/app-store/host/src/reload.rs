@@ -91,6 +91,7 @@ struct Candidate {
     entry: CatalogEntry,
     instance: Instance,
     frame: wire::Frame,
+    frame_reports: FrameReports,
     alive: Arc<AtomicBool>,
     ticks: u64,
 }
@@ -220,6 +221,7 @@ fn finish(running: &[Running], serial: i64, reload: Reload) -> Result<Loaded, St
         }
     }
     fresh.frame = candidate.frame;
+    fresh.frame_reports = candidate.frame_reports;
     fresh.frame_rev = guest.frame_rev + 1;
     fresh.dark = guest.dark;
     fresh.inputs = std::mem::take(&mut guest.inputs);
@@ -237,6 +239,7 @@ fn finish(running: &[Running], serial: i64, reload: Reload) -> Result<Loaded, St
     // where native clipboard and mounted widget operations are available.
     fresh.staged_frame = true;
     *guest = fresh;
+    guest.report_display_truncation();
     drop(guest);
     Ok(Loaded {
         preferred_size: entry.preferred_size,
@@ -281,7 +284,7 @@ impl Candidate {
         let bytes = instance
             .backend
             .tick(&wire::encode(&Vec::<wire::Event>::new()))?;
-        let frame = shape(&bytes)?;
+        let (frame, frame_reports) = shape(&bytes)?;
         if frame.root.is_none() {
             return Err("The replacement did not publish a complete tree".into());
         }
@@ -289,6 +292,7 @@ impl Candidate {
             entry,
             instance,
             frame,
+            frame_reports,
             alive,
             ticks,
         })

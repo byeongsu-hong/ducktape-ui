@@ -335,6 +335,7 @@ impl<A: App> Driver<A> {
             self.last_root = Some(kept);
         }
         wire::Frame {
+            upstream_sanitization: Default::default(),
             editor_decisions: slots::take_editor_responses(),
             mouse_interest: slots::mouse_interest(),
             root: Some(root),

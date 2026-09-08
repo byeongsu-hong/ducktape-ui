@@ -173,6 +173,11 @@ pub use window_effects::{
     prepare_window_effects,
 };
 
+#[path = "display_diagnostics.rs"]
+mod display_diagnostics;
+use display_diagnostics::{DisplayDiagnostics, FrameReports};
+static NEXT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 // ---------- the guest ----------
 
 /// A clock subscription: one answer per period, forever.
@@ -221,6 +226,9 @@ pub struct Guest {
     /// Bumped when `frame.root` changes: the widget rebuilds when it sees a
     /// number it has not rendered.
     pub(crate) frame_rev: u64,
+    generation: u64,
+    frame_reports: FrameReports,
+    display_diagnostics: DisplayDiagnostics,
     staged_frame: bool,
     /// The live text of every input in the tree — the host's, not the
     /// guest's.
@@ -561,6 +569,9 @@ impl Guest {
             pending: Vec::new(),
             frame: wire::Frame::default(),
             frame_rev: 0,
+            generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
+            frame_reports: FrameReports::default(),
+            display_diagnostics: DisplayDiagnostics::default(),
             staged_frame: false,
             inputs: Inputs::default(),
             pictures: Pictures::default(),
@@ -1140,7 +1151,8 @@ impl Guest {
         self.tick_time = started.elapsed();
         self.fuel_used = self.backend.fuel_used();
         match outcome {
-            Ok(mut frame) => {
+            Ok((mut frame, mut reports)) => {
+                let inherits = frame.root.is_none();
                 if frame.unchanged {
                     self.unchanged += 1;
                 } else if frame.root.is_none() {
@@ -1148,8 +1160,9 @@ impl Guest {
                 }
                 let mut accepted = true;
                 match merge(&mut self.frame.root, &mut frame) {
-                    Ok(false) => {}
-                    Ok(true) => {
+                    Ok((false, _)) => {}
+                    Ok((true, report)) => {
+                        reports.local.merge(report);
                         self.frame_rev += 1;
                         if let Some(root) = &mut frame.root {
                             self.inputs.adopt(root);
@@ -1174,8 +1187,15 @@ impl Guest {
                         self.pending.push(wire::Event::Resync);
                     }
                 }
-                if accepted && self.inputs.editor_frame(&frame, &mut self.pending) {
-                    self.frame_rev += 1;
+                if accepted {
+                    if inherits {
+                        reports.inherit(self.frame_reports);
+                    }
+                    self.frame_reports = reports;
+                    self.report_display_truncation();
+                    if self.inputs.editor_frame(&frame, &mut self.pending) {
+                        self.frame_rev += 1;
+                    }
                 }
                 self.frame = frame;
             }
@@ -1189,38 +1209,55 @@ impl Guest {
         }
     }
 
-    fn tick_inner(&mut self, bytes: &[u8]) -> Result<wire::Frame, String> {
+    fn report_display_truncation(&mut self) {
+        for origin in self
+            .display_diagnostics
+            .observe(self.frame_reports)
+            .into_iter()
+            .flatten()
+        {
+            eprintln!(
+                "module={} generation={} reason=display_text_truncated origin={origin}",
+                self.entry.id, self.generation
+            );
+        }
+    }
+
+    fn tick_inner(&mut self, bytes: &[u8]) -> Result<(wire::Frame, FrameReports), String> {
         let frame = self.backend.tick(bytes)?;
         let len = frame.len();
-        let frame = shape(&frame)?;
+        let (frame, reports) = shape(&frame)?;
         if frame.root.is_some() {
             self.frame_bytes = len;
         } else if !frame.unchanged {
             self.patch_bytes = len;
         }
-        Ok(frame)
+        Ok((frame, reports))
     }
 }
 
 /// Brings the tree the host holds into `frame`: an `unchanged` frame takes
 /// it as is, a frame without a tree patches it, a frame with one replaces
-/// it. `Ok(true)` is a tree the window has to rebuild for. `Err` is a
+/// it. `Ok((true, report))` is a tree to rebuild and its observed loss. `Err` is a
 /// patch the held tree cannot take, or no held tree to patch — `frame` is
 /// then left with no new tree, while `held` remains intact for resync.
-fn merge(held: &mut Option<wire::Node>, frame: &mut wire::Frame) -> Result<bool, &'static str> {
+fn merge(
+    held: &mut Option<wire::Node>,
+    frame: &mut wire::Frame,
+) -> Result<(bool, wire::SanitizeReport), &'static str> {
     if frame.unchanged {
         frame.root = held.take();
-        return Ok(false);
+        return Ok((false, wire::SanitizeReport::default()));
     }
     if frame.root.is_some() {
-        return Ok(true);
+        return Ok((true, wire::SanitizeReport::default()));
     }
     let patches = std::mem::take(&mut frame.patches);
     let mut root = held.as_ref().ok_or("no tree to patch")?.clone();
-    wire::apply(&mut root, patches)?;
+    let report = wire::apply(&mut root, patches)?;
     *held = None;
     frame.root = Some(root);
-    Ok(true)
+    Ok((true, report))
 }
 
 /// How long a guest waits after a redraw that cost `spent`. A tick inside
@@ -1249,7 +1286,7 @@ fn throttle_after(spent: u64) -> Option<Duration> {
 /// What the host is willing to take from one tick's bytes. Everything in
 /// here is the guest's to choose, so nothing in here is trusted: the length,
 /// the counts, the tree.
-fn shape(bytes: &[u8]) -> Result<wire::Frame, String> {
+fn shape(bytes: &[u8]) -> Result<(wire::Frame, FrameReports), String> {
     if bytes.len() > MAX_FRAME_BYTES {
         return Err("frame too large".to_string());
     }
@@ -1271,8 +1308,12 @@ fn shape(bytes: &[u8]) -> Result<wire::Frame, String> {
     }
     // Every frame, tree or no tree: an unchanged one still carries request
     // kinds the host formats into refusals and shows.
-    wire::sanitize(&mut frame).map_err(str::to_owned)?;
-    Ok(frame)
+    let upstream = frame.upstream_sanitization;
+    let local = wire::sanitize(&mut frame).map_err(str::to_owned)?;
+    // sanitize records its producer report for a future wire hop; this host
+    // keeps the received advisory claim distinct from its own observation.
+    frame.upstream_sanitization = upstream;
+    Ok((frame, FrameReports { local, upstream }))
 }
 
 /// The message the guest's panic hook handed over before the trap, if it
@@ -1437,7 +1478,8 @@ mod tests {
 
     #[test]
     fn an_unchanged_frame_is_taken_at_its_word_and_still_shaped() {
-        let frame = shape(&wire::encode(&wire::Frame {
+        let (frame, _) = shape(&wire::encode(&wire::Frame {
+            upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
             mouse_interest: false,
             root: Some(wire::Node::empty()),
@@ -1491,14 +1533,14 @@ mod tests {
             path: Vec::new(),
             index: 0,
         };
-        let whole = shape(&wire::encode(&wire::Frame {
+        let (whole, _) = shape(&wire::encode(&wire::Frame {
             root: Some(wire::Node::empty()),
             patches: vec![patch.clone()],
             ..wire::Frame::default()
         }))
         .expect("shaped");
         assert!(whole.patches.is_empty());
-        let patched = shape(&wire::encode(&wire::Frame {
+        let (patched, _) = shape(&wire::encode(&wire::Frame {
             patches: vec![patch.clone()],
             ..wire::Frame::default()
         }))
@@ -1522,7 +1564,10 @@ mod tests {
             ],
             ..wire::Frame::default()
         };
-        assert_eq!(merge(&mut held, &mut frame), Ok(true));
+        assert_eq!(
+            merge(&mut held, &mut frame),
+            Ok((true, wire::SanitizeReport::default()))
+        );
         assert_eq!(frame.root, Some(column(vec![label("b", "two!")])));
         assert!(frame.patches.is_empty());
 
@@ -1531,7 +1576,10 @@ mod tests {
             unchanged: true,
             ..wire::Frame::default()
         };
-        assert_eq!(merge(&mut held, &mut unchanged), Ok(false));
+        assert_eq!(
+            merge(&mut held, &mut unchanged),
+            Ok((false, wire::SanitizeReport::default()))
+        );
         assert_eq!(unchanged.root, Some(column(vec![label("b", "two!")])));
 
         let mut held = unchanged.root.take();
