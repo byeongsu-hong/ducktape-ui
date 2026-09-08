@@ -1988,3 +1988,21 @@ both assertions, and exact restoration passes. A two-sensor wire test gives
 each sensor an individually valid value whose total exceeds the frame budget;
 a per-sensor budget mutation fails before restoration. The sanitized frame
 must also encode and decode successfully.
+
+### Authored tests through native and Wasm guest hosts
+
+Counter's `increment_updates_rendered_count` is one `.ice` test compiled into
+both `store::authored_tests::native` and `store::authored_tests::wasm`. The host
+semantic Driver mounts the actual packaged guest, asserts drawn `0`, performs a
+pointer click on its identified increment button, and asserts drawn `1` within
+the count target. This exercises existing target resolution, native widgets,
+guest event delivery and renderer text assertions, without direct handler
+dispatch or a second scenario format. The app-store CI explicitly runs these
+artifact-dependent tests after building both kinds of guest packages.
+
+The owning behavioral mutation changes only `increment` from `count + 1` to
+`count + 0`, then rebuilds each backend: both tests must fail at the final drawn
+`1` assertion and pass after exact restoration and rebuilding. Core checks keep
+Native generation intact and verify that an unsupported test imported from a
+fragment reports E190 at that fragment's line. Typed state, presets, dispatch,
+mounts and other authored actions remain follow-up work, not covered support.

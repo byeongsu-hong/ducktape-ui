@@ -158,6 +158,37 @@ pub fn compile_dir_for(path: impl AsRef<Path>, target: Target) -> Result<(), Err
     })
 }
 
+/// Generate Tree UI tests for a native host. Include the returned file only under
+/// `cfg(test)` in a module supplying `__ice_tree_test_driver(Config)`.
+/// Generated tests are ignored until explicitly run with built guest packages.
+pub fn compile_tree_tests(path: impl AsRef<Path>) -> Result<PathBuf, Error> {
+    let path = path.as_ref().to_owned();
+    compiler_thread(move || {
+        let source = cargo_path("CARGO_MANIFEST_DIR")?.join(path);
+        let compiled = ui_lang_core::compile_tree_tests_file(&source)
+            .map_err(|error| Error(error.render(&source.display().to_string())))?;
+        for dependency in compiled
+            .dependencies
+            .iter()
+            .chain(&compiled.asset_dependencies)
+        {
+            println!("cargo:rerun-if-changed={}", dependency.display());
+        }
+        let output = cargo_path("OUT_DIR")?.join(format!(
+            "tree-tests-{}.rs",
+            content_digest(source.to_string_lossy().as_bytes()),
+        ));
+        if fs::read(&output).ok().as_deref() != Some(compiled.rust.as_bytes()) {
+            AtomicFile::new(&output, AllowOverwrite)
+                .write(|file| file.write_all(compiled.rust.as_bytes()))
+                .map_err(|error| {
+                    Error(format!("write Tree tests {}: {error}", output.display()))
+                })?;
+        }
+        Ok(output)
+    })
+}
+
 /// Returns the generated Rust path used by both the build script and proc macro.
 pub fn generated_path(out_dir: impl AsRef<Path>, relative: &str) -> Result<PathBuf, Error> {
     let relative = normalized_relative(Path::new(relative))?;

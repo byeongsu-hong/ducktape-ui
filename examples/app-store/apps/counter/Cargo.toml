@@ -9,8 +9,8 @@ publish = false
 # exports need `#[unsafe(export_name)]`.
 [lib]
 crate-type = ["cdylib", "rlib"]
-# The generated `#[cfg(test)]` glue needs the runtime's test driver, which
-# pulls wgpu into the graph; the app's tests live in `tests/` instead.
+# Helper tests live in `tests/`. Authored UI scenarios run in the host against
+# packaged native/Wasm guests, not inside this guest library's test harness.
 test = false
 
 [dependencies]

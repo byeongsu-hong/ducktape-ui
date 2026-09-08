@@ -6,6 +6,14 @@ app Counter
   window
     size 480 320
 
+test increment_updates_rendered_count
+  viewport 480 600
+  target increment = #app/content/controls/increment
+  target count_label = #app/content/pad/card/count
+  expect text "0" within count_label
+  click increment
+  expect text "1" within count_label
+
 use "theme.ice"
 
 extern crate::host

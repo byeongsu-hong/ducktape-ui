@@ -296,6 +296,15 @@ boundaries — no Core syntax involved: [`VirtualList`](crates/ui-lang-component
 
 ## First-class tests
 
+Tree guests can run authored static-target click and literal rendered-text tests
+in a native host with `ui_lang_build::compile_tree_tests`. The app-store Counter
+uses the same scenario against its native process and Wasm component through
+the existing semantic Driver and mounted guest widgets. The generated file is
+included only under `cfg(test)` and requires a host Driver adapter; production
+guest exports are unchanged. State assertions, presets, dispatch, mounts and
+other Tree test actions remain explicit follow-up work. See the
+[app-store test boundary](examples/app-store/README.md#what-is-not-here-yet).
+
 Apps and components ship headless behavior tests written in Ice, discovered as
 ordinary generated `#[test]` functions — no Rust wrapper or registration:
 

@@ -558,6 +558,7 @@ jobs:
           cargo test --locked -p app-store-host store::native_tests:: -- --ignored
           cargo test --locked -p app-store-host native::tests:: -- --include-ignored
           cargo test --locked -p app-store-host native_reload_preserves -- --ignored
+          cargo test --locked -p app-store-host store::authored_tests:: -- --ignored
       - name: Lint the app-store workspace
         working-directory: examples/app-store
         run: cargo clippy --locked --workspace --tests --no-deps -- -D warnings
