@@ -15,6 +15,7 @@ members = [
     "examples/cef-browser",
     "examples/hotreload",
     "examples/markdown-editor",
+    "examples/settings",
     "examples/showcase",
     "examples/starter",
     "examples/terminal",

@@ -76,6 +76,46 @@ navigation, unread append counts, and explicit resume. It does not replace
 `MessageScroller`: transcripts retain variable-height measurement, message
 anchors, prepend restoration, and jump-control behavior.
 
+## Form defaults and customization
+
+Import `src/ice/default.ice` and declare a form with application-owned state:
+
+```ice
+Form
+  FormSection title="Profile"
+    TextField label="Display name" value<->name
+```
+
+`Form(max_width=640.0, padding=24.0)` owns vertical scrolling and centers its
+bounded content. `FormSection(title, description="", padding=20.0, radius=11.0)`
+provides a section surface and heading. Each accepts one content root; use a
+`col w=fill gap=20.0` for multiple fields. Text wraps rather than using fixed
+row heights. Do not wrap Form in another vertical scroll container.
+
+`TextField(label, bind value, description="", error="", placeholder="",
+disabled=false, secure=false, padding=11.0, radius=10.0)` supplies the native
+input and default control recipe. Change just geometry when needed:
+
+```ice
+TextField label="Workspace" value<->workspace radius=4.0 padding=14.0
+```
+
+Colors continue to follow the existing semantic palette. Geometry changes do
+not replace binding, focus or accessibility. Errors are visible wrapping text
+with polite live announcements; callers supply validation policy. The input's
+accessible name is its label and its description is the supplied help text.
+
+For a different control or a complete input-style override, use
+`Field(label, description="", error="")` and its content slot. The caller
+sets that custom control's label and styles. Empty help/error strings add no
+text node or spacer row. Field's `root`, `label`, `description`, and `error`
+IDs and TextField's `field/root/input` path support semantic inspection.
+
+The [settings example](../../examples/settings/README.md) demonstrates default
+and custom geometry, a checkbox slot, narrow layouts and validation feedback.
+These are reusable Ice components, not new language keywords or automatic
+platform-native controls.
+
 ## Rust library quick start
 
 Each component remains individually feature-gated, and enabling one also enables its internal component dependencies.

@@ -1,5 +1,6 @@
 use "recipes.ice"
 use "components.ice"
+use "forms.ice"
 use "data-grid.ice"
 use "log-timeline.ice"
 use "tree-view.ice"
