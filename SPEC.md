@@ -1192,3 +1192,16 @@ report E190 at the component call, including through wrapper components and
 slots. Those boundaries do not replay guest mount sightings or report host branch
 activation. An unconditional responsive child has ordinary guest-known lifetime.
 No new wire node or host lifecycle event is introduced.
+
+## Tree QR codes
+
+Tree `qr` carries an owned UTF-8 or byte payload, optional correction level,
+normal/micro version, cell/total size, and cell/background colors. The host
+encodes it with the same QR widget as native Ice; guests do not draw matrices.
+Omitted options retain native defaults. Unencodable payloads have zero layout.
+
+Each payload is limited to 8192 bytes, shares the frame text-byte budget, and
+spends one of 32 frame encoding slots even when empty. Invalid versions and
+excess payloads are dropped whole, never truncated into a different code.
+Sizes and colors are bounded before rendering. Rebuild hosts and guests
+together for the new `Qr` wire variant.

@@ -1432,6 +1432,18 @@ fn check_bounds(
         Node::MouseArea { content, .. } => {
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
+        Node::Qr { code, .. } => {
+            if let Some(payload) = &code.payload {
+                assert!(payload.len() <= ui_lang_wire::MAX_QR_PAYLOAD_BYTES);
+            }
+            check_color(&code.cell, ctx);
+            check_color(&code.background, ctx);
+            if let Some(ui_lang_wire::QrSize::Cell(value) | ui_lang_wire::QrSize::Total(value)) =
+                code.size
+            {
+                check_pixels(&Some(value), ctx, "QR size");
+            }
+        }
         Node::RichText {
             spans,
             size,
