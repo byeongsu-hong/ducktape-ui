@@ -19,8 +19,10 @@ design uses its declared contract and structural APIs, not temporary guard value
 - runtime/view_tree/editor_transactions.rs:28 owns the existing Lane FIFO;
   Control:246 retains revisions, pending request and committed acknowledgment.
   Requests:630 and commits:776 currently copy full native Content text.
-- runtime/view_tree.rs:190 owns EditorField per widget, so shared logical bindings
-  still duplicate native Content. Keep widget focus/scroll separate from document.
+- runtime/view_tree.rs:190 owns EditorField per widget. Iced TextEditor::layout
+  (iced_widget 0.14.2 text_editor.rs:621–652) updates Content's renderer editor;
+  iced_graphics text/editor.rs:20 stores font/bounds/cosmic layout in that editor.
+  Preserve per-widget Content projections for independent widths/styles/scroll.
 - wire/snapshot.rs:7 has an 8 MiB aggregate bound; guest/snapshot.rs rejects pending
   transactions and restores into an independent driver without boot.
 - Ducktape origin/dev 58372599d, crates/views/pages/src/editor.rs:100–101 currently
@@ -34,6 +36,7 @@ Proposed hard framework bounds (root approval required):
 | --- | --- |
 | Complete document | 1,048,576 UTF-8 bytes |
 | Logical documents | 16; combined live text <= 4 MiB |
+| Native per-widget projection text | <= 8 MiB combined, separately charged |
 | One raw transfer chunk | 65,536 bytes |
 | One full assignment/resync | ceil(length / 65,536), at most 16 chunks |
 | Concurrent transfer staging | one 1 MiB receiver buffer; pending descriptors only |
@@ -51,9 +54,15 @@ checks run before adopting references, patches or transfer data.
 
 Guest Editor remains the one owned application mirror. Do not add another full
 text map in slots or change Clone into aliasing Rc mutation. Slots retains only
-transfer progress, acknowledgments and routes. Host stores one Content per
-logical document; each widget references that Content while retaining its own
-native focus/scroll state. The existing logical transaction lane is reused.
+transfer progress, acknowledgments and routes. Host stores one canonical logical
+document plus the existing per-widget Content projections. Their native layout,
+focus and scroll stay independent; patch propagation updates them from the one
+logical lane. This deliberately preserves native projection copies rather than
+incorrectly sharing Iced's mutable layout buffer across differently sized views.
+It adds no duplicate wire transfer. A broad Iced storage/layout refactor is not
+required for this protocol. Validate projection byte reservations before view
+materialization; excess projections reject the candidate frame without changing
+the logical document or previous accepted tree.
 
 History policy remains application-owned. Proposal to consumer: <= 2 MiB total
 history serialized bytes, using inverse/forward patches where useful; no host
@@ -140,6 +149,10 @@ document for typing/caret/paste when a smaller change exists. Guest structural
 patches remain the admitted batch. Large paste/undo replacements may legitimately
 contain up to 1 MiB of changed bytes; charge the dedicated patch budget, not display
 text. Do not call a full-document replacement incremental for an ordinary key.
+Validate every affected projection revision before applying a batch. Propagate to
+all mounted projections before publishing the new logical revision; an unexpected
+native application failure restores projections from the retained old canonical
+text/cursor and emits Fault. No intermediate mixed-version frame is published.
 
 Reuse Lane Ready/Decision/AwaitingGuest/Faulted and its commit barrier. A pending
 transfer is a transport prerequisite held by Control, not a second input FIFO or
@@ -181,8 +194,8 @@ and block serialization; a 1 MiB editor does not enlarge those RPC limits.
 
 1. Wire document limits/reference/transfer and pure atomic assembler; Red for
    publishing a prefix, accepting stale id/order and invalid assembled UTF-8.
-2. Guest mirror/delivery adapter and host logical Content registry, reusing the
-   lane. Red for duplicated unchanged bytes and stale commit application.
+2. Guest mirror/delivery adapter and host logical document registry with native
+   projections, reusing the lane. Red for duplicated unchanged bytes and stale commit application.
 3. Core projection and no-init snapshot/restore; update both native/Wasm fixtures
    and first-frame completeness integration, then downstream Pages wiring.
 4. Actual native/Wasm: exact 1 MiB Unicode crossing chunk boundaries, load/edit/save
