@@ -802,6 +802,9 @@ For ordinary screen content, the default library's `Page` supplies a customizabl
 24px outer inset. Surface components retain their own interior padding; Form
 already owns its screen padding. See the [page and surface guidance](crates/ui-lang-components/README.md#page-edges-and-surface-padding).
 
+Wrapping alignment fixes use the workspace's [patched Iced widget crate](vendor/iced_widget/README.md).
+External applications must select the same patch until an upstream release includes them.
+
 Tree display text retains the existing 64 KiB aggregate budget. Actual sanitizer
 loss now produces a typed report on full frames and applied patches; app-store
 logs it once per module installation generation. Producer reports remain distinct

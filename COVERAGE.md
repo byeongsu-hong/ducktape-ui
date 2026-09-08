@@ -2418,3 +2418,10 @@ which is what makes them counterexamples rather than duplicates. Restoring the
 patched sources passes all seven with
 `cargo test -p showcase --test wrap_alignment`, and the whole showcase suite
 (`cargo test -p showcase`, 355 tests) stays green.
+
+Both the root workspace and `examples/app-store` select the vendored widget
+crate. Locked Linux Cargo metadata confirms the separate workspace resolves
+that path; no new app-store geometry test was run for this patch. External
+consumers do not inherit workspace Cargo patches from published Ice packages
+and need the same patch for this behavior. See
+[the vendor provenance and scope](vendor/iced_widget/README.md).
