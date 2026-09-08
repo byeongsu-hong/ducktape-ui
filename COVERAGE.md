@@ -790,6 +790,11 @@ Behavioral mutations that drop queued message delivery, prevent focus, remove
 the snapshot scope, or bypass disabled checks fail the corresponding assertions;
 restoration passes the runtime suite. These tests exercise native widgets and
 operations without requiring an OS accessibility adapter or a guest backend.
+The showcase mounts two borrowed-editor draft-length externs with distinct
+caller-owned semantic IDs. Its native operation regression asserts that both
+labels expose different IDs; restoring the former hardcoded ID fails that
+assertion. The full catalog capture also exercises both mapped instances, which
+previously hid their duplicate logical ID from the test driver.
 
 ### Gap: an extern's published accessibility node cannot be targeted
 

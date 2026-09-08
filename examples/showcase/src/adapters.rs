@@ -433,10 +433,13 @@ pub fn spinner(frame: i64, reduced_motion: bool) -> Element<'static, ()> {
 /// the read became a place expression, borrowed through a temporary and
 /// failed to compile in the generated crate (E0716). rustc is the only gate
 /// that catches it, so the showcase mounts one.
-pub fn draft_length(document: &iced::widget::text_editor::Content) -> Element<'_, ()> {
+pub fn draft_length<'a>(
+    document: &'a iced::widget::text_editor::Content,
+    id: &str,
+) -> Element<'a, ()> {
     let label = format!("{} characters", document.text().trim().chars().count());
     let text: Element<'_, ()> = iced::widget::text(label).size(12.0).into();
-    semantic(text, "showcase-draft-length", Role::Label)
+    semantic(text, id, Role::Label)
 }
 
 fn current_date() -> Option<Date> {
@@ -2682,6 +2685,56 @@ fn italic_font() -> Font {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_draft_lengths_expose_distinct_native_semantic_ids() {
+        use iced::advanced::renderer::Headless as _;
+        use iced::advanced::widget::{Id, Operation};
+
+        #[derive(Default)]
+        struct Ids(Vec<Id>);
+        impl Operation for Ids {
+            fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn Operation)) {
+                children(self);
+            }
+
+            fn custom(
+                &mut self,
+                id: Option<&Id>,
+                _bounds: iced::Rectangle,
+                _state: &mut dyn std::any::Any,
+            ) {
+                if let Some(id) = id {
+                    self.0.push(id.clone());
+                }
+            }
+        }
+
+        let document = iced::widget::text_editor::Content::new();
+        let content = iced::widget::column![
+            draft_length(&document, "showcase-notes-draft-length"),
+            draft_length(&document, "showcase-todo-draft-length"),
+        ];
+        let mut renderer = iced_test::futures::futures::executor::block_on(iced::Renderer::new(
+            Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("tiny-skia headless renderer");
+        let mut ui = iced_runtime::UserInterface::build(
+            content,
+            iced::Size::new(320.0, 200.0),
+            iced_runtime::user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut ids = Ids::default();
+        ui.operate(&renderer, &mut ids);
+        assert_eq!(ids.0.len(), 2, "both draft labels must expose semantics");
+        assert_ne!(
+            ids.0[0], ids.0[1],
+            "draft instances must not share a semantic ID"
+        );
+    }
 
     #[test]
     fn adapters_build_the_checked_default_contracts() {
