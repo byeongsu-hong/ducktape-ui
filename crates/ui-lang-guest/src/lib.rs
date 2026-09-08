@@ -139,6 +139,10 @@ impl<A: App> Driver<A> {
     /// rebuild before it crosses.
     pub fn tick(&mut self, events: Vec<wire::Event>) -> wire::Frame {
         let _context = self.slots.enter();
+        for message in slots::take_deferred::<A::Message>() {
+            spawn(&mut self.tasks, self.app.update(message));
+            self.settle();
+        }
         self.settle();
         for event in events {
             let message = match event {
@@ -195,6 +199,15 @@ impl<A: App> Driver<A> {
         self.settle();
         slots::reset();
         let mut root = self.app.view();
+        // Synchronous mount pruning can cancel work after the last settle.
+        // Reconcile subscriptions and request another tick to drain woken
+        // tasks; updating here would publish a tree from before that update.
+        self.subscribe();
+        self.busy |= slots::has_deferred()
+            || self
+                .tasks
+                .iter()
+                .any(|task| task.woken.0.load(Ordering::Relaxed));
         let unchanged = self.last_root.as_ref() == Some(&root);
         let mut patches = Vec::new();
         if !unchanged {
@@ -555,6 +568,58 @@ world view {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ViewBoot {
+        seen: std::cell::Cell<bool>,
+        count: u32,
+    }
+
+    impl App for ViewBoot {
+        type Message = u32;
+        fn boot() -> (Self, iced::Task<u32>) {
+            (
+                Self {
+                    seen: false.into(),
+                    count: 0,
+                },
+                iced::Task::none(),
+            )
+        }
+        fn view(&self) -> wire::Node {
+            if !self.seen.replace(true) {
+                slots::defer(vec![10u32]);
+            }
+            slots::message(1u32);
+            wire::Node::empty()
+        }
+        fn update(&mut self, value: u32) -> iced::Task<u32> {
+            // The external event must observe initialization already applied.
+            if value == 1 {
+                assert_eq!(self.count, 10);
+            }
+            self.count += value;
+            iced::Task::none()
+        }
+        fn subscription(&self) -> iced::Subscription<u32> {
+            iced::Subscription::none()
+        }
+    }
+
+    #[test]
+    fn view_boots_wake_the_host_and_stay_with_their_driver() {
+        let mut first = Driver::<ViewBoot>::default();
+        assert!(first.tick(vec![]).busy);
+        assert_eq!(first.app.count, 0, "rendering never runs update");
+        let mut other = Driver::<ViewBoot>::default();
+        assert!(other.tick(vec![]).busy);
+        assert!(!first.tick(vec![wire::Event::Message(0)]).busy);
+        assert_eq!(first.app.count, 11);
+        assert_eq!(other.app.count, 0, "another driver's queue is untouched");
+        assert!(!other.tick(vec![]).busy);
+        assert_eq!(other.app.count, 10);
+        first.tick(vec![]);
+        assert_eq!(first.app.count, 11, "boots are drained once");
+    }
 
     /// Boots with a task that outputs `count` messages at once and remembers
     /// how many `update` saw.

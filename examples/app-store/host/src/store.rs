@@ -1585,3 +1585,7 @@ mod lazy_tests;
 #[cfg(test)]
 #[path = "flex_tests.rs"]
 mod flex_tests;
+
+#[cfg(test)]
+#[path = "component_tests.rs"]
+mod component_tests;

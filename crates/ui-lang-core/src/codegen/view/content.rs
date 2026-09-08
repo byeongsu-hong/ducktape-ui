@@ -29,6 +29,12 @@ pub(in crate::codegen) fn render_content(
         ResolvedViewKind::Space => render_space(document.resolved_space(node)?, document, env),
         ResolvedViewKind::Component { call } => {
             let call = document.component_call_by_id(*call)?;
+            if document.target() == Target::Tree
+                && call.storage == ComponentStorage::Mounted
+                && let Some(reason) = outline::mounted_tree_refusal()
+            {
+                return Err(document.error_at_origin("E190", view.origin, reason));
+            }
             let component = document.component(call.component);
             let name = &component.name;
             // Alias the enclosing environment's callback bindings (an outer

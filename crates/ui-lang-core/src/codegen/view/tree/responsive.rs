@@ -112,6 +112,7 @@ pub(in crate::codegen) fn render_container_condition(
         program,
     )?;
     let mut body = String::new();
+    let _host_condition = super::super::outline::enter_host_condition();
     render_children(&mut body, children, program, message, env, scope, slot)?;
     write!(out, " __children.push({{ let mut __children = Vec::new(); {body} {WIRE}::Node::When {{ key: {key}, condition: {WIRE}::ContainerQuery {{ ops: vec![{ops}] }}, children: __children }} }});").unwrap();
     Ok(true)

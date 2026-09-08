@@ -1173,3 +1173,22 @@ Native gradients and custom Rust styles remain refused; a gradient span reports
 its own source location. Tooltip descriptions concatenate adjacent spans within
 a paragraph before separating distinct text nodes. Rebuild hosts and guests
 together for the RichText wire variant.
+
+## Tree component lifetime
+
+`lifetime retained` keeps guest component state when its identity is absent.
+`lifetime mounted` now uses the same per-scope state storage as native, with
+synchronous pruning after the complete owned Tree render. First sighting queues
+the component's boot message with the current props; the next driver tick drains
+those messages before external input. Rendering never executes an update.
+
+After pruning, the driver reconciles subscriptions and marks the frame busy when
+a deferred boot or cancellation task needs another tick. This allows an idle host
+to deliver cancellation without input. Removed scopes lose state and boot marks;
+reappearing scopes initialize and boot again. Queues belong to their driver.
+
+Mounted descendants of explicit lazy and host-evaluated container conditions
+report E190 at the component call, including through wrapper components and
+slots. Those boundaries do not replay guest mount sightings or report host branch
+activation. An unconditional responsive child has ordinary guest-known lifetime.
+No new wire node or host lifecycle event is introduced.

@@ -1614,3 +1614,20 @@ space insertion. Disabling native span backgrounds fails the pixel assertion;
 disabling link dispatch leaves the guest status unchanged and fails the click
 assertion. A gradient refusal test fails when attributed to the paragraph rather
 than the span. Each mutation is restored before the passing checks.
+
+### Tree mounted component evidence
+
+The component fixture bundles mounted counters and a boot-started replace lane.
+Native pointer tests distinguish fresh mounted state on reappearance from retained
+state, and a separate wasm instance starts independently. A real host-request
+round trip asserts the canceled request ID, rejects its obsolete response after
+remount, then accepts the new instance's response. CI runs `bundled_component_`
+after bundling `app-store-component-fixture`.
+
+The guest driver test asserts deferred work requests another tick, runs before
+external events, drains once and remains isolated between drivers. Red mutations
+remove the boot wake flag, the post-render cancellation wake flag, and synchronous
+pruning (the mounted counter remains 8 instead of restarting at 27). Codegen tests
+name the component call beneath lazy/host conditions and check guard unwind;
+disabling each guard accepts the forbidden expansion and fails the diagnostic
+assertion. All mutations are restored before final verification.

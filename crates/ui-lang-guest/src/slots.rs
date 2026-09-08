@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 #[derive(Default)]
 struct Tables {
+    deferred: Vec<Box<dyn Any>>,
     messages: Vec<Rc<dyn Any>>,
     handlers: Vec<Rc<dyn Any>>,
     pictures: HashSet<u64>,
@@ -109,6 +110,31 @@ impl Drop for Guard {
 
 fn tables() -> Rc<RefCell<Tables>> {
     CURRENT.with_borrow(|current| current.0.clone())
+}
+
+/// First-render component messages run on the next driver tick, before input.
+pub fn defer<M: 'static>(messages: Vec<M>) {
+    tables().borrow_mut().deferred.extend(
+        messages
+            .into_iter()
+            .map(|message| Box::new(message) as Box<dyn Any>),
+    );
+}
+
+pub(crate) fn take_deferred<M: 'static>() -> Vec<M> {
+    let messages = std::mem::take(&mut tables().borrow_mut().deferred);
+    messages
+        .into_iter()
+        .map(|message| {
+            *message
+                .downcast::<M>()
+                .expect("deferred message belongs to the active driver")
+        })
+        .collect()
+}
+
+pub(crate) fn has_deferred() -> bool {
+    !tables().borrow().deferred.is_empty()
 }
 
 pub(crate) fn memo_cache() -> Rc<RefCell<crate::memo::Cache>> {

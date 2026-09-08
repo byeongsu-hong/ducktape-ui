@@ -17,6 +17,52 @@ palette app for AppTheme
   danger #ff0000
 "#;
 
+#[test]
+fn mounted_components_build_a_tree_and_defer_their_boot_messages() {
+    let source = format!(
+        "app Mounted\n{PALETTE}component Counter(initial:i64)\n  lifetime mounted\n  state\n    count = 0\n  boot\n    count = initial\n  on increment\n    count = count + 1\n  col\n    text count\n    button \"Increment\" -> increment\nview\n  Counter initial=7 #counter\n"
+    );
+    let generated = compile_for(&source, "mounted.ice", Target::Tree)
+        .unwrap_or_else(|error| panic!("{}", error.render("mounted.ice")));
+    assert!(generated.contains("::ui_lang_guest::slots::defer"));
+    assert!(generated.contains("finish_tree_render"));
+    assert!(!generated.contains("::ui_lang_runtime::boot_dispatch"));
+}
+
+#[test]
+fn mounted_tree_refusals_follow_lazy_and_host_condition_expansion() {
+    let head = format!(
+        "app Mounted\n{PALETTE}state\n  value = 1\ncomponent Leaf()\n  lifetime mounted\n  state\n    count = 0\n  text count\ncomponent Wrapper()\n  Leaf #leaf\nview\n"
+    );
+    for (view, reason) in [
+        ("  lazy value as cached\n    Wrapper\n", "inside lazy"),
+        (
+            "  responsive size=(width, height)\n    col\n      if width > 100.0\n        Wrapper\n",
+            "inside a host container condition",
+        ),
+    ] {
+        let source = format!("{head}{view}");
+        let error = compile_for(&source, "mounted.ice", Target::Tree)
+            .unwrap_err()
+            .render("mounted.ice");
+        let line = source
+            .lines()
+            .position(|line| line == "  Leaf #leaf")
+            .unwrap()
+            + 1;
+        assert!(error.contains("E190") && error.contains(reason), "{error}");
+        assert!(error.contains(&format!("mounted.ice:{line}:")), "{error}");
+    }
+    // Refused nested expansion must unwind both guards. Unconditional children
+    // of responsive have guest-known lifetime and need no host activation event.
+    compile_for(
+        &format!("{head}  responsive size=(width, height)\n    Wrapper\n"),
+        "mounted.ice",
+        Target::Tree,
+    )
+    .unwrap();
+}
+
 fn tree(view: &str) -> String {
     tree_with("", view)
 }

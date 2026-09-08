@@ -548,3 +548,6 @@ See [pinned module children](examples/app-store/README.md#pinned-module-children
 
 Tree `rich-text` carries styled spans and link routes to a single native paragraph.
 See [rich text module views](examples/app-store/README.md#rich-text-module-views).
+
+Tree mounted components initialize once per appearance and cancel their work on
+removal. See [component module lifetimes](examples/app-store/README.md#mounted-component-module-views).

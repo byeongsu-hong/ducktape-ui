@@ -171,13 +171,6 @@ pub(in crate::codegen) fn generate_view(
         Target::Tree => "__ice_root",
         Target::Native => "::ui_lang_runtime::dev::ready(__ice_root)",
     };
-    if program.target() == Target::Tree && !mounted.is_empty() {
-        return Err(program.error_at_origin(
-            "E190",
-            program.resolved_view(program.app_view())?.origin,
-            "a mounted component is not available in a view module: the tree wire does not carry it",
-        ));
-    }
     if mounted.is_empty() {
         writeln!(
             out,
@@ -190,15 +183,19 @@ pub(in crate::codegen) fn generate_view(
             .iter()
             .map(|field| format!("self.{field}.begin_render();"))
             .collect::<String>();
+        let finish_method = match program.target() {
+            Target::Tree => "finish_tree_render",
+            Target::Native => "finish_render",
+        };
         let finish = mounted
             .iter()
-            .map(|field| format!("self.{field}.finish_render(__ice_root_scope_ref);"))
+            .map(|field| format!("self.{field}.{finish_method}(__ice_root_scope_ref);"))
             .collect::<String>();
         let result = &navigation;
         let (boot_drain, boot_wrap) = boot_dispatch_code(program, message);
         writeln!(
             out,
-            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {span} {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {boot_drain} let __ice_root: __IceElement<'_, {message}> = {result}; {boot_wrap} ::ui_lang_runtime::dev::ready(__ice_root) }}"
+            "pub(super) fn __view(&self{window_arg}) -> __IceElement<'_, {message}> {{ {span} {palette} let __ice_root_scope = {root_scope_init}; let __ice_root_scope_ref = __ice_root_scope.as_str(); {begin} let __ice_content: __IceElement<'_, {message}> = {rendered_root}; {finish} {boot_drain} let __ice_root: __IceElement<'_, {message}> = {result}; {boot_wrap} {ready} }}"
         )
         .unwrap();
     }
@@ -235,8 +232,11 @@ pub(in crate::codegen) fn boot_dispatch_code(
         format!(
             "let __ice_boots: ::std::vec::Vec<{message}> = self.__ice_boot_queue.borrow_mut().drain(..).collect();"
         ),
-        format!(
-            "let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::boot_dispatch(__ice_root, __ice_boots);"
-        ),
+        match program.target() {
+            Target::Tree => "::ui_lang_guest::slots::defer(__ice_boots);".into(),
+            Target::Native => format!(
+                "let __ice_root: __IceElement<'_, {message}> = ::ui_lang_runtime::boot_dispatch(__ice_root, __ice_boots);"
+            ),
+        },
     )
 }

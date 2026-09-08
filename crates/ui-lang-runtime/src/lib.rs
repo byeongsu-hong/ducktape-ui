@@ -156,6 +156,12 @@ impl<T> MountedComponentState<T> {
         self.pending.borrow_mut().replace(root.to_owned());
     }
 
+    /// Tree views build all owned nodes synchronously, so no layout callback
+    /// can add a sighting after this point. Drop absent instances immediately.
+    pub fn finish_tree_render(&self, root: &str) {
+        self.prune(root);
+    }
+
     fn prune(&self, root: &str) {
         let active = self.active.borrow();
         let survives = |scope: &str| {
