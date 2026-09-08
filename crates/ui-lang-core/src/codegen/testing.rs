@@ -1,11 +1,79 @@
 use super::*;
 
+/// Host-only test bodies. The including module supplies the mounted guest Driver.
+pub(crate) fn generate_tree_tests(
+    program: &LoweredProgram,
+    source_path: &str,
+) -> Result<String, Error> {
+    let mut out = String::new();
+    for test in program.tests() {
+        let unsupported = |origin, detail| {
+            program.error_at_origin(
+            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: static targets, click, and literal text expectations"),
+        )
+        };
+        if program.settings().kind == ProgramKind::Daemon
+            || test.mount.is_some()
+            || test.config.preset.is_some()
+            || test.config.theme.is_some()
+            || test.config.scale_factor.is_some()
+            || test.config.locale.is_some()
+            || test.config.platform.is_some()
+            || test.config.reduced_motion.is_some()
+        {
+            return Err(unsupported(
+                test.origin,
+                "daemon windows, mounts, presets, or environment overrides",
+            ));
+        }
+        let static_path = |path: &ResolvedTestTargetPath| {
+            path.segments.iter().all(|segment| segment.key.is_none())
+        };
+        let static_ref = |target: &ResolvedTestTargetRef| match target {
+            ResolvedTestTargetRef::Alias(_) => true,
+            ResolvedTestTargetRef::Id(path) => static_path(path),
+        };
+        for target in &test.targets {
+            if !static_path(&target.path) {
+                return Err(unsupported(target.origin, "keyed targets"));
+            }
+        }
+        for step in &test.steps {
+            let supported = match &step.kind {
+                ResolvedTestStepKind::Click { target, .. } => static_ref(target),
+                ResolvedTestStepKind::Expect(ResolvedTestExpectation::Text {
+                    value,
+                    within,
+                    ..
+                }) => {
+                    let expressions = program.expressions();
+                    matches!(
+                        expressions
+                            .expression(expressions.expression_use(*value).root)
+                            .kind,
+                        crate::lower::ResolvedExpressionKind::Str(_)
+                    ) && within.as_ref().is_none_or(static_ref)
+                }
+                _ => false,
+            };
+            if !supported {
+                return Err(unsupported(step.origin, "this test step"));
+            }
+        }
+        generate_test(&mut out, program, "", source_path, test, true)?;
+    }
+    Ok(resolve_source_markers(out, program, source_path))
+}
+
 pub(in crate::codegen) fn generate_test_mounts(
     out: &mut String,
     program: &LoweredProgram,
     message: &str,
     source_path: &str,
 ) -> Result<(), Error> {
+    if program.target() == Target::Tree {
+        return Ok(());
+    }
     let daemon = program.settings().kind == ProgramKind::Daemon;
     let presets = if program.preset_names().is_empty() {
         String::new()
@@ -118,6 +186,22 @@ pub(in crate::codegen) fn generate_tests(
     message: &str,
     source_path: &str,
 ) -> Result<(), Error> {
+    if program.target() == Target::Tree {
+        writeln!(out, "#[cfg(test)] mod __ice_tests {{ use super::*;").unwrap();
+        generate_stack_contract(out, program);
+        if let Some(test) = program.tests().first() {
+            let error = program.error_at_origin("E190", test.origin,
+                "Tree authored UI tests run in a host harness; use ui_lang_build::compile_tree_tests in the host and include its output under cfg(test)");
+            writeln!(
+                out,
+                "compile_error!({});",
+                rust_string(&error.render(source_path))
+            )
+            .unwrap();
+        }
+        writeln!(out, "}}").unwrap();
+        return Ok(());
+    }
     writeln!(out, "#[cfg(test)]\nmod __ice_tests {{\nuse super::*;").unwrap();
     writeln!(
         out,
@@ -128,7 +212,7 @@ pub(in crate::codegen) fn generate_tests(
     .unwrap();
     generate_stack_contract(out, program);
     for test in program.tests() {
-        generate_test(out, program, message, source_path, test)?;
+        generate_test(out, program, message, source_path, test, false)?;
     }
     writeln!(out, "}}").unwrap();
     Ok(())
@@ -175,6 +259,7 @@ fn generate_test(
     message: &str,
     source_path: &str,
     test: &ResolvedTest,
+    host: bool,
 ) -> Result<(), Error> {
     let expr_code =
         |value: &ResolvedExpressionId, env: &HashMap<String, Binding>, mode: ValueMode| {
@@ -188,6 +273,13 @@ fn generate_test(
             .map(|values| values.join(", "))
     };
     let index = test.id.0 as usize;
+    if host {
+        writeln!(
+            out,
+            "#[ignore = \"requires built Tree guest packages and their host harness\"]"
+        )
+        .unwrap();
+    }
     writeln!(out, "#[test]\nfn {}() {{", test.name).unwrap();
     let declaration = format!("test {}", test.name);
     let source = location_code(program, source_path, test.origin, &declaration);
@@ -250,11 +342,15 @@ fn generate_test(
     } else {
         format!("{}::__program()", program.app_name())
     };
-    writeln!(
-        out,
-        "let mut __test = ::ui_lang_runtime::testing::Driver::new({test_program}, __config);"
-    )
-    .unwrap();
+    if host {
+        writeln!(out, "let mut __test = __ice_tree_test_driver(__config);").unwrap();
+    } else {
+        writeln!(
+            out,
+            "let mut __test = ::ui_lang_runtime::testing::Driver::new({test_program}, __config);"
+        )
+        .unwrap();
+    }
 
     for (step_index, step) in test.steps.iter().enumerate() {
         if step.id

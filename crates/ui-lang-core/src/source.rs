@@ -120,6 +120,21 @@ pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
     AnalysisDb::default().compile_root(path)
 }
 
+/// Generate authored Tree tests for inclusion in a native host's `cfg(test)` module.
+/// The module supplies `__ice_tree_test_driver(Config)` using its real guest backend.
+pub fn compile_tree_tests_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
+    let path = path.as_ref();
+    let analysis = analyze_file_graph(path)?;
+    let mut program = crate::lower::lower(analysis.document)?;
+    program.set_target(crate::Target::Tree);
+    let rust = crate::codegen::generate_tree_tests(&program, &path.display().to_string())?;
+    Ok(FileCompilation {
+        rust,
+        dependencies: analysis.dependencies,
+        asset_dependencies: analysis.asset_dependencies,
+    })
+}
+
 pub(crate) fn analyze_loaded_without_assets(
     loaded: &LoadedSource,
     interface: bool,
@@ -662,6 +677,41 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     struct Fixture(PathBuf);
+
+    #[test]
+    fn tree_host_tests_keep_import_origins_and_reject_unexecuted_steps() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", "app Counter\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #ffffff\n  fg #111111\n  primary #333333\n  danger #ff0000\nuse \"test.ice\"\nstate\n  count = 0\non increment\n  count = count + 1\nview\n  col\n    text count #count\n    button \"+\" #increment -> increment\n");
+        fixture.write(
+            "test.ice",
+            "test click_count\n  target button = #increment\n  click button\n  expect text \"1\"\n",
+        );
+        let compiled = super::compile_tree_tests_file(fixture.path("app.ice")).unwrap();
+        assert!(compiled.rust.contains("__ice_tree_test_driver(__config)"));
+        assert!(compiled.rust.contains("Action::Click"));
+        assert!(compiled.rust.contains("check_text"));
+        assert!(compiled.rust.contains("test.ice"));
+        assert_eq!(compiled.dependencies.len(), 2);
+        fixture.write("test.ice", "test click_count\n  expect count == 0\n");
+        let error = super::compile_tree_tests_file(fixture.path("app.ice")).unwrap_err();
+        assert_eq!(error.code, "E190");
+        assert_eq!(error.line, 2);
+        assert!(error.path.unwrap().ends_with("test.ice"));
+        assert!(error.message.contains("Tree host tests do not yet support"));
+    }
+
+    #[test]
+    fn tree_guest_test_build_reports_host_boundary_without_changing_native_tests() {
+        let source = "app Counter\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #ffffff\n  fg #111111\n  primary #333333\n  danger #ff0000\nview\n  text \"0\" #count\ntest count_is_visible\n  expect text \"0\"\n";
+        let tree = crate::compile_for(source, "counter.ice", crate::Target::Tree).unwrap();
+        assert!(tree.contains("compile_error!(\"E190 counter.ice:"));
+        assert!(tree.contains("Tree authored UI tests run in a host harness"));
+        assert!(!tree.contains("agent_inspect("));
+        let native = crate::compile(source, "counter.ice").unwrap();
+        assert!(native.contains("fn count_is_visible()"));
+        assert!(native.contains("Counter::__program()"));
+        assert!(native.contains("agent_inspect("));
+    }
 
     impl Fixture {
         fn new() -> Self {

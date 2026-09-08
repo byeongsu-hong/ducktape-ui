@@ -450,6 +450,19 @@ Full native/wasm parity is ongoing; see the [functional worklist](PARITY.md).
 The native process backend addresses execution, not the remaining Tree syntax,
 widget, effect, and authored-test gaps below.
 
+The same `increment_updates_rendered_count` test in Counter's `.ice` source
+runs against both native and Wasm packages through the host semantic Driver.
+After building the packages above, run
+`cargo test -p app-store-host store::authored_tests:: -- --ignored` here.
+The test clicks the mounted button and checks drawn text within the count
+target; it does not dispatch a guest handler directly. `host/build.rs` generates
+the host-only test bodies with `ui_lang_build::compile_tree_tests`; no testing
+export is added to the guest. This first slice supports static targets, clicks
+and literal text expectations. Typed state, presets, dispatch, mounts and other
+test actions remain unsupported and produce a source-position diagnostic when
+generating the host harness. Direct guest library tests report that the authored
+UI scenario needs the host harness; existing Native-language tests are unchanged.
+
 Catalog polling and approved in-place replacement are implemented; state-schema
 migrations and remote distribution are not. See [host replacement](#approved-host-replacement).
 

@@ -12,6 +12,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+#[cfg(test)]
+#[path = "authored_tests.rs"]
+mod authored_tests;
+
 use iced::time::Instant;
 use ui_lang_runtime::view_tree::{Inputs, Output, Pictures};
 use ui_lang_wire as wire;

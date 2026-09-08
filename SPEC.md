@@ -1431,3 +1431,22 @@ its delay, local measurement and child state. The language's `bool`, `i64`,
 `f64` and `str` keys use the bounded SurfaceValue codec; opaque extern keys
 remain E190. Reset data shares frame text/value budgets. The existing per-frame sensor
 loop limit still applies. Host and guest must rebuild for the new reset field.
+
+### Authored Tree host tests
+
+`ui_lang_build::compile_tree_tests(root)` analyzes the same imported Ice graph
+and generates a Rust test file in `OUT_DIR`, returning its path. The host includes
+it under `cfg(test)` in a module supplying `__ice_tree_test_driver(Config)`, which
+returns the existing runtime semantic `Driver` for a mounted guest Program.
+Generated tests are ignored by default because they require separately built
+guest packages; host CI must explicitly execute them. No test command or export
+is added to production guest artifacts.
+
+The initial Tree host-test subset accepts static target paths, click steps and
+literal text expectations, including `within` and negation, with viewport and
+timeout configuration. Other steps, state expressions, keyed targets,
+mounts, presets, environment overrides and daemon windows produce E190 at their authored source origin;
+the generator never silently drops an unsupported test. Direct `cfg(test)` builds
+of a Tree guest containing authored tests explain the host harness requirement
+at the test origin. Tree stack contracts remain generated. The Native target's
+existing authored test generation and semantics are unchanged.

@@ -1531,7 +1531,8 @@ use state_write::*;
 use statement::*;
 use style::*;
 use subscription::*;
-use testing::*;
+pub(crate) use testing::generate_tree_tests;
+use testing::{generate_test_mounts, generate_tests};
 use view::*;
 
 #[cfg(test)]
