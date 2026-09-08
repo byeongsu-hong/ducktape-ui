@@ -1658,8 +1658,10 @@ consume the aggregate budget; shared document storage is a separate feature.
 
 `sanitize(Frame)` and `apply(Node, patches)` return a fixed-size `SanitizeReport`
 from the actual before/after sanitizer pass. `display_text_truncated` covers
-visible text, rich spans, control labels/options/placeholders and accessibility
-labels; metadata such as font family names is not itself display text. Intentional
+visible text, rich spans, control labels/options/placeholders, accessibility
+labels, and textual host-surface arguments, which share the same budget (for
+example a code preview). Surface record/type names and font family names are
+metadata rather than textual payloads. Intentional
 patch removal happens before measurement and does not produce a truncation report.
 A producer that sanitizes before encoding retains its report in
 `Frame.upstream_sanitization`. Receivers independently validate full frames and
@@ -1673,3 +1675,6 @@ host logs `module`, installation `generation`, the fixed reason
 `display_text_truncated`, and `origin=host|producer-reported`, without message or
 document contents. Each origin is logged once per successful instance installation;
 a failed reload candidate does not change that generation or warning state.
+
+The report field changes the frame schema: wire epoch 2 requires matching hosts
+and guests; epoch 1 modules are refused before execution.

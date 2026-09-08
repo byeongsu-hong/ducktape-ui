@@ -2360,7 +2360,7 @@ system safe-area handling, or a completed audit of every surface.
 
 ### Display text budget reports
 
-Wire tests exercise actual aggregate Text/RichText tail loss, intentional patch
+Wire tests exercise actual aggregate Text/RichText and nested Surface string loss, intentional patch
 removal, within-budget controls, and producer reports surviving encoding and a
 second sanitizer pass. Host tests cover provenance-specific warning deduplication
 and fresh installation state. The `text-budget-guest` fixture drives native and

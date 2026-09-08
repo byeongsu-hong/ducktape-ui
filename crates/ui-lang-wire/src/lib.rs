@@ -25,7 +25,7 @@
 pub mod authored;
 /// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
 /// This is independent of WIT signatures and the manifest text format.
-pub const WIRE_EPOCH: u32 = 1;
+pub const WIRE_EPOCH: u32 = 2;
 
 pub mod manifest;
 pub mod native;
@@ -1467,6 +1467,7 @@ pub fn sanitize(frame: &mut Frame) -> Result<SanitizeReport, &'static str> {
 // Sanitization may shorten display text, but never an authoritative document.
 fn text_amounts(root: &Node) -> Result<(Vec<usize>, usize), &'static str> {
     let mut pending = vec![root];
+    let mut surface_values = Vec::new();
     let mut lengths = Vec::new();
     let mut display = 0usize;
     while let Some(node) = pending.pop() {
@@ -1500,7 +1501,10 @@ fn text_amounts(root: &Node) -> Result<(Vec<usize>, usize), &'static str> {
                 }
             }
             // Unknown surfaces display their name in the native placeholder.
-            Node::Surface { name, .. } => add(name),
+            Node::Surface { name, args, .. } => {
+                add(name);
+                surface_values.extend(args);
+            }
             Node::Button {
                 content,
                 label,
@@ -1549,6 +1553,23 @@ fn text_amounts(root: &Node) -> Result<(Vec<usize>, usize), &'static str> {
             lengths.push(text.len());
         }
         pending.extend(node.children());
+    }
+    // Surface strings share the display budget (for example a code preview).
+    // Record/type names are routing metadata, not the textual payload itself.
+    while let Some(value) = surface_values.pop() {
+        match value {
+            SurfaceValue::Str(text) => display = display.saturating_add(text.len()),
+            SurfaceValue::List(items) => surface_values.extend(items),
+            SurfaceValue::Option(Some(item)) => surface_values.push(item.as_ref()),
+            SurfaceValue::Record { fields, .. } => {
+                surface_values.extend(fields.iter().map(|(_, value)| value));
+            }
+            SurfaceValue::Unit
+            | SurfaceValue::Bool(_)
+            | SurfaceValue::I64(_)
+            | SurfaceValue::F64(_)
+            | SurfaceValue::Option(None) => {}
+        }
     }
     Ok((lengths, display))
 }
@@ -2820,6 +2841,32 @@ mod tests {
         };
         assert_eq!(sanitize(&mut small).unwrap(), SanitizeReport::default());
         assert_eq!(small.upstream_sanitization, SanitizeReport::default());
+    }
+
+    #[test]
+    fn text_passed_to_a_host_surface_reports_actual_loss() {
+        let mut frame = Frame {
+            root: Some(Node::Surface {
+                key: "preview".into(),
+                name: "forge_code".into(),
+                args: vec![SurfaceValue::Record {
+                    name: "Preview".into(),
+                    fields: vec![(
+                        "text".into(),
+                        SurfaceValue::Option(Some(Box::new(SurfaceValue::List(vec![
+                            SurfaceValue::Str("x".repeat(MAX_STRING_BYTES)),
+                        ])))),
+                    )],
+                }],
+                on_event: None,
+            }),
+            ..Default::default()
+        };
+        assert!(
+            sanitize(&mut frame).unwrap().display_text_truncated,
+            "surface text spends the same frame budget and its loss must be reported"
+        );
+        assert!(!sanitize(&mut frame).unwrap().display_text_truncated);
     }
 
     #[test]
