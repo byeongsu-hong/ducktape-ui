@@ -29,6 +29,9 @@ use iced_runtime::futures::futures::channel::mpsc;
 use iced_runtime::futures::subscription::{self, Tracker};
 use iced_runtime::{Action, task};
 
+#[cfg(feature = "authored-tests")]
+pub mod authored;
+
 mod clipboard;
 pub mod keyboard;
 mod markdown;
@@ -126,9 +129,16 @@ impl<A: App> Driver<A> {
 
     /// The host platform selects Command/word-jump semantics before app boot.
     pub fn with_macos(macos: bool) -> Self {
+        Self::initialize(macos, || Ok(A::boot())).expect("ordinary boot is infallible")
+    }
+
+    fn initialize(
+        macos: bool,
+        boot: impl FnOnce() -> Result<(A, iced::Task<A::Message>), String>,
+    ) -> Result<Self, String> {
         let slots = slots::Context::with_macos(macos);
         let _context = slots.enter();
-        let (app, boot) = A::boot();
+        let (app, boot) = boot()?;
         let (subscribed, produced) = mpsc::channel(SUBSCRIPTION_QUEUE);
         let mut driver = Self {
             slots,
@@ -142,7 +152,7 @@ impl<A: App> Driver<A> {
             busy: false,
         };
         spawn(&mut driver.tasks, boot);
-        driver
+        Ok(driver)
     }
 
     /// Delivers the host's events and returns the frame they produced.
@@ -513,7 +523,26 @@ pub const fn manifest_bytes<const N: usize>(text: &str, preferred_size: &str) ->
 #[macro_export]
 macro_rules! export_app {
     ($app:ident, $name:expr, $description:expr, [$($capability:literal),* $(,)?]) => {
+        $crate::__export_app!(production, $app, $name, $description, [$($capability),*]);
+    };
+}
+
+/// Export an explicitly built authored-test artifact. Never install this package
+/// in a production catalog; its manifest and protocol deliberately differ.
+#[cfg(feature = "authored-tests")]
+#[macro_export]
+macro_rules! export_test_app {
+    ($app:ident, $name:expr, $description:expr, [$($capability:literal),* $(,)?]) => {
+        $crate::__export_app!(test, $app, $name, $description, [$($capability),*]);
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __export_app {
+    ($mode:ident, $app:ident, $name:expr, $description:expr, [$($capability:literal),* $(,)?]) => {
         struct __IceApp($app);
+        $crate::__test_app_impl!($mode, __IceApp, $app);
 
         impl $crate::App for __IceApp {
             type Message = __IceMessage;
@@ -541,7 +570,7 @@ macro_rules! export_app {
             fn restore(bytes: &[u8]) -> ::std::result::Result<Self, ::std::string::String> { <$app>::__restore(bytes).map(Self) }
         }
 
-        const __ICE_MANIFEST: &str = concat!("ice.manifest.v1\n", $name, "\n", $description, "\n" $(, $capability, ",")*, "\n");
+        const __ICE_MANIFEST: &str = concat!($crate::__manifest_header!($mode), $name, "\n", $description, "\n" $(, $capability, ",")*, "\n");
 
         #[unsafe(link_section = "ice.manifest")]
         #[used]
@@ -555,7 +584,7 @@ macro_rules! export_app {
 
         #[cfg(not(target_arch = "wasm32"))]
         pub fn run_native() -> ::std::result::Result<(), ::std::string::String> {
-            $crate::native::run::<__IceApp>(&__ICE_MANIFEST_SECTION)
+            $crate::__native_entry!($mode, __IceApp, __ICE_MANIFEST_SECTION)
         }
 
         pub fn boot_native() {
@@ -586,7 +615,7 @@ macro_rules! export_app {
                     });
                 };
             }
-            $crate::wire::with_view_wit!(bindings);
+            $crate::__export_bindings!($mode, bindings);
 
             struct __IceComponent;
 
@@ -610,6 +639,7 @@ macro_rules! export_app {
             }
 
             impl Guest for __IceComponent {
+                $crate::__test_export!($mode, __ICE_DRIVER);
                 fn init(macos: bool) {
                     install_panic_hook();
                     super::__ICE_DRIVER.with(|driver| *driver.borrow_mut() = Some($crate::Driver::with_macos(macos)));
@@ -905,3 +935,72 @@ mod driver_routes_tests {
 
 mod combo;
 pub use combo::Combo;
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __manifest_header {
+    (production) => {
+        "ice.manifest.v1\n"
+    };
+    (test) => {
+        "ice.test.manifest.v1\n"
+    };
+}
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __native_entry {
+    (production, $app:ident, $manifest:ident) => {
+        $crate::native::run::<$app>(&$manifest)
+    };
+    (test, $app:ident, $manifest:ident) => {
+        $crate::authored::run::<$app>(&$manifest)
+    };
+}
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __export_bindings {
+    (production, $callback:ident) => {
+        $crate::wire::with_view_wit!($callback);
+    };
+    (test, $callback:ident) => {
+        $crate::wire::with_test_view_wit!($callback);
+    };
+}
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __test_app_impl {
+    (production, $wrapper:ident, $app:ident) => {};
+    (test, $wrapper:ident, $app:ident) => {
+        impl $crate::authored::TestApp for $wrapper {
+            const FINGERPRINT: u64 = $app::__ICE_TEST_FINGERPRINT;
+            fn test_boot(
+                test: u32,
+            ) -> ::std::result::Result<(Self, ::iced::Task<Self::Message>), ::std::string::String>
+            {
+                $app::__ice_test_boot(test).map(|(app, task)| (Self(app), task))
+            }
+            fn test_step(
+                &self,
+                test: u32,
+                step: u32,
+            ) -> ::std::result::Result<::std::option::Option<Self::Message>, ::std::string::String>
+            {
+                self.0.__ice_test_step(test, step)
+            }
+        }
+    };
+}
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __test_export {
+    (production, $driver:ident) => {};
+    (test, $driver:ident) => {
+        fn authored(
+            command: ::std::vec::Vec<u8>,
+        ) -> ::std::result::Result<::std::vec::Vec<u8>, ::std::string::String> {
+            let request = $crate::wire::decode(&command)?;
+            super::$driver
+                .with(|driver| $crate::authored::respond(&mut driver.borrow_mut(), request))
+        }
+    };
+}

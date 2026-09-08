@@ -2014,8 +2014,29 @@ The owning behavioral mutation changes only `increment` from `count + 1` to
 `count + 0`, then rebuilds each backend: both tests must fail at the final drawn
 `1` assertion and pass after exact restoration and rebuilding. Core checks keep
 Native generation intact and verify that an unsupported test imported from a
-fragment reports E190 at that fragment's line. Typed state, presets, dispatch,
-mounts and other authored actions remain follow-up work, not covered support.
+fragment reports E190 at that fragment's line. Mounts and other unsupported
+authored actions remain follow-up work.
+
+The same Counter source also boots preset `seven`, asserts typed count and drawn
+`7`, clicks the mounted increment control, asserts count and drawn `8`, directly
+dispatches the typed wheel handler, and asserts count and drawn `9`. Explicit
+native and Wasm authored artifacts execute the checked predicate and message
+construction inside the guest; the ordinary host semantic Driver observes text
+and delivers the click. Before each typed step it redraws to deliver queued
+widget events. Omitting that redraw fails the `count == 8` assertion. Bypassing
+the guest preset fails `count == 7` on both backends; discarding the typed dispatch
+fails `count == 9` on both. Each artifact is rebuilt for its mutation and exact
+restoration. These assertions also prove that false guest predicates reach the
+host as a failure at the original Ice location.
+
+The same actual tests reject a mismatched source fingerprint before beginning
+successfully, and assert that the production catalog excludes the test packages.
+A focused guest Driver test retains opaque state and a pending initialization
+Task while typed expectations and dispatch succeed; Snapshot continues to reject
+pending work. Core coverage keeps predicates and typed arguments in the guest,
+uses the existing preset boot, preserves the Native harness, and retains original
+source diagnostics for unsupported steps. Production export and Snapshot formats
+are unchanged; the explicit test artifact uses a separate manifest and WIT export.
 
 ### Scoped guest window effects
 

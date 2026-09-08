@@ -552,6 +552,12 @@ jobs:
         run: |
           python3 scripts/build-native.py
           python3 scripts/build-native.py -p app-store-reload-v1-fixture -p app-store-reload-v2-fixture --out target/native-reload-fixture
+      - name: Build explicit authored test artifacts
+        run: |
+          python3 examples/app-store/scripts/build-native.py -p app-store-authored-counter --out examples/app-store/target/authored-native
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-authored-counter --target wasm32-unknown-unknown \
+            --out examples/app-store/target/authored-wasm
       - name: Prove native and wasm execution parity
         env:
           APP_STORE_DATA: ${{ runner.temp }}/app-store-native-parity

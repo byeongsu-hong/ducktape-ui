@@ -1443,20 +1443,39 @@ loop limit still applies. Host and guest must rebuild for the new reset field.
 
 `ui_lang_build::compile_tree_tests(root)` analyzes the same imported Ice graph
 and generates a Rust test file in `OUT_DIR`, returning its path. The host includes
-it under `cfg(test)` in a module supplying `__ice_tree_test_driver(Config)`, which
+it under `cfg(test)` in a module supplying `__ice_tree_test_driver(Config, test_id, fingerprint)`, which
 returns the existing runtime semantic `Driver` for a mounted guest Program.
+Typed steps additionally call
+`__ice_tree_test_step(&mut Driver<P>, test_id: u32, step_id: u32, Location) -> ()`.
+This adapter forwards the checked IDs to the same guest instance and reports any
+guest error as a test failure at the supplied source `Location`. It redraws before
+and after the step, publishing dispatch changes to mounted widgets before the
+next rendered UI assertion. The app-store host's authored test adapter implements
+both hooks.
 Generated tests are ignored by default because they require separately built
 guest packages; host CI must explicitly execute them. No test command or export
 is added to production guest artifacts.
 
-The initial Tree host-test subset accepts static target paths, click steps and
+The Tree host-test subset accepts named presets, typed state expressions and
+direct dispatch, static target paths, click steps and
 literal text expectations, including `within` and negation, with viewport and
-timeout configuration. Other steps, state expressions, keyed targets,
-mounts, presets, environment overrides and daemon windows produce E190 at their authored source origin;
+timeout configuration. Other steps, keyed targets,
+mounts, environment overrides and daemon windows produce E190 at their authored source origin;
 the generator never silently drops an unsupported test. Direct `cfg(test)` builds
 of a Tree guest containing authored tests explain the host harness requirement
 at the test origin. Tree stack contracts remain generated. The Native target's
 existing authored test generation and semantics are unchanged.
+
+Explicit authored test artifacts enable the guest `authored-tests` feature, include
+`compile_tree_guest_tests(root)` beside the generated app, and use
+`export_test_app!`. Their `ice.test.manifest.v1` header and test-only `authored`
+export are never accepted as production packages. The host and guest compare a
+source-graph fingerprint before beginning a selected test. Presets use the same
+generated boot function and Driver initialization; dispatch constructs the checked
+message and runs ordinary update/task settling. Predicates read live typed state
+inside the guest and return success or an error, without serializing application
+state or requiring snapshot quiescence. The production view/native protocol and
+Snapshot contracts do not change.
 
 ### Scoped guest window effects
 

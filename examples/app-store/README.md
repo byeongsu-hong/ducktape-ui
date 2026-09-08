@@ -456,18 +456,30 @@ Full native/wasm parity is ongoing; see the [functional worklist](PARITY.md).
 The native process backend addresses execution, not the remaining Tree syntax,
 widget, effect, and authored-test gaps below.
 
-The same `increment_updates_rendered_count` test in Counter's `.ice` source
-runs against both native and Wasm packages through the host semantic Driver.
-After building the packages above, run
-`cargo test -p app-store-host store::authored_tests:: -- --ignored` here.
-The test clicks the mounted button and checks drawn text within the count
-target; it does not dispatch a guest handler directly. `host/build.rs` generates
-the host-only test bodies with `ui_lang_build::compile_tree_tests`; no testing
-export is added to the guest. This first slice supports static targets, clicks
-and literal text expectations. Typed state, presets, dispatch, mounts and other
-test actions remain unsupported and produce a source-position diagnostic when
-generating the host harness. Direct guest library tests report that the authored
-UI scenario needs the host harness; existing Native-language tests are unchanged.
+Counter's authored Ice tests run on both backends through the mounted semantic
+Driver. Build their explicit test packages, then run the host harness:
+
+```sh
+python3 scripts/build-native.py -p app-store-authored-counter --out target/authored-native
+cargo ice bundle -p app-store-authored-counter --target wasm32-unknown-unknown --out target/authored-wasm
+cargo test -p app-store-host store::authored_tests:: -- --ignored
+```
+
+The original click test observes drawn `0` → `1`. A second scenario boots preset
+`seven`, checks typed state and drawn `7`, clicks the mounted button to reach `8`,
+then directly dispatches the typed wheel handler and checks state and drawn `9`.
+The host generates tests with `compile_tree_tests`; the dedicated test package
+uses `compile_tree_guest_tests` and `export_test_app!`. Predicates and dispatch
+arguments evaluate inside the guest, without Snapshot or a serialized state
+mirror. A source fingerprint rejects stale test artifacts; their distinct
+manifest keeps them out of the production catalog. Normal guest exports remain
+unchanged, including when the test feature is enabled elsewhere in the workspace.
+
+Presets, typed state expectations and dispatch, static targets, clicks and
+literal text expectations are supported. Mounts, keyed targets and other test
+actions still report a source-position diagnostic. Direct Tree guest library
+tests continue to explain that authored scenarios need the host harness;
+Native-language tests keep their existing generated harness.
 
 Catalog polling and approved in-place replacement are implemented; state-schema
 migrations and remote distribution are not. See [host replacement](#approved-host-replacement).

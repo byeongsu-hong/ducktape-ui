@@ -26,29 +26,37 @@ fn serve<A: SnapshotApp>(
     let mut driver: Option<Driver<A>> = None;
     loop {
         let request = wire::decode::<Request>(&read_packet(input)?)?;
-        let result: Response = (|| match request {
-            Request::Init { macos } => {
-                if driver.is_some() {
-                    return Err("already initialized".into());
-                }
-                driver = Some(Driver::with_macos(macos));
-                Ok(Vec::new())
-            }
-            Request::Tick(bytes) => {
-                let events = wire::decode(&bytes)?;
-                let mut frame = driver.as_mut().ok_or("initialize first")?.tick(events);
-                if frame.unchanged || !frame.patches.is_empty() {
-                    frame.root = None;
-                }
-                Ok(wire::encode(&frame))
-            }
-            Request::Snapshot => driver.as_ref().ok_or("initialize first")?.snapshot(),
-            Request::Restore { state, macos } => {
-                let candidate = Driver::from_snapshot(&state, macos)?;
-                driver = Some(candidate);
-                Ok(Vec::new())
-            }
-        })();
+        let result = respond(&mut driver, request);
         write_packet(output, &wire::encode(&result))?;
+    }
+}
+
+/// Shared ordinary operations for production and explicit test transports.
+pub(crate) fn respond<A: SnapshotApp>(
+    driver: &mut Option<Driver<A>>,
+    request: Request,
+) -> Response {
+    match request {
+        Request::Init { macos } => {
+            if driver.is_some() {
+                return Err("already initialized".into());
+            }
+            *driver = Some(Driver::with_macos(macos));
+            Ok(Vec::new())
+        }
+        Request::Tick(bytes) => {
+            let events = wire::decode(&bytes)?;
+            let mut frame = driver.as_mut().ok_or("initialize first")?.tick(events);
+            if frame.unchanged || !frame.patches.is_empty() {
+                frame.root = None;
+            }
+            Ok(wire::encode(&frame))
+        }
+        Request::Snapshot => driver.as_ref().ok_or("initialize first")?.snapshot(),
+        Request::Restore { state, macos } => {
+            let candidate = Driver::from_snapshot(&state, macos)?;
+            *driver = Some(candidate);
+            Ok(Vec::new())
+        }
     }
 }

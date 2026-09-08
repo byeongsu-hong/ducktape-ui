@@ -14,6 +14,20 @@ test increment_updates_rendered_count
   click increment
   expect text "1" within count_label
 
+test preset_and_typed_dispatch_update_live_count
+  preset seven
+  viewport 480 600
+  target increment = #app/content/controls/increment
+  target count_label = #app/content/pad/card/count
+  expect count == 7
+  expect text "7" within count_label
+  click increment
+  expect count == 8
+  expect text "8" within count_label
+  dispatch wheeled(0.0, 2.0, true)
+  expect count == 9
+  expect text "9" within count_label
+
 use "theme.ice"
 
 extern crate::host
@@ -35,6 +49,10 @@ state
   pointer = ""
   active_palette:palette[CounterTheme] = CounterTheme.light
   dark = false
+
+preset seven
+  state
+    count = 7
 
 on themed(mode)
   dark = mode == "dark"

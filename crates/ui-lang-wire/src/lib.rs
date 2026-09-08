@@ -21,6 +21,8 @@
 //! drop silently. A host that reads a frame from an untrusted module runs
 //! [`sanitize`] first.
 
+#[cfg(feature = "authored-tests")]
+pub mod authored;
 pub mod manifest;
 pub mod native;
 mod wit;

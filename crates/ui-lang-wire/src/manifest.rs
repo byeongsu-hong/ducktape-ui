@@ -43,6 +43,14 @@ const MAX_CAPABILITY_BYTES: usize = 32;
 /// This parses the binary structure; it does not validate the component ABI or execute it.
 #[cfg(feature = "manifest")]
 pub fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
+    read_manifest_with(bytes, Manifest::parse)
+}
+
+#[cfg(feature = "manifest")]
+pub(crate) fn read_manifest_with(
+    bytes: &[u8],
+    parse: impl Fn(&str) -> Option<Manifest>,
+) -> Option<Manifest> {
     // The parser walks into the core modules a component nests, which is
     // where the app's own sections are.
     let mut payloads = wasmparser::Parser::new(0).parse_all(bytes);
@@ -63,7 +71,7 @@ pub fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
             if manifest.is_some() {
                 return None;
             }
-            manifest = Some(Manifest::parse(std::str::from_utf8(section.data()).ok()?)?);
+            manifest = Some(parse(std::str::from_utf8(section.data()).ok()?)?);
         }
     }
     manifest
@@ -72,11 +80,15 @@ pub fn read_manifest(bytes: &[u8]) -> Option<Manifest> {
 impl Manifest {
     /// Parses the strict five-line `ice.manifest.v1` text and its bounds.
     pub fn parse(text: &str) -> Option<Self> {
+        Self::parse_with_header(text, "ice.manifest.v1")
+    }
+
+    pub(crate) fn parse_with_header(text: &str, header: &str) -> Option<Self> {
         if text.len() > 1024 || text.chars().any(|c| c.is_control() && c != '\n') {
             return None;
         }
         let mut lines = text.split('\n');
-        if lines.next()? != "ice.manifest.v1" {
+        if lines.next()? != header {
             return None;
         }
         let name = lines.next()?.to_owned();

@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+authored-tests = ["ui-lang-wire/authored-tests"]
+
 [dependencies]
 # No renderer feature on purpose: the guest builds a tree, it never draws.
 # `advanced` is what the generated app's `Task`/`Theme` code names.
