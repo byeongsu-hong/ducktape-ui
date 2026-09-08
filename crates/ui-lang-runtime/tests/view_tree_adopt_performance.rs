@@ -33,6 +33,8 @@ fn input(nth: usize) -> wire::Node {
 
 fn screen_of_inputs() -> wire::Node {
     wire::Node::Linear {
+        max_width: None,
+        clip: false,
         wrap: None,
         key: "App/form".into(),
         axis: wire::Axis::Column,

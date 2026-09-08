@@ -651,6 +651,8 @@ fn gen_list(rng: &mut Rng, children: Vec<Node>) -> Node {
     }
     if rng.next_bool() {
         return Node::Linear {
+            max_width: gen_opt_f32(rng),
+            clip: rng.next_bool(),
             wrap: rng.next_bool().then(|| Wrap {
                 spacing: gen_opt_f32(rng),
                 align: gen_opt_align_x(rng),
@@ -1271,6 +1273,7 @@ fn check_bounds(
             }
         }
         Node::Linear {
+            max_width,
             wrap,
             spacing,
             padding,
@@ -1281,6 +1284,9 @@ fn check_bounds(
             children,
             ..
         } => {
+            if let Some(value) = max_width {
+                assert!(value.is_finite() && (0.0..=PIXEL_BOUND).contains(value));
+            }
             if let Some(Wrap {
                 spacing: Some(gap), ..
             }) = wrap
@@ -2203,6 +2209,8 @@ fn a_length_prefix_bomb_is_refused_without_the_allocation() {
     fn linear(children: Vec<Node>) -> Frame {
         Frame {
             root: Some(Node::Linear {
+                max_width: None,
+                clip: false,
                 wrap: None,
                 key: "k".into(),
                 axis: Axis::Column,

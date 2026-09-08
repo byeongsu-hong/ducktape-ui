@@ -1751,7 +1751,7 @@ mod tests {
         fixture.write("app.ice", &app("Demo", "part.ice", "Part"));
         fixture.write(
             "part.ice",
-            "component Part()\n  col max-w=640.0\n    text \"a\"\n",
+            "component Part()\n  rule horizontal fill=percent(50.0)\n",
         );
         let mut db = AnalysisDb::default();
         db.set_target(crate::Target::Tree);

@@ -49,6 +49,8 @@ fn input_node(nth: usize) -> wire::Node {
 
 fn column_of(children: Vec<wire::Node>) -> wire::Node {
     wire::Node::Linear {
+        max_width: None,
+        clip: false,
         wrap: None,
         key: "App/column".into(),
         axis: wire::Axis::Column,

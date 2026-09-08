@@ -160,6 +160,13 @@ fn text_wasm_preserves_layout_and_padding_routes() {
         620.0,
         "box maximum width bounds a wide host"
     );
+    assert_eq!(
+        bounds(&mut ui, &mut renderer, "Settings content")
+            .unwrap()
+            .width,
+        560.0,
+        "column maximum width bounds the settings content inside the box"
+    );
     let heading = bounds(&mut ui, &mut renderer, "Node overview").unwrap();
     assert_eq!(heading.height, 44.0, "component text keeps explicit height");
     assert_eq!(heading.x, 16.0, "box px utility supplies native padding");
@@ -185,6 +192,43 @@ fn text_wasm_preserves_layout_and_padding_routes() {
     }
     let clipped_key = clipped_key(guest.lock().unwrap().frame.root.as_ref().unwrap()).unwrap();
     let clipped = container_bounds(&mut ui, &renderer, &clipped_key);
+    fn clipped_linear_keys(node: &wire::Node, keys: &mut Vec<String>) {
+        if let wire::Node::Linear {
+            clip: true,
+            width: Some(wire::Length::Fixed(80.0)),
+            key,
+            ..
+        } = node
+        {
+            keys.push(key.clone());
+        }
+        for child in node.children() {
+            clipped_linear_keys(child, keys);
+        }
+    }
+    let mut keys = vec![];
+    clipped_linear_keys(
+        guest.lock().unwrap().frame.root.as_ref().unwrap(),
+        &mut keys,
+    );
+    assert_eq!(
+        keys.len(),
+        2,
+        "bundled row and column clipping options survive"
+    );
+    let mut clipped_bounds = vec![clipped];
+    for label in [
+        "Column content extending past its parent",
+        "Row content extending past its parent",
+    ] {
+        let text = bounds(&mut ui, &mut renderer, label).expect("clipped layout text");
+        assert_eq!(text.width, 80.0);
+        clipped_bounds.push(Rectangle {
+            height: 20.0,
+            ..text
+        });
+    }
+
     ui.draw(
         &mut renderer,
         &iced::Theme::Light,
@@ -194,14 +238,16 @@ fn text_wasm_preserves_layout_and_padding_routes() {
         mouse::Cursor::Unavailable,
     );
     let pixels = renderer.screenshot(Size::new(900, 600), 1.0, iced::Color::WHITE);
-    for y in clipped.y.ceil() as usize..(clipped.y + clipped.height).floor() as usize {
-        for x in (clipped.x + clipped.width).ceil() as usize..500 {
-            let pixel = &pixels[(y * 900 + x) * 4..][..3];
-            assert_eq!(
-                pixel,
-                &[255, 255, 255],
-                "clipped text cannot paint outside its box at {x},{y}"
-            );
+    for clipped in clipped_bounds {
+        for y in clipped.y.ceil() as usize..(clipped.y + clipped.height).floor() as usize {
+            for x in (clipped.x + clipped.width).ceil() as usize..500 {
+                let pixel = &pixels[(y * 900 + x) * 4..][..3];
+                assert_eq!(
+                    pixel,
+                    &[255, 255, 255],
+                    "clipped text cannot paint outside its box at {x},{y}"
+                );
+            }
         }
     }
     assert!(bounds(&mut ui, &mut renderer, "Applied").is_none());

@@ -1439,6 +1439,20 @@ mutation dropping native text height made its intended assertion fail
 first failed on line 1 instead of 2, then passed after preventing double remap.
 Font assets remain host-owned; the host registers trusted names for resolution.
 
+### Tree bounded linear layout evidence
+
+`tree_linear_layout_options_cross_the_wire` checks column `max-w=` and
+row/column `clip=` lowering. `linear_max_width_and_clip_reach_native_layout_and_paint`
+checks narrow/wide native column geometry and both clipped/unclipped row and
+column glyph pixels, including positive visible ink. Increasing the forwarded
+maximum by one fails at 81 versus 80; disabling column clipping fails the
+out-of-bounds ink assertion. Both pass after restoration. Hostile frame tests
+bound copied maximum widths. The bundled `app-store-text-fixture` also carries
+a bounded settings column, clipped rows/columns and the existing clipped box;
+`text_wasm_preserves_layout_and_padding_routes` checks its content width and
+raster bounds in the real host. Native clipping changes the paint viewport,
+not event routing. Linear wire fields require a joint host/guest rebuild.
+
 ### Tree button accessibility
 
 Tree buttons preserve optional `checked=`, `expanded=` and `description=`.

@@ -1493,3 +1493,14 @@ fn rich_span_gradient_refusal_names_the_span_line() {
         "refusal must name the span, not its paragraph: {error}"
     );
 }
+
+#[test]
+fn tree_linear_layout_options_cross_the_wire() {
+    let source = format!(
+        "app Demo\n{PALETTE}view\n  col w=fill max-w=860.0 clip=true\n    row clip=false\n      text \"Settings\"\n    col clip=true\n      text \"Details\"\n"
+    );
+    let generated = compile_for(&source, "linear.ice", Target::Tree).unwrap();
+    assert!(generated.contains("max_width: ::std::option::Option::Some("));
+    assert!(generated.contains("clip: true"));
+    assert!(generated.contains("clip: false"));
+}

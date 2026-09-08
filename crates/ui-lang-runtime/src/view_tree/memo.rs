@@ -389,6 +389,8 @@ mod tests {
         let node = |spent: usize| {
             let mut frame = wire::Frame {
                 root: Some(wire::Node::Linear {
+                    max_width: None,
+                    clip: false,
                     key: "root".into(),
                     axis: wire::Axis::Column,
                     wrap: None,
