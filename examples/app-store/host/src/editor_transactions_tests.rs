@@ -116,6 +116,57 @@ fn state(guest: &Arc<Mutex<Guest>>) -> wire::EditorState {
         revision: *revision,
     }
 }
+fn assert_document_identities(guest: &Arc<Mutex<Guest>>) {
+    fn editors<'a>(node: &'a wire::Node, output: &mut Vec<&'a wire::Node>) {
+        if matches!(node, wire::Node::Editor { .. }) {
+            output.push(node);
+        }
+        for child in node.children() {
+            editors(child, output);
+        }
+    }
+    let guest = guest.lock().unwrap();
+    let mut nodes = vec![];
+    editors(guest.frame.root.as_ref().unwrap(), &mut nodes);
+    let mut independent = vec![];
+    let mut shared = vec![];
+    for node in nodes {
+        let wire::Node::Editor {
+            options,
+            text,
+            reset,
+            revision,
+            ..
+        } = node
+        else {
+            unreachable!()
+        };
+        if text.is_empty() {
+            assert!(
+                options.binding.is_some(),
+                "component binding reached the real guest"
+            );
+            independent.push((&options.document, *reset, *revision));
+        } else {
+            assert_eq!(text, "ab");
+            shared.push(&options.document);
+        }
+    }
+    assert_eq!(independent.len(), 2, "two mounted component instances");
+    assert_eq!(independent[0].1, independent[1].1);
+    assert_eq!(independent[0].2, independent[1].2);
+    assert_ne!(
+        independent[0].0, independent[1].0,
+        "equal empty states belong to distinct component lanes"
+    );
+    assert_eq!(shared.len(), 2, "one app state rendered twice");
+    assert_eq!(
+        shared[0], shared[1],
+        "widget identity must not split one state into two lanes"
+    );
+    assert_ne!(shared[0], independent[0].0);
+    assert_ne!(shared[0], independent[1].0);
+}
 fn texts(node: &wire::Node, output: &mut Vec<String>) {
     if let wire::Node::Text { content, .. } = node {
         output.push(content.clone());
@@ -187,6 +238,7 @@ fn editor_transactions_native_and_wasm_order_input_and_unify_guest_history() {
         let mut now = std::time::Instant::now();
         let mut clipboard = Clipboard::default();
         ui = settle(ui, &guest, &mut renderer, &mut now, &mut clipboard);
+        assert_document_identities(&guest);
         let mut bounds = Bounds(
             editor(guest.lock().unwrap().frame.root.as_ref().unwrap())
                 .unwrap()

@@ -26,6 +26,21 @@ state
 on committed(outcome)
   history = record(history, outcome, draft)
 
+component IndependentEditor()
+  lifetime mounted
+  state
+    draft:editor = editor("")
+    history:History = initial_history()
+  on committed(outcome)
+    history = record(history, outcome, draft)
+  editor #local <-> draft key-binding=keys(history) -> committed _
+    with
+      w=120.0
+      min-h=30.0
+      max-h=30.0
+      size=12.0
+    active bg=bg value=fg selection=primary
+
 view
   col w=260.0 gap=8.0
     editor #document <-> draft key-binding=keys(history) -> committed _
@@ -46,3 +61,13 @@ view
       text "commits ordered" #ordered
     if !history.ordered
       text "duplicate or reordered commit" #out-of-order
+    row
+      IndependentEditor #left
+      IndependentEditor #right
+    editor #same-document <-> draft
+      with
+        w=120.0
+        min-h=30.0
+        max-h=30.0
+        size=12.0
+      active bg=bg value=fg selection=primary
