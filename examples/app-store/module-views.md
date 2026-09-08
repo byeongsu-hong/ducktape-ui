@@ -6,34 +6,43 @@ with its consensus code. A view component executes on the desktop host, never
 in consensus. It emits declarative UI and sends capability requests; native
 rendering, devices, credentials and network access remain host responsibilities.
 
-This inventory reads ducktape at `ffc1629b54337734910e60a4ad282943f5586515`
-and Ice at `007ab0b9`. It is a source audit, not evidence that the existing
-Ducktape daemon compiles for wasm. Ducktape is not modified by this work.
+This inventory was refreshed on 2026-09-08 against Ducktape's clean `dev`
+checkout `06e0378b4022a43effead97a700c0669a4d17d9c` and Ice main
+`90391f5f30b8a3e8517b5d9dc238d288fe3319bc`. Ducktape's inspected integration
+branch `379cc7067` pins Ice `fad0aa32`; its changes are not counted as deployed
+mainline behavior. This is a source audit, not a fresh execution of Ducktape's
+tests or proof that its native daemon compiles for wasm. Ducktape is not modified
+by this work.
 
 ## Actual consumers
 
 Paths in this table are relative to ducktape's `app/src/ui/`. A screen is
 not necessarily a one-to-one module: ownership below is a proposed extraction
-boundary, and shared shell UI must not be duplicated into every package.
+boundary, and shared shell UI must not be duplicated into every package. These
+are source-identified boundaries; each remaining guest still needs a complete
+typed-root compile and execution of its real workflows.
 
-| Consumer and source | Blocking UI requirements | Host / module boundary |
+| Consumer and source | Remaining port boundary after implemented Ice support | Host / module boundary |
 | --- | --- | --- |
-| Chat and DMs: `screens/chat.ice`, `components/chat.ice`, `components/dm.ice` | stack, hover, flex, overlay, keyed/lazy lists; `rich_composer(&editor, str, bool, f64, f64, f64) -> ComposerEvent`; focus and scroll operations | chat queries/submissions and live deltas; navigation, clipboard and notifications through host capabilities |
-| Huddle: `components/huddle.ice`, `extern/call.ice` | existing one-string video surfaces express the tiles/stage; their native providers are still required | host-owned call session and media; stream cancellation ends the session; mute/camera/screen commands; detached window stays host-owned |
-| Pages: `screens/pages.ice`, `extern/editor.ice` | stack/overlay; `page_document(&editor, bool, bool, &[PageBlock], &[str]) -> PageEvent`; editing shortcuts | page load/save/comments, dirty-buffer conflict handling; editor content/event contract cannot be replaced by a plain input without losing behavior |
-| Forge: `screens/forge.ice`, `components/forge.ice` | stack/pin/keyed/lazy/flex; rich composer; `forge_markdown(str, str, bool) -> str`, `forge_code(str, str, bool)`, `picture(str, str)` | repository data, links and file assets; native git work and HTTP fetching stay host-side |
-| Files: `screens/storage.ice` (`FilesScreen`) | overlay/keyed/stack/lazy/flex, editor, picture/markdown/code surfaces | file listing/read/write/history and dropped-file access; a guest path is not permission to read a host file |
-| Agent UI: `screens/shell.ice` | keyed/lazy, markdown links, rich composer, `agent_terminal_surface(&AgentTerminalSession)` | agent streams and session capabilities; terminal process, retained terminal state and focus stay in host |
-| Governance: `screens/governance.ice` | basic controls, plus shared shell/component dependencies | proposal query/vote/submit and signing authorization |
-| Members and agents roster: `screens/roster.ice` | basic controls, plus shared shell/component dependencies | identity, membership and agent data; roles/authorization remain backend rules |
-| Node/logs: `screens/node.ice`, `view.ice`, `ducktape-ui/log-timeline.ice` | `node_log_timeline(&NodeLogTimelineState, &str) -> NodeLogTimelineEvent` | node/log/peer streams; retained log state needs a host resource or a declarative replacement |
-| Explorer: `screens/storage.ice` (`ExplorerScreen`) | flex/stack; shared components | cross-module search and block/operation data; not a single module's state |
-| Shell, settings and onboarding: `view.ice`, `components/shell.ice`, `components/onboarding.ice`, `screens/settings.ice` | stack/pin/tooltip/qr, window lifecycle, keyboard modifiers/shortcuts, theme/font assets | host shell, network selection, keystore, signing prompts, tray and native windows; not automatically owned by an app module |
+| Chat and DMs: `screens/chat.ice`, `components/chat.ice`, `components/dm.ice` | data contract for `rich_composer(&editor, ...) -> ComposerEvent`; guest-local widget paths instead of native `window=` targets | chat queries/submissions and live deltas; navigation, clipboard and notifications through host capabilities |
+| Huddle: `components/huddle.ice`, `extern/call.ice` | native video surface providers and call capability integration | host-owned call session and media; cancellation, mute/camera/screen requests and detached windows remain host responsibilities |
+| Pages: `screens/pages.ice`, `extern/editor.ice` | `page_document(&editor, ..., &[PageBlock], &[str]) -> PageEvent` buffer/action boundary; page menus, history and comments | load/save and dirty-buffer conflict handling; preserve rich editing behavior |
+| Forge: `screens/forge.ice`, `components/forge.ice` | rich composer, application markdown/code/picture surfaces and `scroll-to-key` (PR #977 pending at this audit) | repository data, links and file assets; native git work and HTTP fetching stay host-side |
+| Files: `screens/storage.ice` (`FilesScreen`) | editor and application picture/markdown/code surface integration | file listing/read/write/history and dropped-file access; a guest path is not authority to read host files |
+| Agent UI: `screens/shell.ice` | rich composer and `agent_terminal_surface(&AgentTerminalSession)` resource adapter | agent streams; terminal process/session state remains host-owned |
+| Governance: `screens/governance.ice` | separate `crates/views/governance` guest and native mount exist; module-artifact ownership remains | proposal intents return to existing host authorization/signing handlers |
+| Members and agents roster: `screens/roster.ice` | separate `crates/views/members` and `crates/views/agents` guests and mounts exist; module-artifact ownership remains | identity, membership and agent intents return to host handlers |
+| Node/logs: `screens/node.ice`, `view.ice`, `ducktape-ui/log-timeline.ice` | host log Surface and stream integration; existing `log_timeline` now permits static owned row elements | host owns the log ring; separate view selection and lifecycle |
+| Explorer: `screens/storage.ice` (`ExplorerScreen`) | guest root and host query/context boundary | cross-module search and block/operation data; not a single module's state |
+| Shell, settings and onboarding: `view.ice`, `components/shell.ice`, `components/onboarding.ice`, `screens/settings.ice` | window lifecycle, shared navigation, secret/device access and guest extraction | host shell and credentials must not be copied into every module package |
 
 The actual root is `daemon Ducktape` in `app.ice`, importing all state,
 handlers, screens and tests. `view.ice` dispatches by native window identity;
 `handlers/lifecycle.ice` subscribes to keyboard, dropped-file and window events.
-There are no independent module guest entry points in this source graph.
+Three independent guest entry points now exist under `crates/views`:
+governance, members and agents. `app/src/ui/view.ice` mounts their native
+`module_view` adapters. The inspected `dev` checkout still pins Ice `eca0c878`,
+so newer Ice support is available for integration, not already adopted there.
 The `ducktape-app` Cargo dependency graph includes native camera/audio, git,
 keystore, node and networking code. Changing only `Target::Tree` cannot turn
 that binary into an isolated view package.
@@ -42,13 +51,18 @@ that binary into an isolated view package.
 
 - **Package ownership:** `crates/kernel/module-artifact/src/lib.rs` in ducktape
   encodes only `component` and optional `index`, and hashes that entire frame.
-  A future module-owned view must enter that same commitment and activation
-  path (including view removal), with its assets/manifest covered by the
+  `app/Cargo.toml` stages `../target/views`, and `app/src/module_view.rs` loads
+  `views/<module>_view.wasm` beside the executable, also searching a parent
+  `views/` during development; `DUCKTAPE_VIEWS_DIR` overrides the directory. This
+  provides external wasm files in a desktop package, but does not add a view
+  to `ModuleArtifact` or its hash. A module-owned view must enter that
+  commitment and activation path (including view removal), with its assets/manifest covered by the
   commitment. An independently scanned UI catalog is not that guarantee.
   Keep consensus and desktop view as separate wasm components within the
   deployable unit; importing desktop capabilities into consensus is wrong.
 - **Mount contract:** the example host currently gives one app one window.
-  A module view also needs mounting inside a host tab, initial route/context,
+  Ducktape now mounts the three guests inside its host view and sends props
+  and semantic intents. General extraction still needs route/context,
   cross-module navigation, instance-scoped state, unmount cancellation and
   host-resource cleanup. Do not equate a module id with a unique UI instance.
 - **Data boundary:** ordinary record/list data can cross as values; native
@@ -60,14 +74,15 @@ that binary into an isolated view package.
   clipboard uses a manifest capability and the mounted host's platform interface.
   Checked Ice focus/selection/scroll statements now use the mounted host's
   widget request channel. Arbitrary native Widget actions and window/font/
-  image/reload/exit actions remain dropped and logged. Keyboard handling and
-  these effects are functional requirements of the
+  image/reload/exit actions remain dropped and logged. Ice now transports
+  keyboard events with captured status and host-platform modifiers; embedding
+  hosts must route them to the active guest. Remaining effects are requirements of the
   existing screens, not optional visual polish. Existing host request/stream
   transport can carry domain capabilities; ducktape must supply authorization,
   signing, query/submit/page and cancellation semantics later.
 - **Assets and presentation:** embedded SVG works, but picture providers refer
-  to host caches; guest file paths cannot access those caches. Named text fonts/layout and button recipes/accessibility now cross as copied values. SVG icon Rust style callbacks remain deliberately refused; declarative colors and host button-ink inheritance are needed. Images,
-  theme inheritance and keyboard behavior need
+  to host caches; guest file paths cannot access those caches. Named text fonts/layout and button recipes/accessibility now cross as copied values. SVG icon Rust style callbacks remain deliberately refused; declarative colors and host button-ink inheritance are implemented. Application image providers,
+  theme inheritance and integrated keyboard behavior need
   observable parity, including unknown-surface placeholders.
 - **Reload:** `ice:view` exports only `init` and `tick`. Snapshot/restore must
   preserve serializable UI state, rebuild handler tables and subscriptions,
@@ -86,12 +101,12 @@ that binary into an isolated view package.
 | 3c — declarative graphics and responsive layout | Canvas geometry data and host-evaluated container conditions implemented, with widget-local opt-in measurements only. Arbitrary measured widget properties and native callbacks remain refused. | Geometry rendering and interaction; multiple container widths with correct branches and no guest layout callback; bounded sensor feedback. |
 | 4a — actual app layouts first | stack/hover/overlay and wrapping rows/columns and tooltip implemented with native host routing and modal lifecycle; keyed/virtual rows, lazy caching and native flex layouts implemented; pin implemented with native local offsets. Preserve union sizing, hit routing, identity, virtualization and scroll behavior. | Representative chat list and menus, page overlay, file/forge list; reorder/edit/scroll assertions and frame measurements, not compile-only coverage. |
 | 4b — remaining content/layout/style | rich text and host-encoded QR implemented; markdown/image/combo, table/pane grid/theme/themer/float/resize handle and remaining supported surface shapes. | Per-feature native/wire behavior checks and real wasm bundle builds; preserve intentional rejection of native callbacks. |
-| Runtime alongside 3–4 | Clipboard Tasks and checked widget focus/selection/scroll requests implemented through the mounted host; guest component mount/unmount and boot implemented; window requests, input subscriptions, assets and host context remain. | Focus/scroll/copy, keyboard and cancellation driven through a real host boundary; separate guest instances cannot affect one another. |
+| Runtime alongside 3–4 | Clipboard Tasks and checked widget focus/selection/scroll requests implemented through the mounted host; guest component mount/unmount and boot implemented; host-delivered keyboard subscriptions and platform modifiers implemented; window requests, mouse/IME/window subscriptions, assets and host context remain. | Focus/scroll/copy, keyboard and cancellation driven through a real host boundary; separate guest instances cannot affect one another. |
 | Hot reload after state/lifecycle boundary | Generated snapshot/restore exports and catalog watch in the example host. | Same window and UI draft survive replacement; failure retains usable old instance; no duplicated side effects, stale routes or leaked subscriptions. |
-| Ducktape integration — deferred | Extract per-module guest roots, bind real capabilities/surfaces, add view to module artifact and build/hydration/activation paths, mount from module packages. | Every existing module-owned screen builds and runs from its package; no wasm embedded in desktop binary; module+index+view hash/activation/removal agree; real workflows and permissions pass. |
+| Ducktape integration — application owner | Three guest roots and file-based mounts exist. Extract the remaining roots, bind real capabilities/surfaces, add view to module artifact and build/hydration/activation paths, and mount from module packages. | Every existing module-owned screen builds and runs from its package; no wasm embedded in desktop binary; module+index+view hash/activation/removal agree; real workflows and permissions pass. |
 
-The two goals are compatible, but `51 emitted / 42 refused` is not a measure
-of module portability. Completion requires view construction, interaction,
+The two goals are compatible, but widget coverage counts do not measure
+module portability. Completion requires view construction, interaction,
 effects, lifecycle and packaging together. Purely local visual state belongs
 in the guest; the host must not become a second implementation of module
 business logic. Ducktape integration remains deferred until authorized.
