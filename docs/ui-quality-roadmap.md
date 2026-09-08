@@ -149,3 +149,9 @@ does **not** close L04. Follow-up work remains:
   adding an automatic action-layout API.
 - L04c: verify Dialog.Actions and ButtonGroup, including long labels and focus
   order; the card test alone does not establish their behavior.
+
+- L04b implementation design: [multi-child slots](superpowers/specs/2026-09-08-multi-child-slots-design.md)
+  and [implementation plan](superpowers/plans/2026-09-08-multi-child-slots.md).
+  This is a planned language contract, not supported syntax or completed layout
+  behavior. Existing source inspection confirms that scalar slot codegen is the
+  boundary preventing the parent from arranging caller siblings individually.
