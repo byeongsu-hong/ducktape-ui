@@ -121,18 +121,51 @@ pub fn compile_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
 }
 
 /// Generate authored Tree tests for inclusion in a native host's `cfg(test)` module.
-/// The module supplies `__ice_tree_test_driver(Config)` using its real guest backend.
+/// The module supplies `__ice_tree_test_driver(Config, test_id, fingerprint)` using its real guest backend.
 pub fn compile_tree_tests_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
     let path = path.as_ref();
     let analysis = analyze_file_graph(path)?;
+    let fingerprint = tree_test_fingerprint(&analysis.dependencies)?;
     let mut program = crate::lower::lower(analysis.document)?;
     program.set_target(crate::Target::Tree);
-    let rust = crate::codegen::generate_tree_tests(&program, &path.display().to_string())?;
+    let generated = crate::codegen::generate_tree_tests(&program, &path.display().to_string())?;
+    let rust = format!("const __ICE_TEST_FINGERPRINT: u64 = {fingerprint};\n{generated}");
     Ok(FileCompilation {
         rust,
         dependencies: analysis.dependencies,
         asset_dependencies: analysis.asset_dependencies,
     })
+}
+
+/// Generate typed test hooks for an explicitly built Tree test artifact.
+/// This output must never be included in a production guest.
+pub fn compile_tree_guest_tests_file(path: impl AsRef<Path>) -> Result<FileCompilation, Error> {
+    let path = path.as_ref();
+    let analysis = analyze_file_graph(path)?;
+    let fingerprint = tree_test_fingerprint(&analysis.dependencies)?;
+    let mut program = crate::lower::lower(analysis.document)?;
+    program.set_target(crate::Target::Tree);
+    let generated =
+        crate::codegen::generate_tree_guest_tests(&program, &path.display().to_string())?;
+    let app = program.app_name();
+    let rust =
+        format!("impl {app} {{ const __ICE_TEST_FINGERPRINT: u64 = {fingerprint}; }}\n{generated}");
+    Ok(FileCompilation {
+        rust,
+        dependencies: analysis.dependencies,
+        asset_dependencies: analysis.asset_dependencies,
+    })
+}
+
+fn tree_test_fingerprint(paths: &[PathBuf]) -> Result<u64, Error> {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    for path in paths {
+        let bytes =
+            fs::read(path).map_err(|error| file_error("E001", path, 1, error.to_string()))?;
+        bytes.hash(&mut hash);
+    }
+    Ok(hash.finish())
 }
 
 pub(crate) fn analyze_loaded_without_assets(
@@ -687,17 +720,44 @@ mod tests {
             "test click_count\n  target button = #increment\n  click button\n  expect text \"1\"\n",
         );
         let compiled = super::compile_tree_tests_file(fixture.path("app.ice")).unwrap();
-        assert!(compiled.rust.contains("__ice_tree_test_driver(__config)"));
+        assert!(
+            compiled
+                .rust
+                .contains("__ice_tree_test_driver(__config, 0, __ICE_TEST_FINGERPRINT)")
+        );
         assert!(compiled.rust.contains("Action::Click"));
         assert!(compiled.rust.contains("check_text"));
         assert!(compiled.rust.contains("test.ice"));
         assert_eq!(compiled.dependencies.len(), 2);
-        fixture.write("test.ice", "test click_count\n  expect count == 0\n");
+        fixture.write("test.ice", "test click_count\n  idle\n");
         let error = super::compile_tree_tests_file(fixture.path("app.ice")).unwrap_err();
         assert_eq!(error.code, "E190");
         assert_eq!(error.line, 2);
         assert!(error.path.unwrap().ends_with("test.ice"));
         assert!(error.message.contains("Tree host tests do not yet support"));
+    }
+
+    #[test]
+    fn tree_authored_typed_steps_stay_in_the_guest_and_presets_use_native_boot() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", "app Counter\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #ffffff\n  fg #111111\n  primary #333333\n  danger #ff0000\nstate\n  count = 0\npreset seeded\n  state\n    count = 7\non set_count(value)\n  count = value\nview\n  button \"Set\" -> set_count(3)\ntest typed_count\n  preset seeded\n  expect count == 7\n  dispatch set_count(count + 2)\n  expect count > 8\n");
+        let host = super::compile_tree_tests_file(fixture.path("app.ice")).unwrap();
+        let guest = super::compile_tree_guest_tests_file(fixture.path("app.ice")).unwrap();
+        assert_eq!(host.rust.matches("__ice_tree_test_step(").count(), 3);
+        assert!(!host.rust.contains("__IceMessage::"));
+        assert!(!host.rust.contains(".count"));
+        assert!(guest.rust.contains("Self::__preset_0()"));
+        assert!(guest.rust.contains("__IceMessage::SetCount"));
+        assert!(guest.rust.contains("self.count"));
+        assert!(!guest.rust.contains("snapshot"));
+        // Ordinary Tree production has neither the sidecar nor an export hook.
+        let production = crate::compile_for(
+            &fs::read_to_string(fixture.path("app.ice")).unwrap(),
+            "app.ice",
+            crate::Target::Tree,
+        )
+        .unwrap();
+        assert!(!production.contains("fn __ice_test_step"));
     }
 
     #[test]

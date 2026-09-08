@@ -29,8 +29,8 @@ pub use hir::for_each_child;
 pub use semantic::*;
 pub use source::{
     FileAnalysis, FileCompilation, analyze_file, analyze_file_graph, analyze_file_with_overlays,
-    compile_file, compile_tree_tests_file, discover_file_asset_dependencies,
-    discover_file_dependencies, source_is_app,
+    compile_file, compile_tree_guest_tests_file, compile_tree_tests_file,
+    discover_file_asset_dependencies, discover_file_dependencies, source_is_app,
 };
 
 use std::collections::{BTreeMap, HashSet};

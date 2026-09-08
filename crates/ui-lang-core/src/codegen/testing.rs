@@ -9,12 +9,11 @@ pub(crate) fn generate_tree_tests(
     for test in program.tests() {
         let unsupported = |origin, detail| {
             program.error_at_origin(
-            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: static targets, click, and literal text expectations"),
+            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: presets, typed state expectations and dispatch, static targets, click, and literal text expectations"),
         )
         };
         if program.settings().kind == ProgramKind::Daemon
             || test.mount.is_some()
-            || test.config.preset.is_some()
             || test.config.theme.is_some()
             || test.config.scale_factor.is_some()
             || test.config.locale.is_some()
@@ -23,7 +22,7 @@ pub(crate) fn generate_tree_tests(
         {
             return Err(unsupported(
                 test.origin,
-                "daemon windows, mounts, presets, or environment overrides",
+                "daemon windows, mounts, or environment overrides",
             ));
         }
         let static_path = |path: &ResolvedTestTargetPath| {
@@ -54,6 +53,9 @@ pub(crate) fn generate_tree_tests(
                         crate::lower::ResolvedExpressionKind::Str(_)
                     ) && within.as_ref().is_none_or(static_ref)
                 }
+                ResolvedTestStepKind::Dispatch { .. }
+                | ResolvedTestStepKind::Expect(ResolvedTestExpectation::Equality { .. })
+                | ResolvedTestStepKind::Expect(ResolvedTestExpectation::Expr { .. }) => true,
                 _ => false,
             };
             if !supported {
@@ -62,6 +64,110 @@ pub(crate) fn generate_tree_tests(
         }
         generate_test(&mut out, program, "", source_path, test, true)?;
     }
+    Ok(resolve_source_markers(out, program, source_path))
+}
+
+/// Included only by an explicitly built test guest, beside its generated app.
+/// Arguments and predicates never leave the guest's typed state boundary.
+pub(crate) fn generate_tree_guest_tests(
+    program: &LoweredProgram,
+    source_path: &str,
+) -> Result<String, Error> {
+    // Apply precisely the same supported-step and source-origin checks as the host.
+    generate_tree_tests(program, source_path)?;
+    let app = program.app_name();
+    let mut out = format!(
+        "impl {app} {{\nfn __ice_test_boot(test: u32) -> ::std::result::Result<(Self, ::iced::Task<__IceMessage>), ::std::string::String> {{\nmatch test {{\n"
+    );
+    for test in program.tests() {
+        let boot = if let Some(name) = &test.config.preset {
+            let index = program
+                .preset_names()
+                .iter()
+                .position(|preset| preset == name)
+                .ok_or_else(|| {
+                    program.invariant_at_origin(test.origin, "checked test preset is missing")
+                })?;
+            format!("Self::__preset_{index}()")
+        } else {
+            "Self::__boot()".into()
+        };
+        writeln!(out, "{} => ::std::result::Result::Ok({boot}),", test.id.0).unwrap();
+    }
+    out.push_str("_ => ::std::result::Result::Err(\"unknown authored test\".into()),\n}\n}\n");
+    out.push_str("fn __ice_test_step(&self, test: u32, step: u32) -> ::std::result::Result<::std::option::Option<__IceMessage>, ::std::string::String> {\nmatch (test, step) {\n");
+    let env = checked_state_env(program, "self");
+    for test in program.tests() {
+        for (index, step) in test.steps.iter().enumerate() {
+            let body = match &step.kind {
+                ResolvedTestStepKind::Dispatch {
+                    handler,
+                    handler_name,
+                    args,
+                } => {
+                    if program.handler(*handler).name != *handler_name {
+                        return Err(program.invariant_at_origin(
+                            step.origin,
+                            "test dispatch handler identity changed before code generation",
+                        ));
+                    }
+                    let variant = handler_variant(handler_name);
+                    let args = args
+                        .iter()
+                        .map(|arg| resolved_expr_use_code(program, *arg, &env, ValueMode::Owned))
+                        .collect::<Result<Vec<_>, _>>()?
+                        .join(", ");
+                    let value = if args.is_empty() {
+                        format!("__IceMessage::{variant}")
+                    } else {
+                        format!("__IceMessage::{variant}({args})")
+                    };
+                    format!("::std::result::Result::Ok(::std::option::Option::Some({value}))")
+                }
+                ResolvedTestStepKind::Expect(expectation) => {
+                    let predicate = match expectation {
+                        ResolvedTestExpectation::Equality {
+                            left,
+                            right,
+                            negated,
+                            expression,
+                        } => {
+                            let left = resolved_expr_node_code(
+                                program,
+                                *expression,
+                                *left,
+                                &env,
+                                ValueMode::Owned,
+                            )?;
+                            let right = resolved_expr_node_code(
+                                program,
+                                *expression,
+                                *right,
+                                &env,
+                                ValueMode::Owned,
+                            )?;
+                            let operator = if *negated { "!=" } else { "==" };
+                            format!("({left}) {operator} ({right})")
+                        }
+                        ResolvedTestExpectation::Expr { expression, .. } => {
+                            resolved_expr_use_code(program, *expression, &env, ValueMode::Owned)?
+                        }
+                        _ => continue,
+                    };
+                    // Original source remains the host oracle's Location. The guest
+                    // reports failure instead of panicking/trapping its instance.
+                    format!(
+                        "if {predicate} {{ ::std::result::Result::Ok(::std::option::Option::None) }} else {{ ::std::result::Result::Err(\"typed guest expectation failed\".into()) }}"
+                    )
+                }
+                _ => continue,
+            };
+            writeln!(out, "({}, {index}) => {{ {body} }},", test.id.0).unwrap();
+        }
+    }
+    out.push_str(
+        "_ => ::std::result::Result::Err(\"unknown typed authored step\".into()),\n}\n}\n}\n",
+    );
     Ok(resolve_source_markers(out, program, source_path))
 }
 
@@ -333,7 +439,9 @@ fn generate_test(
     if let Some(reduced_motion) = test.config.reduced_motion {
         write!(config, ".reduced_motion({reduced_motion})").unwrap();
     }
-    if let Some(preset) = &test.config.preset {
+    if let Some(preset) = &test.config.preset
+        && !host
+    {
         write!(config, ".preset({})", rust_string(preset)).unwrap();
     }
     writeln!(out, "let __config = {config};").unwrap();
@@ -343,7 +451,11 @@ fn generate_test(
         format!("{}::__program()", program.app_name())
     };
     if host {
-        writeln!(out, "let mut __test = __ice_tree_test_driver(__config);").unwrap();
+        writeln!(
+            out,
+            "let mut __test = __ice_tree_test_driver(__config, {index}, __ICE_TEST_FINGERPRINT);"
+        )
+        .unwrap();
     } else {
         writeln!(
             out,
@@ -365,6 +477,21 @@ fn generate_test(
             ));
         }
         let location = location_code(program, source_path, step.origin, &step.source);
+        if host
+            && matches!(
+                step.kind,
+                ResolvedTestStepKind::Dispatch { .. }
+                    | ResolvedTestStepKind::Expect(ResolvedTestExpectation::Equality { .. })
+                    | ResolvedTestStepKind::Expect(ResolvedTestExpectation::Expr { .. })
+            )
+        {
+            writeln!(
+                out,
+                "__ice_tree_test_step(&mut __test, {index}, {step_index}, {location});"
+            )
+            .unwrap();
+            continue;
+        }
         let mut env = checked_state_env(program, "__test.state()");
         if program.settings().kind == ProgramKind::Daemon {
             env.insert(

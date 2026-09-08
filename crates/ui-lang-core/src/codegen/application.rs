@@ -446,7 +446,7 @@ pub(in crate::codegen) fn generate_presets(
             "fn __preset_{index}() -> (Self, ::iced::Task<{message}>) {{\nlet mut state = Self::__state();\n{tray_init}"
         )
         .unwrap();
-        if settings.kind == ProgramKind::Daemon {
+        if settings.kind == ProgramKind::Daemon || program.target() == Target::Tree {
             writeln!(
                 out,
                 "let task = state.{task_name}();\n{tray_sync}(state, task)\n}}"
@@ -461,7 +461,7 @@ pub(in crate::codegen) fn generate_presets(
             .unwrap();
         }
     }
-    if settings.kind == ProgramKind::Application {
+    if settings.kind == ProgramKind::Application && program.target() != Target::Tree {
         writeln!(
             out,
             "#[cfg(all(target_os = \"windows\", not(test)))]\nfn __accessibility_initial_task(&mut self) -> ::iced::Task<{message}> {{\nmatch self.__ice_accessibility_initial.take() {{\n::std::option::Option::Some(0) => self.__boot_task(),"

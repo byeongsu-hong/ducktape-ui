@@ -131,6 +131,13 @@ pub fn is_native(entry: &CatalogEntry) -> bool {
 }
 
 pub(crate) fn native_package(path: &std::path::Path) -> Result<(Vec<u8>, Vec<u8>), String> {
+    native_package_with(path, ui_lang_wire::manifest::Manifest::parse)
+}
+
+pub(crate) fn native_package_with(
+    path: &std::path::Path,
+    parse: fn(&str) -> Option<ui_lang_wire::manifest::Manifest>,
+) -> Result<(Vec<u8>, Vec<u8>), String> {
     fn read(path: &std::path::Path, limit: u64) -> Result<Vec<u8>, String> {
         use std::io::Read;
         let metadata = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
@@ -152,11 +159,7 @@ pub(crate) fn native_package(path: &std::path::Path) -> Result<(Vec<u8>, Vec<u8>
         Ok(bytes)
     }
     let manifest = read(&path.join("manifest"), 64 << 10)?;
-    if ui_lang_wire::manifest::Manifest::parse(
-        std::str::from_utf8(&manifest).map_err(|error| error.to_string())?,
-    )
-    .is_none()
-    {
+    if parse(std::str::from_utf8(&manifest).map_err(|error| error.to_string())?).is_none() {
         return Err("invalid native manifest".into());
     }
     let bytes = read(

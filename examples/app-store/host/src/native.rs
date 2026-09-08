@@ -11,7 +11,7 @@ use ui_lang_wire::native::{Request, Response, read_packet, write_packet};
 
 pub(crate) struct Process {
     child: Child,
-    requests: SyncSender<Request>,
+    requests: SyncSender<Vec<u8>>,
     responses: Receiver<Result<Response, String>>,
     _directory: Directory,
 }
@@ -25,7 +25,30 @@ impl Drop for Directory {
 
 impl Process {
     pub(crate) fn new(entry: &CatalogEntry) -> Result<Self, String> {
-        let (manifest, bytes) = native_package(std::path::Path::new(&entry.path))?;
+        Self::launch(
+            entry,
+            "--ice-native",
+            native_package(std::path::Path::new(&entry.path))?,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_authored(entry: &CatalogEntry) -> Result<Self, String> {
+        Self::launch(
+            entry,
+            "--ice-authored-test",
+            crate::catalog::native_package_with(
+                std::path::Path::new(&entry.path),
+                ui_lang_wire::authored::parse_manifest,
+            )?,
+        )
+    }
+
+    fn launch(
+        entry: &CatalogEntry,
+        argument: &str,
+        (manifest, bytes): (Vec<u8>, Vec<u8>),
+    ) -> Result<Self, String> {
         if native_hash(&manifest, &bytes) != entry.hash {
             return Err("native package changed since consent; Rescan, then Get it again".into());
         }
@@ -58,7 +81,7 @@ impl Process {
         file.write_all(&bytes).map_err(|error| error.to_string())?;
         drop(file);
         let mut child = Command::new(executable)
-            .arg("--ice-native")
+            .arg(argument)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -66,13 +89,13 @@ impl Process {
             .map_err(|error| error.to_string())?;
         let mut input = child.stdin.take().expect("piped stdin");
         let mut output = child.stdout.take().expect("piped stdout");
-        let (requests, incoming) = sync_channel::<Request>(1);
+        let (requests, incoming) = sync_channel::<Vec<u8>>(1);
         let (outgoing, responses) = sync_channel(1);
         // Pipe writes can block too. Neither reading nor writing runs on the UI
         // thread; one bounded exchange is in flight and the caller owns kill.
         std::thread::spawn(move || {
             while let Ok(request) = incoming.recv() {
-                let result = write_packet(&mut input, &ui_lang_wire::encode(&request))
+                let result = write_packet(&mut input, &request)
                     .and_then(|()| read_packet(&mut output))
                     .and_then(|bytes| ui_lang_wire::decode::<Response>(&bytes));
                 let failed = result.is_err();
@@ -93,6 +116,18 @@ impl Process {
         if ui_lang_wire::encoded_size(&request) > ui_lang_wire::native::MAX_PACKET_BYTES as u64 {
             return Err("native input exceeds the byte budget".into());
         }
+        self.call_bytes(ui_lang_wire::encode(&request))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn call_authored(&mut self, request: ui_lang_wire::authored::Request) -> Response {
+        if ui_lang_wire::encoded_size(&request) > ui_lang_wire::native::MAX_PACKET_BYTES as u64 {
+            return Err("native input exceeds the byte budget".into());
+        }
+        self.call_bytes(ui_lang_wire::encode(&request))
+    }
+
+    fn call_bytes(&mut self, request: Vec<u8>) -> Response {
         self.requests
             .try_send(request)
             .map_err(|error| error.to_string())?;

@@ -468,26 +468,7 @@ impl Instance {
         // component is several core instances — the app, the stub adapters
         // `cargo ice bundle` gave it, the bindings' shims — all of them the
         // guest's own and none with a memory but the app's.
-        let limits = StoreLimitsBuilder::new()
-            .memory_size(MEMORY_LIMIT)
-            .memories(1)
-            .instances(8)
-            .tables(4)
-            .table_elements(1 << 20)
-            .trap_on_grow_failure(true)
-            .build();
-        let mut store = Store::new(
-            engine,
-            HostState {
-                limits,
-                panic: None,
-            },
-        );
-        store.limiter(|state| &mut state.limits);
-        // The default already traps on the deadline; named here because the
-        // whole point of the deadline is that it ends the instance.
-        store.epoch_deadline_trap();
-        arm(&mut store);
+        let mut store = new_wasm_store();
         // The world's one import is the panic hook's; anything else the
         // component asks for traps if it is ever called.
         let mut linker = Linker::new(engine);
@@ -1699,3 +1680,31 @@ mod native_tests;
 #[cfg(test)]
 #[path = "image_tests.rs"]
 mod image_tests;
+
+fn new_wasm_store() -> Store<HostState> {
+    let limits = StoreLimitsBuilder::new()
+        .memory_size(MEMORY_LIMIT)
+        .memories(1)
+        .instances(8)
+        .tables(4)
+        .table_elements(1 << 20)
+        .trap_on_grow_failure(true)
+        .build();
+    let mut store = Store::new(
+        engine(),
+        HostState {
+            limits,
+            panic: None,
+        },
+    );
+    store.limiter(|state| &mut state.limits);
+    // The default already traps on the deadline; named here because the
+    // whole point of the deadline is that it ends the instance.
+    store.epoch_deadline_trap();
+    arm(&mut store);
+    store
+}
+
+#[cfg(test)]
+#[path = "authored_backend.rs"]
+mod authored_backend;

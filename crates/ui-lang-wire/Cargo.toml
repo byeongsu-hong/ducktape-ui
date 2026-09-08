@@ -9,6 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
+authored-tests = []
 manifest = ["dep:wasmparser"]
 iced = ["dep:iced_core"]
 

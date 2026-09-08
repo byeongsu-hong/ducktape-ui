@@ -159,14 +159,28 @@ pub fn compile_dir_for(path: impl AsRef<Path>, target: Target) -> Result<(), Err
 }
 
 /// Generate Tree UI tests for a native host. Include the returned file only under
-/// `cfg(test)` in a module supplying `__ice_tree_test_driver(Config)`.
+/// `cfg(test)` in a module supplying `__ice_tree_test_driver(Config, test_id, fingerprint)`.
 /// Generated tests are ignored until explicitly run with built guest packages.
 pub fn compile_tree_tests(path: impl AsRef<Path>) -> Result<PathBuf, Error> {
-    let path = path.as_ref().to_owned();
+    compile_tree_test_sidecar(path.as_ref(), false)
+}
+
+/// Generate guest-side typed hooks for an explicit authored-test artifact.
+/// Include this output only with `ui_lang_guest::export_test_app!`.
+pub fn compile_tree_guest_tests(path: impl AsRef<Path>) -> Result<PathBuf, Error> {
+    compile_tree_test_sidecar(path.as_ref(), true)
+}
+
+fn compile_tree_test_sidecar(path: &Path, guest: bool) -> Result<PathBuf, Error> {
+    let path = path.to_owned();
     compiler_thread(move || {
         let source = cargo_path("CARGO_MANIFEST_DIR")?.join(path);
-        let compiled = ui_lang_core::compile_tree_tests_file(&source)
-            .map_err(|error| Error(error.render(&source.display().to_string())))?;
+        let compiled = if guest {
+            ui_lang_core::compile_tree_guest_tests_file(&source)
+        } else {
+            ui_lang_core::compile_tree_tests_file(&source)
+        }
+        .map_err(|error| Error(error.render(&source.display().to_string())))?;
         for dependency in compiled
             .dependencies
             .iter()
@@ -175,7 +189,8 @@ pub fn compile_tree_tests(path: impl AsRef<Path>) -> Result<PathBuf, Error> {
             println!("cargo:rerun-if-changed={}", dependency.display());
         }
         let output = cargo_path("OUT_DIR")?.join(format!(
-            "tree-tests-{}.rs",
+            "tree-{}tests-{}.rs",
+            if guest { "guest-" } else { "" },
             content_digest(source.to_string_lossy().as_bytes()),
         ));
         if fs::read(&output).ok().as_deref() != Some(compiled.rust.as_bytes()) {
