@@ -32,6 +32,8 @@ use serde::{Deserialize, Serialize};
 
 mod background;
 pub use background::{Background, ColorStop};
+mod editor;
+pub use editor::{EditorCursor, EditorPosition, EditorState, editor_lines};
 
 mod image;
 pub use image::{ImageData, ImageFilter, ViewerOptions, viewer_scale_bounds};
@@ -118,10 +120,15 @@ pub enum Event {
     /// per-frame input-handler table; `text` is the whole value the host now
     /// holds.
     Input { handler: u32, text: String },
-    /// An editor's text changed. `handler` indexes the guest's per-frame
-    /// handler table; `text` is the whole value the host now holds. A caret
-    /// move alone sends nothing: the guest holds the text, not the cursor.
-    Edit { handler: u32, text: String },
+    /// An editor's text or cursor changed. `reset` fences document replacements;
+    /// `revision` orders host observations. Caret-only changes are included.
+    Edit {
+        handler: u32,
+        text: String,
+        cursor: EditorCursor,
+        reset: u64,
+        revision: u64,
+    },
     /// A checkbox or toggler flipped. `handler` indexes the guest's
     /// per-frame handler table; `on` is the state it now shows.
     Toggle { handler: u32, on: bool },
@@ -894,9 +901,7 @@ pub enum Node {
         options: InputOptions,
         key: String,
         placeholder: String,
-        /// The guest's copy of the text. The host owns the live value and
-        /// adopts this only when it differs from what the guest reported
-        /// last frame.
+        /// Copied document state, adopted by reset and host observation revision.
         value: String,
         on_input: u32,
         on_submit: Option<u32>,
@@ -905,16 +910,17 @@ pub enum Node {
         style: Box<InputStyle>,
     },
     /// A multiline text editor. The host owns the `text_editor::Content` —
-    /// caret, selection, undo — and the guest sees the text alone, as with
+    /// native widget interaction — and the guest sees document state, unlike
     /// [`Node::Input`]. Presentation crosses as copied data.
     Editor {
         options: Box<EditorOptions>,
         key: String,
         placeholder: String,
-        /// The guest's copy of the text. The host owns the live value and
-        /// adopts this only when it differs from what the guest reported
-        /// last frame.
+        /// Copied document state, adopted by reset and host observation revision.
         text: String,
+        cursor: EditorCursor,
+        reset: u64,
+        revision: u64,
         /// `None` is a disabled editor.
         on_edit: Option<u32>,
         /// Pixels; the editor fills its parent otherwise.
@@ -2101,6 +2107,7 @@ fn sanitize_node(
             key,
             placeholder,
             text,
+            cursor,
             width,
             min_height,
             max_height,
@@ -2118,6 +2125,7 @@ fn sanitize_node(
             claim(key, taken);
             spend_text(placeholder, &mut budgets.text);
             spend_text(text, &mut budgets.text);
+            cursor.clamp(text);
             if let Some(font) = &mut options.font {
                 font.sanitize(&mut budgets.text);
             }
@@ -2838,6 +2846,9 @@ mod tests {
                     style: Box::default(),
                 },
                 Node::Editor {
+                    cursor: Default::default(),
+                    reset: 0,
+                    revision: 0,
                     options: Default::default(),
                     key: "App/e".into(),
                     placeholder: "Notes".into(),
@@ -2870,6 +2881,9 @@ mod tests {
                 text: "xy".into(),
             },
             Event::Edit {
+                cursor: Default::default(),
+                reset: 0,
+                revision: 0,
                 handler: 5,
                 text: "xy\nz".into(),
             },
@@ -3144,6 +3158,9 @@ mod tests {
         let mut frame = Frame {
             root: Some(column(vec![
                 Node::Editor {
+                    cursor: Default::default(),
+                    reset: 0,
+                    revision: 0,
                     options: Default::default(),
                     key: "App/e".into(),
                     placeholder: long.clone(),

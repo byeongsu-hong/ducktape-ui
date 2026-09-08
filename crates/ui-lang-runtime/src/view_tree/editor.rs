@@ -30,6 +30,7 @@ pub(super) struct HostEditor {
     content: Shared,
     placeholder: String,
     on_edit: Option<u32>,
+    reset: u64,
     width: Option<f32>,
     height: Length,
     min_height: Option<f32>,
@@ -43,6 +44,7 @@ impl HostEditor {
             key,
             placeholder,
             on_edit,
+            reset,
             width,
             height,
             min_height,
@@ -63,6 +65,7 @@ impl HostEditor {
             content,
             placeholder: placeholder.clone(),
             on_edit: *on_edit,
+            reset: *reset,
             width: *width,
             height: height.map_or(Length::Shrink, super::length),
             min_height: *min_height,
@@ -114,6 +117,7 @@ impl HostEditor {
         if let Some(handler) = self.on_edit {
             let key = &self.key;
             editor = editor.on_action(move |action| Output::EditorAction {
+                reset: self.reset,
                 key: key.clone(),
                 handler,
                 action,
@@ -377,6 +381,7 @@ mod tests {
                 handler: 7,
                 key,
                 action,
+                ..
             } = message
             else {
                 panic!("native editor route");
@@ -435,6 +440,9 @@ mod tests {
             ..Default::default()
         };
         let mut node = wire::Node::Editor {
+            cursor: Default::default(),
+            reset: 0,
+            revision: 0,
             key: "editor".into(),
             placeholder: "File contents".into(),
             text: "ab\ncd".into(),
@@ -597,6 +605,9 @@ mod tests {
         let height = |wrapping| {
             let text = "one two three four five six";
             let node = wire::Node::Editor {
+                cursor: Default::default(),
+                reset: 0,
+                revision: 0,
                 key: "wrapped".into(),
                 placeholder: String::new(),
                 text: text.into(),

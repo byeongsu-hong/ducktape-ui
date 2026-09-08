@@ -33,7 +33,7 @@ state
   active_palette:palette[TodoTheme] = TodoTheme.light
   dark = false
   hide_done = false
-  // The host owns the editor's caret and selection; the guest holds the text.
+  // The host edits the document; text and caret observations return to the guest.
   notes:editor = ""
 
 // The list lives in the host's storage: it survives uninstall and reinstall.

@@ -417,6 +417,9 @@ fn gen_input(rng: &mut Rng) -> Node {
 
 fn gen_editor(rng: &mut Rng) -> Node {
     Node::Editor {
+        cursor: Default::default(),
+        reset: 0,
+        revision: 0,
         options: Box::new(EditorOptions {
             size: gen_opt_f32(rng),
             padding: gen_opt_f32(rng),

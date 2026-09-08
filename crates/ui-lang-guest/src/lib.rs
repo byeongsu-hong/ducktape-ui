@@ -33,6 +33,8 @@ use iced_runtime::{Action, task};
 pub mod authored;
 
 mod clipboard;
+mod editor;
+pub use editor::Editor;
 pub mod keyboard;
 mod markdown;
 mod memo;
@@ -213,9 +215,21 @@ impl<A: App> Driver<A> {
                 wire::Event::Input { handler, text } => {
                     slots::run_handler::<String, A::Message>(handler, text)
                 }
-                wire::Event::Edit { handler, text } => {
-                    slots::run_handler::<String, A::Message>(handler, text)
-                }
+                wire::Event::Edit {
+                    handler,
+                    text,
+                    cursor,
+                    reset,
+                    revision,
+                } => slots::run_handler::<wire::EditorState, A::Message>(
+                    handler,
+                    wire::EditorState {
+                        text,
+                        cursor,
+                        reset,
+                        revision,
+                    },
+                ),
                 wire::Event::Toggle { handler, on } => {
                     slots::run_handler::<bool, A::Message>(handler, on)
                 }

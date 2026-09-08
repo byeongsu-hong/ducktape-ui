@@ -35,7 +35,6 @@ pub(super) fn code(
         Type::I64 => Some("I64"),
         Type::F64 => Some("F64"),
         Type::Str => Some("Str"),
-        Type::Editor if target == ValueTarget::Snapshot => Some("Str"),
         Type::Bytes if target == ValueTarget::Snapshot => Some("Bytes"),
         _ => None,
     };
@@ -66,6 +65,15 @@ pub(super) fn code(
     }
     if target == ValueTarget::Snapshot {
         match ty {
+            Type::Editor => {
+                return Ok(if decode {
+                    format!(
+                        "match {value} {{ {v}::Bytes(bytes) => ::ui_lang_guest::Editor::restore(&bytes), _ => None }}"
+                    )
+                } else {
+                    format!("{v}::Bytes(({value}).snapshot())")
+                });
+            }
             Type::Combo(inner) => {
                 let list = Type::List(inner.clone());
                 return Ok(if decode {

@@ -595,6 +595,11 @@ pub(in crate::codegen) fn generate_statements(
                         "{state}.{SECRET_STORE_FIELD}.clear({})",
                         rust_string(&target.name)
                     ))
+                } else if target.ty == Type::Editor && program.target() == Target::Tree {
+                    StateWrite::Mutate(format!(
+                        "{{ let __reset = {state}.{name}.reset_revision(); let __next = {code}; {state}.{name}.replace(__next, __reset); }}",
+                        name = target.name
+                    ))
                 } else if matches!(target.ty, Type::Combo(_)) {
                     if program.target() == Target::Tree {
                         StateWrite::Mutate(format!("{state}.{}.replace({code})", target.name))

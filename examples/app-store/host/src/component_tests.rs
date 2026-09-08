@@ -428,7 +428,16 @@ fn bundled_snapshot_round_trips_all_owned_data_shapes_and_rejects_nested_mismatc
     };
     let field = |name: &str| &fields.iter().find(|(key, _)| key == name).unwrap().1;
     assert_eq!(field("payload"), &V::Bytes(vec![0, 255, 164]));
-    assert_eq!(field("content"), &V::Str("editor draft".into()));
+    let V::Bytes(document) = field("content") else {
+        panic!("typed editor snapshot");
+    };
+    assert_eq!(
+        wire::decode::<wire::EditorState>(document).unwrap(),
+        wire::EditorState {
+            text: "editor draft".into(),
+            ..Default::default()
+        }
+    );
     assert_eq!(field("document"), &V::Str("# Heading".into()));
     assert_eq!(
         field("nested"),

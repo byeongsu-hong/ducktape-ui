@@ -767,6 +767,9 @@ jobs:
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
             -p app-store-editor-fixture --target wasm32-unknown-unknown \
             --out examples/app-store/target/editor-fixture
+      - name: Build native editor fixture
+        working-directory: examples/app-store
+        run: python3 scripts/build-native.py -p app-store-editor-fixture --out target/editor-native
       - name: Check native editor presentation and editing through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host editor_wasm_ -- --ignored
