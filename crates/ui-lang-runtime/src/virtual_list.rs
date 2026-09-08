@@ -697,15 +697,19 @@ fn navigation_index(
 /// The parent must provide a bounded height and must not scroll the list
 /// vertically. This widget's pointer and touch guarantees cover its owned
 /// native scrollable and viewport, not an arbitrary scrolling ancestor.
+///
+/// The source slice is borrowed only while constructing mounted rows. If `view`
+/// returns owned elements, the resulting element can be `'static` even when the
+/// slice came from a temporary `Arc<[T]>`. Borrowing row views remain supported.
 #[allow(clippy::too_many_arguments)]
-pub fn virtual_list<'a, T, Key, Message, Theme, Renderer>(
+pub fn virtual_list<'a, 'data, T, Key, Message, Theme, Renderer>(
     state: &VirtualListState<Key>,
-    items: &'a [T],
+    items: &'data [T],
     config: VirtualListConfig,
     collection_label: impl Into<String>,
     key: impl Fn(&T) -> Key,
     label: impl Fn(&T) -> String,
-    view: impl Fn(usize, &'a T, bool) -> Element<'a, Message, Theme, Renderer>,
+    view: impl Fn(usize, &'data T, bool) -> Element<'a, Message, Theme, Renderer>,
     on_event: impl Fn(VirtualListEvent<Key>) -> Message + 'a,
 ) -> Element<'a, Message, Theme, Renderer>
 where
@@ -750,16 +754,16 @@ pub(crate) struct VirtualCollectionItemSemantics {
 type ExtraKeyHandler<'a, Message> = Rc<dyn Fn(&keyboard::Key) -> Option<Message> + 'a>;
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn virtual_collection<'a, T, Key, Message, Theme, Renderer>(
+pub(crate) fn virtual_collection<'a, 'data, T, Key, Message, Theme, Renderer>(
     state: &VirtualListState<Key>,
-    items: &'a [T],
+    items: &'data [T],
     config: VirtualListConfig,
     collection_label: impl Into<String>,
     collection_role: crate::Role,
     collection_selector: impl Into<String>,
     key: impl Fn(&T) -> Key,
     label: impl Fn(&T) -> String,
-    view: impl Fn(usize, &'a T, bool) -> Element<'a, Message, Theme, Renderer>,
+    view: impl Fn(usize, &'data T, bool) -> Element<'a, Message, Theme, Renderer>,
     item_semantics: impl Fn(usize, &T, u32) -> VirtualCollectionItemSemantics,
     on_event: impl Fn(VirtualListEvent<Key>) -> Message + 'a,
     on_key: impl Fn(&keyboard::Key) -> Option<Message> + 'a,

@@ -1205,3 +1205,8 @@ spends one of 32 frame encoding slots even when empty. Invalid versions and
 excess payloads are dropped whole, never truncated into a different code.
 Sizes and colors are bounded before rendering. Rebuild hosts and guests
 together for the new `Qr` wire variant.
+
+Native `log_timeline` and `virtual_list` separate the source-slice lifetime from
+the returned element lifetime. An owned row view permits a static surface from
+a temporary slice (including an `Arc<[T]>`); a borrowing row view still ties its
+elements to the source naturally. Only mounted row views are constructed.
