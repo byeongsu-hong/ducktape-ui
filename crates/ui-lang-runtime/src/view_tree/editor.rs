@@ -266,9 +266,17 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
         let status = {
             let content = self.lock();
             let mut editor = self.build(&content);
+            let mut actions = Vec::new();
+            let mut local = Shell::new(&mut actions);
             editor.update(
-                tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+                tree, event, layout, cursor, renderer, clipboard, &mut local, viewport,
             );
+            // Hosts apply these actions immediately, including inside overlays.
+            // Reflow the changed Content before the next batched caret/IME query.
+            if !local.is_empty() {
+                local.invalidate_layout();
+            }
+            shell.merge(local, std::convert::identity);
             let mut focused = Focus(false);
             editor.operate(tree, layout, renderer, &mut focused);
             use widget::text_editor::Status;

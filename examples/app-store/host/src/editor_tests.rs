@@ -33,7 +33,7 @@ fn build(
 ) -> Ui {
     UserInterface::build(
         wasm_view(Surface(guest.clone()), false),
-        Size::new(240.0, 200.0),
+        Size::new(240.0, 300.0),
         cache,
         renderer,
     )
@@ -113,6 +113,11 @@ fn text(guest: &Arc<Mutex<Guest>>) -> String {
 }
 struct Bounds<'a>(&'a str, Option<Rectangle>);
 impl Operation for Bounds<'_> {
+    fn text(&mut self, _: Option<&iced::widget::Id>, bounds: Rectangle, text: &str) {
+        if text == self.0 {
+            self.1 = Some(bounds);
+        }
+    }
     fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
         visit(self);
     }
@@ -227,5 +232,84 @@ fn editor_wasm_preserves_presentation_selection_editing_and_disabled_state() {
         &pixels[offset..][..3],
         &[128, 128, 128],
         "disabled editor paints its copied face"
+    );
+}
+
+#[test]
+#[ignore = "requires bundled editor fixture"]
+fn editor_wasm_overlay_refreshes_layout_between_batched_native_edits() {
+    let guest = guest();
+    let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+        Font::DEFAULT,
+        Pixels(16.0),
+        Some("tiny-skia"),
+    ))
+    .unwrap();
+    let mut ui = build(&guest, &mut renderer, user_interface::Cache::default());
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now);
+    }
+    let mut open = Bounds("Open editor overlay", None);
+    ui.operate(&renderer, &mut open);
+    click(
+        &mut ui,
+        &mut renderer,
+        open.1.expect("open overlay button").center(),
+    );
+    for _ in 0..3 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now);
+    }
+    let key = {
+        let g = guest.lock().unwrap();
+        let wire::Node::Overlay { children, .. } = g.frame.root.as_ref().unwrap() else {
+            panic!("fixture overlay")
+        };
+        editor(
+            children
+                .get(1)
+                .expect("overlay must open after native button click"),
+        )
+        .expect("open overlay editor")
+        .key()
+        .unwrap()
+        .to_owned()
+    };
+    let mut find = Bounds(&key, None);
+    ui.operate(&renderer, &mut find);
+    let bounds = find.1.expect("mounted native overlay editor");
+    let point = Point::new(bounds.x + 15.0, bounds.y + 10.0);
+    click(&mut ui, &mut renderer, point);
+    let modifiers = if cfg!(target_os = "macos") {
+        keyboard::Modifiers::LOGO
+    } else {
+        keyboard::Modifiers::CTRL
+    };
+    // Iced processes queued events before the outer application handles wake
+    // messages. The edited Content must have valid geometry within this batch.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        ui.update(
+            &[
+                key_event("a", modifiers),
+                key_event("Z", keyboard::Modifiers::default()),
+                Event::Window(window::Event::RedrawRequested(now)),
+            ],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut vec![],
+        );
+    }));
+    assert!(
+        outcome.is_ok(),
+        "overlay edits must refresh native caret/IME layout before the next queued event"
+    );
+    for _ in 0..3 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now);
+    }
+    assert_eq!(
+        text(&guest),
+        "Z",
+        "overlay selection replacement crosses the guest binding"
     );
 }

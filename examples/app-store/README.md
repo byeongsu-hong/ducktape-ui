@@ -548,7 +548,8 @@ For module packaging requirements and the connected implementation phases, see
   colors. Hosts and guests must rebuild together for `EditorOptions`. The
   [editor fixture](tests/editor-guest/src/ui/app.ice) and
   [host test](host/src/editor_tests.rs) exercise native layout, selection, edits,
-  disabled state and paint through a real wasm bundle. Everything requiring
+  disabled state and paint through a real wasm bundle, including native edits
+  followed by caret/IME queries in the same overlay event batch. Everything requiring
   a native callback remains E190: an `editor-action`, `editor-binding`,
   `editor-highlighter` or `editor-style` extern and `highlight=`.
   The caret builtins (`editor_cursor_line`, `editor_cursor_column`,

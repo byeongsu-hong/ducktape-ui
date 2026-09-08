@@ -1584,8 +1584,12 @@ and [host test](examples/app-store/host/src/editor_tests.rs) exercise the same
 path through a wasm guest: native min-height 80 plus 6.6px padding measures
 200x93.2, selection paints cyan, typing replaces the guest string, and disabling
 through a guest button prevents a different character from changing it while
-painting the disabled face. Editor action delivery invalidates layout before
-subsequent native caret/input-method queries.
+painting the disabled face. A second wasm test opens an editor overlay, then
+batches native select-all, replacement typing and a redraw. Before invalidation
+was moved into the owning editor widget, that test failed its no-panic assertion
+on an uncached line in the native caret/input-method query; it passes with both
+base and overlay action paths covered. The fixture uses `app Box` to verify
+fully qualified standard-library names in generated editor construction.
 
 Red: temporarily removing selection-color forwarding makes the bundled test
 fail its cyan-pixel assertion; restoring it passes. Forcing relative line height
