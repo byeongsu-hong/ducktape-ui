@@ -2378,3 +2378,43 @@ forcing the sanitizer report to false fails `actual shortened text must be
 reported`; dropping the prepared candidate report fails the actual reload oracle
 at `candidate's already-sanitized first full frame carries its local report into
 installation`. Both mutations are restored for Green.
+
+## Wrapping line alignment
+
+`row wrap`/`col wrap` with `wrap-align=center|end` align each wrapped line
+against the main-axis size the layout actually assigns, not against the widest
+line of content. Published `iced_widget` 0.14.2 aligned against the intrinsic
+content size, which it computes before `Limits::resolve`, so a `w=fill` or a
+larger `w=<fixed>` wrapping row ended its lines at the widest line's edge
+instead of its own. It also detected a new line by testing the next child's
+`x` against `0.0` while every child had already been offset by `padding.left`,
+so with nonzero leading padding no interior line break was recognised and one
+translation was applied to every child at once; the column had the same two
+defects on `y`/`padding.top`.
+
+`vendor/iced_widget` carries the published 0.14.2 sources (`Cargo.toml`,
+`.cargo_vcs_info.json`, `src`, `assets`, copied unmodified from the crates.io
+registry checkout) with `[patch.crates-io]` pointing at it, following the
+existing `iced_winit`/`iced_tiny_skia` vendoring. Only `src/row.rs` and
+`src/column.rs` differ: each records its wrapped line ranges as it produces
+them, resolves the size before aligning, measures line extents from the content
+origin, and falls back to the intrinsic size when an unbounded `Fill` resolves
+to infinity. A `Fill` child still spans its line, and a wrapping row under a
+compressing parent still aligns against its own content, because `resolve`
+returns the intrinsic size when the parent compresses that axis.
+
+Owning tests: `examples/showcase/tests/cases/ui/wrap_alignment.ice`, seven
+first-class Ice tests over direct `row wrap`/`col wrap` with fixed-size `space`
+children, so every expected coordinate is derived arithmetic. They cover end
+alignment on a `w=fill` multi-line row, end alignment on a single-line
+`w=400.0` row, end alignment with `p=16.0` on both axes, center alignment, and
+the two counterexamples above.
+
+Red evidence: restoring the published 0.14.2 `row.rs` and `column.rs` fails
+five of the seven — `a.left` reads 0.0 instead of 52.0 (fill), 0.0 instead of
+192.0 (fixed), 0.0 instead of 26.0 (center), and 128.0 instead of 68.0 for both
+padded cases — while the `Fill`-child and shrink-parent tests keep passing,
+which is what makes them counterexamples rather than duplicates. Restoring the
+patched sources passes all seven with
+`cargo test -p showcase --test wrap_alignment`, and the whole showcase suite
+(`cargo test -p showcase`, 355 tests) stays green.
