@@ -44,6 +44,10 @@ pub enum WidgetCommand {
         x: f32,
         y: f32,
     },
+    ScrollToKey {
+        target: String,
+        key: u64,
+    },
     ScrollBy {
         target: String,
         x: f32,
@@ -66,7 +70,8 @@ impl WidgetCommand {
             | Self::Snap { target, .. }
             | Self::SnapEnd { target }
             | Self::ScrollTo { target, .. }
-            | Self::ScrollBy { target, .. } => target,
+            | Self::ScrollBy { target, .. }
+            | Self::ScrollToKey { target, .. } => target,
         };
         if target.len() > crate::MAX_STRING_BYTES {
             return Err("widget target exceeds the key byte limit".into());

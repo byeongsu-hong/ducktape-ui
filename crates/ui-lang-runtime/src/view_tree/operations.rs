@@ -48,13 +48,16 @@ pub fn execute_widget_command(
                 y: Some(y),
             },
         )),
+        C::ScrollToKey { target, key } => Box::new(
+            crate::virtual_children::scroll_to_key_operation(Id::from(target), key),
+        ),
         C::ScrollBy { target, x, y } => Box::new(scrollable::scroll_by(
             Id::from(target),
             scrollable::AbsoluteOffset { x, y },
         )),
     };
     // Native focus traversal and content-end snapping use chained passes.
-    // These fixed operations need at most two; cap traversal regardless.
+    // Keyed row reveals add another pass; cap traversal regardless.
     for _ in 0..4 {
         traverse(&mut operation::black_box(operation.as_mut()));
         match operation.finish() {

@@ -562,7 +562,8 @@ For module packaging requirements and the connected implementation phases, see
   `host.widget` and operate only inside that mounted guest, including its
   overlays. The first mount is awaited; superseded requests are refused,
   cancellation removes queued work, and native work counts toward host
-  throttling. Widget selectors and virtual-row scrolling remain E190.
+  throttling. `scroll-to-key` reveals a keyed virtual row through the same
+  scoped operation path. Widget selectors remain E190.
 
 ### Tasks and runtime
 
@@ -984,8 +985,9 @@ rotations, insertions and removal. Repeated keys match old occurrences in order;
 ordinary float keys use numeric equality, while virtual keys preserve their bits.
 `virtual-row=` on keyed or ordinary columns delegates viewport mounting and
 measurement to the host. The surrounding scroll keeps native synchronization.
-No guest layout callback runs. Widget selectors and `scroll-to-key` commands are
-still separate unsupported Tree features; ordinary host scroll actions work.
+No guest layout callback runs. `task widget scroll-to-key #list key` reveals a
+virtual row using the same copied identity as its keyed column. The host lands
+on its measured top; a missing key does nothing. Widget selectors remain E190.
 
 The bundled keyed fixture verifies input and focus after reorder/prepend/remove
 on both ordinary and virtual paths. Its 200-row case checks bounded mounted rows

@@ -226,3 +226,8 @@ one guest the entire guest window; a Ducktape shared-window host must target
 only the active/focused module. `init(macos: bool)` supplies modifier semantics
 before boot. Native Rust extern modifier helpers need guest-aware equivalents.
 Window, mouse and IME subscription transport remain separate work.
+
+Ducktape Forge’s `task widget scroll-to-key` now has a Tree lowering through
+`host.widget`. Guest views use local qualified widget paths and omit native
+`window=` targets. Chat’s focus/focus-next/snap, overlay scroll-by and page focus
+already use this scoped path. Selector queries remain a separate gap.

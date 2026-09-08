@@ -321,3 +321,102 @@ fn bundled_keyed_large_list_mounts_only_a_window_and_reaches_the_tail() {
         tail.texts
     );
 }
+
+#[test]
+#[ignore = "requires bundled keyed-fixture wasm"]
+fn bundled_keyed_scroll_to_key_lands_a_row_and_preserves_guest_scope() {
+    use super::layers_tests::click;
+    use iced::advanced::widget::{Id, Operation, operation};
+    #[derive(Default)]
+    struct Landing {
+        scroll: Option<(f32, f32)>,
+        row: Option<f32>,
+    }
+    impl Operation for Landing {
+        fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+            visit(self);
+        }
+        fn scrollable(
+            &mut self,
+            _id: Option<&Id>,
+            bounds: iced::Rectangle,
+            _content: iced::Rectangle,
+            translation: iced::Vector,
+            _state: &mut dyn operation::Scrollable,
+        ) {
+            if self.scroll.is_none() {
+                self.scroll = Some((bounds.y, translation.y));
+            }
+        }
+        fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, text: &str) {
+            if text == "150" {
+                self.row = Some(bounds.y);
+            }
+        }
+    }
+    fn position(ui: &mut Ui, renderer: &iced::Renderer) -> Landing {
+        let mut result = Landing::default();
+        ui.operate(renderer, &mut result);
+        result
+    }
+    let first = guest();
+    let second = guest();
+    let mut renderer = renderer();
+    let mut now = std::time::Instant::now();
+    let mut ui = build(
+        &first,
+        user_interface::Cache::default(),
+        &mut renderer,
+        640.0,
+    );
+    let mut other = build(
+        &second,
+        user_interface::Cache::default(),
+        &mut renderer,
+        640.0,
+    );
+    for _ in 0..4 {
+        ui = redraw(ui, &first, &mut renderer, &mut now, 640.0);
+        other = redraw(other, &second, &mut renderer, &mut now, 640.0);
+    }
+    click(&mut ui, &mut renderer, "Many");
+    click(&mut other, &mut renderer, "Many");
+    for _ in 0..4 {
+        ui = redraw(ui, &first, &mut renderer, &mut now, 640.0);
+        other = redraw(other, &second, &mut renderer, &mut now, 640.0);
+    }
+    assert!(
+        position(&mut ui, &renderer).row.is_none(),
+        "target starts unmounted"
+    );
+    let other_before = position(&mut other, &renderer).scroll.unwrap();
+    click(&mut ui, &mut renderer, "Jump");
+    for _ in 0..6 {
+        ui = redraw(ui, &first, &mut renderer, &mut now, 640.0);
+    }
+    let landed = position(&mut ui, &renderer);
+    let (origin, offset) = landed.scroll.unwrap();
+    let row = landed.row.expect("guest scroll-to-key must mount row 150");
+    assert!(offset > 0.0);
+    assert!(
+        (row - origin - offset).abs() < 1.0,
+        "row {row} must land at viewport {origin} + offset {offset}"
+    );
+    click(&mut ui, &mut renderer, "Missing");
+    for _ in 0..4 {
+        ui = redraw(ui, &first, &mut renderer, &mut now, 640.0);
+    }
+    assert_eq!(
+        position(&mut ui, &renderer).scroll,
+        landed.scroll,
+        "missing key preserves position"
+    );
+    other = redraw(other, &second, &mut renderer, &mut now, 640.0);
+    let unchanged = position(&mut other, &renderer);
+    assert_eq!(
+        unchanged.scroll,
+        Some(other_before),
+        "same widget key in another guest stays put"
+    );
+    assert!(unchanged.row.is_none());
+}

@@ -21,6 +21,10 @@ state
   use_plain = false
 on many
   rows = many_rows()
+on jump
+  task widget scroll-to-key #list 150
+on missing
+  task widget scroll-to-key #list 999
 on ordinary
   use_plain = true
 on reorder
@@ -49,6 +53,9 @@ view
       button "Remove" #remove -> remove
       button "Ordinary" #ordinary -> ordinary
       button "Many" #many -> many
+    row
+      button "Jump" #jump -> jump
+      button "Missing" #missing -> missing
     if use_plain
       keyed number in rows by=number w=fill gap=4.0
         Row number=number #ordinary_row

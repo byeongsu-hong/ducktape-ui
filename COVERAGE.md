@@ -1674,3 +1674,14 @@ Forcing non-macOS command modifiers fails the boot assertion (`CTRL` instead of
 `LOGO`). Disabling captured-overlay forwarding fails the actual wasm count
 assertion (0 instead of 1) while native input still accepts the text. Both
 mutations are restored and the corresponding tests pass.
+
+### Tree keyed row commands
+
+`bundled_keyed_scroll_to_key_lands_a_row_and_preserves_guest_scope` clicks the
+actual wasm fixture's native buttons to populate 200 rows and reveal key 150.
+The row starts unmounted; native operation geometry then places its measured
+top at the viewport top. A missing key preserves the offset, and a second guest
+with the same widget identity stays at its original position. Replacing the
+production host's requested key with a missing key fails the row-150 mount
+assertion; restoration passes. Existing keyed wasm cases retain input/focus and
+bounded mounting checks.
