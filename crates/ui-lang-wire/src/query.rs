@@ -216,7 +216,7 @@ mod tests {
             }),
             ..crate::Frame::default()
         };
-        crate::sanitize(&mut frame);
+        crate::sanitize(&mut frame).unwrap();
         let Some(crate::Node::When {
             condition,
             children,

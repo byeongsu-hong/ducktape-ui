@@ -92,7 +92,7 @@ mod tests {
             root: Some(node),
             ..Default::default()
         };
-        sanitize(&mut frame);
+        sanitize(&mut frame).unwrap();
         let Node::ComboBox {
             options,
             selected,

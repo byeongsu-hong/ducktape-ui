@@ -1620,3 +1620,11 @@ text wraps inside the available width. Their `root/title` and optional
 `root/description` IDs identify real text nodes. This is ordinary component
 composition, not a new Core construct. Public signatures are tracked in the
 component API baseline.
+
+## Tree editor transactions
+
+The existing `editor-binding` declaration has a target-specific Rust boundary.
+Tree factories return `ui_lang_guest::EditorBinding<Payload>`; Native factories
+retain the native Iced key-binding signature. The authored route still receives
+its declared `Payload`. See [the transaction contract](docs/editor-transactions.md)
+for admission, ordering, cancellation and guest-owned history.

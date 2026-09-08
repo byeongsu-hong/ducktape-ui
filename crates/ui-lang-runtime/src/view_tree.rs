@@ -44,6 +44,7 @@ mod button;
 mod canvas;
 mod combo;
 mod editor;
+mod editor_transactions;
 mod layers;
 mod operations;
 pub use operations::execute_widget_command;
@@ -63,7 +64,10 @@ pub enum Output {
     /// table index the node carried.
     Activate(u32),
     /// A rich text link activated the guest's String handler.
-    Link { handler: u32, text: String },
+    Link {
+        handler: u32,
+        text: String,
+    },
     /// A provider result; the renderer supplies the guest route, not the provider.
     Surface {
         handler: Option<u32>,
@@ -86,6 +90,14 @@ pub enum Output {
     /// The user did `action` in an editor: a keystroke, a paste, a click,
     /// a caret move. The host performs it on the `Content` it holds and the
     /// guest hears text/cursor changes fenced by the originating reset.
+    EditorBatch(editor_transactions::Batch),
+    EditorLaneFault {
+        document: String,
+    },
+    EditorClaim {
+        key: String,
+        state: wire::keyboard::KeyState,
+    },
     EditorAction {
         reset: u64,
         key: String,
@@ -101,11 +113,20 @@ pub enum Output {
         column: usize,
     },
     /// A checkbox or toggler was flipped to `on`.
-    Toggle { handler: u32, on: bool },
+    Toggle {
+        handler: u32,
+        on: bool,
+    },
     /// A slider moved to `value`.
-    Slide { handler: u32, value: f32 },
+    Slide {
+        handler: u32,
+        value: f32,
+    },
     /// A pick list chose its option at `index`.
-    Select { handler: u32, index: u32 },
+    Select {
+        handler: u32,
+        index: u32,
+    },
     /// A sensor's child was shown at or resized to `width` by `height`.
     Size {
         handler: u32,
@@ -114,10 +135,18 @@ pub enum Output {
     },
     /// A left press landed at (`x`, `y`) inside a mouse area, in the area's
     /// own coordinates.
-    Pointer { handler: u32, x: f32, y: f32 },
+    Pointer {
+        handler: u32,
+        x: f32,
+        y: f32,
+    },
     /// The pointer moved to (`x`, `y`) inside a mouse area. Coalesced by
     /// [`Inputs::apply`]: one per handler per frame, the last position.
-    Move { handler: u32, x: f32, y: f32 },
+    Move {
+        handler: u32,
+        x: f32,
+        y: f32,
+    },
     /// Native scrollable offsets, measured from its configured anchors.
     ScrollOffset {
         handler: u32,
@@ -171,6 +200,11 @@ pub struct Inputs {
     fields: HashMap<String, Field>,
     editors: HashMap<String, EditorField>,
     editor_revision: u64,
+    editor_sequence: Arc<std::sync::atomic::AtomicU64>,
+    editor_transactions: HashMap<String, editor_transactions::Shared>,
+    editor_bindings: HashMap<String, (String, wire::EditorBinding)>,
+    editor_reported: HashMap<String, (u64, u64)>,
+    editor_notifications: Vec<wire::Event>,
     combos: HashMap<String, combo::Field>,
 }
 
@@ -188,6 +222,11 @@ impl Default for Inputs {
             fields: HashMap::new(),
             editors: HashMap::new(),
             editor_revision: 0,
+            editor_sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            editor_transactions: HashMap::new(),
+            editor_bindings: HashMap::new(),
+            editor_reported: HashMap::new(),
+            editor_notifications: Vec::new(),
             combos: HashMap::new(),
         }
     }
@@ -249,6 +288,7 @@ impl Inputs {
                 }
             }
         }
+        editor_transactions::adopt(self, root);
     }
 
     /// Restore only a matching combo identity, reset revision and option set.
@@ -333,6 +373,15 @@ impl Inputs {
                 }
                 wire::Event::Input { handler, text }
             }
+            Output::EditorLaneFault { document } => {
+                self.editor_fault(&document, pending);
+                return;
+            }
+            Output::EditorBatch(batch) => {
+                self.apply_editor_batch(batch, pending);
+                return;
+            }
+            Output::EditorClaim { .. } => return,
             Output::EditorAction {
                 reset,
                 key,
@@ -353,15 +402,15 @@ impl Inputs {
                 let mut content = lock(&field.content);
                 let before = (content.text(), content.cursor());
                 content.perform(action);
-                let mut text = content.text();
+                let text = content.text();
                 if text == before.0 && content.cursor() == before.1 {
                     return;
                 }
-                // A paste past the bound is cut like an input's, at the
-                // cost of the caret: the content is rebuilt from the cut.
                 if text.len() > wire::MAX_STRING_BYTES {
-                    wire::truncate_string(&mut text);
-                    *content = text_editor::Content::with_text(&text);
+                    *content = text_editor::Content::with_text(&before.0);
+                    content.move_to(before.1);
+                    eprintln!("editor document exceeds text limit; edit rejected");
+                    return;
                 }
                 self.editor_revision = revision;
                 field.revision = revision;
@@ -488,7 +537,7 @@ impl Inputs {
     }
 }
 
-fn lock(content: &editor::Shared) -> std::sync::MutexGuard<'_, text_editor::Content> {
+fn lock<T>(content: &Arc<Mutex<T>>) -> std::sync::MutexGuard<'_, T> {
     content
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1959,7 +2008,16 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 }
             };
             accessible(
-                editor::HostEditor::new(node, content),
+                editor::HostEditor::new(
+                    node,
+                    content,
+                    match node {
+                        wire::Node::Editor { options, .. } => {
+                            inputs.editor_transactions.get(&options.document).cloned()
+                        }
+                        _ => None,
+                    },
+                ),
                 StableId::new(key),
                 Role::MultilineTextInput,
             )
@@ -3612,7 +3670,7 @@ mod tests {
     }
 
     #[test]
-    fn a_paste_into_an_editor_past_the_bound_is_cut() {
+    fn a_paste_into_an_editor_past_the_bound_preserves_the_document() {
         use text_editor::{Action, Edit};
         let mut inputs = Inputs::default();
         inputs.adopt(&editor_node(""));
@@ -3626,11 +3684,9 @@ mod tests {
                 action: Action::Edit(Edit::Paste(Arc::new(format!("{prefix}€€€")))),
             },
         );
-        let Some(wire::Event::Edit { text, .. }) = event else {
-            panic!("expected an Edit event, got {event:?}");
-        };
-        assert_eq!(text, prefix);
-        assert_eq!(editor_text(&inputs), prefix);
+        assert_eq!(event, None);
+        assert_eq!(editor_text(&inputs), "");
+        assert_eq!(inputs.editor_revision, 0);
     }
 
     #[test]

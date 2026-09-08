@@ -63,7 +63,7 @@ fn frame_of_texts(count: usize, filler: &str, bytes: usize) -> wire::Node {
         }),
         ..wire::Frame::default()
     };
-    wire::sanitize(&mut frame);
+    wire::sanitize(&mut frame).unwrap();
     frame.root.expect("sanitized root")
 }
 

@@ -27,10 +27,10 @@
 //! input's `String -> Message` constructor likewise (`slots::handler`), as
 //! do an editor's, a checkbox's `bool`, a slider's `f32`, a pick list's
 //! option index, a mouse area's pointer position and scroll delta. An
-//! `editor` state field is a `String` on this target (`editor_type_code`):
-//! the host owns the `text_editor::Content`, and the guest hears the whole
-//! text back like an input's. Colours are resolved through the app's
-//! palette here and cross as RGBA.
+//! `editor` field holds typed guest text/caret/selection state; the host
+//! retains native `text_editor::Content`. Editor bindings route transaction
+//! outcomes only after their state is accepted. Colours are resolved through
+//! the app's palette here and cross as RGBA.
 //!
 //! A per-state style given as literal colours crosses as a set of faces the
 //! host paints over its own theme; a style given as a Rust callback
@@ -1733,12 +1733,6 @@ fn editor(
     refuse_when(
         program,
         origin,
-        editor.key_binding.is_some(),
-        "an editor key binding",
-    )?;
-    refuse_when(
-        program,
-        origin,
         editor.highlight.is_some() || editor.highlighter.is_some(),
         "an editor highlighter",
     )?;
@@ -1785,6 +1779,39 @@ fn editor(
         ),
         None => format!("::std::option::Option::Some({handler})"),
     };
+    // A logical cell, not its rendered widget identity: base and overlay
+    // editors share a lane, while repeated component instances do not.
+    let (document, transaction_constructor) = match &state.state {
+        Some(StateBinding::App(name)) => (
+            format!("({}).to_owned()", rust_string(&format!("app:{name}"))),
+            format!("{message}::{}", editor_transaction_variant(name)),
+        ),
+        Some(StateBinding::Component {
+            component,
+            name,
+            scope,
+        }) => (
+            format!(
+                "::std::format!(\"component:{{:?}}\", ({}, {}, &({})))",
+                rust_string(component),
+                rust_string(name),
+                borrowed_scope(scope)
+            ),
+            format!(
+                "{{ let __scope = ({}).clone(); move |__transaction| {message}::{}(__scope.clone(), __transaction) }}",
+                borrowed_scope(scope),
+                component_editor_transaction_variant(component, name)
+            ),
+        ),
+        None => unreachable!("editor state checked above"),
+    };
+    let binding = editor.key_binding.as_ref().map(|binding| {
+        let arguments = binding.arguments.iter().map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned)).collect::<Result<Vec<_>, _>>()?.join(", ");
+        let route = snapshot_callback(&binding.route, "__value", &["__value"], env, program, message)?;
+        let factory = &program.extern_function(binding.function).rust_path;
+        Ok::<_, Error>(format!("::std::boxed::Box::new({factory}({arguments}).register({route}, {transaction_constructor}))"))
+    }).transpose()?;
+    let binding = option_code(binding);
     let pixels = |value: Option<CheckedExprUseId>| -> Result<Option<String>, Error> {
         value
             .map(|value| {
@@ -1852,7 +1879,7 @@ fn editor(
             .map(|value| format!("{:?}f32", value.min(f64::from(f32::MAX))))
     }));
     let options = format!(
-        "::std::boxed::Box::new({WIRE}::EditorOptions {{ size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
+        "::std::boxed::Box::new({WIRE}::EditorOptions {{ document: {document}, binding: {binding}, size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
         option_code(pixels(editor.padding)?)
     );
     let key = key_code(identity, "editor", origin, scope, env, program)?;

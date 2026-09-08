@@ -195,7 +195,7 @@ mod tests {
                 items: vec![FlexItem::default(); rules],
                 children: vec![crate::Node::empty(); rows],
             };
-            crate::sanitize_tree(&mut node);
+            crate::sanitize_tree(&mut node).unwrap();
             let crate::Node::Flex {
                 items, children, ..
             } = node

@@ -344,6 +344,17 @@ pub(in crate::codegen) fn component_editor_variant(component: &str, state: &str)
     }
 }
 
+pub(in crate::codegen) fn component_editor_transaction_variant(
+    component: &str,
+    state: &str,
+) -> String {
+    format!(
+        "__0CT{}S{}",
+        rust_identifier_hex(component),
+        rust_identifier_hex(state)
+    )
+}
+
 /// The message that moves a component editor's caret; see
 /// `editor_caret_variant`.
 pub(in crate::codegen) fn component_editor_caret_variant(component: &str, state: &str) -> String {

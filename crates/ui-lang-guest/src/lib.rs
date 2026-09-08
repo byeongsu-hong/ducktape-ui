@@ -34,7 +34,9 @@ pub mod authored;
 
 mod clipboard;
 mod editor;
+mod editor_binding;
 pub use editor::Editor;
+pub use editor_binding::{EditorBinding, EditorTransaction};
 pub mod keyboard;
 mod markdown;
 mod memo;
@@ -215,6 +217,18 @@ impl<A: App> Driver<A> {
                 wire::Event::Input { handler, text } => {
                     slots::run_handler::<String, A::Message>(handler, text)
                 }
+                wire::Event::EditorKeyRequest { handler, request } => {
+                    slots::run_handler::<wire::EditorKeyRequest, A::Message>(handler, request)
+                }
+                wire::Event::EditorTransaction { handler, event } => {
+                    if let wire::EditorTransactionEvent::Cancelled { id, .. } = &event {
+                        if !slots::editor_matches_pending(id) {
+                            continue;
+                        }
+                        slots::editor_acknowledge(&event);
+                    }
+                    slots::run_handler::<wire::EditorTransactionEvent, A::Message>(handler, event)
+                }
                 wire::Event::Edit {
                     handler,
                     text,
@@ -321,6 +335,7 @@ impl<A: App> Driver<A> {
             self.last_root = Some(kept);
         }
         wire::Frame {
+            editor_decisions: slots::take_editor_responses(),
             mouse_interest: slots::mouse_interest(),
             root: Some(root),
             patches,

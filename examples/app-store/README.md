@@ -624,8 +624,13 @@ For module packaging requirements and the connected implementation phases, see
   Hint, native dimensions, disabled state, typography and status faces are copied.
   Rebuild hosts and guests together. The [fixture](tests/editor-guest/src/ui/app.ice)
   and [host tests](host/src/editor_tests.rs) exercise real native/Wasm editing.
-  Native editor action/binding/highlighter/style callbacks and `highlight=` stay
-  E190. Structural pre-edit handling and undo grouping remain app-owned; native
+  Tree `editor-binding` factories retain guest decision and post-commit callbacks;
+  only declared key claims and versioned request/decision data cross the wire.
+  A logical document orders input through decision, native commit, guest state
+  acceptance and authored history reduction. Atomic patches preserve native
+  `Content`; native fallback edits and guest patches reach the same guest-owned
+  history reducer. See [the transaction contract](../../docs/editor-transactions.md).
+  Native action/highlighter/style callbacks and `highlight=` stay E190. Native
   word/line selection modes are not copied by the cursor/anchor contract.
 - No scale factor or locale reaches the guest. The colour mode does, as a
   `host.theme` stream the app has to subscribe to and act on itself.

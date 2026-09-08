@@ -774,6 +774,14 @@ Container `bg=linear(...)` preserves native angle, color-stop alpha and eight-st
 semantics in native-child and Wasm hosts. Other widget gradient fields remain
 tracked in the app-store parity ledger.
 
+### Tree editor transactions
+
+Tree `editor-binding` factories declare focused key claims and decide between
+native editing, no-op and atomic guest patches. Native and Wasm guests receive
+post-commit events after their editor state updates, allowing one guest-owned
+undo history. See [the contract](docs/editor-transactions.md) and
+[actual interaction evidence](COVERAGE.md#tree-editor-transaction-evidence).
+
 ## UI quality worklist
 
 The [UI quality worklist](docs/ui-quality-roadmap.md) tracks default composition,

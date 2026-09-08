@@ -136,7 +136,7 @@ mod tests {
                 ..Default::default()
             }))
             .unwrap();
-            sanitize(&mut frame);
+            sanitize(&mut frame).unwrap();
             let kept = frame
                 .root
                 .as_ref()
@@ -158,7 +158,7 @@ mod tests {
                 .count();
             assert_eq!(kept, expected);
             let once = frame.clone();
-            sanitize(&mut frame);
+            sanitize(&mut frame).unwrap();
             assert_eq!(once, frame);
         }
     }

@@ -9,7 +9,11 @@ impl Editor {
             text: text.into(),
             ..Default::default()
         };
-        state.sanitize();
+        assert!(
+            state.text.len() <= wire::MAX_STRING_BYTES,
+            "editor document exceeds text limit"
+        );
+        state.cursor.clamp(&state.text);
         Self(state)
     }
     pub fn text(&self) -> String {
@@ -37,13 +41,20 @@ impl Editor {
         next.0.reset = previous_reset
             .checked_add(1)
             .expect("editor reset revisions exhausted");
-        next.0.sanitize();
+        assert!(
+            next.0.text.len() <= wire::MAX_STRING_BYTES,
+            "editor document exceeds text limit"
+        );
+        next.0.cursor.clamp(&next.0.text);
         *self = next;
     }
     /// Observations from a previous document cannot overwrite a replacement.
     pub fn accept(&mut self, mut state: wire::EditorState) {
-        if state.reset == self.0.reset && state.revision > self.0.revision {
-            state.sanitize();
+        if state.reset == self.0.reset
+            && state.revision > self.0.revision
+            && state.text.len() <= wire::MAX_STRING_BYTES
+        {
+            state.cursor.clamp(&state.text);
             self.0 = state;
         }
     }
@@ -70,6 +81,20 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn oversized_initial_and_observed_documents_never_become_prefixes() {
+        let oversized = "x".repeat(wire::MAX_STRING_BYTES + 1);
+        assert!(std::panic::catch_unwind(|| Editor::new(oversized.clone())).is_err());
+        let mut editor = Editor::new("preserved");
+        editor.accept(wire::EditorState {
+            text: oversized,
+            revision: 1,
+            ..Default::default()
+        });
+        assert_eq!(editor.text(), "preserved");
+        assert_eq!(editor.observation_revision(), 0);
+    }
+
     #[test]
     fn observations_do_not_reset_and_old_document_events_cannot_replace_new_state() {
         let mut editor = Editor::new("a");
