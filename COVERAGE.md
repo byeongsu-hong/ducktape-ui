@@ -406,8 +406,11 @@ Ordered widget payload routes, including sensor show/resize dimensions, may
 emit those named events directly from a component view.
 An explicit `forward` block accepts only outer events with the exact same name
 and payload signature; wildcard and verbose identity forwarding are rejected.
-Component contracts also support required and optional slots; missing optional
-slots lower to no child, and `provided(Name)` is folded at each call site.
+Component contracts support required and optional single-root slots and
+zero-or-more `slot name*` content. Missing optional or multi-child slots lower
+to no child, and `provided(Name)` is folded at each call site. Multi-child
+content expands into the receiving layout without an implicit grouping widget;
+explicit caller layouts remain grouped.
 Canonical `with` metadata blocks preserve long checked property and utility
 lists without changing the view tree; the formatter alone decides inline versus
 wrapped form and orders metadata before events, forwarding, slots/statuses, and
@@ -2451,3 +2454,36 @@ copy because the current Ice test driver cannot assert those effects. This
 slice does not assert justified text or soft-wrapped line geometry; its multiline
 case uses explicit newlines. Rich-span decoration and link hit testing have a
 separate owning-layer contract.
+
+## Multi-child component content
+
+Core `tests/multi_child_slots.rs` covers cardinality, formatting, scalar-position
+and forwarding rejection, ordered expansion and caller/callee binding. The
+existing app-store component guest additionally runs through a freshly bundled
+Wasm app in the host test: direct siblings retain order, an explicit caller row
+remains grouped, and forwarded routes and conditional removal reach the actual
+Tree. Inserting a column around the slot made its direct-child-count assertion
+fail (1 versus 3); rebuilding the restored guest and rerunning the same host test
+passed. This test requires explicit bundle preparation and is ignored by the
+ordinary workspace test command.
+
+Native `multi_child_slots.ice` exercises omitted/conditional content, forwarded
+keyed local state through reordering, explicit grouping and ButtonGroup wrapping.
+The forwarded counter initially remained 0 after a click: forwarded-slot memo
+reads now preserve that caller state dependency, and the same test passes with
+count 1 retained after reordering while its sibling remains 0.
+
+Minimal compiling mutations fail their intended geometry assertions: an empty
+placeholder adds a spurious 10px gap; changing a custom column to a row breaks
+its vertical placement; removing ButtonGroup wrapping keeps the second action
+at y=24 instead of y=62.25; adding a 4px group gap breaks the touching-edge
+assertion (180 versus 176). Restoring each mutation and rerunning its focused
+`cargo test -p showcase --test multi_child_slots <test-name>` passes. Captures
+under `examples/showcase/screenshots/multi-child-slots` accompany these bounds
+and real keyboard/pointer route assertions; captures alone are not the oracle.
+
+The action-card tests now place buttons directly in Card.Footer. Removing its
+wrapping fails the narrow next-line assertion; inserting an implicit column
+around its slot fails the wide same-line assertion (167.10 versus 119.85).
+Both focused `action_layout` cases pass after exact restoration. This rejects
+the original caller-wrapper limitation as well as loss of default reflow.

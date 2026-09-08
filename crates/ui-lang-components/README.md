@@ -276,24 +276,29 @@ cargo check -p ui-lang-components --no-default-features --features button,x11
 cargo check -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features button
 ```
 
-## Action rows at narrow widths
+## Component-owned action layout
 
-When actions should retain their natural label widths and move to the next line
-as space runs out, put wrapping on the row that directly owns the buttons:
+`Card.Footer`, `Dialog.Actions`, and `ButtonGroup` accept ordinary buttons
+as direct children. The component owns the row and its wrapping policy:
 
 ```ice
 Card.Footer
-  row wrap w=fill gap=8.0 wrap-gap=8.0
-    button "Discard all changes" @secondary_action -> cancel
-    button "Save workspace settings" @primary_action -> save
+  button "Discard all changes" @secondary_action -> cancel
+  button "Save workspace settings" @primary_action -> save
 ```
 
-At 280px the demonstrated card places these actions on separate lines; at 640px
-they share one line. Wrapping preserves source order for keyboard navigation.
-The [compiling example and tests](../../examples/showcase/tests/cases/ui/action_layout.ice)
-check placement, label containment, Tab/Enter and pointer activation.
+Card.Footer uses a 9px gap; Dialog.Actions uses an 8px gap and right-aligns each
+wrapped line. Their `gap` prop changes spacing on both axes. ButtonGroup retains
+zero spacing inside its shared border. Narrow space moves whole buttons to the
+next line instead of assigning the remaining width only to the last button.
 
-The slot accepts one root: the caller owns this inner row and its reflow policy.
-Wrapping only an outer Card.Footer, Dialog.Actions or ButtonGroup container does
-not rearrange descendants inside the caller's row. This pattern demonstrates
-explicit layout; those components do not yet choose that policy automatically.
+These are multi-child slots (`slot children*`). Callers retain native buttons,
+custom content, conditions and iteration. An explicit nested layout remains a
+single grouped child, so a custom composition can keep its own internal layout.
+Use such grouping intentionally; a wrapper around all actions gives that wrapper
+responsibility for arranging its descendants again.
+
+The [action example](../../examples/showcase/tests/cases/ui/action_layout.ice)
+and [slot interaction tests](../../examples/showcase/tests/cases/ui/multi_child_slots.ice)
+exercise the actual shared components. Page still owns screen insets; action
+layout does not add a second page boundary.

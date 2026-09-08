@@ -377,6 +377,12 @@ changes as `breaking`, `behavioral_review`, or `additive`. Breaking changes
 exit nonzero. The reviewed public baseline for `ui-lang-components` lives at
 `api/baselines/ui-lang-components.json`.
 
+Fingerprint schema version 2 records both `required` and `multiple` on every
+component slot. A `slot children*` has `required: false, multiple: true`;
+single-root slots have `multiple: false`. Readers reject other fingerprint
+versions; regenerate artifacts with the current command. The independent diff
+report format remains version 1.
+
 ## lsp
 
 `cargo ice lsp` is a stdio server with full-document synchronization, UTF-16
@@ -387,7 +393,7 @@ the error-tolerant core editor model shared with the language frontends rather
 than a second indentation parser in the server.
 
 Component hover/signature help exposes read/bind/default props, output, named
-events, and required/optional slots; recipe hover shows base-first expansion.
+events, and required/optional/multi-child slots; recipe hover shows base-first expansion.
 Workspace-edit code actions repair component bindings and event routes, create
 handler/error-route skeletons, label child-content buttons, extract repeated
 inline utilities into recipes, close direct app-handler captures through named

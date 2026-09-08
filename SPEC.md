@@ -217,6 +217,26 @@ bind their own Rust modules beside the application's backend. Bare extern type
 and function names are graph-global and duplicates are errors; aliased imports
 retain their namespace identity instead.
 
+### Component slot cardinality
+
+A component declaration uses `slot` (the default `children` name) or `slot name`
+for a required single-root slot, `slot name?` for an optional single-root slot,
+and `slot name*` for zero or more caller roots. A multi-child slot can be omitted.
+Multiple direct component children fill its default `children` slot; named
+`name:` blocks may similarly contain multiple roots. Compound component children
+continue to map to their family's named slots.
+
+A multi-child slot expands into the receiving layout's sibling list, including
+conditional and iterative branches. It may forward to another multi-child slot.
+It is invalid as scalar content in a box, button, scroll viewport or component
+root, or when forwarded into a single-root slot. No implicit column or other
+widget is introduced, and an explicit caller layout remains one grouped child.
+Empty content contributes no child or inter-child spacing. Expression/handler
+bindings stay in the caller; rendered scopes stay at the receiving placement.
+API extraction records whether each slot is required and accepts multiple roots.
+`stack under=N` counts the resulting rendered children, including children
+expanded by slots, conditions and loops; it does not count source declarations.
+
 ## 5. The Rust boundary
 
 This is the one part of the contract the schema does not carry: what a

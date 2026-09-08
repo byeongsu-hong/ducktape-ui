@@ -548,8 +548,41 @@ Dialog
     button "Cancel" -> cancel
 ```
 
-Every slot is required and accepts one root; wrap siblings in `row`, `col`,
-`grid`, or `stack`.
+Slot cardinality determines what a caller supplies:
+
+| Declaration | Caller content |
+| --- | --- |
+| `slot` / `slot name` | One required root |
+| `slot name?` | Zero or one root |
+| `slot name*` | Zero or more roots, including omission |
+
+Use a multi-child slot when the receiving component owns sibling layout:
+
+```ice
+component Actions(gap:f64=8.0)
+  row wrap w=fill gap=gap wrap-gap=gap
+    slot children*
+
+Actions
+  button "Cancel" -> cancel
+  if show_save
+    button "Save" -> save
+```
+
+No caller-owned row is needed. A multi-child slot expands directly into its
+receiving layout; an empty branch contributes no gap. Named `actions:` blocks
+can also contain multiple roots when declared with `slot actions*`. Multi-child
+slots may forward into another multi-child slot.
+
+Put a multi-child slot in a layout child list, including transparent `if`/`for`
+branches. Do not put it directly in scalar positions such as a component root,
+box, button or scroll content, or forward it to a single-root slot. An explicit
+caller `row`/`col` remains one grouped child; use one when custom content should
+keep its own arrangement. For a single-root slot, siblings still need that
+explicit layout.
+
+`stack under=N` counts rendered children after slot/condition/loop expansion.
+Use an explicit caller layout when a whole group must count as one child.
 
 Qualified components form checked compound components:
 

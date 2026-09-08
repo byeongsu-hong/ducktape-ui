@@ -45,6 +45,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | L04 | P0 · Gap | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
 | L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
 | L06 | P1 · Audit | [grid/flex surface](../skills/design-ice-ui/references/extended-surface.md), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Repeated cards use a consistent minimum useful width and aspect ratio; odd item counts and narrow windows leave no clipped or zero-width cells. |
+| L07 | P0 · Audit | [text/layout emission](../crates/ui-lang-core/src/codegen/view), [text runtime](../crates/ui-lang-runtime/src) | Horizontal and vertical text alignment inside assigned bounds work independently of parent placement, including fixed/fill/shrink sizes, multiline wrapping and padding. Verify painted text geometry, not only the enclosing widget's rectangle. Added from the user's explicit two-axis text-alignment request. |
 
 ## Design defaults and customization
 
@@ -139,22 +140,19 @@ layout. The explicit `row wrap` pattern in
 preserves natural button widths at 280px and keeps the actions together at
 640px. Its tests assert line placement, text bounds and keyboard/pointer routes.
 
-This supplies L04a (the explicit pattern and assertion-level evidence), but
-does **not** close L04. Follow-up work remains:
+L04b supplies the shared [multi-child slot contract](superpowers/specs/2026-09-08-multi-child-slots-design.md)
+and [implementation](superpowers/plans/2026-09-08-multi-child-slots.md):
+`slot children*` lets the receiving component arrange ordinary caller siblings.
+Card.Footer now owns wrapping and spacing; the same narrow/wide tests use direct
+buttons. Empty content adds no placeholder or gap, explicit caller layouts stay
+grouped, and forwarded keyed state survives reordering. Both native and freshly
+bundled Tree interaction evidence exercise the composition boundary.
 
-- L04b: resolve default layout ownership. A slot accepts one root, so callers
-  currently construct the inner row. Making Card.Footer's outer row wrap cannot
-  reflow the buttons inside that caller-owned row. Determine the smallest
-  shared composition or slot contract that can own sibling arrangement before
-  adding an automatic action-layout API.
-- L04c: verify Dialog.Actions and ButtonGroup, including long labels and focus
-  order; the card test alone does not establish their behavior.
-
-- L04b implementation design: [multi-child slots](superpowers/specs/2026-09-08-multi-child-slots-design.md)
-  and [implementation plan](superpowers/plans/2026-09-08-multi-child-slots.md).
-  This is a planned language contract, not supported syntax or completed layout
-  behavior. Existing source inspection confirms that scalar slot codegen is the
-  boundary preventing the parent from arranging caller siblings individually.
+L04c additionally verifies ButtonGroup's narrow wrapping, zero-gap wide row,
+single-line labels and keyboard/pointer routes. Dialog.Actions has the same
+direct-child interface, but its absolute right-edge assertions exposed an Iced
+wrapping-alignment defect. Keep L04 open until the separate owning-layer fix and
+the narrow/wide Dialog assertions are verified together.
 
 ### L01 follow-up: viewport and surface edge spacing
 

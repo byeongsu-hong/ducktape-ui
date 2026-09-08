@@ -34,8 +34,10 @@ Apply these rules before editing:
   payload with `_`, apply checked utilities with `@`, and assign scoped identity
   with `#`.
 - Pass component inputs explicitly. Components do not capture app state.
-  Declare slots explicitly; every declared slot is required and receives one
-  root.
+  Declare slot cardinality explicitly: `slot name` receives one required root,
+  `slot name?` receives zero or one, and `slot name*` receives zero or more.
+  Multi-child slots let the component own sibling layout; explicit caller
+  layouts remain grouped children.
 - Use the small closed Ice expression language. Move deterministic missing
   domain operations behind typed `pure` externs, immediate effects/environment
   reads/retained identity behind app-initializer-or-immediate-handler-only
