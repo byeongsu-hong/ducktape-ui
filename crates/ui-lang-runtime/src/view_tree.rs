@@ -409,6 +409,7 @@ fn collect_inputs(
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
         | wire::Node::Pin { content, .. }
+        | wire::Node::Float { content, .. }
         | wire::Node::Responsive { content, .. }
         | wire::Node::Lazy { content, .. }
         | wire::Node::MouseArea { content, .. }
@@ -492,6 +493,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         wire::Node::Container { content, .. }
         | wire::Node::Sensor { child: content, .. }
         | wire::Node::Pin { content, .. }
+        | wire::Node::Float { content, .. }
         | wire::Node::Responsive { content, .. }
         | wire::Node::Lazy { content, .. }
         | wire::Node::MouseArea { content, .. }
@@ -1251,6 +1253,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             .logical_id_maybe(cfg!(test).then_some(key.as_str()))
             .into()
         }
+        wire::Node::Float { content, .. } => layers::floating(node, render_node(content, kept)),
         wire::Node::Pin {
             x,
             y,

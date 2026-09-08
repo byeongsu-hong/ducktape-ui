@@ -453,15 +453,111 @@ fn a_sensor_compiles_to_a_sensor_node_with_size_handlers() {
 }
 
 #[test]
+fn float_geometry_arithmetic_and_guest_snapshots_build_wire_operations() {
+    let source = format!(
+        "app Demo\n{PALETTE}extern crate::host\n  pure offset(value:f64) -> f64\nstate\n  shift = 2.0\nview\n  float scale=1.1 x=(viewport_x + viewport_width - original_x - original_width + offset(shift)) y=(-(viewport_y + viewport_height - original_y - original_height) * 2.0 / 3.0 % 4.0) shadow=black/50 shadow-x=1.0 shadow-y=2.0 shadow-blur=4.0 r=8.0 r-tl=1.0\n    text \"floating\"\n"
+    );
+    let result = compile_for(&source, "float.ice", Target::Tree);
+    assert!(result.is_ok(), "float arithmetic must compile: {result:?}");
+    let generated = result.unwrap();
+    for expected in [
+        "Node::Float",
+        "FloatExpression",
+        "FloatOp::Negate",
+        "FloatOp::Add",
+        "FloatOp::Subtract",
+        "FloatOp::Multiply",
+        "FloatOp::Divide",
+        "FloatOp::Remainder",
+        "FloatOp::Number((crate::host::offset(",
+        ".max(f32::EPSILON).min(f32::MAX)",
+        "Shadow",
+        "radius: ::std::option::Option::Some",
+    ] {
+        assert!(
+            generated.contains(expected),
+            "missing {expected}: {generated}"
+        );
+    }
+    for index in 0..8 {
+        assert!(
+            generated.contains(&format!("FloatOp::Geometry({index})")),
+            "missing geometry {index}: {generated}"
+        );
+    }
+    assert!(!generated.contains("__original"));
+    assert!(!generated.contains("__viewport"));
+    let defaults = compile_for(
+        &format!("app Demo\n{PALETTE}view\n  float\n    text \"default\"\n"),
+        "float.ice",
+        Target::Tree,
+    )
+    .unwrap();
+    assert!(
+        defaults.matches("FloatOp::Number((0.0) as f64)").count() >= 2,
+        "{defaults}"
+    );
+    assert!(
+        defaults.contains("radius: ::std::option::Option::None"),
+        "{defaults}"
+    );
+}
+
+#[test]
+fn float_geometry_calls_are_refused_even_inside_nested_arguments() {
+    for expression in [
+        "offset(viewport_width)",
+        "offset(-viewport_width + 1.0)",
+        "total([1.0, viewport_width])",
+        "offset(total([viewport_width]))",
+    ] {
+        let source = format!(
+            "app Demo\n{PALETTE}extern crate::host\n  pure offset(value:f64) -> f64\n  pure total(values:[f64]) -> f64\nview\n  float x={expression}\n    text \"floating\"\n"
+        );
+        compile(&source, "float.ice").unwrap();
+        let error = compile_for(&source, "float.ice", Target::Tree)
+            .unwrap_err()
+            .render("float.ice");
+        assert!(
+            error.contains("E190") && error.contains("function of float geometry"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn float_geometry_operation_budget_accepts_64_and_refuses_65() {
+    let sum = std::iter::repeat_n("viewport_width", 32)
+        .collect::<Vec<_>>()
+        .join(" + ");
+    for (expression, accepted) in [(format!("-({sum})"), true), (format!("{sum} + 1.0"), false)] {
+        let source =
+            format!("app Demo\n{PALETTE}view\n  float x=({expression})\n    text \"floating\"\n");
+        compile(&source, "float.ice").unwrap();
+        let result = compile_for(&source, "float.ice", Target::Tree);
+        if accepted {
+            let generated = result.expect("64 operations must compile");
+            assert_eq!(generated.matches("FloatOp::Geometry").count(), 32);
+        } else {
+            let error = result.unwrap_err().render("float.ice");
+            assert!(
+                error.contains("E190") && error.contains("more than 64 operations"),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_construct_the_wire_does_not_carry_fails_at_its_line() {
     let source = format!(
-        "app Demo\n{PALETTE}state\n  draft = \"\"\nview\n  col\n    text \"before\" @text-fg\n    float x=1.0 y=2.0\n      text \"after\"\n"
+        "app Demo\n{PALETTE}state\n  draft = \"\"\nview\n  col\n    text \"before\" @text-fg\n    theme dark\n      text \"after\"\n"
     );
     let error = compile_for(&source, "demo.ice", Target::Tree).unwrap_err();
     let rendered = error.render("demo.ice");
     assert!(rendered.contains("E190"), "{rendered}");
     assert!(
-        rendered.contains("`float` is not available in a view module"),
+        rendered.contains("`theme` is not available in a view module"),
         "{rendered}"
     );
     assert!(rendered.contains("demo.ice:17"), "{rendered}");
@@ -792,11 +888,10 @@ const COVERAGE: &[Coverage] = &[
         "  theme dark\n    text \"a\" @text-fg\n",
         "`theme`",
     ),
-    refused(
+    emitted(
         "float",
         "",
         "  float x=2.0 y=3.0\n    text \"a\" @text-fg\n",
-        "`float`",
     ),
     emitted(
         "pin",

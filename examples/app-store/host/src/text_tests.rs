@@ -32,9 +32,13 @@ fn renderer() -> iced::Renderer {
     .unwrap()
 }
 fn guest() -> Arc<Mutex<Guest>> {
+    guest_from("text-fixture/app_store_text_fixture.wasm")
+}
+fn guest_from(relative: &str) -> Arc<Mutex<Guest>> {
     use sha2::{Digest, Sha256};
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/text-fixture/app_store_text_fixture.wasm");
+        .join("../target")
+        .join(relative);
     let bytes = std::fs::read(&path).expect("bundle layers fixture first");
     let hash = Sha256::digest(&bytes)
         .iter()
@@ -566,4 +570,74 @@ fn text_wasm_box_shadow_paints_outside_its_bounds() {
         pixel[0] > pixel[1] && pixel[1] > 0 && pixel[1] < 255,
         "blurred translucent red shadow outside the box, got {pixel:?}"
     );
+}
+
+#[test]
+#[ignore = "requires bundled float-fixture wasm"]
+fn text_wasm_float_repositions_after_resize_and_routes_clicks() {
+    fn count(node: &wire::Node) -> Option<&str> {
+        if let wire::Node::Text { key, content, .. } = node
+            && key.ends_with("/count")
+        {
+            return Some(content);
+        }
+        node.children().iter().find_map(count)
+    }
+    let guest = guest_from("float-fixture/app_store_float_fixture.wasm");
+    let mut renderer = renderer();
+    let mut ui = build(
+        &guest,
+        user_interface::Cache::default(),
+        &mut renderer,
+        600.0,
+    );
+    let mut now = std::time::Instant::now();
+    for (width, expected_count) in [(600.0, "1"), (800.0, "2")] {
+        ui = build(&guest, ui.into_cache(), &mut renderer, width);
+        for _ in 0..3 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now, width);
+        }
+        // Native Float operates on the original layout; inspect painted pixels
+        // and deliver the pointer at the translated position instead.
+        ui.draw(
+            &mut renderer,
+            &iced::Theme::Light,
+            &iced::advanced::renderer::Style {
+                text_color: iced::Color::BLACK,
+            },
+            mouse::Cursor::Unavailable,
+        );
+        let pixels = renderer.screenshot(Size::new(width as u32, 600), 1.0, iced::Color::WHITE);
+        let pixel = |x: usize, y: usize| &pixels[(y * width as usize + x) * 4..][..3];
+        assert_eq!(
+            pixel((width - 84.0) as usize, 140),
+            &[0, 170, 68],
+            "floating panel must follow viewport width"
+        );
+        assert_eq!(
+            pixel(60, 50),
+            &[255, 255, 255],
+            "panel must not paint at its original layout slot"
+        );
+        let point = iced::Point::new(width - 84.0, 111.0);
+        ui.update(
+            &[
+                Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            ],
+            mouse::Cursor::Available(point),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut vec![],
+        );
+        for _ in 0..3 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now, width);
+        }
+        let guard = guest.lock().unwrap();
+        assert_eq!(
+            count(guard.frame.root.as_ref().unwrap()),
+            Some(expected_count)
+        );
+    }
 }

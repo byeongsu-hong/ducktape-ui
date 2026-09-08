@@ -1102,6 +1102,7 @@ fn tree_depth(node: &Node) -> usize {
         | Node::Sensor { child: content, .. }
         | Node::MouseArea { content, .. }
         | Node::Pin { content, .. }
+        | Node::Float { content, .. }
         | Node::Responsive { content, .. }
         | Node::Lazy { content, .. }
         | Node::Scroll { content, .. } => 1 + tree_depth(content),
@@ -1266,6 +1267,24 @@ fn check_bounds(
             check_edges(padding, ctx);
             check_color(background, ctx);
             check_border(border, ctx);
+            check_bounds(content, depth + 1, keys, svg_bytes, ctx);
+        }
+        Node::Float {
+            scale,
+            shadow,
+            radius,
+            content,
+            ..
+        } => {
+            assert!(scale.is_finite() && (f32::EPSILON..=PIXEL_BOUND).contains(scale));
+            check_color(&shadow.color, ctx);
+            check_pixels(&shadow.blur, ctx, "float shadow blur");
+            for value in [shadow.x, shadow.y].into_iter().flatten() {
+                assert!(value.is_finite() && (-PIXEL_BOUND..=PIXEL_BOUND).contains(&value));
+            }
+            for value in radius.iter().flatten() {
+                check_pixels(&Some(*value), ctx, "float shadow radius");
+            }
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
         Node::Pin {

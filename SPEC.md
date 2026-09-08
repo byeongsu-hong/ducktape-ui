@@ -1039,8 +1039,15 @@ inferred unless explicitly set, and responsive structural conditions splice
 into the stack's child list. Hover uses native cursor presence and a copied
 `open` flag. An overlay carries its base and an optional modal child; the host
 blocks base keyboard/focus operations while the modal is present and forwards
-its native overlay events to the same guest. Native callback-based float
-positioning remains refused. Wire child, numeric, depth, and frame limits apply.
+its native overlay events to the same guest.
+
+Tree `float` copies one child, scale, shadow and radius. Translation arithmetic
+(`+`, `-`, `*`, `/`, `%`, unary minus) runs on the host against current original
+and viewport bounds; geometry-independent expressions are evaluated by the guest
+and copied as numbers. Each axis is limited to 64 postfix operations. Calls that
+depend on host geometry remain E190. Invalid or nonfinite wire arithmetic yields
+zero translation. A floated modal guards its visible translated panel against
+outside-click dismissal. Wire child, numeric, depth, and frame limits apply.
 
 ## Tree text presentation
 

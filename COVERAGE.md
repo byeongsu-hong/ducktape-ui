@@ -1886,3 +1886,15 @@ the branch passes. Cargo and component tooling are controlled process fixtures,
 so this test establishes CLI routing and process suppression, not Wasm validity.
 The portable request unit test also checks sole-Wasm-target validation and that
 the flag is not forwarded to Cargo.
+
+### Tree float evidence
+
+Core Tree tests cover arithmetic lowering, copied guest values and the 64-op
+budget. Wire tests cover live geometry, malformed programs and bounded decoding.
+`text_wasm_float_repositions_after_resize_and_routes_clicks` bundles an actual
+wasm guest and checks tiny-skia pixels and button events at 600 and 800 pixels.
+Replacing host x translation with zero fails the painted-position assertion;
+restoring it passes. The runtime floated-overlay test also proves that the
+translated modal consumes inside clicks while its old slot dismisses; moving
+the guard outside Float fails that assertion. These are headless renderer tests,
+not platform window smoke evidence.

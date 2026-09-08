@@ -31,10 +31,12 @@ mod snapshot;
 pub use snapshot::{MAX_SNAPSHOT_BYTES, Snapshot, SnapshotValue};
 
 mod flex;
+mod float;
 pub use flex::{
     FlexBasis, FlexContentAlignment, FlexDirection, FlexItem, FlexItemAlignment, FlexLayout,
     FlexMargin, FlexMargins, FlexWrap,
 };
+pub use float::{FloatExpression, FloatOp, MAX_FLOAT_OPS};
 
 mod pick;
 pub use pick::{PickHandle, PickIcon, PickOptions};
@@ -612,6 +614,17 @@ pub enum Node {
         #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
+    /// Floating content whose translation is evaluated only by the host.
+    Float {
+        key: String,
+        x: FloatExpression,
+        y: FloatExpression,
+        scale: f32,
+        shadow: Shadow,
+        radius: Option<[f32; 4]>,
+        #[serde(deserialize_with = "decode_child")]
+        content: Box<Node>,
+    },
     /// Copied keyed rows; the host owns widget state and optional virtualization.
     KeyedColumn {
         key: String,
@@ -1061,6 +1074,7 @@ impl Node {
             | Self::KeyedColumn { key, .. }
             | Self::Flex { key, .. }
             | Self::Pin { key, .. }
+            | Self::Float { key, .. }
             | Self::Responsive { key, .. }
             | Self::Lazy { key, .. }
             | Self::When { key, .. }
@@ -1097,6 +1111,7 @@ impl Node {
         match self {
             Self::Container { content, .. }
             | Self::Pin { content, .. }
+            | Self::Float { content, .. }
             | Self::Responsive { content, .. }
             | Self::Lazy { content, .. }
             | Self::Sensor { child: content, .. }
@@ -1147,6 +1162,7 @@ impl Node {
         match self {
             Self::Container { content, .. }
             | Self::Pin { content, .. }
+            | Self::Float { content, .. }
             | Self::Responsive { content, .. }
             | Self::Lazy { content, .. }
             | Self::Sensor { child: content, .. }
@@ -1201,6 +1217,7 @@ impl Node {
             | Self::Overlay { children, .. } => Some(children),
             Self::Container { .. }
             | Self::Pin { .. }
+            | Self::Float { .. }
             | Self::Responsive { .. }
             | Self::Lazy { .. }
             | Self::Sensor { .. }
@@ -1784,6 +1801,22 @@ fn sanitize_node(
             *radius = bounded(*radius);
             children.truncate(2);
         }
+        Node::Float {
+            key,
+            scale,
+            shadow,
+            radius,
+            ..
+        } => {
+            claim(key, taken);
+            *scale = finite(*scale).clamp(f32::EPSILON, MAX_PIXELS);
+            shadow.sanitize();
+            if let Some(corners) = radius {
+                for corner in corners {
+                    *corner = bounded(*corner);
+                }
+            }
+        }
         Node::Pin { key, x, y, .. } => {
             claim(key, taken);
             *x = finite(*x).clamp(-MAX_PIXELS, MAX_PIXELS);
@@ -2246,6 +2279,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Overlay { .. }
         | Node::Tooltip { .. }
         | Node::When { .. }
+        | Node::Float { .. }
         | Node::Surface { .. } => Vec::new(),
     };
     slots.into_iter().flatten().collect()
