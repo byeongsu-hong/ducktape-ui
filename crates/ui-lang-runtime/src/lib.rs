@@ -301,6 +301,7 @@ struct SemanticSnapshot {
     supports_activate: bool,
     supports_increment: bool,
     supports_decrement: bool,
+    supports_move_to: bool,
 }
 
 /// The numeric contract of a range control: where it is, where it can go, and
@@ -437,6 +438,7 @@ impl<Message> Semantics<Message> {
                 supports_activate: false,
                 supports_increment: false,
                 supports_decrement: false,
+                supports_move_to: false,
             },
             focus_id: None,
             activate: None,
@@ -446,12 +448,26 @@ impl<Message> Semantics<Message> {
     }
 }
 
-struct SemanticState<Message> {
-    semantics: Semantics<Message>,
+// Operation traversal crosses Element::map without mapping its Any payloads.
+// Keep live semantic control independent of the widget's message type; update
+// resolves requests through the current widget and its normal Shell mapping.
+struct SemanticState {
+    semantics: SemanticSnapshot,
+    focus_id: Option<widget::Id>,
     focus_visible: bool,
+    pending: Vec<SemanticAction>,
 }
 
-impl<Message> Focusable for SemanticState<Message> {
+#[derive(Clone, Copy)]
+enum SemanticAction {
+    Focus,
+    Activate,
+    Increment,
+    Decrement,
+    MoveCaret { line: usize, column: usize },
+}
+
+impl Focusable for SemanticState {
     fn is_focused(&self) -> bool {
         self.semantics.focused
     }
@@ -901,6 +917,7 @@ where
         move_to: impl Fn(usize, usize) -> Message + Send + Sync + 'static,
     ) -> Self {
         self.semantics.move_to = Some(std::sync::Arc::new(move_to));
+        self.semantics.supports_move_to = true;
         self
     }
 
@@ -1002,13 +1019,15 @@ where
     Renderer: iced::advanced::Renderer,
 {
     fn tag(&self) -> tree::Tag {
-        tree::Tag::of::<SemanticState<Message>>()
+        tree::Tag::of::<SemanticState>()
     }
 
     fn state(&self) -> tree::State {
         tree::State::new(SemanticState {
-            semantics: self.semantics.clone(),
+            semantics: self.semantics.snapshot.clone(),
+            focus_id: self.semantics.focus_id.clone(),
             focus_visible: false,
+            pending: Vec::new(),
         })
     }
 
@@ -1017,25 +1036,20 @@ where
     }
 
     fn diff(&self, tree: &mut widget::Tree) {
-        let state = tree.state.downcast_mut::<SemanticState<Message>>();
+        let state = tree.state.downcast_mut::<SemanticState>();
         let focused = state.semantics.focused;
+        if state.semantics.id != self.semantics.id || self.semantics.disabled {
+            state.pending.clear();
+        }
         // The snapshot owns the node's strings, and the tree keeps a copy. A
         // pass that hands over the same snapshot compares it against that
         // copy instead of cloning it and dropping the old one — a few
         // `String`s per node per frame, on a screen where most nodes hold.
-        if state.semantics.snapshot != self.semantics.snapshot {
-            state.semantics.snapshot = self.semantics.snapshot.clone();
+        if state.semantics != self.semantics.snapshot {
+            state.semantics = self.semantics.snapshot.clone();
         }
-        if state.semantics.focus_id != self.semantics.focus_id {
-            state.semantics.focus_id = self.semantics.focus_id.clone();
-        }
-        state.semantics.activate = self.semantics.activate.clone();
-        // Almost every node has no steps: `None == None` skips the clone.
-        if state.semantics.steps.is_some() || self.semantics.steps.is_some() {
-            state.semantics.steps = self.semantics.steps.clone();
-        }
-        if state.semantics.move_to.is_some() || self.semantics.move_to.is_some() {
-            state.semantics.move_to = self.semantics.move_to.clone();
+        if state.focus_id != self.semantics.focus_id {
+            state.focus_id = self.semantics.focus_id.clone();
         }
         state.semantics.focused = focused;
         if state.semantics.disabled {
@@ -1071,9 +1085,8 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        let state = tree.state.downcast_mut::<SemanticState<Message>>();
+        let state = tree.state.downcast_mut::<SemanticState>();
         let focus_id = state
-            .semantics
             .focus_id
             .clone()
             .unwrap_or_else(|| state.semantics.id.widget_id());
@@ -1081,7 +1094,7 @@ where
             state.semantics.focused = false;
             state.focus_visible = false;
         }
-        operation.custom(None, layout.bounds(), &mut state.semantics.snapshot);
+        operation.custom(None, layout.bounds(), &mut state.semantics);
         operation.custom(Some(&focus_id), layout.bounds(), state);
         if let Some(mut caret) = text_caret(
             &tree.children[0],
@@ -1132,7 +1145,26 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        let state = tree.state.downcast_mut::<SemanticState<Message>>();
+        let state = tree.state.downcast_mut::<SemanticState>();
+        for action in state.pending.drain(..) {
+            if state.semantics.disabled {
+                continue;
+            }
+            let message = match action {
+                SemanticAction::Activate => self.semantics.activate.clone(),
+                SemanticAction::Increment => self.semantics.increment().cloned(),
+                SemanticAction::Decrement => self.semantics.decrement().cloned(),
+                SemanticAction::MoveCaret { line, column } => self
+                    .semantics
+                    .move_to
+                    .as_ref()
+                    .map(|move_to| move_to(line, column)),
+                SemanticAction::Focus => None,
+            };
+            if let Some(message) = message {
+                shell.publish(message);
+            }
+        }
         let wrapper_focus = state.semantics.focus == FocusBehavior::Wrapper;
 
         if wrapper_focus && !state.semantics.disabled {
@@ -1187,7 +1219,7 @@ where
             _ => false,
         };
 
-        if activates && let Some(message) = state.semantics.activate.clone() {
+        if activates && let Some(message) = self.semantics.activate.clone() {
             shell.publish(message);
             shell.capture_event();
         }
@@ -1212,7 +1244,7 @@ where
             cursor,
             viewport,
         );
-        let state = tree.state.downcast_ref::<SemanticState<Message>>();
+        let state = tree.state.downcast_ref::<SemanticState>();
         if state.focus_visible && !state.semantics.disabled {
             let ring = self.focus_ring.unwrap_or(FocusRing {
                 color: style.text_color,
@@ -1791,28 +1823,25 @@ where
 }
 
 #[derive(Clone)]
-struct ActionTarget<Message> {
-    activate: Option<Message>,
+struct ActionTarget {
+    activate: bool,
     node: SemanticFocus,
     focusable: bool,
     /// The caret a `SetTextSelection` request moves. Boxed: two of the
     /// three shapes carry a string or a vector.
-    caret: Option<Box<CaretTarget<Message>>>,
-    increment: Option<Message>,
-    decrement: Option<Message>,
+    caret: Option<Box<CaretTarget>>,
+    increment: bool,
+    decrement: bool,
 }
 
 #[derive(Clone)]
-enum CaretTarget<Message> {
+enum CaretTarget {
     /// A `text_input`: iced moves its caret through a widget operation.
     Input(widget::Id),
     /// A `text_editor`: its `Content` belongs to the program, so the caret
     /// moves through a message. Each run is one line, kept with its text to
     /// turn a grapheme index back into the byte column iced counts in.
-    Editor {
-        runs: Vec<(NodeId, Box<str>)>,
-        move_to: MoveCaret<Message>,
-    },
+    Editor { runs: Vec<(NodeId, Box<str>)> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1825,7 +1854,9 @@ struct SemanticFocus {
 #[derive(Clone)]
 pub struct Snapshot<Message> {
     pub update: TreeUpdate,
-    actions: HashMap<NodeId, ActionTarget<Message>>,
+    actions: HashMap<NodeId, ActionTarget>,
+    scope: Option<iced::window::Id>,
+    marker: std::marker::PhantomData<fn() -> Message>,
 }
 
 impl<Message> fmt::Debug for Snapshot<Message> {
@@ -1867,6 +1898,8 @@ impl<Message> Snapshot<Message> {
         Self {
             update,
             actions: HashMap::default(),
+            scope: None,
+            marker: std::marker::PhantomData,
         }
     }
 }
@@ -1880,8 +1913,12 @@ impl<Message: Clone + Send + 'static> Snapshot<Message> {
             return Task::none();
         };
         match request.action {
-            Action::Click => target.activate.clone().map_or_else(Task::none, Task::done),
-            Action::Focus if target.focusable => focus_semantic(target.node),
+            Action::Click if target.activate => {
+                semantic_action(target.node, SemanticAction::Activate, self.scope)
+            }
+            Action::Focus if target.focusable => {
+                semantic_action(target.node, SemanticAction::Focus, self.scope)
+            }
             Action::ScrollIntoView => scroll_into_view(target.node),
             // iced moves a caret, not an arbitrary selection: the focus end
             // is where the reader asked the insertion point to land.
@@ -1896,7 +1933,7 @@ impl<Message: Clone + Send + 'static> Snapshot<Message> {
                     ),
                 ),
                 (
-                    Some(CaretTarget::Editor { runs, move_to }),
+                    Some(CaretTarget::Editor { runs }),
                     Some(accesskit::ActionData::SetTextSelection(selection)),
                 ) => {
                     let Some((line, (_, text))) = runs
@@ -1911,12 +1948,20 @@ impl<Message: Clone + Send + 'static> Snapshot<Message> {
                             .take(selection.focus.character_index)
                             .map(str::len)
                             .sum();
-                    Task::done(move_to(line, column))
+                    semantic_action(
+                        target.node,
+                        SemanticAction::MoveCaret { line, column },
+                        self.scope,
+                    )
                 }
                 _ => Task::none(),
             },
-            Action::Increment => target.increment.clone().map_or_else(Task::none, Task::done),
-            Action::Decrement => target.decrement.clone().map_or_else(Task::none, Task::done),
+            Action::Increment if target.increment => {
+                semantic_action(target.node, SemanticAction::Increment, self.scope)
+            }
+            Action::Decrement if target.decrement => {
+                semantic_action(target.node, SemanticAction::Decrement, self.scope)
+            }
             _ => Task::none(),
         }
     }
@@ -1953,25 +1998,34 @@ fn disambiguate_semantic_id(
     (id, SemanticFocus { base, occurrence })
 }
 
-struct FocusOperation<Message> {
+struct SemanticOperation {
+    scope: Option<iced::window::Id>,
+    inside: bool,
     target: SemanticFocus,
     occurrences: HashMap<NodeId, u64>,
     used_ids: HashSet<NodeId>,
     frames: Vec<Option<(SemanticFocus, FocusBehavior, bool)>>,
-    marker: std::marker::PhantomData<Message>,
+    action: SemanticAction,
 }
 
-impl<Message: Send + 'static> Operation<()> for FocusOperation<Message> {
+impl Operation<()> for SemanticOperation {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<()>)) {
         operate(self);
     }
 
     fn custom(&mut self, _id: Option<&widget::Id>, _bounds: Rectangle, state: &mut dyn Any) {
+        if let Some(WindowScope(window)) = state.downcast_ref::<WindowScope>() {
+            self.inside = self.scope.is_none_or(|scope| scope == *window);
+            return;
+        }
+        if !self.inside {
+            return;
+        }
         if state.downcast_mut::<SemanticEnd>().is_some() {
             self.frames.pop();
             return;
         }
-        let Some(state) = state.downcast_mut::<SemanticState<Message>>() else {
+        let Some(state) = state.downcast_mut::<SemanticState>() else {
             return;
         };
         if self.frames.iter().flatten().any(|(_, _, atomic)| *atomic) {
@@ -1989,6 +2043,12 @@ impl<Message: Send + 'static> Operation<()> for FocusOperation<Message> {
             atomic_role(state.semantics.role),
         )));
 
+        if !matches!(self.action, SemanticAction::Focus) {
+            if !state.semantics.disabled && current == self.target {
+                state.pending.push(self.action);
+            }
+            return;
+        }
         if state.semantics.focus == FocusBehavior::Wrapper {
             if !state.semantics.disabled && current == self.target {
                 state.focus();
@@ -2004,6 +2064,9 @@ impl<Message: Send + 'static> Operation<()> for FocusOperation<Message> {
         _bounds: Rectangle,
         state: &mut dyn Focusable,
     ) {
+        if !self.inside || !matches!(self.action, SemanticAction::Focus) {
+            return;
+        }
         if self
             .frames
             .iter()
@@ -2023,15 +2086,24 @@ impl<Message: Send + 'static> Operation<()> for FocusOperation<Message> {
     }
 }
 
-fn focus_semantic<Message: Send + 'static>(target: SemanticFocus) -> Task<Message> {
-    iced::advanced::widget::operate(FocusOperation::<Message> {
+fn semantic_action<Message: Send + 'static>(
+    target: SemanticFocus,
+    action: SemanticAction,
+    scope: Option<iced::window::Id>,
+) -> Task<Message> {
+    iced::advanced::widget::operate(SemanticOperation {
+        scope,
+        inside: scope.is_none(),
         target,
         occurrences: HashMap::new(),
         used_ids: HashSet::from([ROOT_ID]),
         frames: Vec::new(),
-        marker: std::marker::PhantomData,
+        action,
     })
     .discard()
+    .chain(iced_runtime::task::effect(iced_runtime::Action::Window(
+        iced::window::Action::RedrawAll,
+    )))
 }
 
 /// Scrolls every scroll enclosing `target` until the node is in view, and
@@ -2223,10 +2295,11 @@ impl Operation<()> for ApplyScrolls {
 }
 
 struct SnapshotOperation<Message> {
+    marker: std::marker::PhantomData<fn() -> Message>,
     nodes: Vec<(NodeId, Node)>,
     root_children: Vec<NodeId>,
     frames: Vec<SemanticFrame>,
-    actions: HashMap<NodeId, ActionTarget<Message>>,
+    actions: HashMap<NodeId, ActionTarget>,
     occurrences: HashMap<NodeId, u64>,
     used_ids: HashSet<NodeId>,
     focus: NodeId,
@@ -2281,6 +2354,7 @@ fn atomic_role(role: Role) -> bool {
 impl<Message> Default for SnapshotOperation<Message> {
     fn default() -> Self {
         Self {
+            marker: std::marker::PhantomData,
             nodes: Vec::new(),
             root_children: Vec::new(),
             frames: Vec::new(),
@@ -2355,7 +2429,7 @@ impl<Message> SnapshotOperation<Message> {
         &mut self,
         index: usize,
         cursor: &iced::widget::text_editor::Cursor,
-        move_to: Option<&MoveCaret<Message>>,
+        movable: bool,
     ) {
         let Some(frame) = self.frames.last_mut() else {
             return;
@@ -2405,11 +2479,8 @@ impl<Message> SnapshotOperation<Message> {
         self.nodes[index]
             .1
             .set_text_selection(accesskit::TextSelection { anchor, focus });
-        if let (Some(move_to), Some(target)) = (move_to, self.actions.get_mut(&editor_id)) {
-            target.caret = Some(Box::new(CaretTarget::Editor {
-                runs,
-                move_to: move_to.clone(),
-            }));
+        if movable && let Some(target) = self.actions.get_mut(&editor_id) {
+            target.caret = Some(Box::new(CaretTarget::Editor { runs }));
         }
     }
 
@@ -2499,7 +2570,7 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
             self.text_run(caret);
             return;
         }
-        if let Some(state) = state.downcast_mut::<SemanticState<Message>>() {
+        if let Some(state) = state.downcast_mut::<SemanticState>() {
             let Some(frame) = self.frames.last() else {
                 return;
             };
@@ -2514,13 +2585,13 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
             if focusable {
                 node.add_action(Action::Focus);
             }
-            if enabled && state.semantics.activate.is_some() {
+            if enabled && state.semantics.supports_activate {
                 node.add_action(Action::Click);
             }
-            if enabled && state.semantics.increment().is_some() {
+            if enabled && state.semantics.supports_increment {
                 node.add_action(Action::Increment);
             }
-            if enabled && state.semantics.decrement().is_some() {
+            if enabled && state.semantics.supports_decrement {
                 node.add_action(Action::Decrement);
             }
             if scrollable {
@@ -2530,19 +2601,18 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
                 self.actions.insert(
                     id,
                     ActionTarget {
-                        activate: state.semantics.activate.clone().filter(|_| enabled),
+                        activate: enabled && state.semantics.supports_activate,
                         node: focus,
                         focusable,
                         caret: None,
-                        increment: state.semantics.increment().cloned().filter(|_| enabled),
-                        decrement: state.semantics.decrement().cloned().filter(|_| enabled),
+                        increment: enabled && state.semantics.supports_increment,
+                        decrement: enabled && state.semantics.supports_decrement,
                     },
                 );
             }
-            if let Some(cursor) = &state.semantics.snapshot.editor {
+            if let Some(cursor) = &state.semantics.editor {
                 let cursor = **cursor;
-                let move_to = state.semantics.move_to.clone();
-                self.editor_runs(index, &cursor, move_to.as_ref());
+                self.editor_runs(index, &cursor, enabled && state.semantics.supports_move_to);
             }
             return;
         }
@@ -2704,6 +2774,8 @@ impl<Message: Clone + Send + 'static> Operation<Snapshot<Message>> for SnapshotO
                 focus: self.focus,
             },
             actions: self.actions.clone(),
+            scope: self.scope,
+            marker: std::marker::PhantomData,
         })
     }
 }
@@ -4505,15 +4577,23 @@ mod tests {
     }
 
     #[test]
-    fn a_numeric_control_exports_its_range_and_steps_through_actions() {
-        let native: TestElement<'static> =
-            iced::widget::slider(0.0..=10.0, 4.0, |_| Message::First).into();
-        let root: TestElement<'static> = accessible(native, StableId::new("volume"), Role::Slider)
-            .label("Volume")
-            .numeric(4.0, 0.0, 10.0, Some(1.0))
-            .on_increment_maybe(Some(Message::Next))
-            .on_decrement_maybe(Some(Message::Previous))
-            .into();
+    fn a_mapped_numeric_control_exports_its_range_and_steps_through_actions() {
+        let native: Element<'static, i8, Theme, TestRenderer> =
+            iced::widget::slider(0.0..=10.0, 4.0, |_| 0).into();
+        let inner: Element<'static, i8, Theme, TestRenderer> =
+            accessible(native, StableId::new("volume"), Role::Slider)
+                .label("Volume")
+                .numeric(4.0, 0.0, 10.0, Some(1.0))
+                .on_increment_maybe(Some(1))
+                .on_decrement_maybe(Some(-1))
+                .into();
+        let root: TestElement<'static> = inner.map(|step| {
+            if step > 0 {
+                Message::Next
+            } else {
+                Message::Previous
+            }
+        });
         let mut renderer = renderer();
         let mut ui = UserInterface::build(
             root,
@@ -4542,18 +4622,22 @@ mod tests {
             target_node: id,
             data: None,
         };
-        let output = |task| {
-            let mut stream = iced_test::runtime::task::into_stream(task).expect("step task");
-            iced_test::futures::futures::executor::block_on(stream.next()).expect("step output")
-        };
-        assert!(matches!(
-            output(snapshot.dispatch(request(Action::Increment))),
-            iced_test::runtime::Action::Output(Message::Next)
-        ));
-        assert!(matches!(
-            output(snapshot.dispatch(request(Action::Decrement))),
-            iced_test::runtime::Action::Output(Message::Previous)
-        ));
+        assert_eq!(
+            dispatch_accessibility(
+                &mut ui,
+                &mut renderer,
+                snapshot.dispatch(request(Action::Increment))
+            ),
+            vec![Message::Next]
+        );
+        assert_eq!(
+            dispatch_accessibility(
+                &mut ui,
+                &mut renderer,
+                snapshot.dispatch(request(Action::Decrement))
+            ),
+            vec![Message::Previous]
+        );
     }
 
     #[test]
@@ -4605,7 +4689,7 @@ mod tests {
 
     #[test]
     fn builds_real_accesskit_nodes_and_disambiguates_repeated_ids() {
-        let (mut ui, renderer) = interface();
+        let (mut ui, mut renderer) = interface();
         let snapshot = snapshot(&mut ui, &renderer);
         let nodes = semantic_nodes(&snapshot);
 
@@ -4622,8 +4706,8 @@ mod tests {
 
         assert_ne!(nodes[0].0, nodes[2].0, "repeated source IDs stay unique");
         assert_eq!(snapshot.update.focus, ROOT_ID);
-        assert_eq!(snapshot.actions[&nodes[0].0].activate, Some(Message::First));
-        assert_eq!(snapshot.actions[&nodes[2].0].activate, Some(Message::Last));
+        assert!(snapshot.actions[&nodes[0].0].activate);
+        assert!(snapshot.actions[&nodes[2].0].activate);
         assert!(!snapshot.actions.contains_key(&nodes[1].0));
 
         let click = snapshot.dispatch(ActionRequest {
@@ -4632,13 +4716,10 @@ mod tests {
             target_node: nodes[0].0,
             data: None,
         });
-        let mut stream = iced_test::runtime::task::into_stream(click).expect("click task");
-        let action =
-            iced_test::futures::futures::executor::block_on(stream.next()).expect("click output");
-        assert!(matches!(
-            action,
-            iced_test::runtime::Action::Output(Message::First)
-        ));
+        assert_eq!(
+            dispatch_accessibility(&mut ui, &mut renderer, click),
+            vec![Message::First]
+        );
 
         let root = snapshot
             .update
@@ -4649,6 +4730,227 @@ mod tests {
             .expect("root node");
         assert_eq!(root.label(), Some("Test application"));
         assert_eq!(root.children(), &[nodes[0].0, nodes[1].0, nodes[2].0]);
+    }
+
+    fn dispatch_accessibility(
+        ui: &mut UserInterface<'_, Message, Theme, TestRenderer>,
+        renderer: &mut TestRenderer,
+        task: Task<Message>,
+    ) -> Vec<Message> {
+        let mut outputs = Vec::new();
+        let Some(mut stream) = iced_test::runtime::task::into_stream(task) else {
+            return outputs;
+        };
+        while let Some(action) = iced_test::futures::futures::executor::block_on(stream.next()) {
+            match action {
+                iced_test::runtime::Action::Output(message) => outputs.push(message),
+                iced_test::runtime::Action::Widget(mut operation) => loop {
+                    ui.operate(renderer, operation.as_mut());
+                    match operation.finish() {
+                        Outcome::Chain(next) => operation = next,
+                        Outcome::None | Outcome::Some(()) => break,
+                    }
+                },
+                iced_test::runtime::Action::Window(iced::window::Action::RedrawAll) => {
+                    ui.update(
+                        &[Event::Window(iced::window::Event::RedrawRequested(
+                            std::time::Instant::now(),
+                        ))],
+                        mouse::Cursor::Unavailable,
+                        renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut outputs,
+                    );
+                }
+                _ => panic!("unexpected accessibility task effect"),
+            }
+        }
+        outputs
+    }
+
+    #[test]
+    fn mapped_button_advertises_and_delivers_accessibility_click() {
+        let inner: Element<'static, bool, Theme, TestRenderer> = accessible(
+            iced::widget::button("Mapped").on_press(true),
+            StableId::new("mapped-action"),
+            Role::Button,
+        )
+        .label("Mapped")
+        .on_activate(true)
+        .into();
+        let root: TestElement<'static> = inner.map(Some).map(|_| Message::First);
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(320.0, 200.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let snapshot = snapshot(&mut ui, &renderer);
+        let (id, node) = snapshot
+            .update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Mapped"))
+            .unwrap();
+        assert!(
+            node.supports_action(Action::Click),
+            "mapped button must advertise Click across both message mappings"
+        );
+        let messages = dispatch_accessibility(
+            &mut ui,
+            &mut renderer,
+            snapshot.dispatch(ActionRequest {
+                action: Action::Click,
+                target_tree: TreeId::ROOT,
+                target_node: *id,
+                data: None,
+            }),
+        );
+        assert_eq!(
+            messages,
+            vec![Message::First],
+            "accessibility must follow the live widget's message mappings exactly once"
+        );
+        assert!(node.supports_action(Action::Focus));
+        assert!(
+            dispatch_accessibility(
+                &mut ui,
+                &mut renderer,
+                snapshot.dispatch(ActionRequest {
+                    action: Action::Focus,
+                    target_tree: TreeId::ROOT,
+                    target_node: *id,
+                    data: None,
+                })
+            )
+            .is_empty()
+        );
+        let focused = super::tests::snapshot(&mut ui, &renderer);
+        assert_eq!(
+            focused.update.focus, *id,
+            "mapped focus must reach the live wrapper"
+        );
+    }
+
+    #[test]
+    fn scoped_mapped_actions_do_not_cross_windows_with_the_same_key() {
+        let first = iced::window::Id::unique();
+        let second = iced::window::Id::unique();
+        let child = |window, message: Message| -> TestElement<'static> {
+            let inner: Element<'static, bool, Theme, TestRenderer> = accessible(
+                iced::widget::button("Shared").on_press(true),
+                StableId::new("shared-action"),
+                Role::Button,
+            )
+            .label("Shared")
+            .on_activate(true)
+            .into();
+            navigation(
+                inner.map(move |_| message.clone()),
+                Message::Next,
+                Message::Previous,
+            )
+            .in_window(window)
+            .into()
+        };
+        let root: TestElement<'static> =
+            iced::widget::column![child(first, Message::First), child(second, Message::Last)]
+                .into();
+        let mut renderer = renderer();
+        let mut ui = UserInterface::build(
+            root,
+            Size::new(320.0, 400.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut operation = SnapshotOperation::<Message>::scoped("Second", second);
+        ui.operate(&renderer, &mut operation::black_box(&mut operation));
+        let Outcome::Some(snapshot) = operation.finish() else {
+            panic!("scoped snapshot");
+        };
+        let (id, node) = snapshot
+            .update
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Shared"))
+            .unwrap();
+        assert!(node.supports_action(Action::Click));
+        assert_eq!(
+            dispatch_accessibility(
+                &mut ui,
+                &mut renderer,
+                snapshot.dispatch(ActionRequest {
+                    action: Action::Click,
+                    target_tree: TreeId::ROOT,
+                    target_node: *id,
+                    data: None,
+                })
+            ),
+            vec![Message::Last],
+            "a scoped action must reach only the selected window"
+        );
+    }
+
+    #[test]
+    fn stale_accessibility_click_cannot_activate_a_removed_or_disabled_mapped_button() {
+        let button = |disabled| -> TestElement<'static> {
+            let inner: Element<'static, bool, Theme, TestRenderer> = accessible(
+                iced::widget::button("Mapped").on_press(true),
+                StableId::new("stale-action"),
+                Role::Button,
+            )
+            .label("Mapped")
+            .on_activate(true)
+            .disabled(disabled)
+            .into();
+            inner.map(|_| Message::First)
+        };
+        let mut renderer = renderer();
+        for removed in [false, true] {
+            let mut ui = UserInterface::build(
+                button(false),
+                Size::new(320.0, 200.0),
+                user_interface::Cache::default(),
+                &mut renderer,
+            );
+            let snapshot = snapshot(&mut ui, &renderer);
+            let (id, node) = snapshot
+                .update
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some("Mapped"))
+                .unwrap();
+            assert!(
+                node.supports_action(Action::Click),
+                "the old snapshot has a real action"
+            );
+            let replacement = if removed {
+                iced::widget::text("Removed").into()
+            } else {
+                button(true)
+            };
+            let mut ui = UserInterface::build(
+                replacement,
+                Size::new(320.0, 200.0),
+                ui.into_cache(),
+                &mut renderer,
+            );
+            let outputs = dispatch_accessibility(
+                &mut ui,
+                &mut renderer,
+                snapshot.dispatch(ActionRequest {
+                    action: Action::Click,
+                    target_tree: TreeId::ROOT,
+                    target_node: *id,
+                    data: None,
+                }),
+            );
+            assert!(
+                outputs.is_empty(),
+                "old Click must not activate a removed/disabled target"
+            );
+        }
     }
 
     #[test]
@@ -4827,7 +5129,9 @@ mod tests {
         ui.operate(&renderer, operation.as_mut());
         assert_eq!(snapshot(&mut ui, &renderer).update.focus, first);
 
-        let mut disabled_focus = FocusOperation::<Message> {
+        let mut disabled_focus = SemanticOperation {
+            scope: None,
+            inside: true,
             target: SemanticFocus {
                 base: StableId::new("disabled-control"),
                 occurrence: 0,
@@ -4835,7 +5139,7 @@ mod tests {
             occurrences: HashMap::new(),
             used_ids: HashSet::from([ROOT_ID]),
             frames: Vec::new(),
-            marker: std::marker::PhantomData,
+            action: SemanticAction::Focus,
         };
         ui.operate(&renderer, &mut operation::black_box(&mut disabled_focus));
         assert_eq!(snapshot(&mut ui, &renderer).update.focus, ROOT_ID);
@@ -5030,15 +5334,18 @@ mod tests {
     fn keeps_exported_accessibility_bounds_finite() {
         let mut operation = SnapshotOperation::<Message>::named("Test application");
         operation.translation = Vector::new(-f32::MAX, -f32::MAX);
-        let mut state: SemanticState<Message> = SemanticState {
-            semantics: Semantics::new(StableId::new("extreme-bounds"), Role::Button),
+        let mut state: SemanticState = SemanticState {
+            semantics: Semantics::<Message>::new(StableId::new("extreme-bounds"), Role::Button)
+                .snapshot,
+            focus_id: None,
             focus_visible: false,
+            pending: Vec::new(),
         };
         let bounds = Rectangle::new(
             Point::new(f32::MAX, f32::MAX),
             Size::new(f32::MAX, f32::MAX),
         );
-        operation.custom(None, bounds, &mut state.semantics.snapshot);
+        operation.custom(None, bounds, &mut state.semantics);
         operation.custom(None, bounds, &mut state);
         operation.custom(None, Rectangle::default(), &mut SemanticEnd);
         let Outcome::Some(snapshot) = operation.finish() else {
@@ -5120,13 +5427,16 @@ mod tests {
             position: iced::widget::text_editor::Position { line: 1, column: 3 },
             selection: None,
         });
-        let native: TestElement<'_> = iced::widget::text_editor(&content).into();
-        let root: TestElement<'_> = accessible(native, id, Role::MultilineTextInput)
-            .label("Notes")
-            .value(content.text())
-            .editor_caret(content.cursor())
-            .on_move_to(Message::Move)
-            .into();
+        let native: Element<'_, (usize, usize), Theme, TestRenderer> =
+            iced::widget::text_editor(&content).into();
+        let inner: Element<'_, (usize, usize), Theme, TestRenderer> =
+            accessible(native, id, Role::MultilineTextInput)
+                .label("Notes")
+                .value(content.text())
+                .editor_caret(content.cursor())
+                .on_move_to(|line, column| (line, column))
+                .into();
+        let root: TestElement<'_> = inner.map(|(line, column)| Message::Move(line, column));
         let mut renderer = renderer();
         let mut ui = UserInterface::build(
             root,
@@ -5176,15 +5486,10 @@ mod tests {
                 },
             )),
         });
-        let mut stream = iced_test::runtime::task::into_stream(request).expect("move task");
-        let output =
-            iced_test::futures::futures::executor::block_on(stream.next()).expect("move output");
-        assert!(
-            matches!(
-                output,
-                iced_test::runtime::Action::Output(Message::Move(0, 4))
-            ),
-            "grapheme 3 of h\u{e9}llo starts at byte 4"
+        assert_eq!(
+            dispatch_accessibility(&mut ui, &mut renderer, request),
+            vec![Message::Move(0, 4)],
+            "grapheme 3 of héllo starts at byte 4"
         );
     }
 
@@ -5551,9 +5856,7 @@ mod tests {
     }
 
     fn window_button_focus(tree: &WidgetTree) -> (bool, bool) {
-        let state = tree.children[0]
-            .state
-            .downcast_ref::<SemanticState<Message>>();
+        let state = tree.children[0].state.downcast_ref::<SemanticState>();
         (state.semantics.focused, state.focus_visible)
     }
 
@@ -5714,7 +6017,7 @@ mod tests {
         );
         drop(shell);
 
-        let state = tree.state.downcast_ref::<SemanticState<Message>>();
+        let state = tree.state.downcast_ref::<SemanticState>();
         assert!(state.semantics.focused);
         assert!(!state.focus_visible);
 
@@ -5772,12 +6075,7 @@ mod tests {
             &viewport,
         );
         drop(shell);
-        assert!(
-            tree.state
-                .downcast_ref::<SemanticState<Message>>()
-                .semantics
-                .focused
-        );
+        assert!(tree.state.downcast_ref::<SemanticState>().semantics.focused);
         element.as_widget().draw(
             &tree,
             &mut renderer,
@@ -5850,7 +6148,7 @@ mod tests {
             );
         }
 
-        let state = tree.state.downcast_ref::<SemanticState<Message>>();
+        let state = tree.state.downcast_ref::<SemanticState>();
         assert!(state.semantics.focused);
         assert!(state.focus_visible);
 
@@ -6252,7 +6550,9 @@ mod tests {
         let mut button = Node::new(Role::Button);
         button.set_label(label.clone());
         button.add_action(Action::Click);
-        let snapshot = Snapshot {
+        let snapshot: Snapshot<Message> = Snapshot {
+            scope: None,
+            marker: std::marker::PhantomData,
             update: TreeUpdate {
                 nodes: vec![(ROOT_ID, root), (id, button)],
                 tree: Some(Tree {
@@ -6266,15 +6566,15 @@ mod tests {
             actions: HashMap::from([(
                 id,
                 ActionTarget {
-                    activate: Some(Message::First),
+                    activate: true,
                     node: SemanticFocus {
                         base: StableId::new("button"),
                         occurrence: 0,
                     },
                     focusable: false,
                     caret: None,
-                    increment: None,
-                    decrement: None,
+                    increment: false,
+                    decrement: false,
                 },
             )]),
         };

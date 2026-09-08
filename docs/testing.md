@@ -33,7 +33,9 @@ test dark_keyboard_and_focus
 technology's action on a semantic node — activate runs its click route, focus
 moves keyboard focus to it, and increment/decrement run a range control's
 change route with the value one step away — and `expect a11y <target> action
-click|focus|increment|decrement [bool]` asserts whether the node exports it.
+click|focus|increment|decrement [bool]` asserts whether the node exports it. The
+driver uses the same live semantic operation and redraw path as the accessibility
+bridge, including mapped widget messages and current disabled-state checks.
 
 `theme` replaces the headless program theme result with `Theme::default(mode)`;
 it does not switch application-owned palette state, which should be selected

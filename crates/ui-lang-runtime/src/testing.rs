@@ -1631,12 +1631,12 @@ struct IdSelector<Message> {
 }
 
 #[derive(Clone)]
-struct SemanticActionTarget<Message> {
-    activate: Option<Message>,
+struct SemanticActionTarget {
+    activate: bool,
     node: crate::SemanticFocus,
     focus: Option<crate::SemanticFocus>,
-    increment: Option<Message>,
-    decrement: Option<Message>,
+    increment: bool,
+    decrement: bool,
     disabled: bool,
 }
 
@@ -1657,13 +1657,13 @@ impl<Message> SemanticActionSelector<Message> {
 }
 
 impl<Message: Clone + 'static> Selector for SemanticActionSelector<Message> {
-    type Output = SemanticActionTarget<Message>;
+    type Output = SemanticActionTarget;
 
     fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
         let Candidate::Custom { state, .. } = candidate else {
             return None;
         };
-        let state = state.downcast_ref::<SemanticState<Message>>()?;
+        let state = state.downcast_ref::<SemanticState>()?;
         let occurrence = self.occurrences.entry(state.semantics.id).or_default();
         let current = *occurrence;
         *occurrence += 1;
@@ -1673,11 +1673,11 @@ impl<Message: Clone + 'static> Selector for SemanticActionSelector<Message> {
                 occurrence: current,
             };
             SemanticActionTarget {
-                activate: state.semantics.activate.clone(),
+                activate: state.semantics.supports_activate,
                 node,
                 focus: (state.semantics.focus != crate::FocusBehavior::None).then_some(node),
-                increment: state.semantics.increment().cloned(),
-                decrement: state.semantics.decrement().cloned(),
+                increment: state.semantics.supports_increment,
+                decrement: state.semantics.supports_decrement,
                 disabled: state.semantics.disabled,
             }
         })
@@ -3843,15 +3843,19 @@ where
                 source,
             );
         }
-        let message = target.activate.unwrap_or_else(|| {
+        if !target.activate {
             self.invalid_action(
                 "accessibility activate",
                 "a target supporting the Click action",
                 format!("{id} has no activation action"),
                 source,
             )
-        });
-        self.dispatch(message, source);
+        }
+        self.run_task(
+            crate::semantic_action(target.node, crate::SemanticAction::Activate, None),
+            Some(source),
+        );
+        self.settle(Some(source));
     }
 
     /// Steps a range control the way a screen reader's increment or decrement
@@ -3876,15 +3880,24 @@ where
         } else {
             target.decrement
         };
-        let message = step.unwrap_or_else(|| {
+        if !step {
             self.invalid_action(
                 verb,
                 &format!("a target supporting the {action} action"),
                 format!("{id} cannot step that way"),
                 source,
             )
-        });
-        self.dispatch(message, source);
+        }
+        let action = if up {
+            crate::SemanticAction::Increment
+        } else {
+            crate::SemanticAction::Decrement
+        };
+        self.run_task(
+            crate::semantic_action(target.node, action, None),
+            Some(source),
+        );
+        self.settle(Some(source));
     }
 
     pub fn accessibility_focus(&mut self, id: &str, source: Location) {
@@ -3905,7 +3918,10 @@ where
                 source,
             )
         });
-        self.run_task(crate::focus_semantic(focus), Some(source));
+        self.run_task(
+            crate::semantic_action(focus, crate::SemanticAction::Focus, None),
+            Some(source),
+        );
         self.settle(Some(source));
     }
 
@@ -3951,7 +3967,7 @@ where
         &mut self,
         id: &str,
         source: Location,
-    ) -> SemanticActionTarget<P::Message> {
+    ) -> SemanticActionTarget {
         let mut targets = self.with_interface(|interface, renderer, _| {
             let mut operation = SemanticActionSelector::<P::Message>::new(id).find_all();
             interface.operate(renderer, &mut widget::operation::black_box(&mut operation));
@@ -5038,6 +5054,31 @@ where
                 };
                 let _ = channel.send(id);
             }
+            Action::RedrawAll => {
+                let event = iced::Event::Window(window::Event::RedrawRequested(self.logical_time));
+                let cursor = self.cursor;
+                let (messages, statuses) = self.with_interface(|interface, renderer, clipboard| {
+                    let mut messages = Vec::new();
+                    let (_, statuses) = interface.update(
+                        std::slice::from_ref(&event),
+                        cursor,
+                        renderer,
+                        clipboard,
+                        &mut messages,
+                    );
+                    (messages, statuses)
+                });
+                for status in statuses {
+                    self.broadcast(subscription::Event::Interaction {
+                        window: self.window,
+                        event: event.clone(),
+                        status,
+                    });
+                }
+                for message in messages {
+                    self.update(message, source);
+                }
+            }
             Action::Close(_) => {}
             Action::GetOldest(channel) | Action::GetLatest(channel) => {
                 let _ = channel.send(Some(self.window));
@@ -5109,7 +5150,6 @@ where
             | Action::SetResizable(_, _)
             | Action::SetResizeIncrements(_, _)
             | Action::SetAllowAutomaticTabbing(_)
-            | Action::RedrawAll
             | Action::RelayoutAll => {}
             Action::GetSize(_, channel) => {
                 let _ = channel.send(Size::ZERO);
@@ -5914,7 +5954,7 @@ impl<Message: 'static> Selector for KnownIds<Message> {
 
     fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
         if let Candidate::Custom { state, .. } = candidate.clone()
-            && let Some(state) = state.downcast_ref::<SemanticState<Message>>()
+            && let Some(state) = state.downcast_ref::<SemanticState>()
         {
             return state.semantics.logical_id.clone();
         }
