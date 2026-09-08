@@ -979,11 +979,10 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  scroll auto=busy\n    text \"a\" @text-fg\n",
     ),
-    refused(
+    emitted(
         "layout: scroll route",
         "on scrolled(_x, _y, _rx, _ry)\n",
         "  scroll scroll=scrolled\n    text \"a\" @text-fg\n",
-        "a scroll route",
     ),
     emitted("rule: style preset", "", "  rule horizontal style=weak\n"),
     emitted("rule: snap", "", "  rule horizontal snap=busy\n"),

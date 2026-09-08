@@ -136,6 +136,16 @@ pub enum Event {
         dy: f32,
         pixels: bool,
     },
+    /// A scrollable's content offset in logical pixels and anchor-relative
+    /// fractions, emitted only when its native viewport changes. No window
+    /// coordinates cross the wire.
+    ScrollOffset {
+        handler: u32,
+        x: f32,
+        y: f32,
+        relative_x: f32,
+        relative_y: f32,
+    },
     /// One answer to a [`Request`]. A one-shot request gets exactly one with
     /// `done`; a subscription gets many, the last one `done`.
     Response {
@@ -711,6 +721,7 @@ pub enum Node {
         child: Box<Node>,
     },
     Scroll {
+        on_scroll: Option<u32>,
         virtual_rows: bool,
         key: String,
         direction: ScrollDirection,
@@ -2653,6 +2664,13 @@ mod tests {
                 dx: 0.0,
                 dy: -1.0,
                 pixels: false,
+            },
+            Event::ScrollOffset {
+                handler: 6,
+                x: 24.0,
+                y: 50.0,
+                relative_x: 0.2,
+                relative_y: 0.1,
             },
             Event::Response {
                 id: 1,

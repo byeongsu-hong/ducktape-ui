@@ -765,6 +765,7 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
             },
             1 => gen_list(rng, vec![node]),
             2 => Node::Scroll {
+                on_scroll: Some(7),
                 virtual_rows: rng.next_bool(),
                 key: gen_key(rng),
                 direction: *rng.choose(&[

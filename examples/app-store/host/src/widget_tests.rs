@@ -737,3 +737,59 @@ fn bundled_widget_svg_inherits_final_button_ink() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires bundled widget-fixture wasm"]
+fn bundled_widget_scroll_route_reports_native_viewport_offsets() {
+    let mut renderer = renderer();
+    let first = guest();
+    let mut ui = build(&first, user_interface::Cache::default(), &mut renderer);
+    let mut now = std::time::Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &first, &mut renderer, &mut now);
+    }
+    let mut find = TextBounds {
+        label: "Start",
+        bounds: None,
+    };
+    ui.operate(&renderer, &mut find);
+    let point = find.bounds.expect("visible first scroll row").center();
+    let before: u32 = value(&first, "WidgetFixture/scroll-count").parse().unwrap();
+    ui.update(
+        &[Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Pixels { x: 0.0, y: -50.0 },
+        })],
+        mouse::Cursor::Available(point),
+        &mut renderer,
+        &mut iced::advanced::clipboard::Null,
+        &mut vec![],
+    );
+    for _ in 0..3 {
+        ui = redraw(ui, &first, &mut renderer, &mut now);
+    }
+    let (actual, overflow) = scroll_position(&mut ui, &renderer);
+    assert!(
+        (actual - 50.0).abs() < 0.5,
+        "native wheel moved the scrollable"
+    );
+    let number = |key: &str| {
+        value(&first, &format!("WidgetFixture/{key}"))
+            .parse::<f32>()
+            .unwrap()
+    };
+    assert_eq!(number("scroll-x"), 0.0);
+    assert_eq!(number("scroll-rx"), 0.0);
+    assert!(
+        (number("scroll-y") - actual).abs() < 0.5,
+        "wasm receives absolute native offset"
+    );
+    assert!(
+        (number("scroll-ry") - actual / overflow).abs() < 0.0001,
+        "wasm receives relative native offset"
+    );
+    assert_eq!(
+        number("scroll-count"),
+        (before + 1) as f32,
+        "one changed viewport reaches the guest once"
+    );
+}

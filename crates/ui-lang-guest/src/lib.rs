@@ -207,6 +207,16 @@ impl<A: App> Driver<A> {
                     dy,
                     pixels,
                 } => slots::run_handler::<(f32, f32, bool), A::Message>(handler, (dx, dy, pixels)),
+                wire::Event::ScrollOffset {
+                    handler,
+                    x,
+                    y,
+                    relative_x,
+                    relative_y,
+                } => slots::run_handler::<(f32, f32, f32, f32), A::Message>(
+                    handler,
+                    (x, y, relative_x, relative_y),
+                ),
                 wire::Event::Response { id, result, done } => {
                     host::fulfill(id, result, done);
                     None

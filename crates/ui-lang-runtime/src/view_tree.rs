@@ -104,6 +104,14 @@ pub enum Output {
     /// The pointer moved to (`x`, `y`) inside a mouse area. Coalesced by
     /// [`Inputs::apply`]: one per handler per frame, the last position.
     Move { handler: u32, x: f32, y: f32 },
+    /// Native scrollable offsets, measured from its configured anchors.
+    ScrollOffset {
+        handler: u32,
+        x: f32,
+        y: f32,
+        relative_x: f32,
+        relative_y: f32,
+    },
     /// The wheel turned over a mouse area.
     Scroll {
         handler: u32,
@@ -344,6 +352,19 @@ impl Inputs {
                 }
                 wire::Event::Pointer { handler, x, y }
             }
+            Output::ScrollOffset {
+                handler,
+                x,
+                y,
+                relative_x,
+                relative_y,
+            } => wire::Event::ScrollOffset {
+                handler,
+                x,
+                y,
+                relative_x,
+                relative_y,
+            },
             Output::Scroll {
                 handler,
                 dx,
@@ -1443,6 +1464,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             sensor.into()
         }
         wire::Node::Scroll {
+            on_scroll,
             virtual_rows,
             key,
             direction,
@@ -1499,6 +1521,27 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             }
             if let Some(height) = height {
                 scroll = scroll.height(length(*height));
+            }
+            if let Some(handler) = *on_scroll {
+                scroll = scroll.on_scroll(move |viewport| {
+                    let absolute = viewport.absolute_offset();
+                    let relative = viewport.relative_offset();
+                    Output::ScrollOffset {
+                        handler,
+                        x: absolute.x,
+                        y: absolute.y,
+                        relative_x: if relative.x.is_finite() {
+                            relative.x.clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        },
+                        relative_y: if relative.y.is_finite() {
+                            relative.y.clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        },
+                    }
+                });
             }
             let scroll: IceElement<'static, Output> = if *virtual_rows {
                 crate::virtual_scroll(scroll).into()
@@ -3243,6 +3286,99 @@ mod tests {
     }
 
     #[test]
+    fn scroll_offsets_follow_native_anchors_and_only_emit_on_change() {
+        use iced::advanced::renderer::Headless;
+        use iced::{Event, Point, Size, mouse};
+        use iced_test::runtime::{UserInterface, user_interface};
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for anchor_y in [wire::ScrollAnchor::Start, wire::ScrollAnchor::End] {
+            for on_scroll in [Some(42), None] {
+                let node = wire::Node::Scroll {
+                    on_scroll,
+                    virtual_rows: false,
+                    key: "viewport".into(),
+                    direction: wire::ScrollDirection::Vertical,
+                    width: Some(wire::Length::Fixed(100.0)),
+                    height: Some(wire::Length::Fixed(100.0)),
+                    bar_hidden: true,
+                    bar_width: None,
+                    bar_margin: None,
+                    scroller_width: None,
+                    bar_spacing: None,
+                    anchor_x: wire::ScrollAnchor::Start,
+                    anchor_y,
+                    auto_scroll: false,
+                    background: None,
+                    border: None,
+                    content: Box::new(wire::Node::Space {
+                        width: Some(wire::Length::Fixed(100.0)),
+                        height: Some(wire::Length::Fixed(600.0)),
+                    }),
+                };
+                let mut inputs = Inputs::default();
+                let mut ui = UserInterface::build(
+                    render(&node, &inputs, &Pictures::default(), &Surfaces::new()),
+                    Size::new(100.0, 100.0),
+                    user_interface::Cache::default(),
+                    &mut renderer,
+                );
+                let mut messages = vec![];
+                let delta = if anchor_y == wire::ScrollAnchor::Start {
+                    -50.0
+                } else {
+                    50.0
+                };
+                ui.update(
+                    &[Event::Mouse(mouse::Event::WheelScrolled {
+                        delta: mouse::ScrollDelta::Pixels { x: 0.0, y: delta },
+                    })],
+                    mouse::Cursor::Available(Point::new(25.0, 25.0)),
+                    &mut renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut messages,
+                );
+                let mut pending = vec![];
+                for message in messages.drain(..) {
+                    inputs.apply(message, &mut pending);
+                }
+                if on_scroll.is_some() {
+                    assert_eq!(
+                        pending,
+                        vec![wire::Event::ScrollOffset {
+                            handler: 42,
+                            x: 0.0,
+                            y: 50.0,
+                            relative_x: 0.0,
+                            relative_y: 0.1
+                        }],
+                        "native anchor-relative scroll payload"
+                    );
+                } else {
+                    assert!(pending.is_empty(), "scroll telemetry is opt-in");
+                }
+                ui.update(
+                    &[Event::Mouse(mouse::Event::WheelScrolled {
+                        delta: mouse::ScrollDelta::Pixels { x: 0.0, y: 0.0 },
+                    })],
+                    mouse::Cursor::Available(Point::new(25.0, 25.0)),
+                    &mut renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut messages,
+                );
+                assert!(
+                    messages.is_empty(),
+                    "unchanged native viewport sends no duplicate event"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_node_kind_renders() {
         let tree = wire::Node::Container {
             shadow: Default::default(),
@@ -3336,6 +3472,7 @@ mod tests {
                         anticipate: Some(48.0),
                         delay: Some(16.0),
                         child: Box::new(wire::Node::Scroll {
+                            on_scroll: None,
                             virtual_rows: false,
                             key: "App/content/list".into(),
                             direction: wire::ScrollDirection::Vertical,
