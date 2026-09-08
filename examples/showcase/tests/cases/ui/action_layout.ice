@@ -13,15 +13,16 @@ on save
   action = "save"
 
 view
-  Card #card
-    Card.Header
-      text "Workspace" @section_title
-    Card.Body
-      text "Review your changes before saving." @body
-    Card.Footer #footer
-      row #actions wrap w=fill gap=8.0 wrap-gap=8.0
-        button "Discard all changes" #cancel @secondary_action -> cancel
-        button "Save workspace settings" #save @primary_action -> save
+  Page #page
+    Card #card
+      Card.Header
+        text "Workspace" @section_title
+      Card.Body
+        text "Review your changes before saving." @body
+      Card.Footer #footer
+        row #actions wrap w=fill gap=8.0 wrap-gap=8.0
+          button "Discard all changes" #cancel @secondary_action -> cancel
+          button "Save workspace settings" #save @primary_action -> save
 
 test narrow_card_actions_preserve_labels
   viewport 280 300
@@ -29,10 +30,14 @@ test narrow_card_actions_preserve_labels
   locale "en-US"
   platform linux
   reduced-motion true
-  target card = #card/root
+  target card = #page/root/card/root
   target actions = card/footer/root/actions
   target cancel_button = actions/cancel
   target save_button = actions/save
+  expect card.left >= 24.0
+  expect card.top >= 24.0
+  expect card.right <= 256.0
+  expect card.bottom <= 276.0
   expect save_button.top >= cancel_button.bottom + 8.0
   expect save_button.text_height < 20.0
   expect cancel_button.text_height < 20.0
@@ -55,10 +60,14 @@ test wide_card_actions_share_a_row
   locale "en-US"
   platform linux
   reduced-motion true
-  target card = #card/root
+  target card = #page/root/card/root
   target actions = card/footer/root/actions
   target cancel_button = actions/cancel
   target save_button = actions/save
+  expect card.left ~= 24.0
+  expect card.top ~= 24.0
+  expect card.right ~= 616.0
+  expect card.bottom <= 276.0
   expect save_button.top ~= cancel_button.top
   expect save_button.left >= cancel_button.right + 8.0
   expect save_button.right <= card.right - 18.0

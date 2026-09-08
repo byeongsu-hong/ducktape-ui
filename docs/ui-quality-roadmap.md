@@ -155,3 +155,16 @@ does **not** close L04. Follow-up work remains:
   This is a planned language contract, not supported syntax or completed layout
   behavior. Existing source inspection confirms that scalar slot codegen is the
   boundary preventing the parent from arranging caller siblings individually.
+
+### L01 follow-up: viewport and surface edge spacing
+
+A user-reported recurring failure is content touching the viewport or its parent
+surface. The action card reproduced the viewport case: text containment passed
+while its left/top edges were at zero. `Page(padding=24.0)` supplies an explicit
+ordinary-screen boundary; the card example uses it and asserts the outer inset.
+A 12px customization test separately checks Panel's retained 20px inner padding;
+an explicit zero-inset test preserves intentional full-bleed composition.
+
+This edge-spacing slice does not close L01's flexible label/input/action-row
+audit. Form already owns outer padding and is not wrapped in Page. Additional
+surface-specific edge defects require their own reproductions.

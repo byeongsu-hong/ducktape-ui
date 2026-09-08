@@ -284,3 +284,17 @@ cargo ice check
 Use the live LSP throughout, with the importing app root open. Run the narrow
 behavior test for the primary interaction. Use `cargo ice schema` or the
 language references whenever syntax or property ownership is uncertain.
+
+## Verify the distance to the container edge
+
+For ordinary screen/pane content, start with the default library's `Page`
+(24px outer padding, customizable through its `padding` prop). Use it once at
+that boundary. `Form` already owns outer padding and scrolling; do not wrap it
+in another Page. A deliberately full-bleed surface can opt out explicitly.
+
+Check outer and inner geometry separately: a card's left/top/right/bottom must
+respect the page's inset; labels and controls must respect their containing
+surface's own padding. Containment alone permits a zero-pixel edge gap. Record
+actual distances at narrow and wide sizes, and inspect the image. For scrolling
+content, check the end inset after reaching the last item rather than requiring
+the whole document to fit the initial viewport.
