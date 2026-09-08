@@ -36,8 +36,8 @@ Names below specify semantics, not an independent substitute for #1's public typ
 
 ```rust
 struct Identity { reset: u64, sequence: u64, attempt: u32 }
-struct Version { text_revision: u64, observation: u64 }
-// text_revision increases only for changed text; #1 observation covers accepted state ordering.
+struct Version { text_revision: u64, revision: u64 }
+// text_revision increases only for changed text; #1 revision orders accepted observations.
 struct DecisionRequest {
     identity: Identity,
     version: Version,
@@ -65,6 +65,12 @@ A response echoes Identity and Version. The host saves the native binding/action
 A committed event contains reset, sequence, before/after versions, before/after cursor, EditKind, input timestamp, history effect and the accepted #1 EditorState after-image. The guest already has the previous accepted state; if it does not, it must receive a resync before another decision. Changed text increments text_revision once per batch. Cursor-only outcomes advance #1 observation; no-op still acknowledges the sequence. Exact duplicate responses acknowledge the existing result without editing twice.
 
 `reset` supplies document replacement cancellation; key reuse/unmount additionally gets a host instance token so an old response cannot land in a new editor with the same key. All identities remain outstanding until acknowledged, explicitly epoch-cancelled, or explicitly faulted. Same-document changed state causes a resync then redecision of the same sequence with a new attempt/version, never DefaultEditorAction by accident. Cursor-only conflicts are included: matching text alone cannot justify deleting at an old caret.
+
+## Confirmed target-specific editor-binding callback
+
+Reuse the existing `.ice` `editor-binding` extern kind, arguments and route; add no alternate syntax or separate claims function. For Target::Tree (both native execution and Wasm), the Rust function is `fn(authored_args...) -> ui_lang_guest::EditorBinding<Payload>`. It constructs explicit bounded key claims and a retained `Fn(EditorKeyRequest) -> EditorDecision<Payload>`. The factory executes while constructing the guest view. Only copied claims cross to the host; requests invoke the retained guest callback. No Rust closure or generated Message is serialized. Target::Native keeps the existing `fn(KeyPress, authored_args...) -> Option<iced::text_editor::Binding<Payload>>` contract. Tree previously refused this feature, so there is no prior Tree callback compatibility path to preserve.
+
+The binding's authored route receives a typed commit containing the optional decision payload, EditKind and before/after EditorState, only after host acknowledgment. Calling the route during decision evaluation would advance document/history ahead of a host rejection; do not do that. Payload remains retained guest-side under pending transaction identity until the matching commit or explicit cancellation. All native edits on a bound editor also produce a commit, with no decision payload, so the same reducer owns typing and guest patches. The exact generated callback/commit-route integration is the next Core checkpoint with root.
 
 ## Lane and claim semantics
 

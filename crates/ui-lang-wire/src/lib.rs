@@ -33,6 +33,11 @@ use serde::{Deserialize, Serialize};
 mod background;
 pub use background::{Background, ColorStop};
 mod editor;
+mod editor_transaction;
+pub use editor_transaction::{
+    EditorPatch, EditorPatchError, MAX_EDITOR_PATCHES, patched_editor_text,
+};
+
 pub use editor::{EditorCursor, EditorPosition, EditorState, editor_lines};
 
 mod image;
