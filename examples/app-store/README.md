@@ -516,8 +516,11 @@ For module packaging requirements and the connected implementation phases, see
   measured again on the next redraw, four times in a row at most: past
   that the host drops the size events and logs `sensor loop limit
   exceeded` until a user event, timer or window resize drives a tick.
-  `key=` is refused with E190: the wire's node key is the identity, and
-  a second key that resets the sensor has no field to cross in.
+  `key=` carries a separate copied continuity value: changing it re-arms
+  `show` even when the child stays the same size; equal values remain quiet.
+  `bool`, `i64`, `f64` and `str` keys use the bounded data codec.
+  The widget identity and child state remain unchanged. Native resources and
+  other non-data keys remain E190. Rebuild hosts and guests together.
 - A host surface takes positional scalar, list, optional and record values
   and returns a typed value through
   the extern's declared route. The provider receives the instance's node key

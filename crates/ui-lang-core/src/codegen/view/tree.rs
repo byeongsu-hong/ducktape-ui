@@ -871,9 +871,7 @@ fn layout(
 
 /// A sensor's size routes cross as `(f32, f32)` handlers: the host answers
 /// with the child's own laid-out size (see `wire::Event::Size`), never a
-/// window position. `key=` is refused: the wire's node key is the node's
-/// identity, and a second key that resets the sensor when it changes has no
-/// field to cross in.
+/// window position. A copied reset value is separate from widget identity.
 #[allow(clippy::too_many_arguments)]
 fn sensor(
     id: ViewId,
@@ -887,7 +885,24 @@ fn sensor(
 ) -> Result<String, Error> {
     let sensor = program.resolved_sensor(id)?;
     let origin = sensor.origin;
-    refuse_when(program, origin, sensor.key.is_some(), "a sensor key")?;
+    let reset = sensor
+        .key
+        .map(|expression| {
+            let root = program.expressions().expression_use(expression).root;
+            let ty = &program.expressions().expression(root).ty;
+            let value = resolved_expr_use_code(program, expression, env, ValueMode::Owned)?;
+            let encoded = crate::codegen::value::code(
+                ty,
+                "__sensor_key",
+                false,
+                program,
+                crate::codegen::value::ValueTarget::Surface,
+                &mut Vec::new(),
+            )
+            .map_err(|_| refused(program, origin, "a non-data sensor reset key"))?;
+            Ok::<_, Error>(format!("{{ let __sensor_key = &({value}); {encoded} }}"))
+        })
+        .transpose()?;
     let key = key_code(identity, "sensor", origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     let child = render_node(content, program, message, env, &child_scope, slot)?;
@@ -929,7 +944,8 @@ fn sensor(
             .transpose()
     };
     Ok(format!(
-        "{WIRE}::Node::Sensor {{ key: {key}, on_show: {}, on_resize: {}, on_hide: {}, anticipate: {}, delay: {}, child: ::std::boxed::Box::new({child}) }}",
+        "{WIRE}::Node::Sensor {{ key: {key}, reset: {}, on_show: {}, on_resize: {}, on_hide: {}, anticipate: {}, delay: {}, child: ::std::boxed::Box::new({child}) }}",
+        option_code(reset),
         size_handlers[0],
         size_handlers[1],
         option_code(on_hide),

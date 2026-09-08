@@ -21,7 +21,7 @@ lowering diagnostics; those refusals apply to both Tree execution paths.
 | Floating content | Native layout | Host-evaluated placement, scale, shadow and radius; bounded arithmetic | Actual bundled component tests placement, resize, pixels and translated clicks |
 | Mounted components in lazy or host-conditional containers | Native state and lifetime machinery | Tree refusals remain | Mount/unmount lifetime, cancellation, fresh routes and retained state |
 | Interaction styles and missing editor/slider/toggler/rule/scroll options | Native recipes/callbacks | Some declarative recipes exist; remaining Rust callbacks refused | Declarative recipes or host-owned semantics with equivalent states and pixels |
-| Sensor reset key | Native reset semantics | Explicit Tree diagnostic | Reset observes a new measurement and ignores stale frame events |
+| Sensor reset key | Native reset semantics | Copied scalar keys re-arm the shared host sensor without replacing widget identity | Retained runtime and actual wasm fixture verify one fresh measurement per changed key |
 | Recursive records, enums and opaque surface parameters | Typed Rust values | Copied scalar/list/option/record surface contract; other shapes refused | Owned declarative data or named host resources with validated lifetime and routes |
 | General mouse, window, focus, close, drag/drop and IME subscriptions | Native runtime | No complete guest subscription contract | Real native events reach both backends without duplicate widget delivery |
 | Window/system/image/font/reload/exit task effects | Native Iced actions | Guest poller currently logs and drops these action families | Host-owned action contracts; observable result or explicit diagnostic, never silent success |

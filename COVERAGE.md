@@ -1976,3 +1976,15 @@ The mounted accessibility test dispatches AccessKit Click through the mapped
 host message boundary and increments the actual native and Wasm Counter. The
 pre-fix mapping fails the accessible Click assertion; the shared runtime fix
 restores it. Operating-system bridge smoke remains a separate platform gate.
+
+### Tree sensor reset keys
+
+Tree sensor `key=` values are wire data separate from widget identity. The
+runtime test changes the reset value on one retained widget and asserts one
+show notification per change, including clearing the key. The actual sensor
+wasm fixture repeats rearming through a host button route and checks show
+counts plus local dimensions; replacing the reset key with a constant fails
+both assertions, and exact restoration passes. A two-sensor wire test gives
+each sensor an individually valid value whose total exceeds the frame budget;
+a per-sensor budget mutation fails before restoration. The sanitized frame
+must also encode and decode successfully.

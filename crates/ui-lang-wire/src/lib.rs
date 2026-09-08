@@ -767,6 +767,8 @@ pub enum Node {
     /// must hold before it is reported.
     Sensor {
         key: String,
+        /// Copied continuity value for `key=`, independent of widget identity.
+        reset: Option<SurfaceValue>,
         on_show: Option<u32>,
         on_resize: Option<u32>,
         on_hide: Option<u32>,
@@ -1757,11 +1759,17 @@ fn sanitize_node(
         }
         Node::Sensor {
             key,
+            reset,
             anticipate,
             delay,
             ..
         } => {
             claim(key, taken);
+            if let Some(value) = reset
+                && !value.bound(0, &mut budgets.surface_values, &mut budgets.text, false)
+            {
+                *reset = None;
+            }
             bound_optional(anticipate);
             if let Some(delay) = delay {
                 *delay = finite(*delay).max(0.0);
@@ -3396,14 +3404,58 @@ mod tests {
         }
     }
 
-    /// The form controls: a menu is cut to `MAX_OPTIONS` with a selection
-    /// past the cut dropped, and a slider's numbers are made finite but not
-    /// clamped like a size — a value of a million is the app's to send.
+    #[test]
+    fn sensor_reset_values_share_the_frame_budget() {
+        let sensor = |key: &str| Node::Sensor {
+            key: key.into(),
+            reset: Some(SurfaceValue::List(vec![SurfaceValue::Unit; 3000])),
+            on_show: Some(3),
+            on_resize: None,
+            on_hide: None,
+            anticipate: None,
+            delay: None,
+            child: Box::new(text("child")),
+        };
+        let mut frame = Frame {
+            root: Some(column(vec![sensor("first"), sensor("second")])),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!("column retained")
+        };
+        for (index, node) in children.iter().enumerate() {
+            let Node::Sensor {
+                key,
+                reset,
+                on_show,
+                child,
+                ..
+            } = node
+            else {
+                panic!("sensor retained")
+            };
+            assert_eq!(
+                reset.is_some(),
+                index == 0,
+                "individually valid reset values must share one frame budget"
+            );
+            assert_eq!(key, if index == 0 { "first" } else { "second" });
+            assert_eq!(*on_show, Some(3));
+            assert!(matches!(&**child, Node::Text { content, .. } if content == "child"));
+        }
+        assert!(
+            decode::<Frame>(&encode(&frame)).is_ok(),
+            "sanitized aggregate fits the decoder budget"
+        );
+    }
+
     #[test]
     fn a_sensor_is_pulled_into_range_and_keeps_its_child() {
         let mut frame = Frame {
             root: Some(Node::Sensor {
                 key: "App/watch".into(),
+                reset: None,
                 on_show: Some(0),
                 on_resize: Some(0),
                 on_hide: Some(1),
@@ -3429,6 +3481,9 @@ mod tests {
         assert_eq!(frame.root.as_ref().unwrap().count(), 2);
     }
 
+    /// The form controls: a menu is cut to `MAX_OPTIONS` with a selection
+    /// past the cut dropped, and a slider's numbers are made finite but not
+    /// clamped like a size — a value of a million is the app's to send.
     #[test]
     fn form_controls_are_pulled_into_range() {
         let mut frame = Frame {

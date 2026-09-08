@@ -641,3 +641,6 @@ fn text_wasm_float_repositions_after_resize_and_routes_clicks() {
         );
     }
 }
+
+#[path = "sensor_tests.rs"]
+mod sensor_tests;
