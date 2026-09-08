@@ -7,6 +7,8 @@ use std::rc::Rc;
 #[derive(Default)]
 struct Tables {
     editor_responses: Vec<crate::wire::EditorResponse>,
+    editor_documents: Vec<crate::wire::editor_document::EditorDocumentMessage>,
+    editor_sender: Option<crate::wire::editor_document::EditorTransferSender>,
     editor_pending: Vec<crate::wire::EditorTransactionId>,
     macos: bool,
     mouse_interest: bool,
@@ -336,6 +338,83 @@ pub(crate) fn editor_acknowledge(event: &crate::wire::EditorTransactionEvent) {
         .borrow_mut()
         .editor_pending
         .retain(|pending| pending != id);
+}
+pub(crate) fn start_editor_transfer(
+    id: crate::wire::editor_document::EditorTransferId,
+    target: crate::wire::editor_document::EditorDocumentRef,
+) -> Result<(), crate::wire::editor_document::EditorTransferError> {
+    use crate::wire::editor_document::{EditorTransferError, EditorTransferSender};
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    if let Some(sender) = &tables.editor_sender {
+        return if sender.id() == &id {
+            Ok(())
+        } else {
+            Err(EditorTransferError::Limit)
+        };
+    }
+    tables.editor_sender = Some(EditorTransferSender::new(id, target)?);
+    Ok(())
+}
+
+pub(crate) fn editor_document_frame(
+    reference: &crate::wire::editor_document::EditorDocumentRef,
+    text: &str,
+) {
+    use crate::wire::editor_document::EditorDocumentMessage;
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    if !tables.editor_documents.is_empty() {
+        return;
+    }
+    let Some(sender) = &mut tables.editor_sender else {
+        return;
+    };
+    if sender.id().document != reference.document {
+        return;
+    }
+    let message = match sender.next_frame(reference, text) {
+        Ok(Some(transfer)) => EditorDocumentMessage::Transfer(transfer),
+        Ok(None) => return,
+        Err(reason) => EditorDocumentMessage::Failed {
+            id: sender.id().clone(),
+            reason,
+        },
+    };
+    tables.editor_documents.push(message);
+}
+
+pub(crate) fn editor_document_failure(
+    id: crate::wire::editor_document::EditorTransferId,
+    reason: crate::wire::editor_document::EditorTransferError,
+) {
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    if tables.editor_documents.is_empty() {
+        tables
+            .editor_documents
+            .push(crate::wire::editor_document::EditorDocumentMessage::Failed { id, reason });
+    }
+}
+
+pub(crate) fn finish_editor_transfer(id: &crate::wire::editor_document::EditorTransferId) {
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    if tables
+        .editor_sender
+        .as_ref()
+        .is_some_and(|sender| sender.id() == id)
+    {
+        tables.editor_sender = None;
+    }
+}
+
+pub(crate) fn editor_transferring() -> bool {
+    tables().borrow().editor_sender.is_some()
+}
+
+pub(crate) fn take_editor_documents() -> Vec<crate::wire::editor_document::EditorDocumentMessage> {
+    std::mem::take(&mut tables().borrow_mut().editor_documents)
 }
 pub(crate) fn take_editor_responses() -> Vec<crate::wire::EditorResponse> {
     std::mem::take(&mut tables().borrow_mut().editor_responses)

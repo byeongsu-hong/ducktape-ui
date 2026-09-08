@@ -1481,6 +1481,7 @@ mod tests {
         let (frame, _) = shape(&wire::encode(&wire::Frame {
             upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
+            editor_documents: Vec::new(),
             mouse_interest: false,
             root: Some(wire::Node::empty()),
             requests: vec![kind(wire::MAX_STRING_BYTES * 2)],

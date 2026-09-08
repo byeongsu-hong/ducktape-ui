@@ -305,7 +305,9 @@ pub enum EditorTransactionEvent {
 pub const MAX_EDITOR_CLAIMS: usize = 32;
 pub const MAX_EDITOR_RESPONSES: usize = 128;
 
-fn decode_bounded<'de, D, T, const LIMIT: usize>(deserializer: D) -> Result<Vec<T>, D::Error>
+pub(crate) fn decode_bounded<'de, D, T, const LIMIT: usize>(
+    deserializer: D,
+) -> Result<Vec<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,

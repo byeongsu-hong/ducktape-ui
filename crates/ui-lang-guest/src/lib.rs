@@ -35,8 +35,10 @@ pub mod authored;
 mod clipboard;
 mod editor;
 mod editor_binding;
+mod editor_documents;
 pub use editor::Editor;
 pub use editor_binding::{EditorBinding, EditorTransaction};
+pub use editor_documents::EditorDocumentUpdate;
 pub mod keyboard;
 mod markdown;
 mod memo;
@@ -217,6 +219,20 @@ impl<A: App> Driver<A> {
                 wire::Event::Input { handler, text } => {
                     slots::run_handler::<String, A::Message>(handler, text)
                 }
+                wire::Event::EditorDocument { handler, message } => {
+                    use wire::editor_document::EditorDocumentMessage;
+                    if matches!(
+                        message,
+                        EditorDocumentMessage::Acknowledged { .. }
+                            | EditorDocumentMessage::Failed { .. }
+                    ) {
+                        slots::finish_editor_transfer(message.id());
+                        continue;
+                    }
+                    slots::run_handler::<wire::editor_document::EditorDocumentMessage, A::Message>(
+                        handler, message,
+                    )
+                }
                 wire::Event::EditorKeyRequest { handler, request } => {
                     slots::run_handler::<wire::EditorKeyRequest, A::Message>(handler, request)
                 }
@@ -296,6 +312,9 @@ impl<A: App> Driver<A> {
         // once more so what it produced reaches `update` before the view.
         self.settle();
         slots::reset();
+        if slots::editor_transferring() {
+            memo::invalidate();
+        }
         let mut root = self.app.view();
         // Synchronous mount pruning can cancel work after the last settle.
         // Reconcile subscriptions and request another tick to drain woken
@@ -337,6 +356,7 @@ impl<A: App> Driver<A> {
         wire::Frame {
             upstream_sanitization: Default::default(),
             editor_decisions: slots::take_editor_responses(),
+            editor_documents: slots::take_editor_documents(),
             mouse_interest: slots::mouse_interest(),
             root: Some(root),
             patches,

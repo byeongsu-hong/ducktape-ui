@@ -923,6 +923,7 @@ fn gen_frame_with(rng: &mut Rng, depth: usize, width: usize) -> Frame {
     Frame {
         upstream_sanitization: Default::default(),
         editor_decisions: Vec::new(),
+        editor_documents: Vec::new(),
         mouse_interest: rng.next_bool(),
         root: Some(root),
         requests,

@@ -2,7 +2,7 @@
 use crate::wire;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Editor(wire::EditorState);
+pub struct Editor(wire::EditorState, u64);
 impl Editor {
     pub fn new(text: impl Into<String>) -> Self {
         let mut state = wire::EditorState {
@@ -14,10 +14,23 @@ impl Editor {
             "editor document exceeds text limit"
         );
         state.cursor.clamp(&state.text);
-        Self(state)
+        Self(state, 0)
     }
     pub fn text(&self) -> String {
         self.0.text.clone()
+    }
+    pub(crate) fn text_ref(&self) -> &str {
+        &self.0.text
+    }
+    pub fn document_reference(&self, document: String) -> wire::editor_document::EditorDocumentRef {
+        wire::editor_document::EditorDocumentRef {
+            document,
+            reset: self.0.reset,
+            text_revision: self.1,
+            revision: self.0.revision,
+            cursor: self.0.cursor,
+            byte_len: self.0.text.len() as u32,
+        }
     }
     pub fn cursor(&self) -> wire::EditorCursor {
         self.0.cursor
@@ -46,6 +59,7 @@ impl Editor {
             "editor document exceeds text limit"
         );
         next.0.cursor.clamp(&next.0.text);
+        next.1 = 0;
         *self = next;
     }
     /// Observations from a previous document cannot overwrite a replacement.
@@ -55,6 +69,12 @@ impl Editor {
             && state.text.len() <= wire::MAX_STRING_BYTES
         {
             state.cursor.clamp(&state.text);
+            if state.text != self.0.text {
+                self.1 = self
+                    .1
+                    .checked_add(1)
+                    .expect("editor text revisions exhausted");
+            }
             self.0 = state;
         }
     }
@@ -66,21 +86,50 @@ impl Editor {
             .reset
             .checked_add(1)
             .expect("editor reset revisions exhausted");
+        self.1 = 0;
     }
     pub fn snapshot(&self) -> Vec<u8> {
-        wire::encode(&self.0)
+        wire::encode(&(&self.0, self.1))
     }
     pub fn restore(bytes: &[u8]) -> Option<Self> {
-        let mut state: wire::EditorState = wire::decode(bytes).ok()?;
+        let (mut state, text_revision): (wire::EditorState, u64) = wire::decode(bytes).ok()?;
         let original = state.clone();
         state.sanitize();
-        (state == original).then_some(Self(state))
+        (state == original).then_some(Self(state, text_revision))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn document_references_separate_text_revisions_from_caret_observations() {
+        let mut editor = Editor::new("a");
+        editor.accept(wire::EditorState {
+            text: "ab".into(),
+            revision: 4,
+            ..Default::default()
+        });
+        let typed = editor.document_reference("app:draft".into());
+        assert_eq!(
+            (typed.text_revision, typed.revision, typed.byte_len),
+            (1, 4, 2)
+        );
+        editor.accept(wire::EditorState {
+            text: "ab".into(),
+            revision: 5,
+            ..Default::default()
+        });
+        let caret = editor.document_reference("app:draft".into());
+        assert_eq!((caret.text_revision, caret.revision), (1, 5));
+        assert_eq!(Editor::restore(&editor.snapshot()), Some(editor.clone()));
+        editor.move_to(wire::EditorCursor::default());
+        assert_eq!(
+            editor.document_reference("app:draft".into()).text_revision,
+            0
+        );
+    }
+
     #[test]
     fn oversized_initial_and_observed_documents_never_become_prefixes() {
         let oversized = "x".repeat(wire::MAX_STRING_BYTES + 1);

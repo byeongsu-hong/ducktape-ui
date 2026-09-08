@@ -13,6 +13,7 @@ impl<A: SnapshotApp> Driver<A> {
     pub fn snapshot(&self) -> Result<Vec<u8>, String> {
         let _context = self.slots.enter();
         if slots::editor_pending()
+            || slots::editor_transferring()
             || self.busy
             || self.tasks.iter().any(|task| !task.subscription)
             || slots::has_deferred()

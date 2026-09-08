@@ -25,7 +25,7 @@
 pub mod authored;
 /// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
 /// This is independent of WIT signatures and the manifest text format.
-pub const WIRE_EPOCH: u32 = 2;
+pub const WIRE_EPOCH: u32 = 3;
 
 pub mod manifest;
 pub mod native;
@@ -137,6 +137,11 @@ pub enum Event {
     Input { handler: u32, text: String },
     /// An editor's text or cursor changed. `reset` fences document replacements;
     /// `revision` orders host observations. Caret-only changes are included.
+    /// Initial assignment, mirror repair and exact transfer acknowledgments.
+    EditorDocument {
+        handler: u32,
+        message: editor_document::EditorDocumentMessage,
+    },
     EditorKeyRequest {
         handler: u32,
         request: EditorKeyRequest,
@@ -239,6 +244,9 @@ pub struct Frame {
     pub upstream_sanitization: SanitizeReport,
     #[serde(deserialize_with = "editor_transaction::decode_responses")]
     pub editor_decisions: Vec<EditorResponse>,
+    /// One bounded document message, independent of display text budgets.
+    #[serde(deserialize_with = "editor_document::decode_messages")]
+    pub editor_documents: Vec<editor_document::EditorDocumentMessage>,
     /// The current subscription requests guest-local mouse observations.
     pub mouse_interest: bool,
     /// The tree to show. `None` with `unchanged` set means "what you have";
@@ -3088,6 +3096,7 @@ mod tests {
         let frame = Frame {
             upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
+            editor_documents: Vec::new(),
             mouse_interest: true,
             root: Some(column(vec![
                 text("hello"),
@@ -3745,6 +3754,7 @@ mod tests {
         let sound = encode(&Frame {
             upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
+            editor_documents: Vec::new(),
             mouse_interest: false,
             root: Some(column(vec![text("hello"), Node::empty()])),
             requests: vec![Request {

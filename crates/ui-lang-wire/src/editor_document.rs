@@ -195,7 +195,7 @@ impl EditorTransfer {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditorTransferError {
     Limit,
     Identity,
@@ -204,6 +204,76 @@ pub enum EditorTransferError {
     Utf8,
     Cursor,
     Aborted,
+}
+
+/// The same bounded exchange supplies an initial host projection and repairs a
+/// guest mirror before a retained key is reconsidered. Routing is by exact id;
+/// a reference alone does not authorize unsolicited bytes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EditorDocumentMessage {
+    Request {
+        id: EditorTransferId,
+        target: EditorDocumentRef,
+    },
+    Transfer(EditorTransfer),
+    Acknowledged {
+        id: EditorTransferId,
+    },
+    Failed {
+        id: EditorTransferId,
+        reason: EditorTransferError,
+    },
+}
+
+impl EditorDocumentMessage {
+    pub fn id(&self) -> &EditorTransferId {
+        match self {
+            Self::Request { id, .. } | Self::Acknowledged { id } | Self::Failed { id, .. } => id,
+            Self::Transfer(transfer) => transfer.id(),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), EditorTransferError> {
+        let id = self.id();
+        if id.document.is_empty() || id.document.len() > 1024 {
+            return Err(EditorTransferError::Identity);
+        }
+        let target = match self {
+            Self::Request { target, .. } | Self::Transfer(EditorTransfer::Begin { target, .. }) => {
+                Some(target)
+            }
+            Self::Transfer(EditorTransfer::Chunk { index, bytes, .. }) => {
+                if usize::from(*index) >= MAX_EDITOR_CHUNKS
+                    || bytes.is_empty()
+                    || bytes.len() > MAX_EDITOR_CHUNK_BYTES
+                {
+                    return Err(EditorTransferError::Limit);
+                }
+                None
+            }
+            _ => None,
+        };
+        if let Some(target) = target {
+            target.validate()?;
+            if id.document != target.document || id.reset != target.reset {
+                return Err(EditorTransferError::Identity);
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn decode_messages<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<EditorDocumentMessage>, D::Error> {
+    let messages =
+        crate::editor_transaction::decode_bounded::<D, EditorDocumentMessage, 1>(deserializer)?;
+    for message in &messages {
+        message
+            .validate()
+            .map_err(|_| serde::de::Error::custom("invalid editor document message"))?;
+    }
+    Ok(messages)
 }
 
 /// Transfer progress borrows the application's mirror only while producing one
@@ -236,6 +306,10 @@ impl EditorTransferSender {
             target,
             stage: SendStage::Begin,
         })
+    }
+
+    pub fn id(&self) -> &EditorTransferId {
+        &self.id
     }
 
     /// At most one chunk is allocated per call. A replaced source explicitly
@@ -457,6 +531,62 @@ fn decode_chunk<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Er
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frames_allow_one_document_message_and_reject_a_second_before_delivery() {
+        let (id, _) = metadata(MAX_EDITOR_DOCUMENT_BYTES);
+        let message = EditorDocumentMessage::Transfer(EditorTransfer::Chunk {
+            id,
+            index: 0,
+            bytes: vec![b'x'; MAX_EDITOR_CHUNK_BYTES],
+        });
+        let mut frame = crate::Frame {
+            editor_documents: vec![message.clone()],
+            ..Default::default()
+        };
+        let decoded: crate::Frame = crate::decode(&crate::encode(&frame)).unwrap();
+        assert_eq!(decoded.editor_documents, frame.editor_documents);
+        frame.editor_documents.push(message);
+        assert!(
+            crate::decode::<crate::Frame>(&crate::encode(&frame)).is_err(),
+            "a frame cannot allocate a second document payload"
+        );
+    }
+
+    #[test]
+    fn document_messages_reject_cross_document_targets_and_unbounded_chunks() {
+        let (id, target) = metadata(MAX_EDITOR_DOCUMENT_BYTES);
+        let request = EditorDocumentMessage::Request {
+            id: id.clone(),
+            target: target.clone(),
+        };
+        assert_eq!(request.validate(), Ok(()));
+        let mut wrong = target;
+        wrong.reset += 1;
+        assert_eq!(
+            EditorDocumentMessage::Request {
+                id: id.clone(),
+                target: wrong
+            }
+            .validate(),
+            Err(EditorTransferError::Identity)
+        );
+        for (index, length) in [(16, 1), (0, 0), (0, MAX_EDITOR_CHUNK_BYTES + 1)] {
+            assert_eq!(
+                EditorDocumentMessage::Transfer(EditorTransfer::Chunk {
+                    id: id.clone(),
+                    index,
+                    bytes: vec![b'x'; length],
+                })
+                .validate(),
+                Err(EditorTransferError::Limit)
+            );
+        }
+        assert_eq!(
+            EditorDocumentMessage::Acknowledged { id: id.clone() }.id(),
+            &id
+        );
+    }
 
     #[test]
     fn repeated_bindings_charge_one_document_but_each_native_projection() {
