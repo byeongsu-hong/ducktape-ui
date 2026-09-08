@@ -1,7 +1,8 @@
 # Tree wire protocol admission
 
-Status: approved by Codex lead; implementation in progress. Base: origin/main 480a5290. Merge after editor
-transaction lane; settle the initial epoch against that final schema.
+Status: implemented and reviewed. Rebased onto origin/main c36ad66e after the
+editor transaction lane (#1019, f878b948). Initial WIRE_EPOCH = 1 includes that
+transaction schema; subsequent serialized shape changes require another epoch.
 
 ## Contract
 
