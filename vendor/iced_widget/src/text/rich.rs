@@ -269,6 +269,8 @@ where
             .downcast_ref::<State<Link, Renderer::Paragraph>>();
 
         let style = theme.style(&self.class);
+        let anchor = text_bounds(layout.bounds(), &state.paragraph).position();
+        let translation = anchor - Point::ORIGIN;
 
         for (index, span) in self.spans.as_ref().as_ref().iter().enumerate() {
             let is_hovered_link = self.on_link_click.is_some()
@@ -279,7 +281,6 @@ where
                 || span.strikethrough
                 || is_hovered_link
             {
-                let translation = layout.position() - Point::ORIGIN;
                 let regions = state.paragraph.span_bounds(index);
 
                 if let Some(highlight) = span.highlight {
@@ -389,22 +390,21 @@ where
 
         let was_hovered = self.hovered_link.is_some();
 
-        if let Some(position) = cursor.position_in(layout.bounds()) {
-            let state = tree
-                .state
-                .downcast_ref::<State<Link, Renderer::Paragraph>>();
+        let state = tree
+            .state
+            .downcast_ref::<State<Link, Renderer::Paragraph>>();
 
-            self.hovered_link =
-                state.paragraph.hit_span(position).and_then(|span| {
-                    if self.spans.as_ref().as_ref().get(span)?.link.is_some() {
-                        Some(span)
-                    } else {
-                        None
-                    }
-                });
-        } else {
-            self.hovered_link = None;
-        }
+        self.hovered_link = cursor
+            .position_in(text_bounds(layout.bounds(), &state.paragraph))
+            .filter(|_| cursor.is_over(layout.bounds()))
+            .and_then(|position| state.paragraph.hit_span(position))
+            .and_then(|span| {
+                if self.spans.as_ref().as_ref().get(span)?.link.is_some() {
+                    Some(span)
+                } else {
+                    None
+                }
+            });
 
         if was_hovered != self.hovered_link.is_some() {
             shell.request_redraw();
@@ -461,6 +461,24 @@ where
             mouse::Interaction::None
         }
     }
+}
+
+/// The area the paragraph's glyphs occupy inside `bounds`.
+///
+/// `text::draw` fills the paragraph at `bounds.anchor(...)`, so an aligned
+/// paragraph sits somewhere inside the widget's bounds rather than at its
+/// corner. Span decorations and link hit tests are in the paragraph's own
+/// coordinates and must be offset by that same origin.
+fn text_bounds<P>(bounds: Rectangle, paragraph: &P) -> Rectangle
+where
+    P: Paragraph,
+{
+    let min_bounds = paragraph.min_bounds();
+
+    Rectangle::new(
+        bounds.anchor(min_bounds, paragraph.align_x(), paragraph.align_y()),
+        min_bounds,
+    )
 }
 
 fn layout<Link, Renderer>(

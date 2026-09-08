@@ -2398,8 +2398,8 @@ defects on `y`/`padding.top`.
 `vendor/iced_widget` carries the published 0.14.2 sources (`Cargo.toml`,
 `.cargo_vcs_info.json`, `src`, `assets`, copied unmodified from the crates.io
 registry checkout) with `[patch.crates-io]` pointing at it, following the
-existing `iced_winit`/`iced_tiny_skia` vendoring. Only `src/row.rs` and
-`src/column.rs` differ: each records its wrapped line ranges as it produces
+existing `iced_winit`/`iced_tiny_skia` vendoring. The wrapping patch changes `src/row.rs` and
+`src/column.rs`: each records its wrapped line ranges as it produces
 them, resolves the size before aligning, measures line extents from the content
 origin, and falls back to the intrinsic size when an unbounded `Fill` resolves
 to infinity. A `Fill` child still spans its line, and a wrapping row under a
@@ -2504,3 +2504,48 @@ column (1 child instead of 3); the latter previously observed scalar counters
 `[1, 1]` instead of `[1, 0]`. These are execution assertions, not generated-Rust
 string checks. The guest was rebuilt before the host runs against the current
 wire epoch; no stale fixture or timeout adjustment was used.
+
+## Rich text decoration and link alignment
+
+A `rich-text` with `align-x=center|right` or `align-y=center|bottom` decorates
+and routes clicks where its glyphs are painted. `iced` fills a paragraph at
+`bounds.anchor(min_bounds, align_x, align_y)`, but published `iced_widget`
+0.14.2 translated span highlights, borders, underlines and strikethroughs by
+`layout.position()` and hit-tested links against it, so an aligned label
+underlined empty box and its links answered from empty box instead of from the
+letters. Ice reaches both axes: `codegen::view::text` and
+`view_tree::rich_text` pass `align_x`, `align_y` and `on_link_click` straight
+through.
+
+`vendor/iced_widget/src/text/rich.rs` computes that anchored area once
+(`text_bounds`) and uses it for both: `draw` translates the span regions by it,
+and `update` hit-tests inside it while still requiring the cursor to be over
+the widget. Confining the hit test matters on its own — `Paragraph::hit_span`
+delegates to `cosmic_text::Buffer::hit`, which answers with the nearest cursor
+position, so a click on the empty part of an aligned label's box used to
+activate the first span.
+
+Owning test: `crates/ui-lang-runtime/tests/rich_text_alignment.rs`, five cases
+over an underlined link span in a 300x120 box inside a padded container —
+`align-x=center`, `align-x=right`, `align-y=bottom`, `align-y=center`, and a
+top-left control. The oracle is the paint: the glyph box and the underline quad
+are both read back out of the tiny-skia renderer, and the click is aimed at the
+glyph box's middle, so no expected coordinate repeats the anchor arithmetic.
+
+Red evidence (`cargo test -p ui-lang-runtime --test rich_text_alignment`
+against the published `rich.rs`): each of the four aligned cases reports
+`(clicks on the glyphs, clicks at the box's corner)` as `(0, 1)` where `(1, 0)`
+is required — the painted link is dead and the empty corner is the link — and,
+with that assertion ordered after it, the centred case's underline is painted
+at `x = 24.0` with the glyphs at `x = 123.3`, and the bottom-aligned case's at
+`y = 45.4` with the glyphs at `y = 118.0`. The top-left control passes
+throughout, which is what makes it a control. All five pass after the fix.
+
+Vertical alignment is why the oracle is the paint rather than the hit test
+alone: `cosmic_text` clamps a click below the buffer to the last line, so a
+bottom-aligned label's own hit test fails silently rather than out of range.
+
+Both the root workspace and `examples/app-store` select the vendored widget
+crate. External consumers do not inherit workspace Cargo patches from published
+Ice packages and need the same patch for this behavior. See
+[the vendor provenance and scope](vendor/iced_widget/README.md).
