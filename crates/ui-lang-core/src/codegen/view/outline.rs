@@ -31,6 +31,7 @@ struct OutlineState {
     /// (and warn as dead code) in non-test builds.
     test_mode: bool,
     lazy_depth: usize,
+    host_condition_depth: usize,
     counter: usize,
     /// Outlined items paired with the fragment slug of the component (or
     /// lazy block) they were generated from. The slug groups methods into
@@ -105,6 +106,33 @@ pub(in crate::codegen) struct LazyRenderGuard;
 pub(in crate::codegen) fn enter_lazy_render() -> LazyRenderGuard {
     OUTLINE.with_borrow_mut(|state| state.lazy_depth += 1);
     LazyRenderGuard
+}
+
+/// A host-selected branch is built eagerly by a Tree guest. Its descendants
+/// cannot own mounted lifetime until the host reports branch activation.
+pub(in crate::codegen) struct HostConditionGuard;
+
+pub(in crate::codegen) fn enter_host_condition() -> HostConditionGuard {
+    OUTLINE.with_borrow_mut(|state| state.host_condition_depth += 1);
+    HostConditionGuard
+}
+
+impl Drop for HostConditionGuard {
+    fn drop(&mut self) {
+        OUTLINE.with_borrow_mut(|state| state.host_condition_depth -= 1);
+    }
+}
+
+pub(in crate::codegen) fn mounted_tree_refusal() -> Option<&'static str> {
+    OUTLINE.with_borrow(|state| {
+        if state.lazy_depth > 0 {
+            Some("a mounted component inside lazy: cached trees do not replay mount sightings")
+        } else if state.host_condition_depth > 0 {
+            Some("a mounted component inside a host container condition: branch visibility belongs to the host")
+        } else {
+            None
+        }
+    })
 }
 
 impl Drop for LazyRenderGuard {

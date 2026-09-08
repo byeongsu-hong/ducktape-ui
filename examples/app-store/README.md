@@ -444,19 +444,19 @@ For module packaging requirements and the connected implementation phases, see
   delayed show/hide and the native AccessKit snapshot. Delay is capped at
   60 seconds and both children share the frame budgets.
 
-- The wire carries `box`, `mouse`, `col`/`row`, `keyed`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
-  `text`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
+- The wire carries `box`, `mouse`, `col`/`row`, `keyed`, `lazy`, `flex`, `pin`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
+  `text`, `rich-text`, `tooltip`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
   extern's name (`clock_face` is the one this store paints, with a sweeping
   second hand the guest never ticks), given the call's copied data arguments
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
-  the host lacks renders a placeholder. Every other Ice
-  construct — combo box, images,
-  mounted components, gradients, and unsupported interaction utility styles —
-  fails the app's build at its `.ice` line with E190. Each is a node kind
-  to add to the wire, an emitter arm and a renderer arm. A layout's surface
-  utilities (`@bg-…`, `@border-…`, `@r-…`) and a box's `px-snap` do cross.
+  the host lacks renders a placeholder. Remaining refusals include combo box, images,
+  mounted components inside lazy or host container conditions, gradients, and
+  unsupported interaction utility styles. These fail the app's build at
+  its `.ice` line with E190 and need additional lowering or host contracts.
+  A layout's surface utilities (`@bg-…`, `@border-…`, `@r-…`) and a box's
+  `px-snap` do cross.
 - A `sensor` crosses with its show, resize and hide routes, `anticipate`
   and `delay`; the host measures the child after layout and answers with
   its local size, never a window position (the activity feed turns its
@@ -1011,8 +1011,7 @@ native UI cache. A second test clicks component-local routes inside virtual keye
 lazy rows before and after reordering, preserving sibling state and generations.
 Native tests separately count layout hits/reflows and verify
 resource release and shared text/image budgets. Other Tree refusals, including
-retained components still block larger application
-graphs.
+opaque native extern/data contracts, still block larger application graphs.
 
 ```sh
 cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
@@ -1064,3 +1063,24 @@ Span counts share both decode and rendered-node budgets, and their text/link/fon
 strings share the frame text allowance. Gradients and Rust style callbacks remain
 refused. Rebuild host and guests together. The existing text fixture bundle and
 `cargo test -p app-store-host text_wasm_ -- --ignored` verify this boundary.
+
+### Mounted component module views
+
+Tree supports `lifetime mounted` on components with guest-owned state. The first
+render queues `boot` for the next tick, ahead of external input; its props are
+snapshotted at the render site. Repeated frames do not boot it again. Removing an
+instance synchronously drops its state and abort handles, and the next scheduled
+tick drains cancellation. Reappearance creates fresh state and runs boot with
+current props. `lifetime retained` already keeps state across absence and remains
+supported.
+
+Mounted descendants of explicit `lazy` or host-evaluated container conditions
+remain refused at their component call: cached views skip mount sightings, and
+host-selected branches do not report activation to the guest. Unconditional
+responsive children and lazy content inside an already-mounted component are
+supported. Host surfaces continue to own their native resources separately.
+
+Bundle `app-store-component-fixture` to `target/component-fixture` from this
+workspace, then run `cargo test -p app-store-host bundled_component_ -- --ignored`.
+The tests use native clicks to distinguish mounted and retained counters, and
+exercise pending request cancellation, obsolete replies and separate instances.

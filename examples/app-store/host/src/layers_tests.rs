@@ -7,8 +7,8 @@ use iced_test::runtime::{UserInterface, user_interface};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use ui_lang_runtime::view_tree;
 
-type Ui = UserInterface<'static, String, iced::Theme, iced::Renderer>;
-fn renderer() -> iced::Renderer {
+pub(super) type Ui = UserInterface<'static, String, iced::Theme, iced::Renderer>;
+pub(super) fn renderer() -> iced::Renderer {
     iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
         Font::DEFAULT,
         Pixels(16.0),
@@ -59,7 +59,7 @@ fn guest(live: Arc<AtomicUsize>) -> Arc<Mutex<Guest>> {
     );
     Arc::new(Mutex::new(guest))
 }
-fn build(
+pub(super) fn build(
     guest: &Arc<Mutex<Guest>>,
     cache: user_interface::Cache,
     renderer: &mut iced::Renderer,
@@ -72,7 +72,7 @@ fn build(
         renderer,
     )
 }
-fn redraw(
+pub(super) fn redraw(
     mut ui: Ui,
     guest: &Arc<Mutex<Guest>>,
     renderer: &mut iced::Renderer,
@@ -120,7 +120,7 @@ fn bounds(ui: &mut Ui, renderer: &mut iced::Renderer, label: &str) -> Option<Rec
     ui.operate(renderer, &mut op);
     op.bounds
 }
-fn click(ui: &mut Ui, renderer: &mut iced::Renderer, label: &str) {
+pub(super) fn click(ui: &mut Ui, renderer: &mut iced::Renderer, label: &str) {
     let point = bounds(ui, renderer, label)
         .expect("visible button label")
         .center();
