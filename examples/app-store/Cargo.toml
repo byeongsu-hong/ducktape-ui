@@ -5,7 +5,7 @@
 # and their windows live here.
 [workspace]
 resolver = "2"
-members = ["apps/todo", "apps/counter", "apps/clock", "apps/activity", "apps/chaos", "host", "tests/surface-guest", "tests/clipboard-guest", "tests/widget-guest", "tests/retained-guest", "tests/composer-guest", "tests/terminal-guest", "tests/canvas-guest", "tests/responsive-guest", "tests/component-guest", "tests/layers-guest", "tests/text-guest", "tests/keyed-guest", "tests/lazy-guest", "tests/flex-guest", "tests/qr-guest", "tests/keyboard-guest", "tests/editor-guest", "tests/pick-guest", "tests/reload-v1-guest", "tests/reload-v2-guest", "tests/window-size-guest"]
+members = ["apps/todo", "apps/counter", "apps/clock", "apps/activity", "apps/chaos", "host", "tests/surface-guest", "tests/clipboard-guest", "tests/widget-guest", "tests/retained-guest", "tests/composer-guest", "tests/terminal-guest", "tests/canvas-guest", "tests/responsive-guest", "tests/component-guest", "tests/layers-guest", "tests/text-guest", "tests/float-guest", "tests/keyed-guest", "tests/lazy-guest", "tests/flex-guest", "tests/qr-guest", "tests/keyboard-guest", "tests/editor-guest", "tests/pick-guest", "tests/reload-v1-guest", "tests/reload-v2-guest", "tests/window-size-guest"]
 
 [workspace.dependencies]
 ui-lang = { path = "../../crates/ui-lang" }

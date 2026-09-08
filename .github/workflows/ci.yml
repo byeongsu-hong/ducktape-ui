@@ -667,6 +667,9 @@ jobs:
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
             -p app-store-text-fixture --target wasm32-unknown-unknown \
             --out examples/app-store/target/text-fixture
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-float-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/float-fixture
       - name: Check wasm text layout and button routes
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host text_wasm_ -- --ignored

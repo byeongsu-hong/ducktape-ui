@@ -1279,3 +1279,12 @@ component, resolve imports with `Linker::instantiate_pre`, and check exports
 with the generated `ViewPre::new` without creating a store or running the guest.
 This checks required ABI types; it is not proof that instantiation, init, or boot
 will succeed. Import policy remains the host's responsibility.
+
+### Tree float placement
+
+Tree `float` supports host-evaluated original/viewport translation arithmetic,
+scale, shadow and per-corner radius. Resizing recomputes placement without
+sending geometry to the guest. Geometry-dependent Rust calls remain E190; each
+axis permits at most 64 arithmetic operations. Rebuild hosts and guests together
+for the new wire node. The app-store float fixture checks real wasm painting at
+two viewport sizes and clicks at the translated position.
