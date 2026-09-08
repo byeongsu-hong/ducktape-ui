@@ -1,5 +1,6 @@
 //! Revisioned document transfer, independent of display text and native layout.
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::EditorCursor;
@@ -7,6 +8,54 @@ use crate::EditorCursor;
 pub const MAX_EDITOR_DOCUMENT_BYTES: usize = 1_048_576;
 pub const MAX_EDITOR_CHUNK_BYTES: usize = 65_536;
 pub const MAX_EDITOR_CHUNKS: usize = MAX_EDITOR_DOCUMENT_BYTES / MAX_EDITOR_CHUNK_BYTES;
+
+// Aggregate caps are separate: shared logical text is charged once, while
+// native widgets retain their own editable layout projections.
+pub const MAX_EDITOR_DOCUMENTS: usize = 16;
+pub const MAX_EDITOR_LIVE_BYTES: usize = 4 * MAX_EDITOR_DOCUMENT_BYTES;
+pub const MAX_EDITOR_PROJECTION_BYTES: usize = 8 * MAX_EDITOR_DOCUMENT_BYTES;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EditorDocumentUsage {
+    pub documents: usize,
+    pub live_bytes: usize,
+    pub projection_bytes: usize,
+}
+
+/// Validate all references before allocating projections or changing a live
+/// document. Repeated bindings must describe exactly the same logical state.
+pub fn validate_editor_document_refs<'a>(
+    references: impl IntoIterator<Item = &'a EditorDocumentRef>,
+) -> Result<EditorDocumentUsage, EditorTransferError> {
+    let mut documents = HashMap::new();
+    let mut usage = EditorDocumentUsage::default();
+    for reference in references {
+        reference.validate()?;
+        let bytes = reference.byte_len as usize;
+        usage.projection_bytes = usage
+            .projection_bytes
+            .checked_add(bytes)
+            .filter(|total| *total <= MAX_EDITOR_PROJECTION_BYTES)
+            .ok_or(EditorTransferError::Limit)?;
+        match documents.get(reference.document.as_str()) {
+            Some(previous) if *previous != reference => return Err(EditorTransferError::Identity),
+            Some(_) => {}
+            None => {
+                if documents.len() == MAX_EDITOR_DOCUMENTS {
+                    return Err(EditorTransferError::Limit);
+                }
+                usage.live_bytes = usage
+                    .live_bytes
+                    .checked_add(bytes)
+                    .filter(|total| *total <= MAX_EDITOR_LIVE_BYTES)
+                    .ok_or(EditorTransferError::Limit)?;
+                documents.insert(reference.document.as_str(), reference);
+            }
+        }
+    }
+    usage.documents = documents.len();
+    Ok(usage)
+}
 
 pub(crate) fn native_editor_boundaries(text: &str) -> impl Iterator<Item = usize> + '_ {
     text.grapheme_indices(true)
@@ -155,6 +204,93 @@ pub enum EditorTransferError {
     Utf8,
     Cursor,
     Aborted,
+}
+
+/// Transfer progress borrows the application's mirror only while producing one
+/// frame. Queued senders retain metadata, never another full document copy.
+#[derive(Debug)]
+pub struct EditorTransferSender {
+    id: EditorTransferId,
+    target: EditorDocumentRef,
+    stage: SendStage,
+}
+
+#[derive(Debug)]
+enum SendStage {
+    Begin,
+    Chunk(usize),
+    Ended,
+}
+
+impl EditorTransferSender {
+    pub fn new(
+        id: EditorTransferId,
+        target: EditorDocumentRef,
+    ) -> Result<Self, EditorTransferError> {
+        target.validate()?;
+        if id.document != target.document || id.reset != target.reset {
+            return Err(EditorTransferError::Identity);
+        }
+        Ok(Self {
+            id,
+            target,
+            stage: SendStage::Begin,
+        })
+    }
+
+    /// At most one chunk is allocated per call. A replaced source explicitly
+    /// aborts the old transfer rather than sending bytes from two revisions.
+    pub fn next_frame(
+        &mut self,
+        current: &EditorDocumentRef,
+        text: &str,
+    ) -> Result<Option<EditorTransfer>, EditorTransferError> {
+        if matches!(self.stage, SendStage::Ended) {
+            return Ok(None);
+        }
+        if current != &self.target {
+            self.stage = SendStage::Ended;
+            return Ok(Some(EditorTransfer::Abort {
+                id: self.id.clone(),
+            }));
+        }
+        if text.len() != self.target.byte_len as usize {
+            self.stage = SendStage::Ended;
+            return Err(EditorTransferError::Length);
+        }
+        let transfer = match self.stage {
+            SendStage::Begin => {
+                if let Err(error) = self.target.validate_text(text) {
+                    self.stage = SendStage::Ended;
+                    return Err(error);
+                }
+                self.stage = SendStage::Chunk(0);
+                EditorTransfer::Begin {
+                    id: self.id.clone(),
+                    target: self.target.clone(),
+                }
+            }
+            SendStage::Chunk(index) => {
+                let start = index * MAX_EDITOR_CHUNK_BYTES;
+                if start >= text.len() {
+                    self.stage = SendStage::Ended;
+                    EditorTransfer::Complete {
+                        id: self.id.clone(),
+                    }
+                } else {
+                    let end = (start + MAX_EDITOR_CHUNK_BYTES).min(text.len());
+                    self.stage = SendStage::Chunk(index + 1);
+                    EditorTransfer::Chunk {
+                        id: self.id.clone(),
+                        index: index as u8,
+                        bytes: text.as_bytes()[start..end].to_vec(),
+                    }
+                }
+            }
+            SendStage::Ended => unreachable!("ended senders return before reading their source"),
+        };
+        Ok(Some(transfer))
+    }
 }
 
 /// One bounded byte buffer, also usable by application-owned document loading.
@@ -321,6 +457,117 @@ fn decode_chunk<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Er
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_bindings_charge_one_document_but_each_native_projection() {
+        let (_, reference) = metadata(MAX_EDITOR_DOCUMENT_BYTES);
+        let usage = validate_editor_document_refs(std::iter::repeat_n(&reference, 8)).unwrap();
+        assert_eq!(
+            usage,
+            EditorDocumentUsage {
+                documents: 1,
+                live_bytes: MAX_EDITOR_DOCUMENT_BYTES,
+                projection_bytes: MAX_EDITOR_PROJECTION_BYTES,
+            }
+        );
+        assert_eq!(
+            validate_editor_document_refs(std::iter::repeat_n(&reference, 9)),
+            Err(EditorTransferError::Limit)
+        );
+        let mut conflicting = reference.clone();
+        conflicting.revision += 1;
+        assert_eq!(
+            validate_editor_document_refs([&reference, &conflicting]),
+            Err(EditorTransferError::Identity)
+        );
+    }
+
+    #[test]
+    fn independent_documents_have_separate_count_and_live_byte_limits() {
+        let documents: Vec<_> = (0..=MAX_EDITOR_DOCUMENTS)
+            .map(|index| {
+                let (_, mut reference) = metadata(0);
+                reference.document = format!("app:document-{index}");
+                reference
+            })
+            .collect();
+        assert_eq!(
+            validate_editor_document_refs(&documents[..MAX_EDITOR_DOCUMENTS])
+                .unwrap()
+                .documents,
+            MAX_EDITOR_DOCUMENTS
+        );
+        assert_eq!(
+            validate_editor_document_refs(&documents),
+            Err(EditorTransferError::Limit)
+        );
+        let mut full = documents[..5].to_vec();
+        for reference in &mut full {
+            reference.byte_len = MAX_EDITOR_DOCUMENT_BYTES as u32;
+        }
+        assert_eq!(
+            validate_editor_document_refs(&full[..4])
+                .unwrap()
+                .live_bytes,
+            MAX_EDITOR_LIVE_BYTES
+        );
+        assert_eq!(
+            validate_editor_document_refs(&full),
+            Err(EditorTransferError::Limit)
+        );
+    }
+
+    #[test]
+    fn sender_borrows_one_mib_and_delivers_one_bounded_chunk_per_frame() {
+        let mut text = "x".repeat(MAX_EDITOR_DOCUMENT_BYTES - 3);
+        text.insert(MAX_EDITOR_CHUNK_BYTES - 1, '한');
+        let (id, target) = metadata(text.len());
+        let mut sender = EditorTransferSender::new(id.clone(), target.clone()).unwrap();
+        let mut receiver = EditorTransferReceiver::new(id, target.clone()).unwrap();
+        let mut chunks = 0;
+        let mut frames = 0;
+        let mut result = None;
+        while let Some(frame) = sender.next_frame(&target, &text).unwrap() {
+            if let EditorTransfer::Chunk { index, bytes, .. } = &frame {
+                assert_eq!(usize::from(*index), chunks, "each frame advances one chunk");
+                assert!(bytes.len() <= MAX_EDITOR_CHUNK_BYTES);
+                chunks += 1;
+            }
+            let delivered = receiver.receive(&frame).unwrap();
+            if matches!(frame, EditorTransfer::Complete { .. }) {
+                result = delivered;
+            } else {
+                assert!(delivered.is_none(), "no prefix is visible before Complete");
+            }
+            frames += 1;
+            assert!(frames <= MAX_EDITOR_CHUNKS + 2);
+        }
+        assert_eq!(chunks, MAX_EDITOR_CHUNKS);
+        assert_eq!(frames, MAX_EDITOR_CHUNKS + 2);
+        assert_eq!(result.as_deref(), Some(text.as_str()));
+    }
+
+    #[test]
+    fn source_reset_aborts_an_incomplete_transfer_without_sending_new_bytes() {
+        let text = "a".repeat(MAX_EDITOR_CHUNK_BYTES + 1);
+        let (id, target) = metadata(text.len());
+        let mut sender = EditorTransferSender::new(id.clone(), target.clone()).unwrap();
+        assert!(matches!(
+            sender.next_frame(&target, &text).unwrap(),
+            Some(EditorTransfer::Begin { .. })
+        ));
+        assert!(matches!(
+            sender.next_frame(&target, &text).unwrap(),
+            Some(EditorTransfer::Chunk { index: 0, .. })
+        ));
+        let mut next = target;
+        next.reset += 1;
+        assert_eq!(
+            sender.next_frame(&next, &text),
+            Ok(Some(EditorTransfer::Abort { id }))
+        );
+        assert_eq!(sender.next_frame(&next, &text), Ok(None));
+    }
 
     #[test]
     fn a_one_mib_document_sends_only_the_changed_byte_and_caret_sends_nothing() {
