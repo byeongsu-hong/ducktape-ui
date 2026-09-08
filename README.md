@@ -551,3 +551,6 @@ See [rich text module views](examples/app-store/README.md#rich-text-module-views
 
 Tree mounted components initialize once per appearance and cancel their work on
 removal. See [component module lifetimes](examples/app-store/README.md#mounted-component-module-views).
+
+Tree `qr` copies UTF-8 or byte payloads and encoding/style options to the native
+host. See [QR module views](examples/app-store/README.md#qr-module-views).

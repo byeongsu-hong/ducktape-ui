@@ -1631,3 +1631,20 @@ pruning (the mounted counter remains 8 instead of restarting at 27). Codegen tes
 name the component call beneath lazy/host conditions and check guard unwind;
 disabling each guard accepts the forbidden expansion and fails the diagnostic
 assertion. All mutations are restored before final verification.
+
+### Tree QR evidence
+
+The construct table accepts QR nodes. The bundled `tests/qr-guest` uses runtime
+strings and binary data, normal and Micro versions, correction, sizes and colors.
+`bundled_qr_pixels_match_native_data_and_change_with_guest_payload` loads actual
+wasm, compares three matrices pixel-for-pixel with independent native QR widgets,
+and uses native button clicks to change and overflow the guest payload. It also
+requires nonzero code bounds and changed pixels, then zero layout for overflow.
+This establishes native rendering parity, not independent scanner verification.
+
+Red evidence: changing the host encoder's payload to `WRONG` fails the pixel
+comparison. Removing encoding-slot accounting fails the decoded-frame limit
+assertion (33 instead of 32). Truncating an over-budget payload fails the
+whole-payload assertion (`Some([97, 98])` instead of `None`). The frame test also
+checks the shared text-byte budget and sanitization idempotence; focused tests
+cover invalid versions, payload size, empty codes and bounded dimensions.

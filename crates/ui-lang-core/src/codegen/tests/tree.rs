@@ -455,13 +455,13 @@ fn a_sensor_compiles_to_a_sensor_node_with_size_handlers() {
 #[test]
 fn a_construct_the_wire_does_not_carry_fails_at_its_line() {
     let source = format!(
-        "app Demo\n{PALETTE}state\n  draft = \"\"\nview\n  col\n    text \"before\" @text-fg\n    qr draft\n"
+        "app Demo\n{PALETTE}state\n  draft = \"\"\nview\n  col\n    text \"before\" @text-fg\n    float x=1.0 y=2.0\n      text \"after\"\n"
     );
     let error = compile_for(&source, "demo.ice", Target::Tree).unwrap_err();
     let rendered = error.render("demo.ice");
     assert!(rendered.contains("E190"), "{rendered}");
     assert!(
-        rendered.contains("`qr code` is not available in a view module"),
+        rendered.contains("`float` is not available in a view module"),
         "{rendered}"
     );
     assert!(rendered.contains("demo.ice:17"), "{rendered}");
@@ -769,7 +769,7 @@ const COVERAGE: &[Coverage] = &[
         "  combo search choice \"Search\" -> choose _\n",
         "`combo box`",
     ),
-    refused("qr code", "", "  qr draft\n", "`qr code`"),
+    emitted("qr code", "", "  qr draft\n"),
     emitted(
         "keyed column",
         "",

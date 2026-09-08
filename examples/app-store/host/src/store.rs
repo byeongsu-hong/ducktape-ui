@@ -1589,3 +1589,7 @@ mod flex_tests;
 #[cfg(test)]
 #[path = "component_tests.rs"]
 mod component_tests;
+
+#[cfg(test)]
+#[path = "qr_tests.rs"]
+mod qr_tests;

@@ -32,6 +32,7 @@ mod lists;
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
 mod memo;
+mod qr;
 mod rich_text;
 mod text;
 mod tooltip;
@@ -410,6 +411,7 @@ fn collect_inputs(
             ..
         } => collect_inputs(child, into, editors),
         wire::Node::Button { .. }
+        | wire::Node::Qr { .. }
         | wire::Node::RichText { .. }
         | wire::Node::Text { .. }
         | wire::Node::Svg { .. }
@@ -493,6 +495,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures) {
         } => collect_pictures(child, into),
         wire::Node::Button { .. }
         | wire::Node::Svg { .. }
+        | wire::Node::Qr { .. }
         | wire::Node::RichText { .. }
         | wire::Node::Text { .. }
         | wire::Node::Input { .. }
@@ -1493,6 +1496,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .into()
         }
         wire::Node::Text { .. } => text::render(node),
+        wire::Node::Qr { key, code } => qr::render(key, code),
         wire::Node::RichText { .. } => rich_text::render(node),
         wire::Node::Svg {
             inherit_button_ink,

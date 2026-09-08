@@ -445,7 +445,7 @@ For module packaging requirements and the connected implementation phases, see
   60 seconds and both children share the frame budgets.
 
 - The wire carries `box`, `mouse`, `col`/`row`, `keyed`, `lazy`, `flex`, `pin`, `grid`, `stack`, `hover`, `overlay`, `scroll`, `sensor`, `responsive`,
-  `text`, `rich-text`, `tooltip`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
+  `text`, `rich-text`, `qr`, `tooltip`, `svg`, `canvas`, `input`, `editor`, `button`, `space`, `rule`, `checkbox`, `toggler`,
   `slider`, `pick` and `progress`, with `if`/`for`/`match` around them, and an
   `extern` widget as a host surface: the host paints the region under the
   extern's name (`clock_face` is the one this store paints, with a sweeping
@@ -1084,3 +1084,22 @@ Bundle `app-store-component-fixture` to `target/component-fixture` from this
 workspace, then run `cargo test -p app-store-host bundled_component_ -- --ignored`.
 The tests use native clicks to distinguish mounted and retained counters, and
 exercise pending request cancellation, obsolete replies and separate instances.
+
+## QR module views
+
+Tree `qr` sends copied string or byte data to the native host for encoding.
+Correction levels, automatic or normal/micro versions, cell/total sizes and
+cell/background colors use the native QR widget. Payloads that cannot encode
+have zero layout. Limits drop whole payloads rather than encode partial data:
+8192 bytes per code, the shared frame text budget, and 32 encodings per frame.
+Hosts and guests must rebuild together for the `Qr` wire variant.
+
+The `tests/qr-guest` wasm fixture compares rendered pixels with independently
+constructed native QR widgets for a normal code, a green version-4 High code,
+and a binary Micro-4 Low code. Native Change clicks update the guest payload
+and matrix; Overflow removes the oversized codes. CI bundles and runs
+`cargo test --locked -p app-store-host bundled_qr_ -- --ignored`.
+
+![QR fixture: normal, fixed-version and binary Micro codes](docs/tree-qr.png)
+
+Captured on Linux with TinySkia, Light theme, at 600×600 in the default state.

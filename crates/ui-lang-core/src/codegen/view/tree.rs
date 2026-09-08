@@ -44,6 +44,7 @@ mod lists;
 pub(super) use flex::item_code as flex_item_code;
 pub(super) use lists::keyed_column;
 mod pin;
+mod qr;
 mod responsive;
 mod rich_text;
 mod text;
@@ -92,6 +93,13 @@ pub(in crate::codegen) fn render_tree_node(
         ResolvedViewKind::Text | ResolvedViewKind::RichText => {
             text(node, identity, document, message, env, scope)?
         }
+        ResolvedViewKind::QrCode => qr::render(
+            document.resolved_qr_code(node)?,
+            identity,
+            document,
+            env,
+            scope,
+        )?,
         ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,
         ResolvedViewKind::TextEditor => editor(node, identity, document, message, env, scope)?,

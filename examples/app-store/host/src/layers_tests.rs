@@ -137,7 +137,7 @@ pub(super) fn click(ui: &mut Ui, renderer: &mut iced::Renderer, label: &str) {
     );
 }
 
-fn container_bounds(ui: &mut Ui, renderer: &iced::Renderer, key: &str) -> Rectangle {
+pub(super) fn container_bounds(ui: &mut Ui, renderer: &iced::Renderer, key: &str) -> Rectangle {
     struct Find<'a>(&'a str, Option<Rectangle>);
     impl Operation for Find<'_> {
         fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {

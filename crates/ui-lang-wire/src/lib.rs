@@ -31,6 +31,8 @@ pub use flex::{
 
 mod tooltip;
 pub use tooltip::{TooltipPosition, TooltipPreset, TooltipStyle};
+mod qr;
+pub use qr::{MAX_QR_CODES, MAX_QR_PAYLOAD_BYTES, Qr, QrCorrection, QrSize, QrVersion};
 mod rich_text;
 mod text;
 pub use rich_text::RichSpan;
@@ -490,6 +492,8 @@ pub enum ButtonContent {
 /// the accessibility tree.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Node {
+    /// A payload encoded and painted by the host.
+    Qr { key: String, code: Qr },
     /// Styled spans form one native paragraph; link clicks carry a String handler payload.
     RichText {
         key: String,
@@ -972,6 +976,7 @@ impl Node {
             | Self::When { key, .. }
             | Self::Sensor { key, .. }
             | Self::Scroll { key, .. }
+            | Self::Qr { key, .. }
             | Self::RichText { key, .. }
             | Self::Text { key, .. }
             | Self::Svg { key, .. }
@@ -1022,6 +1027,7 @@ impl Node {
                 ..
             } => std::slice::from_ref(child),
             Self::Button { .. }
+            | Self::Qr { .. }
             | Self::RichText { .. }
             | Self::Text { .. }
             | Self::Svg { .. }
@@ -1071,6 +1077,7 @@ impl Node {
                 ..
             } => std::slice::from_mut(child),
             Self::Button { .. }
+            | Self::Qr { .. }
             | Self::RichText { .. }
             | Self::Text { .. }
             | Self::Input { .. }
@@ -1110,6 +1117,7 @@ impl Node {
             | Self::MouseArea { .. }
             | Self::Scroll { .. }
             | Self::Button { .. }
+            | Self::Qr { .. }
             | Self::RichText { .. }
             | Self::Text { .. }
             | Self::Input { .. }
@@ -1238,6 +1246,7 @@ fn sanitize_tree(root: &mut Node) {
         svg: MAX_SVG_BYTES_PER_FRAME,
         surface_values: MAX_SURFACE_VALUES,
         canvas_parts: MAX_CANVAS_PARTS,
+        qr_codes: MAX_QR_CODES,
     };
     let mut taken = Taken::new();
     sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
@@ -1495,6 +1504,7 @@ fn claim(key: &mut String, taken: &mut Taken) {
 
 /// What is left of a frame's per-frame byte budgets while its tree is walked.
 struct Budgets {
+    qr_codes: usize,
     canvas_parts: usize,
     surface_values: usize,
     text: usize,
@@ -1740,6 +1750,10 @@ fn sanitize_node(
             }
             bound_color(background);
             bound_border(border);
+        }
+        Node::Qr { key, code } => {
+            claim(key, taken);
+            code.sanitize(&mut budgets.text, &mut budgets.qr_codes);
         }
         Node::RichText {
             key,
@@ -2130,7 +2144,8 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Toggle { width, .. }
         | Node::Radio { width, .. }
         | Node::PickList { width, .. } => vec![width],
-        Node::Rule { .. }
+        Node::Qr { .. }
+        | Node::Rule { .. }
         | Node::Lazy { .. }
         | Node::Flex { .. }
         | Node::Sensor { .. }
