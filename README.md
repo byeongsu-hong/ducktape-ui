@@ -801,3 +801,8 @@ shipped component as proof of every screen-level behavior.
 For ordinary screen content, the default library's `Page` supplies a customizable
 24px outer inset. Surface components retain their own interior padding; Form
 already owns its screen padding. See the [page and surface guidance](crates/ui-lang-components/README.md#page-edges-and-surface-padding).
+
+Tree display text retains the existing 64 KiB aggregate budget. Actual sanitizer
+loss now produces a typed report on full frames and applied patches; app-store
+logs it once per module installation generation. Producer reports remain distinct
+from host observations. Editable `Editor` document loss still rejects the frame.

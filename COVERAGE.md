@@ -2357,3 +2357,24 @@ Captures use scale 1, en-US, Linux and reduced motion, and are stored under
 `examples/showcase/screenshots/action-layout` and `page-insets`. This establishes
 explicit Page and Panel geometry, not automatic margins on arbitrary widgets,
 system safe-area handling, or a completed audit of every surface.
+
+### Display text budget reports
+
+Wire tests exercise actual aggregate Text/RichText and nested Surface string loss, intentional patch
+removal, within-budget controls, and producer reports surviving encoding and a
+second sanitizer pass. Host tests cover provenance-specific warning deduplication
+and fresh installation state. The `text-budget-guest` fixture drives native and
+Wasm guests through a within-budget timeline, an oversized patch, subsequent
+patch/unchanged frames, and a reload candidate whose first full frame is shortened.
+The integration oracle checks host-observed reports without a producer flag and
+preservation across successful installation. Limits are unchanged; the editor
+loss rejection tests remain required.
+
+Run `cargo test -p ui-lang-wire` and, after bundling the fixture for both backends,
+`cargo test -p app-store-host display_diagnostics -- --include-ignored --test-threads=1 --nocapture`.
+CI also asserts the emitted transcript: two distinct successful installation
+generations per backend, each with one `origin=host` warning. For Red evidence,
+forcing the sanitizer report to false fails `actual shortened text must be
+reported`; dropping the prepared candidate report fails the actual reload oracle
+at `candidate's already-sanitized first full frame carries its local report into
+installation`. Both mutations are restored for Green.

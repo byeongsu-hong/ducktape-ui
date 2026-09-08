@@ -921,6 +921,7 @@ fn gen_frame_with(rng: &mut Rng, depth: usize, width: usize) -> Frame {
         .collect();
     let cancels = (0..rng.next_range(4)).map(|_| rng.next_u64()).collect();
     Frame {
+        upstream_sanitization: Default::default(),
         editor_decisions: Vec::new(),
         mouse_interest: rng.next_bool(),
         root: Some(root),
@@ -2431,7 +2432,7 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
                 "{ctx}: a structurally valid sequence was refused: {outcome:?}"
             );
             match outcome {
-                Ok(()) => {
+                Ok(_) => {
                     let checked = Frame {
                         root: Some(root),
                         ..Frame::default()
@@ -2499,7 +2500,7 @@ fn a_diff_applied_to_the_old_tree_is_the_new_tree_for_random_pairs() {
                         let patch = gen_patch(&mut rng, &edited, false);
                         let mut candidate = edited.clone();
                         match ui_lang_wire::apply(&mut candidate, vec![patch]) {
-                            Ok(()) => edited = candidate,
+                            Ok(_) => edited = candidate,
                             Err(
                                 "editor document exceeds text limit"
                                 | "frame budget would truncate an editor document",
@@ -2517,7 +2518,7 @@ fn a_diff_applied_to_the_old_tree_is_the_new_tree_for_random_pairs() {
             let count = patches.len();
             let mut applied = old;
             match ui_lang_wire::apply(&mut applied, patches) {
-                Ok(()) => assert_eq!(applied, new, "{ctx}: {count} patches"),
+                Ok(_) => assert_eq!(applied, new, "{ctx}: {count} patches"),
                 Err(refused) => assert!(
                     count > MAX_PATCHES && refused == "more patches than the host applies",
                     "{ctx}: {count} patches refused: {refused}"

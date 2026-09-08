@@ -25,12 +25,15 @@
 pub mod authored;
 /// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
 /// This is independent of WIT signatures and the manifest text format.
-pub const WIRE_EPOCH: u32 = 1;
+pub const WIRE_EPOCH: u32 = 2;
 
 pub mod manifest;
 pub mod native;
 mod wit;
 pub use wit::WIT;
+
+mod sanitization;
+pub use sanitization::SanitizeReport;
 
 use serde::{Deserialize, Serialize};
 
@@ -230,6 +233,9 @@ pub struct Request {
 /// `root` empty and `unchanged` clear.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
+    /// Advisory producer report, sticky when a producer sanitizes before encoding.
+    /// Receivers must independently sanitize the received whole/applied tree.
+    pub upstream_sanitization: SanitizeReport,
     #[serde(deserialize_with = "editor_transaction::decode_responses")]
     pub editor_decisions: Vec<EditorResponse>,
     /// The current subscription requests guest-local mouse observations.
@@ -1445,21 +1451,101 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 /// one nested deeper than this walk goes. A frame that carries `patches`
 /// instead of a tree is bounded by [`apply`], since every bound is on the
 /// tree the patches make and only the host holds it.
-pub fn sanitize(frame: &mut Frame) -> Result<(), &'static str> {
-    if let Some(root) = &mut frame.root {
-        sanitize_tree(root)?;
-    }
+pub fn sanitize(frame: &mut Frame) -> Result<SanitizeReport, &'static str> {
+    let report = if let Some(root) = &mut frame.root {
+        sanitize_tree(root)?
+    } else {
+        SanitizeReport::default()
+    };
+    frame.upstream_sanitization.merge(report);
     for request in &mut frame.requests {
         truncate_string(&mut request.kind);
     }
-    Ok(())
+    Ok(report)
 }
 
 // Sanitization may shorten display text, but never an authoritative document.
-fn editor_lengths(root: &Node) -> Result<Vec<usize>, &'static str> {
+fn text_amounts(root: &Node) -> Result<(Vec<usize>, usize), &'static str> {
     let mut pending = vec![root];
+    let mut surface_values = Vec::new();
     let mut lengths = Vec::new();
+    let mut display = 0usize;
     while let Some(node) = pending.pop() {
+        let mut add = |text: &str| display = display.saturating_add(text.len());
+        match node {
+            Node::Text { content, .. } => add(content),
+            Node::RichText { spans, .. } => {
+                for span in spans {
+                    add(&span.content);
+                }
+            }
+            Node::Input {
+                value,
+                placeholder,
+                options,
+                ..
+            } => {
+                add(value);
+                add(placeholder);
+                add(&options.label);
+                if let Some(description) = &options.description {
+                    add(description);
+                }
+            }
+            Node::Editor { placeholder, .. } => add(placeholder),
+            Node::Image { label, .. }
+            | Node::ImageViewer { label, .. }
+            | Node::Svg { label, .. } => {
+                if let Some(label) = label {
+                    add(label);
+                }
+            }
+            // Unknown surfaces display their name in the native placeholder.
+            Node::Surface { name, args, .. } => {
+                add(name);
+                surface_values.extend(args);
+            }
+            Node::Button {
+                content,
+                label,
+                description,
+                ..
+            } => {
+                if let ButtonContent::Label(text) = content {
+                    add(text);
+                }
+                if let Some(label) = label {
+                    add(label);
+                }
+                if let Some(description) = description {
+                    add(description);
+                }
+            }
+            Node::Toggle { label, .. } | Node::Radio { label, .. } => add(label),
+            Node::ComboBox {
+                options,
+                placeholder,
+                ..
+            } => {
+                for option in options {
+                    add(option);
+                }
+                add(placeholder);
+            }
+            Node::PickList {
+                options,
+                placeholder,
+                ..
+            } => {
+                for option in options {
+                    add(option);
+                }
+                if let Some(placeholder) = placeholder {
+                    add(placeholder);
+                }
+            }
+            _ => {}
+        }
         if let Node::Editor { text, .. } = node {
             if text.len() > MAX_STRING_BYTES {
                 return Err("editor document exceeds text limit");
@@ -1468,11 +1554,28 @@ fn editor_lengths(root: &Node) -> Result<Vec<usize>, &'static str> {
         }
         pending.extend(node.children());
     }
-    Ok(lengths)
+    // Surface strings share the display budget (for example a code preview).
+    // Record/type names are routing metadata, not the textual payload itself.
+    while let Some(value) = surface_values.pop() {
+        match value {
+            SurfaceValue::Str(text) => display = display.saturating_add(text.len()),
+            SurfaceValue::List(items) => surface_values.extend(items),
+            SurfaceValue::Option(Some(item)) => surface_values.push(item.as_ref()),
+            SurfaceValue::Record { fields, .. } => {
+                surface_values.extend(fields.iter().map(|(_, value)| value));
+            }
+            SurfaceValue::Unit
+            | SurfaceValue::Bool(_)
+            | SurfaceValue::I64(_)
+            | SurfaceValue::F64(_)
+            | SurfaceValue::Option(None) => {}
+        }
+    }
+    Ok((lengths, display))
 }
 
-fn sanitize_tree(root: &mut Node) -> Result<(), &'static str> {
-    let documents = editor_lengths(root)?;
+fn sanitize_tree(root: &mut Node) -> Result<SanitizeReport, &'static str> {
+    let (documents, before) = text_amounts(root)?;
     let mut budget = MAX_NODES;
     let mut budgets = Budgets {
         text: MAX_TEXT_BYTES_PER_FRAME,
@@ -1483,10 +1586,13 @@ fn sanitize_tree(root: &mut Node) -> Result<(), &'static str> {
     };
     let mut taken = Taken::new();
     sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
-    if editor_lengths(root)? != documents {
+    let (after_documents, after) = text_amounts(root)?;
+    if after_documents != documents {
         return Err("frame budget would truncate an editor document");
     }
-    Ok(())
+    Ok(SanitizeReport {
+        display_text_truncated: after < before,
+    })
 }
 
 /// The most patches one frame may carry. A diff of a tree the host holds
@@ -1506,15 +1612,14 @@ pub const MAX_PATCHES: usize = 1024;
 /// whose arity is not the node's, or more patches than [`MAX_PATCHES`]. The
 /// tree is then part-way through the sequence and not one the guest ever
 /// sent: the host drops it and asks for a whole one with [`Event::Resync`].
-pub fn apply(root: &mut Node, patches: Vec<Patch>) -> Result<(), &'static str> {
+pub fn apply(root: &mut Node, patches: Vec<Patch>) -> Result<SanitizeReport, &'static str> {
     if patches.len() > MAX_PATCHES {
         return Err("more patches than the host applies");
     }
     for patch in patches {
         apply_one(root, patch)?;
     }
-    sanitize_tree(root)?;
-    Ok(())
+    sanitize_tree(root)
 }
 
 fn apply_one(root: &mut Node, patch: Patch) -> Result<(), &'static str> {
@@ -2710,6 +2815,121 @@ mod tests {
     }
 
     #[test]
+    fn actual_display_truncation_report_survives_encoding_and_resanitizing() {
+        let mut frame = Frame {
+            root: Some(text(&"x".repeat(MAX_STRING_BYTES + 1))),
+            ..Default::default()
+        };
+        let report = sanitize(&mut frame).unwrap();
+        assert!(
+            report.display_text_truncated,
+            "actual shortened text must be reported"
+        );
+        assert_eq!(frame.upstream_sanitization, report);
+        let mut received: Frame = decode(&encode(&frame)).unwrap();
+        assert!(
+            !sanitize(&mut received).unwrap().display_text_truncated,
+            "receiver observes no additional shortening"
+        );
+        assert!(
+            received.upstream_sanitization.display_text_truncated,
+            "producer loss cannot disappear across a wire hop"
+        );
+        let mut small = Frame {
+            root: Some(text("complete")),
+            ..Default::default()
+        };
+        assert_eq!(sanitize(&mut small).unwrap(), SanitizeReport::default());
+        assert_eq!(small.upstream_sanitization, SanitizeReport::default());
+    }
+
+    #[test]
+    fn text_passed_to_a_host_surface_reports_actual_loss() {
+        let mut frame = Frame {
+            root: Some(Node::Surface {
+                key: "preview".into(),
+                name: "forge_code".into(),
+                args: vec![SurfaceValue::Record {
+                    name: "Preview".into(),
+                    fields: vec![(
+                        "text".into(),
+                        SurfaceValue::Option(Some(Box::new(SurfaceValue::List(vec![
+                            SurfaceValue::Str("x".repeat(MAX_STRING_BYTES)),
+                        ])))),
+                    )],
+                }],
+                on_event: None,
+            }),
+            ..Default::default()
+        };
+        assert!(
+            sanitize(&mut frame).unwrap().display_text_truncated,
+            "surface text spends the same frame budget and its loss must be reported"
+        );
+        assert!(!sanitize(&mut frame).unwrap().display_text_truncated);
+    }
+
+    #[test]
+    fn applied_aggregate_text_and_rich_text_loss_is_reported_but_removal_is_not() {
+        let rich = Node::RichText {
+            key: "rich".into(),
+            spans: vec![RichSpan {
+                content: "y".repeat(MAX_TEXT_BYTES_PER_FRAME / 2),
+                ..Default::default()
+            }],
+            size: None,
+            color: None,
+            font: Font::default(),
+            width: None,
+            align_x: None,
+            options: Default::default(),
+            on_link: None,
+        };
+        let mut root = Node::Linear {
+            key: "root".into(),
+            axis: Axis::Column,
+            max_width: None,
+            clip: false,
+            wrap: None,
+            spacing: None,
+            padding: None,
+            width: None,
+            height: None,
+            align: None,
+            background: None,
+            border: None,
+            children: vec![text(&"x".repeat(MAX_TEXT_BYTES_PER_FRAME / 2 + 1))],
+        };
+        let report = apply(
+            &mut root,
+            vec![Patch::Insert {
+                path: vec![],
+                index: 1,
+                node: rich,
+            }],
+        )
+        .unwrap();
+        assert!(
+            report.display_text_truncated,
+            "each node fits, but the applied aggregate loses tail text"
+        );
+        let (_, bytes) = text_amounts(&root).unwrap();
+        assert_eq!(bytes, MAX_TEXT_BYTES_PER_FRAME);
+        let report = apply(
+            &mut root,
+            vec![Patch::Remove {
+                path: vec![],
+                index: 0,
+            }],
+        )
+        .unwrap();
+        assert!(
+            !report.display_text_truncated,
+            "intentional removal precedes the measured sanitizer pass"
+        );
+    }
+
+    #[test]
     fn shadow_sanitization_preserves_signed_offsets_and_bounds_untrusted_values() {
         let mut shadow = Shadow {
             color: Some(Rgba([f32::NAN, -1.0, 2.0, 0.5])),
@@ -2865,6 +3085,7 @@ mod tests {
     #[test]
     fn a_frame_round_trips() {
         let frame = Frame {
+            upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
             mouse_interest: true,
             root: Some(column(vec![
@@ -3521,6 +3742,7 @@ mod tests {
     #[test]
     fn bytes_a_hostile_guest_could_write_are_answered_not_survived() {
         let sound = encode(&Frame {
+            upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
             mouse_interest: false,
             root: Some(column(vec![text("hello"), Node::empty()])),

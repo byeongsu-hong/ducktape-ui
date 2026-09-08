@@ -1496,3 +1496,10 @@ python3 examples/app-store/scripts/build-native.py \
 cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host \
   wire_epoch -- --include-ignored
 ```
+
+Display text budget diagnostics cover both native executables and Wasm guests.
+The host reports actual full-frame or applied-patch text loss once per installation
+generation, with separate provenance for advisory producer reports. Reports persist
+with a shortened tree through later patches and are preserved when a validated
+reload candidate is installed. The limits remain 64 KiB per string and 64 KiB of
+aggregate shaped text; editor-document loss is a rejected frame, not a warning.

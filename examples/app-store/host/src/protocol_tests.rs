@@ -53,7 +53,7 @@ fn draft(guest: &mut Guest, text: Option<&str>) -> String {
             }]
         })
         .unwrap_or_default();
-    let mut frame = guest.tick_inner(&wire::encode(&events)).unwrap();
+    let (mut frame, _) = guest.tick_inner(&wire::encode(&events)).unwrap();
     merge(&mut guest.frame.root, &mut frame).unwrap();
     guest.frame = frame;
     input(guest.frame.root.as_ref().unwrap()).unwrap().1
