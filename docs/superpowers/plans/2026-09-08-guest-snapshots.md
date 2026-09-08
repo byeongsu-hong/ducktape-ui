@@ -45,7 +45,7 @@ fn __restore(bytes: &[u8]) -> Result<Self, String>;
 
 ## Task 2: Driver and component exports
 
-**Files:** `crates/ui-lang-guest/src/snapshot.rs`, `lib.rs`, `wit/view.wit`.
+**Files:** `crates/ui-lang-guest/src/snapshot.rs`, `lib.rs`, `crates/ui-lang-wire/src/wit.rs`.
 
 **Interfaces:**
 ```rust

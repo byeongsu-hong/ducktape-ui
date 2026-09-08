@@ -21,6 +21,10 @@
 //! drop silently. A host that reads a frame from an untrusted module runs
 //! [`sanitize`] first.
 
+pub mod manifest;
+mod wit;
+pub use wit::WIT;
+
 use serde::{Deserialize, Serialize};
 
 mod snapshot;

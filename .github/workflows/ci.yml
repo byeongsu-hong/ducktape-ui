@@ -123,6 +123,8 @@ jobs:
           rustc --edition=2024 -D warnings --test scripts/native-wgpu-smoke.rs -o target/native-wgpu-smoke-tests
           target/native-wgpu-smoke-tests
       - run: cargo test --workspace --locked
+      - name: Verify standalone view metadata
+        run: cargo test --locked -p ui-lang-wire --no-default-features --features manifest
 
   performance:
     name: Performance contracts
@@ -713,7 +715,9 @@ jobs:
         run: cargo test --locked -p app-store-host bundled_preferred_size_ -- --ignored
       - name: Run the surface boundary in wasm
         working-directory: examples/app-store
-        run: cargo test --locked -p app-store-host --test surface_routes -- --ignored
+        run: |
+          cargo test --locked -p app-store-host --test surface_routes
+          cargo test --locked -p app-store-host --test surface_routes -- --ignored
 
   native-bundle-resources:
     name: Native bundle resources (${{ matrix.os }})

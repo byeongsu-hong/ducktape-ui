@@ -1349,3 +1349,20 @@ host `manifest_format_and_preferred_size_are_strict`,
 `preferred_window_settings_choose_saved_declared_then_default`, and the actual
 wasm `bundled_preferred_size_reaches_initial_native_open` test documented in
 [the app-store guide](examples/app-store/README.md#preferred-window-size-evidence).
+
+
+Hosts can consume the Ice view contract without a graphics dependency through
+`ui-lang-wire`. `WIT` exposes the canonical text; `with_view_wit!(callback)`
+passes that same literal to a local macro for Wasmtime or wit-bindgen's `inline`
+option. `export_app!` retains its four arguments and the same `ice:view` ABI.
+`manifest::Manifest::parse` reads the strict five-line metadata;
+`manifest::PreferredSize::dimensions` returns `[f32; 2]`. The optional `manifest`
+feature adds `manifest::read_manifest` for extracting exactly one manifest from
+component bytes, including nested core modules. Neither the default dependency
+set nor this feature enables iced or a renderer.
+
+Metadata extraction does not validate executable code. Hosts can compile the
+component, resolve imports with `Linker::instantiate_pre`, and check exports
+with the generated `ViewPre::new` without creating a store or running the guest.
+This checks required ABI types; it is not proof that instantiation, init, or boot
+will succeed. Import policy remains the host's responsibility.

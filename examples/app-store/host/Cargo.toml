@@ -8,10 +8,9 @@ publish = false
 iced = { workspace = true, features = ["smol"] }
 ui-lang.workspace = true
 ui-lang-runtime = { workspace = true, features = ["full-runtime"] }
-ui-lang-wire.workspace = true
+ui-lang-wire = { workspace = true, features = ["manifest"] }
 ui-lang-components = { path = "../../../crates/ui-lang-components", features = ["terminal"] }
 wasmtime = { version = "46", default-features = false, features = ["cranelift", "runtime", "cache", "parallel-compilation", "component-model"] }
-wasmparser = "0.251"
 sha2 = "0.10"
 getrandom = "0.3"
 
@@ -25,6 +24,7 @@ ui-lang-runtime = { workspace = true, features = ["x11"] }
 # building the host's own unit tests needs the feature that provides it. It
 # is a dev-dependency: the shipped binary never links it.
 [dev-dependencies]
+wat = "1"
 iced_test = "=0.14.0"
 ui-lang-runtime = { workspace = true, features = ["test-runtime"] }
 
