@@ -1,5 +1,7 @@
 state
-  catalog:[CatalogEntry] = scan_catalog()
+  catalog:[CatalogEntry] = []
+  catalog_ready = false
+  catalog_scanning = false
   catalog_path:str = catalog_dir()
   // What the user has installed: ids pinned to the hash of the module that
   // was consented to, persisted by the library helpers.
@@ -9,6 +11,8 @@ state
   // in the order they were asked for.
   running:[Running] = []
   opening:[Loaded] = []
+  // A newer install, removal or window close invalidates staged replacements.
+  reload_serial = 0
   store_window:window-id? = none
   // Where each app's window was last seen, so it opens there again; saved
   // once a second while anything runs, and when a window closes.

@@ -1298,9 +1298,15 @@ Hosts must deliver pending UI events first. Busy frames, deferred component boot
 and any live Task (including long-running Task streams) reject capture. Tracker
 subscriptions restart from restored state on the next tick. The replacement's
 first tick sends a complete tree and new routes. Rebuild hosts and guests for the
-extended component interface. Export support does not implement catalog watching
-or transactional host replacement: preserving host windows, native focus/scroll,
-resource/consent boundaries and rejecting stale replies remains host work.
+extended component interface. The app-store host polls its local catalog on the
+executor and replaces an explicitly approved running artifact in the same Surface
+and window. It stages snapshot/restore and a complete first frame before the UI
+thread checks request serial, current window/instance and unchanged guest ticks.
+Failed or stale candidates preserve the old guest and consent hash. Keyed native
+focus/scroll and permitted host resources survive; removed terminal permission
+removes its provider. Staged requests dispatch before their cancellations and
+platform effects, and old instance input routes are refused. This host policy is
+separate from the guest exports; it does not migrate incompatible state schemas.
 
 ### Tree scroll offsets
 

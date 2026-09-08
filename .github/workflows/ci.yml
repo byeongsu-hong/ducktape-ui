@@ -612,6 +612,19 @@ jobs:
       - name: Verify mounted guest component lifetime
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host store::component_tests -- --ignored
+      - name: Bundle both hot reload versions
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-reload-v1-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/reload-v1-fixture
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-reload-v2-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/reload-v2-fixture
+      - name: Verify transactional replacement in the mounted host
+        working-directory: examples/app-store
+        env:
+          APP_STORE_DATA: ${{ runner.temp }}/app-store-reload-tests
+        run: cargo test --locked -p app-store-host bundled_reload_ -- --ignored --test-threads=1
       - name: Verify host container rules and native input through wasm
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host bundled_responsive_ -- --ignored

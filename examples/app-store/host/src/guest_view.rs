@@ -4,6 +4,7 @@
 //! as the guest's own events. A guest the host had to end shows why, with
 //! the one button that can bring it back.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use iced::advanced::widget::{Operation, Tree, tree};
@@ -24,7 +25,7 @@ mod keyboard;
 /// guest hears about through its theme subscription.
 pub fn wasm_view(surface: Surface, dark: bool) -> Element<'static, String> {
     let guest = surface.0;
-    let (content, rev) = {
+    let (content, rev, instance) = {
         let locked = guest.lock().expect("guest lock");
         if let Some(fault) = &locked.fault {
             return fault_view(fault);
@@ -37,15 +38,21 @@ pub fn wasm_view(surface: Surface, dark: bool) -> Element<'static, String> {
         (
             view_tree::render(&root, &locked.inputs, &locked.pictures, &locked.surfaces),
             locked.frame_rev,
+            locked.alive.clone(),
         )
     };
     let overlay_guest = guest.clone();
+    let overlay_instance = instance.clone();
     Element::new(GuestView {
         overlay_output: Box::new(move |output| {
-            overlay_guest.lock().expect("guest lock").deliver(output);
+            let mut guest = overlay_guest.lock().expect("guest lock");
+            if Arc::ptr_eq(&guest.alive, &overlay_instance) {
+                guest.deliver(output);
+            }
             "wake".to_owned()
         }),
         guest,
+        instance,
         rev,
         dark,
         content,
@@ -72,6 +79,7 @@ fn fault_view(fault: &str) -> Element<'static, String> {
 struct GuestView {
     overlay_output: Box<dyn Fn(Output) -> String>,
     guest: Arc<Mutex<Guest>>,
+    instance: Arc<AtomicBool>,
     /// The frame this element was rendered from.
     rev: u64,
     dark: bool,
@@ -135,6 +143,11 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
         shell: &mut Shell<'_, String>,
         viewport: &Rectangle,
     ) {
+        if !self.instance.load(Ordering::Relaxed) {
+            shell.invalidate_widgets();
+            shell.publish("wake".into());
+            return;
+        }
         // The tree's widgets speak `Output`; what they say is the guest's,
         // not the store's, so it is diverted rather than mapped. Everything
         // else the local shell collected — a redraw request, a captured
@@ -164,6 +177,11 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
             shell.input_method_mut().merge(local.input_method());
         }
         let mut guest = self.guest.lock().expect("guest lock");
+        if !Arc::ptr_eq(&guest.alive, &self.instance) {
+            shell.invalidate_widgets();
+            shell.publish("wake".into());
+            return;
+        }
         if let Event::Window(window::Event::Resized(_)) = event {
             guest.window_resized();
         }
@@ -282,6 +300,7 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
                 keyboard::wrap(
                     overlay.map(self.overlay_output.as_ref()),
                     self.guest.clone(),
+                    self.instance.clone(),
                 )
             })
     }

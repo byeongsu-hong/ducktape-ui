@@ -590,6 +590,11 @@ modifier convention; see [keyboard module views](examples/app-store/README.md#ke
 Tree `task widget scroll-to-key` reveals a keyed virtual row inside the requesting
 guest, using the host’s native measured-row positioning.
 
+The app-store host polls local artifacts asynchronously and replaces an explicitly
+approved rebuild in its existing window, preserving compatible guest state and
+keyed native focus/scroll. Failed or stale candidates retain the old instance and
+consent pin. See [approved host replacement](examples/app-store/README.md#approved-host-replacement).
+
 Tree guests export bounded `snapshot` / `restore` state transfer, including
 retained/mounted components, without replaying boot. See
 [guest snapshots](examples/app-store/README.md#guest-state-snapshots) for supported

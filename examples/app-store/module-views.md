@@ -86,9 +86,9 @@ that binary into an isolated view package.
   observable parity, including unknown-surface placeholders.
 - **Reload:** `ice:view` now exports bounded snapshot/restore alongside init/tick.
   The generated codec preserves owned root/component state without replaying boot.
-  Host replacement still must
-  preserve serializable UI state, rebuild handler tables and subscriptions,
-  invalidate stale events and respect the installed artifact commitment.
+  The example host now preserves serializable UI state in the same window,
+  rebuilds handler tables and subscriptions, invalidates stale events and
+  respects the installed artifact commitment; downstream hosts need the same contract.
   Restoring a view must not replay submissions or retain native resource
   pointers. The host keeps its window and replaces a guest only after the
   replacement can restore successfully; an incompatible snapshot needs an
@@ -104,7 +104,7 @@ that binary into an isolated view package.
 | 4a — actual app layouts first | stack/hover/overlay and wrapping rows/columns and tooltip implemented with native host routing and modal lifecycle; keyed/virtual rows, lazy caching and native flex layouts implemented; pin implemented with native local offsets. Preserve union sizing, hit routing, identity, virtualization and scroll behavior. | Representative chat list and menus, page overlay, file/forge list; reorder/edit/scroll assertions and frame measurements, not compile-only coverage. |
 | 4b — remaining content/layout/style | rich text and host-encoded QR implemented; markdown/image/combo, table/pane grid/theme/themer/float/resize handle and remaining supported surface shapes. | Per-feature native/wire behavior checks and real wasm bundle builds; preserve intentional rejection of native callbacks. |
 | Runtime alongside 3–4 | Clipboard Tasks and checked widget focus/selection/scroll requests implemented through the mounted host; guest component mount/unmount and boot implemented; host-delivered keyboard subscriptions and platform modifiers implemented; window requests, mouse/IME/window subscriptions, assets and host context remain. | Focus/scroll/copy, keyboard and cancellation driven through a real host boundary; separate guest instances cannot affect one another. |
-| Hot reload after state/lifecycle boundary | Generated snapshot/restore exports implemented; catalog watch and transactional replacement in the example host remain. | Same window and UI draft survive replacement; failure retains usable old instance; no duplicated side effects, stale routes or leaked subscriptions. |
+| Hot reload after state/lifecycle boundary | Generated snapshot/restore exports, asynchronous catalog polling and consent-aware transactional replacement are implemented in the example host; module integrations retain the same Surface handle and route intents into its current instance. | Same window and UI draft survive replacement; failure retains usable old instance; no duplicated side effects, stale routes or leaked subscriptions. |
 | Ducktape integration — application owner | Three guest roots and file-based mounts exist. Extract the remaining roots, bind real capabilities/surfaces, add view to module artifact and build/hydration/activation paths, and mount from module packages. | Every existing module-owned screen builds and runs from its package; no wasm embedded in desktop binary; module+index+view hash/activation/removal agree; real workflows and permissions pass. |
 
 The two goals are compatible, but widget coverage counts do not measure

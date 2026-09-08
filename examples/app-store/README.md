@@ -408,9 +408,8 @@ has, and only the whole can be checked for that.
 
 ## What is not here yet
 
-Guest snapshot/restore exports are available; catalog-driven hot reload and
-transactional host replacement that preserve windows/native state are not yet
-implemented. See [guest state snapshots](#guest-state-snapshots).
+Catalog polling and approved in-place replacement are implemented; state-schema
+migrations and remote distribution are not. See [host replacement](#approved-host-replacement).
 
 An honest inventory, grouped by where the work would land. Items marked
 **bug** are wrong today rather than merely absent.
@@ -662,11 +661,10 @@ For module packaging requirements and the connected implementation phases, see
   platform puts it the first time, and where it was last seen after that;
   the app's own `window size` is ignored. One instance per module.
 - The manifest has no icon, version, author or preferred size.
-- The catalog is one local directory, rescanned only when the user presses
-  Rescan: no watch, no remote catalog, no download, no upgrade path, no data
-  migration. Scanning reads every module in full just for its manifest, and
-  the in-memory module cache notices a rebuilt module by its timestamp only
-  at the next load.
+- The catalog is one local directory, polled asynchronously every second and
+  on Rescan. There is no remote catalog, download or state migration. Scanning
+  reads each module in full for its manifest and content hash; unchanged results
+  retain the existing rows. Changed hashes still require explicit consent.
 - Uninstall keeps the app's storage — an app can delete its own keys, the
   store cannot. It asks once, on the app's detail page, and nowhere else.
 - A guest that publishes on every tick makes the store update on every
@@ -1171,9 +1169,43 @@ are not guest state.
 The bundled component fixture tests native draft editing and counters, pending
 requests, boot suppression/remount, untouched component initials and nested data
 round trips with malformed-state rejection. Run its `bundled_snapshot` host tests
-after bundling `app-store-component-fixture`. This is the export boundary only:
-catalog watching, consent-aware staging and atomic host instance replacement
-remain in “What is not here yet”. Hosts and guests rebuild for the added exports.
+after bundling `app-store-component-fixture`. Hosts and guests rebuild for the
+added exports. The host replacement tests below cover their integration.
+
+
+## Approved host replacement
+
+The store polls its local catalog every second on its executor, with at most one
+scan in flight. Added, changed and removed artifacts update the list; unchanged
+scans keep its rows. Neither polling nor a failed candidate changes the saved
+consent hash. Review and Get a rebuilt running app to replace it in its existing
+window; an incompatible state schema requires closing it and starting fresh.
+
+Preparation compiles a separate instance without initialization, snapshots a
+settled guest, restores its state and validates a complete first frame. Commit
+runs on the UI thread and checks the current request, window, shared surface,
+instance identity and tick count. New edits, close, uninstall or another install
+invalidate an outstanding candidate. Failure reports its reason and keeps the
+old instance and pin. Successful replacement retains the Surface Arc, window,
+keyed native input focus/scroll and host session resources, then updates the pin.
+Removed terminal permission drops its native provider. Guest subscriptions start
+fresh; initializers and mount effects do not replay. The first frame dispatches
+requests, cancellations and deferred clipboard/widget effects after commit.
+Old native and overlay keyboard routes are refused by instance generation.
+Startup restoration checks the current consent hash before opening each app,
+so uninstalling during a load cannot restore its pin or request a new window.
+
+Module-view integrations must keep their host Surface handle stable and route
+module intents through the current instance; catalog discovery never grants a
+changed artifact its predecessor's consent.
+
+Bundle `app-store-reload-v1-fixture` and `app-store-reload-v2-fixture` to
+`target/reload-v1-fixture` and `target/reload-v2-fixture`, plus the component fixture,
+then run `cargo test -p app-store-host bundled_reload_ -- --ignored --test-threads=1`
+with `APP_STORE_DATA` set to a temporary directory. The two artifacts have distinct
+version labels and hashes but compatible schemas. Tests exercise the mounted
+native draft, focus and scroll, pin/window identity, error categories, stale
+completion/input rejection, capability removal and staged cancellation order.
 
 ## Scroll offset routes
 

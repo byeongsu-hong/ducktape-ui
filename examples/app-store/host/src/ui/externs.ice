@@ -4,6 +4,11 @@ extern crate::store
   Installed(id:str, hash:str)
   Surface()
   Loaded(id:str, name:str, hash:str, surface:Surface)
+  Reload()
+  InstallRequest(entry:CatalogEntry, serial:i64)
+  InstallCompletion(serial:i64)
+  InstallCommit(library:[Installed], opening:[Loaded], status:str, open:bool)
+  ReloadCommit(library:[Installed], running:[Running], status:str)
   Running(id:str, name:str, surface:Surface, window:window-id)
   StoreError(message:str)
   Gauge(live:bool, fault:str, fuel:str, tick:str, rate:str, frame:str, idle:str, load:str, dropped:str, sustained:str, level:i64)
@@ -11,12 +16,18 @@ extern crate::store
   ShelfModel(id:str, found:bool, entry:CatalogEntry, changed:bool, running:bool, gauge:Gauge)
   Rows(cards:[CardModel], shelf:[ShelfModel])
   Placement(id:str, x:f64, y:f64, w:f64, h:f64, placed:bool)
-  pure scan_catalog() -> [CatalogEntry]
+  scan_catalog() -> [CatalogEntry]
   sync catalog_dir() -> str
   pure find_entry(catalog:&[CatalogEntry], id:&str) -> CatalogEntry?
   pure capability_hint(name:str) -> str
   pure short_hash(hash:str) -> str
-  install_app(entry:CatalogEntry) -> Loaded ! StoreError
+  install_requested(request:InstallRequest) -> InstallCompletion
+  sync commit_install(library:[Installed], opening:[Loaded], running:&[Running], serial:i64, completion:InstallCompletion) -> InstallCommit
+  pure install_request(entry:CatalogEntry, serial:i64) -> InstallRequest
+  prepare_reload(entry:CatalogEntry, running:[Running], serial:i64) -> Reload
+  pure reload_current(candidate:&Reload, serial:i64) -> bool
+  sync commit_reload(library:[Installed], running:[Running], serial:i64, candidate:Reload) -> ReloadCommit
+  pure restore_current(library:&[Installed], opening:&[Loaded], running:&[Running], app:&Loaded) -> bool
   stream restore_running(catalog:[CatalogEntry], library:[Installed]) -> Loaded ! StoreError
   restart_guest(surface:Surface) -> Surface ! StoreError
   pure gauge(surface:&Surface, generation:i64) -> Gauge
@@ -25,7 +36,6 @@ extern crate::store
   pure build_rows(catalog:&[CatalogEntry], query:&str, library:&[Installed], running:&[Running], generation:i64) -> Rows
   pure meter(level:i64) -> f64
   sync remembered_library() -> [Installed]
-  pure add_to_library(library:[Installed], id:str, hash:str) -> [Installed]
   pure remove_from_library(library:[Installed], id:str) -> [Installed]
   pure in_library(library:&[Installed], id:str) -> bool
   pure pinned(library:&[Installed], entry:&CatalogEntry) -> bool
