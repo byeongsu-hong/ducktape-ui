@@ -92,6 +92,16 @@ mod tests {
         editor.accept(stale);
         assert_eq!(editor.text(), "한글");
         assert_eq!(Editor::restore(&editor.snapshot()), Some(editor.clone()));
+        let mut positioned = editor.clone();
+        positioned.move_to(wire::EditorCursor::default());
+        assert_eq!(positioned.reset_revision(), 1);
+        positioned.accept(observed.clone());
+        assert_eq!(
+            positioned.cursor(),
+            wire::EditorCursor::default(),
+            "caret commands fence old observations and clear selection"
+        );
+
         editor.replace(Editor::new("한글"), editor.reset_revision());
         assert_eq!(editor.reset_revision(), 1);
         assert_eq!(editor.cursor().selection, None);

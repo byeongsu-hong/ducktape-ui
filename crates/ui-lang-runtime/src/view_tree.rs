@@ -3446,7 +3446,14 @@ mod tests {
         }
         inputs.adopt(&node);
         assert_eq!(editor_text(&inputs), "a");
-        assert_eq!(applied(&mut inputs, insert()), None);
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            applied(&mut inputs, insert())
+        }));
+        assert!(
+            outcome.is_ok(),
+            "untrusted observation exhaustion must not panic the host"
+        );
+        assert_eq!(outcome.unwrap(), None);
         assert_eq!(
             editor_text(&inputs),
             "a",

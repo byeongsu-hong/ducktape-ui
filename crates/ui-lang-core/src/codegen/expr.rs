@@ -2195,12 +2195,25 @@ fn expr_builtin_group_6(
                 "{{ let __source = &{source}; let mut __copy = ::iced::widget::text_editor::Content::with_text(&__source.text()); __copy.move_to(__source.cursor()); __copy }}"
             )
         }
+        "editor_cursor_line" | "editor_cursor_column"
+            if context.program.target() == Target::Tree =>
+        {
+            format!(
+                "(({}).cursor().position.{} as i64)",
+                expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?,
+                if name == "editor_cursor_line" {
+                    "line"
+                } else {
+                    "column"
+                }
+            )
+        }
         "editor_cursor_line" => format!(
-            "(({}).cursor().position.line as i64)",
+            "(({}).cursor().position.line.min(i64::MAX as usize) as i64)",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
         "editor_cursor_column" => format!(
-            "(({}).cursor().position.column as i64)",
+            "(({}).cursor().position.column.min(i64::MAX as usize) as i64)",
             expr_node_code(args.value(0)?, env, context, ValueMode::Borrowed)?
         ),
         "editor_line_count" => format!(

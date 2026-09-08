@@ -515,6 +515,13 @@ fn editor_wasm_and_native_report_caret_only_changes_and_utf8_selection() {
         assert_eq!(state().text, "한글\n👍🏽");
         assert_eq!(state().cursor.position, wire::EditorPosition::default());
         assert!(state().reset > typed.reset);
+        click(&mut ui, &mut renderer, point);
+        send(&mut ui, &mut renderer, key_event("a", command), point);
+        ui = redraw(ui, &guest, &mut renderer, &mut now);
+        assert!(
+            state().cursor.selection.is_some(),
+            "place starts with a real selection"
+        );
         let mut place = Bounds("Place caret", None);
         ui.operate(&renderer, &mut place);
         click(&mut ui, &mut renderer, place.1.unwrap().center());
@@ -528,31 +535,76 @@ fn editor_wasm_and_native_report_caret_only_changes_and_utf8_selection() {
         let mut open = Bounds("Open editor overlay", None);
         ui.operate(&renderer, &mut open);
         click(&mut ui, &mut renderer, open.1.unwrap().center());
-        for _ in 0..3 { ui = redraw(ui, &guest, &mut renderer, &mut now); }
+        for _ in 0..3 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now);
+        }
         let overlay_key = {
             let locked = guest.lock().unwrap();
-            let wire::Node::Overlay { children, .. } = locked.frame.root.as_ref().unwrap() else { unreachable!() };
+            let wire::Node::Overlay { children, .. } = locked.frame.root.as_ref().unwrap() else {
+                unreachable!()
+            };
             editor(&children[1]).unwrap().key().unwrap().to_owned()
         };
         let mut overlay_bounds = Bounds(&overlay_key, None);
         ui.operate(&renderer, &mut overlay_bounds);
         let overlay_point = overlay_bounds.1.unwrap().center();
         click(&mut ui, &mut renderer, overlay_point);
-        send(&mut ui, &mut renderer, key_event("a", command), overlay_point);
-        send(&mut ui, &mut renderer, named(keyboard::key::Named::ArrowRight, keyboard::Modifiers::empty()), overlay_point);
-        send(&mut ui, &mut renderer, key_event("o", keyboard::Modifiers::empty()), overlay_point);
+        send(
+            &mut ui,
+            &mut renderer,
+            key_event("a", command),
+            overlay_point,
+        );
+        send(
+            &mut ui,
+            &mut renderer,
+            named(
+                keyboard::key::Named::ArrowRight,
+                keyboard::Modifiers::empty(),
+            ),
+            overlay_point,
+        );
+        send(
+            &mut ui,
+            &mut renderer,
+            key_event("o", keyboard::Modifiers::empty()),
+            overlay_point,
+        );
         ui = redraw(ui, &guest, &mut renderer, &mut now);
-        assert_eq!(state().text, "한글\n👍🏽o", "base document initializes the sibling overlay");
+        assert_eq!(
+            state().text,
+            "한글\n👍🏽o",
+            "base document initializes the sibling overlay"
+        );
         let mut close = Bounds("Close editor overlay", None);
         ui.operate(&renderer, &mut close);
         click(&mut ui, &mut renderer, close.1.unwrap().center());
-        for _ in 0..3 { ui = redraw(ui, &guest, &mut renderer, &mut now); }
+        for _ in 0..3 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now);
+        }
         click(&mut ui, &mut renderer, point);
         send(&mut ui, &mut renderer, key_event("a", command), point);
-        send(&mut ui, &mut renderer, named(keyboard::key::Named::ArrowRight, keyboard::Modifiers::empty()), point);
-        send(&mut ui, &mut renderer, key_event("b", keyboard::Modifiers::empty()), point);
+        send(
+            &mut ui,
+            &mut renderer,
+            named(
+                keyboard::key::Named::ArrowRight,
+                keyboard::Modifiers::empty(),
+            ),
+            point,
+        );
+        send(
+            &mut ui,
+            &mut renderer,
+            key_event("b", keyboard::Modifiers::empty()),
+            point,
+        );
         ui = redraw(ui, &guest, &mut renderer, &mut now);
-        assert_eq!(state().text, "한글\n👍🏽ob", "overlay edits synchronize the retained base Content");
+        assert_eq!(
+            state().text,
+            "한글\n👍🏽ob",
+            "overlay edits synchronize the retained base Content"
+        );
         drop(ui);
     }
 }
