@@ -457,11 +457,6 @@ fn ticks(period: Duration) -> BoxStream<()> {
     )
 }
 
-/// The `ice:view` world, as the exports are generated from it. The text is
-/// repeated inside [`export_app!`] because a proc macro takes only a
-/// literal; a test keeps the two identical.
-pub const WIT: &str = include_str!("../wit/view.wit");
-
 /// The most a panic message may carry across the `panicked` import. A host
 /// shows one line of it, and every byte over that is one the host lifts out
 /// of guest memory before it can refuse anything — so the message is cut
@@ -574,20 +569,15 @@ macro_rules! export_app {
 
         #[cfg(target_arch = "wasm32")]
         mod __ice_exports {
-            $crate::wit_bindgen::generate!({
-                inline: "package ice:view@0.1.0;
-
-world view {
-    import panicked: func(message: string);
-
-    export init: func(macos: bool);
-    export tick: func(events: list<u8>) -> list<u8>;
-    export snapshot: func() -> result<list<u8>, string>;
-    export restore: func(state: list<u8>, macos: bool) -> result<_, string>;
-}
-",
-                runtime_path: "::ui_lang_guest::wit_bindgen::rt",
-            });
+            macro_rules! bindings {
+                ($wit:literal) => {
+                    $crate::wit_bindgen::generate!({
+                        inline: $wit,
+                        runtime_path: "::ui_lang_guest::wit_bindgen::rt",
+                    });
+                };
+            }
+            $crate::wire::with_view_wit!(bindings);
 
             struct __IceComponent;
 
@@ -837,21 +827,6 @@ mod tests {
         let frame = driver.tick(Vec::new());
         assert!(!frame.busy);
         assert_eq!(driver.app.0, 3);
-    }
-
-    #[test]
-    fn the_macro_carries_the_wit_file_verbatim() {
-        // The proc macro takes only a literal, so the world is spelled twice.
-        let source = include_str!("lib.rs");
-        let start = source.find("inline: \"").expect("inline wit") + "inline: \"".len();
-        let end = source[start..].find("\",").expect("wit end") + start;
-        let inline = &source[start..end];
-        let file: String = super::WIT
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert_eq!(inline.trim(), file.trim());
     }
 
     #[test]

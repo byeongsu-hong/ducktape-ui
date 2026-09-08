@@ -289,7 +289,7 @@ fn guest_window_settings(
         .find(|p| p.id == id && PreferredSize::new(p.w as f32, p.h as f32).is_some());
     let size = saved
         .map(|p| iced::Size::new(p.w as f32, p.h as f32))
-        .or_else(|| preferred.map(PreferredSize::size))
+        .or_else(|| preferred.map(|size| iced::Size::from(size.dimensions())))
         .unwrap_or(iced::Size::new(560.0, 420.0));
     iced::window::Settings {
         size,

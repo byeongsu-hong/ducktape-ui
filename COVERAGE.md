@@ -1856,3 +1856,23 @@ host `manifest_format_and_preferred_size_are_strict`,
 `preferred_window_settings_choose_saved_declared_then_default`, and the actual
 wasm `bundled_preferred_size_reaches_initial_native_open` test documented in
 [the app-store guide](examples/app-store/README.md#preferred-window-size-evidence).
+
+
+The graphics-free view contract lives in `ui-lang-wire`: one WIT literal feeds
+both Wasmtime and wit-bindgen through `with_view_wit!`, while `Manifest::parse`
+and the optional `manifest::read_manifest` share the catalog's strict metadata
+rules. The wire tests preserve preferred-size bounds and reject duplicate or
+truncated sections. Removing the duplicate guard fails
+`extraction_rejects_duplicate_and_truncated_sections` at “duplicate manifest
+accepted”; restoring it passes the wire suite. The callback macro's doctest
+checks its text against `WIT`. Default and `manifest`-feature normal dependency
+trees contain no iced, winit, or renderer.
+
+The actual rebuilt surface fixture passes `ViewPre::new` before any Store is
+created, then runs through the existing host to exchange typed events and
+patches. `view_pre_refuses_wrong_export_type_without_running_guest` rejects an
+incorrectly typed `init` export whose body traps if executed. Omitting the
+`ViewPre` export check fails its “wrong init type must be rejected” assertion;
+restoring the check passes. This establishes
+static ABI type checking, not successful instantiation or boot. The rebuilt
+window-size fixture also retains its declared native opening dimensions.

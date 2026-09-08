@@ -5,10 +5,15 @@ use ui_lang_wire::{self as wire, Event, Node, SurfaceValue as V};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 
-wasmtime::component::bindgen!({
-    path: "../../../crates/ui-lang-guest/wit/view.wit",
-    world: "view",
-});
+macro_rules! view_bindings {
+    ($wit:literal) => {
+        wasmtime::component::bindgen!({
+            inline: $wit,
+            world: "view",
+        });
+    };
+}
+ui_lang_wire::with_view_wit!(view_bindings);
 
 struct Host;
 impl ViewImports for Host {
@@ -52,9 +57,11 @@ fn a_bundled_guest_receives_typed_surface_events_and_patches_its_view() {
     View::add_to_linker::<Host, wasmtime::component::HasSelf<Host>>(&mut linker, |host| host)
         .unwrap();
     linker.define_unknown_imports_as_traps(&component).unwrap();
+    // Only compilation and import/export type checks: no Store and no guest execution.
+    let pre = ViewPre::new(linker.instantiate_pre(&component).unwrap()).unwrap();
     let mut store = Store::new(&engine, Host);
     store.set_fuel(100_000_000).unwrap();
-    let view = View::instantiate(&mut store, &component, &linker).unwrap();
+    let view = pre.instantiate(&mut store).unwrap();
     view.call_init(&mut store, cfg!(target_os = "macos"))
         .unwrap();
     let mut root = Node::empty();
@@ -258,4 +265,29 @@ fn a_bundled_guest_receives_typed_surface_events_and_patches_its_view() {
     let reset = tick(vec![Event::Message(button(&linked, "Reset docs").unwrap())]);
     assert_eq!(document(&reset, "ice.markdown").source, "Replacement");
     assert!(!has_text(&reset, "asset:more"));
+}
+
+// Claim: a component with an incorrectly typed init export is refused without
+// instantiation. Removing the generated export check is the counterexample.
+#[test]
+fn view_pre_refuses_wrong_export_type_without_running_guest() {
+    let engine = Engine::default();
+    let bytes = wat::parse_str(
+        r#"(component
+        (core module $m (func (export "init") unreachable))
+        (core instance $i (instantiate $m))
+        (func (export "init") (canon lift (core func $i "init")))
+    )"#,
+    )
+    .unwrap();
+    let component = Component::from_binary(&engine, &bytes).unwrap();
+    let linker = Linker::<Host>::new(&engine);
+    let pre = linker.instantiate_pre(&component).unwrap();
+    let error = ViewPre::new(pre)
+        .err()
+        .expect("wrong init type must be rejected");
+    assert!(
+        format!("{error:#}").contains("type-checking export func `init`"),
+        "{error:#}"
+    );
 }

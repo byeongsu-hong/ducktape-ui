@@ -23,10 +23,15 @@ use wasmtime::{
 // The `ice:view` world, as `export_app!` exports it: `init` and `tick`,
 // generated into a `View` with one `call_*` per export, and the `panicked`
 // import the guest's panic hook calls, as a trait the store's data implements.
-wasmtime::component::bindgen!({
-    path: "../../../crates/ui-lang-guest/wit/view.wit",
-    world: "view",
-});
+macro_rules! view_bindings {
+    ($wit:literal) => {
+        wasmtime::component::bindgen!({
+            inline: $wit,
+            world: "view",
+        });
+    };
+}
+ui_lang_wire::with_view_wit!(view_bindings);
 
 /// What a guest's store holds: its limits, and the message its panic hook
 /// handed over — read after the trap that follows, when the instance can no

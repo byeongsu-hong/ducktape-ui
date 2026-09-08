@@ -16,10 +16,15 @@ use wasmtime::{Config, Engine, Store};
 
 use ui_lang_wire as wire;
 
-wasmtime::component::bindgen!({
-    path: "../../../crates/ui-lang-guest/wit/view.wit",
-    world: "view",
-});
+macro_rules! view_bindings {
+    ($wit:literal) => {
+        wasmtime::component::bindgen!({
+            inline: $wit,
+            world: "view",
+        });
+    };
+}
+ui_lang_wire::with_view_wit!(view_bindings);
 
 struct Host;
 

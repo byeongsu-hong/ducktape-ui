@@ -97,12 +97,12 @@ fn bundled_reload_preserves_window_draft_focus_scroll_and_host_resources() {
         "the candidate must be a different binary"
     );
     assert_eq!(
-        entry(1).preferred_size.unwrap().size(),
-        iced::Size::new(600.5, 400.25)
+        entry(1).preferred_size.unwrap().dimensions(),
+        [600.5, 400.25]
     );
     assert_eq!(
-        entry(2).preferred_size.unwrap().size(),
-        iced::Size::new(900.5, 700.25)
+        entry(2).preferred_size.unwrap().dimensions(),
+        [900.5, 700.25]
     );
     let app = running();
     let guest = app.surface.0.clone();
