@@ -32,6 +32,7 @@ mod lists;
 use crate::{Role, StableId, accessible, bounded_fill_element, bounded_padding, bounded_spacing};
 
 mod memo;
+mod pick;
 mod qr;
 mod rich_text;
 mod text;
@@ -952,6 +953,7 @@ fn pick_list_style(
 
 fn menu_style(menu: wire::MenuFace, theme: &iced::Theme) -> iced::overlay::menu::Style {
     let mut resolved = iced::overlay::menu::default(theme);
+    apply_shadow(menu.shadow, &mut resolved.shadow);
     if let Some(fill) = menu.background {
         resolved.background = Background::Color(color(fill));
     }
@@ -2063,45 +2065,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .on_decrement_maybe(down)
                 .into()
         }
-        wire::Node::PickList {
-            key,
-            options,
-            selected,
-            placeholder,
-            on_select,
-            width,
-            style,
-        } => {
-            let style = *style;
-            let choices: Vec<Choice> = options
-                .iter()
-                .enumerate()
-                .map(|(index, option)| Choice(index as u32, option.clone()))
-                .collect();
-            let chosen = selected.and_then(|index| choices.get(index as usize).cloned());
-            let handler = *on_select;
-            let mut pick = widget::pick_list(choices, chosen.clone(), move |choice: Choice| {
-                Output::Select {
-                    handler,
-                    index: choice.0,
-                }
-            })
-            .style(move |theme, status| pick_list_style(style, theme, status));
-            if let Some(menu) = style.menu {
-                pick = pick.menu_style(move |theme| menu_style(menu, theme));
-            }
-            if let Some(placeholder) = placeholder {
-                pick = pick.placeholder(placeholder.clone());
-            }
-            if let Some(width) = width {
-                pick = pick.width(length(*width));
-            }
-            accessible(pick, StableId::new(key), Role::ComboBox)
-                .logical_id_maybe(cfg!(test).then_some(key.as_str()))
-                .label(placeholder.clone().unwrap_or_default())
-                .value(chosen.map(|choice| choice.1).unwrap_or_default())
-                .into()
-        }
+        wire::Node::PickList { .. } => pick::render(node),
         wire::Node::Progress {
             key,
             value,
@@ -3608,6 +3572,7 @@ mod tests {
                         },
                     },
                     wire::Node::PickList {
+                        settings: Default::default(),
                         key: "App/content/mode".into(),
                         options: vec!["Light".into(), "Dark".into()],
                         selected: Some(9),

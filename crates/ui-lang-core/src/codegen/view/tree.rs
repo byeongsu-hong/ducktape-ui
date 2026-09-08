@@ -43,6 +43,7 @@ mod flex;
 mod lists;
 pub(super) use flex::item_code as flex_item_code;
 pub(super) use lists::keyed_column;
+mod pick;
 mod pin;
 mod qr;
 mod responsive;
@@ -2353,24 +2354,6 @@ fn pick_list(
     refuse_when(
         program,
         origin,
-        pick.menu_height.is_some()
-            || pick.padding.is_some()
-            || pick.text_size.is_some()
-            || pick.line_height.is_some()
-            || pick.shaping.is_some()
-            || pick.font.is_some()
-            || pick.handle.is_some(),
-        "this pick list option",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        pick.open.is_some() || pick.close.is_some(),
-        "a pick list open or close route",
-    )?;
-    refuse_when(
-        program,
-        origin,
         pick.custom_style.is_some() || pick.menu.custom.is_some(),
         "a pick list style callback",
     )?;
@@ -2395,19 +2378,37 @@ fn pick_list(
     {
         option_code(None)
     } else {
-        let (background, text, border) = match &pick.menu.surface {
+        let (background, text, border, shadow) = match &pick.menu.surface {
             Some(surface) => {
-                refuse_surface_extras(surface, program, origin)?;
+                refuse_when(
+                    program,
+                    origin,
+                    surface.pixel_snap.is_some(),
+                    "`px-snap` on a menu",
+                )?;
                 (
                     background_code(surface, &plain, program, origin)?,
                     option_code(surface.text_color.as_ref().map(rgba_code)),
                     border_code(surface, &plain, program, env)?,
+                    shadow_code(
+                        surface.shadow_color.as_ref(),
+                        surface.shadow_x,
+                        surface.shadow_y,
+                        surface.shadow_blur,
+                        program,
+                        env,
+                    )?,
                 )
             }
-            None => (option_code(None), option_code(None), option_code(None)),
+            None => (
+                option_code(None),
+                option_code(None),
+                option_code(None),
+                format!("{WIRE}::Shadow::default()"),
+            ),
         };
         option_code(Some(format!(
-            "{WIRE}::MenuFace {{ background: {background}, text: {text}, border: {border}, selected_text: {}, selected_background: {} }}",
+            "{WIRE}::MenuFace {{ shadow: {shadow}, background: {background}, text: {text}, border: {border}, selected_text: {}, selected_background: {} }}",
             option_code(pick.menu.selected_text_color.as_ref().map(rgba_code)),
             plain_background_code(pick.menu.selected_background.as_ref(), program, origin)?,
         )))
@@ -2419,6 +2420,7 @@ fn pick_list(
         face(pick.styles.opened.as_ref())?,
         face(pick.styles.opened_hovered.as_ref())?,
     );
+    let settings = pick::options(pick, program, message, env)?;
     let options = resolved_expr_use_code(program, pick.options, env, ValueMode::Owned)?;
     let selected = resolved_expr_use_code(program, pick.selected, env, ValueMode::Owned)?;
     let placeholder = pick
@@ -2445,7 +2447,7 @@ fn pick_list(
         ),
     );
     Ok(format!(
-        "{{ let __options = {options}; let __selected = {selected}; {WIRE}::Node::PickList {{ key: {}, options: __options.iter().map(|__option| __option.to_string()).collect(), selected: __selected.as_ref().and_then(|__chosen| __options.iter().position(|__option| __option == __chosen)).map(|__index| __index as u32), placeholder: {}, on_select: {handler}, width: {}, style: {style} }} }}",
+        "{{ let __options = {options}; let __selected = {selected}; {WIRE}::Node::PickList {{ key: {}, options: __options.iter().map(|__option| __option.to_string()).collect(), selected: __selected.as_ref().and_then(|__chosen| __options.iter().position(|__option| __option == __chosen)).map(|__index| __index as u32), placeholder: {}, on_select: {handler}, width: {}, style: {style}, settings: ::std::boxed::Box::new({settings}) }} }}",
         key_code(identity, "pick-list", origin, scope, env, program)?,
         option_code(placeholder),
         dimension_code(pick.width.as_ref(), false, program, env, origin)?,

@@ -1554,3 +1554,29 @@ fn tree_editor_copies_presentation_and_all_status_faces() {
         assert!(generated.contains(expected), "missing {expected}");
     }
 }
+
+#[test]
+fn tree_pick_copies_native_declarative_options() {
+    let source = format!(
+        "app Pick\n{PALETTE}state\n  items = [\"One\", \"Two\"]\n  selected:str? = none\non choose(value)\n  selected = some(value)\non opened\n  selected = none\non closed\n  selected = none\nview\n  pick items selected open=opened close=closed -> choose _\n    with\n      hint=\"Choose\"\n      w=180.0\n      p=8.0\n      text-size=12.5\n    active text=fg handle=primary bg=bg border=fg border-w=1.0 r=8.0\n    hovered handle=fg\n    opened border=primary\n    opened-hovered border=danger\n    menu text=fg selected-text=fg selected-bg=primary bg=bg border=fg border-w=1.0 r=10.0 shadow=fg shadow-y=6.0 shadow-blur=18.0\n    handle dynamic\n      closed code=\"▼\" size=11.0\n      open code=\"▲\" size=11.0\n"
+    );
+    let code = compile_for(&source, "pick.ice", Target::Tree)
+        .unwrap_or_else(|error| panic!("{}", error.render("pick.ice")));
+    assert!(code.contains("PickOptions"));
+    assert!(code.contains("PickHandle::Dynamic"));
+}
+
+#[test]
+fn tree_pick_handle_variants_compile() {
+    for handle in [
+        "handle arrow size=12.0",
+        "handle static code=\"◆\" size=12.0",
+        "handle none",
+    ] {
+        let source = format!(
+            "app Pick\n{PALETTE}state\n  choices = [\"One\"]\n  selected:str? = none\non choose(value)\n  selected = some(value)\nview\n  pick choices selected -> choose _\n    {handle}\n"
+        );
+        compile(&source, "pick.ice").unwrap();
+        compile_for(&source, "pick.ice", Target::Tree).unwrap();
+    }
+}

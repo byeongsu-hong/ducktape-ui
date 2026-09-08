@@ -32,6 +32,9 @@ pub use flex::{
     FlexMargin, FlexMargins, FlexWrap,
 };
 
+mod pick;
+pub use pick::{PickHandle, PickIcon, PickOptions};
+
 mod tooltip;
 pub use tooltip::{TooltipPosition, TooltipPreset, TooltipStyle};
 mod qr;
@@ -505,6 +508,7 @@ pub struct PickFace {
 /// The menu a pick list opens.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MenuFace {
+    pub shadow: Shadow,
     pub background: Option<Rgba>,
     pub text: Option<Rgba>,
     pub border: Option<Border>,
@@ -512,8 +516,7 @@ pub struct MenuFace {
     pub selected_background: Option<Rgba>,
 }
 
-/// Each state paints over the host's theme on its own; nothing inherits
-/// across states.
+/// Active overrides apply first; opened-hovered also inherits opened overrides.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PickListStyle {
     pub active: Option<PickFace>,
@@ -916,6 +919,7 @@ pub enum Node {
         style: SliderStyle,
     },
     PickList {
+        settings: Box<PickOptions>,
         key: String,
         /// Every option as the guest shows it; the host answers with an
         /// index into this list.
@@ -2080,6 +2084,7 @@ fn sanitize_node(
             }
         }
         Node::PickList {
+            settings,
             key,
             options,
             selected,
@@ -2088,6 +2093,7 @@ fn sanitize_node(
             ..
         } => {
             claim(key, taken);
+            settings.sanitize(&mut budgets.text);
             for face in [
                 &mut style.active,
                 &mut style.hovered,
@@ -2104,6 +2110,7 @@ fn sanitize_node(
                 bound_border(&mut face.border);
             }
             if let Some(menu) = &mut style.menu {
+                menu.shadow.sanitize();
                 bound_color(&mut menu.background);
                 bound_color(&mut menu.text);
                 bound_border(&mut menu.border);
@@ -3388,6 +3395,7 @@ mod tests {
         let mut frame = Frame {
             root: Some(column(vec![
                 Node::PickList {
+                    settings: Default::default(),
                     key: "App/pick".into(),
                     options: (0..MAX_OPTIONS + 3).map(|i| i.to_string()).collect(),
                     selected: Some((MAX_OPTIONS + 1) as u32),

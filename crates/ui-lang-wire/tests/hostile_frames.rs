@@ -326,6 +326,7 @@ fn gen_pick_list_style(rng: &mut Rng) -> PickListStyle {
         opened: gen_pick_face(rng),
         opened_hovered: gen_pick_face(rng),
         menu: rng.next_bool().then(|| MenuFace {
+            shadow: Shadow::default(),
             background: gen_opt_color(rng),
             text: gen_opt_color(rng),
             border: gen_opt_border(rng),
@@ -532,6 +533,7 @@ fn gen_pick_list(rng: &mut Rng) -> Node {
         _ => rng.skewed(16, 2),
     };
     Node::PickList {
+        settings: Default::default(),
         key: gen_key(rng),
         options: (0..count).map(|_| gen_string(rng)).collect(),
         selected: rng
