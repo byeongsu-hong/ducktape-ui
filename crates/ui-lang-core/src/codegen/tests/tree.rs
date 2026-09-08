@@ -527,9 +527,16 @@ fn float_geometry_calls_are_refused_even_inside_nested_arguments() {
 
 #[test]
 fn float_geometry_operation_budget_accepts_64_and_refuses_65() {
-    let sum = std::iter::repeat_n("viewport_width", 32)
-        .collect::<Vec<_>>()
-        .join(" + ");
+    // Exercise the operation count without making native parsing/checking
+    // consume a deep expression stack on smaller CI test threads.
+    fn sum(leaves: usize) -> String {
+        if leaves == 1 {
+            return "viewport_width".into();
+        }
+        let child = sum(leaves / 2);
+        format!("({child} + {child})")
+    }
+    let sum = sum(32);
     for (expression, accepted) in [(format!("-({sum})"), true), (format!("{sum} + 1.0"), false)] {
         let source =
             format!("app Demo\n{PALETTE}view\n  float x=({expression})\n    text \"floating\"\n");
