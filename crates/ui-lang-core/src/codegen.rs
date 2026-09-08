@@ -42,7 +42,7 @@ fn source_marker_origin(program: &LoweredProgram, origin: crate::hir::OriginId) 
 }
 
 /// Slug of the source fragment an origin points into: the file stem plus a
-/// short stable hash of the full path (stems repeat — `chat.ice` lives under
+/// short stable hash of the app-relative path (stems repeat — `chat.ice` lives under
 /// screens/, components/, and handlers/ in the ducktape app). Origins inside
 /// the root document itself collapse to "root".
 /// Group slugs for the app's own two large functions. A fragment slug is
@@ -61,7 +61,16 @@ fn origin_fragment_slug(program: &LoweredProgram, origin: crate::hir::OriginId) 
     let Some(path) = path else {
         return "root".to_owned();
     };
-    let text = path.display().to_string();
+    // Physical paths remain in include/source metadata. A Rust identifier must
+    // instead survive moving the entire source graph, including ../shared
+    // fragments, without relying on a Cargo environment (Core also runs alone).
+    let base = program
+        .origin(program.settings().origin)
+        .path
+        .as_deref()
+        .and_then(Path::parent);
+    let identity = base.map_or_else(|| path.clone(), |base| relative_source_path(&path, base));
+    let text = identity.to_string_lossy();
     let stem: String = path
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
@@ -76,6 +85,24 @@ fn origin_fragment_slug(program: &LoweredProgram, origin: crate::hir::OriginId) 
         })
         .collect();
     format!("{stem}_{:08x}", fnv1a(text.as_bytes()) as u32)
+}
+
+/// Lexical relative path between canonical source files on the same filesystem.
+/// Unlike strip_prefix alone, sibling imports retain their ../ identity too.
+fn relative_source_path(path: &Path, mut base: &Path) -> PathBuf {
+    let mut relative = PathBuf::new();
+    loop {
+        if let Ok(suffix) = path.strip_prefix(base) {
+            relative.push(suffix);
+            return relative;
+        }
+        let Some(parent) = base.parent() else {
+            // Different Windows volumes have no relative path representation.
+            return path.to_owned();
+        };
+        relative.push("..");
+        base = parent;
+    }
 }
 
 /// FNV-1a rather than std's DefaultHasher: the latter is documented as
@@ -699,7 +726,10 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
         .collect::<HashSet<_>>();
     let app_name = program.app_name();
     let message = format!("__{app_name}Message");
-    let lint_macro = format!("__ice_generated_items_{}", encode_source_path(source_path));
+    // The app type already has to be unique within its Rust scope. Encoding its
+    // name gives the lint macro that same scope without baking a checkout path
+    // into expansion identities; separate modules may reuse the app name.
+    let lint_macro = format!("__ice_generated_items_{}", encode_source_path(app_name));
     let mut out = String::new();
     // Attributes on `include!` do not reach the included items, while a module
     // wrapper would change their visibility and name-resolution scope. Expand

@@ -741,6 +741,63 @@ mod tests {
         }
     }
 
+    #[test]
+    fn generated_names_are_identical_across_checkout_roots_and_distinguish_fragments() {
+        let left = Fixture::new();
+        let right = Fixture::new();
+        let source = "app Demo\nuse \"panels/chat.ice\"\nuse \"../shared/chat.ice\"\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #000000\n  fg #ffffff\n  primary #333333\n  danger #ff0000\nview\n  col\n    Local label=\"one\"\n    Shared label=\"two\"\n";
+        let generate = |fixture: &Fixture| {
+            fixture.write("ui/app.ice", source);
+            fixture.write(
+                "ui/panels/chat.ice",
+                "component Local(label:str)\n  text label\n",
+            );
+            fixture.write(
+                "shared/chat.ice",
+                "component Shared(label:str)\n  text label\n",
+            );
+            let mut db = crate::AnalysisDb::default();
+            db.set_target(crate::Target::Tree);
+            let generated = db.compile_root(fixture.path("ui/app.ice")).unwrap().rust;
+            // Real file paths still belong to source/include metadata, never to
+            // Rust symbol identities. This checks only the generated identifiers.
+            generated
+                .lines()
+                .filter(|line| {
+                    line.starts_with("macro_rules! __ice_generated_items_")
+                        || line.starts_with(crate::GROUP_MARKER_BEGIN)
+                })
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        let left_names = generate(&left);
+        let right_names = generate(&right);
+        assert_eq!(
+            left_names, right_names,
+            "checkout relocation must not rename generated Rust symbols/files"
+        );
+        let groups: Vec<_> = left_names
+            .iter()
+            .filter(|name| name.starts_with("// __ICE_GROUP_BEGIN chat_"))
+            .collect();
+        assert_eq!(
+            groups.len(),
+            2,
+            "both same-stem fragments must actually be outlined"
+        );
+        assert_ne!(
+            groups[0], groups[1],
+            "sibling/shared fragments retain separate identities"
+        );
+        let direct_left = crate::compile(source.replace("use \"panels/chat.ice\"\nuse \"../shared/chat.ice\"\n", "component Local(label:str)\n  text label\ncomponent Shared(label:str)\n  text label\n").as_str(), "/first/root/app.ice").unwrap();
+        let direct_right = crate::compile(source.replace("use \"panels/chat.ice\"\nuse \"../shared/chat.ice\"\n", "component Local(label:str)\n  text label\ncomponent Shared(label:str)\n  text label\n").as_str(), "/second/root/app.ice").unwrap();
+        assert_eq!(
+            direct_left.lines().next(),
+            direct_right.lines().next(),
+            "direct Core compilation needs no Cargo environment for stable names"
+        );
+    }
+
     /// `cargo ice check` claims it reports a missing or wrongly sized icon at
     /// the line that declared it. The tray's icons were not in the walk, so
     /// for them the claim was false and the failure was an `include_bytes!`

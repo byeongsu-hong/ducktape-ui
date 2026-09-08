@@ -46,7 +46,9 @@ ui_lang::include_app!("src/ui/tasks.ice");
 Generated files live below `OUT_DIR/ui-lang-generated`, one file per source
 fragment plus a root, published atomically under a manifest and removed by
 `cargo clean`. Generated items suppress backend-only Rust and Clippy warnings;
-generated errors stay visible and map back to their `.ice` lines.
+generated errors stay visible and map back to their `.ice` lines. Generated Rust
+identifiers use the app name and app-relative fragment paths, so relocating the
+same source graph on one filesystem does not rename its symbols or fragment files.
 
 ## Taste of the language
 

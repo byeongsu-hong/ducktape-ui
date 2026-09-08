@@ -130,7 +130,14 @@ root and imported `.ice` files, and writes generated Rust below
 `OUT_DIR/ui-lang-generated`. Cargo therefore isolates output by consuming
 package, profile, and target, and removes it with `cargo clean`.
 `OUT_DIR/ui-lang-generated/manifest.json` is the canonical versioned mapping
-from generated filenames back to source roots and content digests.
+from generated filenames back to source roots and content digests. Generated
+lint macro names depend on the app name; outlined fragment identifiers hash
+paths relative to the app declaration, including sibling `../` imports. These
+identities do not depend on relocation within one filesystem or the ambient
+Cargo environment.
+Physical include paths and diagnostic source locations remain unchanged. This
+removes one source of binary nondeterminism; reproducible Wasm builds still need
+a pinned toolchain, consistent optimization and path remapping.
 
 Publication is a directory-locked transaction: each changed output and the next
 manifest are staged, flushed, and synced before outputs are atomically replaced

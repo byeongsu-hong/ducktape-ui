@@ -161,7 +161,7 @@ view
     let generated = compile(source, "app.ice").unwrap();
 
     assert!(generated.starts_with(
-        "macro_rules! __ice_generated_items_6170702e696365 { ($($item:item)*) => { $(#[allow(warnings, clippy::all)] $item)* }; }\n__ice_generated_items_6170702e696365! {\n"
+        "macro_rules! __ice_generated_items_44656d6f { ($($item:item)*) => { $(#[allow(warnings, clippy::all)] $item)* }; }\n__ice_generated_items_44656d6f! {\n"
     ));
     assert!(generated.ends_with("}\n"));
 }
