@@ -582,7 +582,11 @@ fn layout(
     }
     let origin = layout.origin;
     let style = &layout.utility_style;
-    refuse_box_utilities(style, program, origin)?;
+    let mut allowed = style.clone();
+    if matches!(layout.mode, ResolvedLayoutMode::Linear(_)) {
+        allowed.clip = false;
+    }
+    refuse_box_utilities(&allowed, program, origin)?;
     let (background, border) = layout_surface_code(style);
     let key = key_code(identity, "layout", origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
@@ -607,10 +611,20 @@ fn layout(
             refuse_when(
                 program,
                 origin,
-                linear.virtual_row.is_none() && linear.max_width.is_some(),
-                "`max-w`",
+                linear.virtual_row.is_some() && (linear.clip.is_some() || style.clip),
+                "`clip` on a virtual column",
             )?;
-            refuse_when(program, origin, linear.clip.is_some(), "`clip`")?;
+            let max_width = option_code(
+                linear
+                    .max_width
+                    .map(|value| clamped_f32_code(value, "0.0", "f32::MAX", program, env))
+                    .transpose()?,
+            );
+            let clip = linear
+                .clip
+                .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))
+                .transpose()?
+                .unwrap_or_else(|| style.clip.to_string());
             let axis = match linear.axis {
                 ResolvedLinearAxis::Column => "Column",
                 ResolvedLinearAxis::Row => "Row",
@@ -660,7 +674,7 @@ fn layout(
             }
             write!(
                 body,
-                " {WIRE}::Node::Linear {{ key: {key}, wrap: {wrap}, axis: {WIRE}::Axis::{axis}, spacing: {}, padding: {}, width: {}, height: {}, align: {}, background: {background}, border: {border}, children: __children }} }}",
+                " {WIRE}::Node::Linear {{ max_width: {max_width}, clip: {clip}, key: {key}, wrap: {wrap}, axis: {WIRE}::Axis::{axis}, spacing: {}, padding: {}, width: {}, height: {}, align: {}, background: {background}, border: {border}, children: __children }} }}",
                 option_code(spacing),
                 edges_code(&linear.padding, style.padding, program, env)?,
                 dimension_code(linear.width.as_ref(), style.width_fill, program, env, origin)?,

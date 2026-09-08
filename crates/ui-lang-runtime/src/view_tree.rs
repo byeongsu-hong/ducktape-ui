@@ -1239,6 +1239,8 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             *position, *gap, *padding, *delay_ms, *snap, *style, children, kept,
         ),
         wire::Node::Linear {
+            max_width,
+            clip,
             key,
             wrap,
             axis,
@@ -1268,7 +1270,10 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             let spacing = bounded_spacing(f64::from(spacing.unwrap_or(0.0)), count);
             let layout: IceElement<'static, Output> = match axis {
                 wire::Axis::Column => {
-                    let mut column = widget::column(rendered).spacing(spacing);
+                    let mut column = widget::column(rendered).spacing(spacing).clip(*clip);
+                    if let Some(max_width) = max_width {
+                        column = column.max_width(*max_width);
+                    }
                     if let Some(edges) = edges {
                         column = column.padding(padding(*edges));
                     }
@@ -1296,7 +1301,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     }
                 }
                 wire::Axis::Row => {
-                    let mut row = widget::row(rendered).spacing(spacing);
+                    let mut row = widget::row(rendered).spacing(spacing).clip(*clip);
                     if let Some(edges) = edges {
                         row = row.padding(padding(*edges));
                     }
@@ -2296,6 +2301,103 @@ mod tests {
     }
     use super::*;
 
+    // Claim: Tree layouts retain native width limits and clip only their paint viewport.
+    // Counterexamples: ignoring max_width or clip must change geometry or pixels.
+    #[test]
+    fn linear_max_width_and_clip_reach_native_layout_and_paint() {
+        use iced::advanced::{layout::Limits, renderer::Headless, widget::Tree};
+        use iced_test::runtime::{UserInterface, user_interface};
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        for axis in [wire::Axis::Column, wire::Axis::Row] {
+            for clip in [false, true] {
+                let node = wire::Node::Linear {
+                    key: "bounded".into(),
+                    max_width: Some(80.0),
+                    clip,
+                    axis,
+                    wrap: None,
+                    spacing: None,
+                    padding: None,
+                    width: Some(wire::Length::Fill),
+                    height: Some(wire::Length::Fixed(20.0)),
+                    align: None,
+                    background: None,
+                    border: None,
+                    children: vec![wire::Node::Text {
+                        key: "overflow".into(),
+                        content: "WWWWWWWWWWWWWWWW".into(),
+                        options: wire::TextOptions {
+                            wrapping: Some(wire::Wrapping::None),
+                            ..Default::default()
+                        },
+                        size: Some(28.0),
+                        color: Some(wire::Rgba([0.0, 0.0, 0.0, 1.0])),
+                        font: Default::default(),
+                        width: None,
+                        align_x: None,
+                    }],
+                };
+                for available in [60.0, 200.0] {
+                    let mut element = render(
+                        &node,
+                        &Inputs::default(),
+                        &Pictures::default(),
+                        &Surfaces::new(),
+                    );
+                    let mut tree = Tree::new(&element);
+                    let layout = element.as_widget_mut().layout(
+                        &mut tree,
+                        &renderer,
+                        &Limits::new(iced::Size::ZERO, iced::Size::new(available, 100.0)),
+                    );
+                    assert_eq!(
+                        layout.children()[0].size().width,
+                        if axis == wire::Axis::Column {
+                            available.min(80.0)
+                        } else {
+                            available
+                        }
+                    );
+                }
+                let mut ui = UserInterface::build(
+                    render(
+                        &node,
+                        &Inputs::default(),
+                        &Pictures::default(),
+                        &Surfaces::new(),
+                    ),
+                    iced::Size::new(200.0, 100.0),
+                    user_interface::Cache::default(),
+                    &mut renderer,
+                );
+                ui.draw(
+                    &mut renderer,
+                    &iced::Theme::Light,
+                    &iced::advanced::renderer::Style {
+                        text_color: iced::Color::BLACK,
+                    },
+                    iced::mouse::Cursor::Unavailable,
+                );
+                let pixels =
+                    renderer.screenshot(iced::Size::new(200, 100), 1.0, iced::Color::WHITE);
+                let ink_below = (20..40).any(|y| (0..80).any(|x| pixels[(y * 200 + x) * 4] < 200));
+                assert_eq!(
+                    ink_below, !clip,
+                    "{axis:?}: clipping must constrain overflowing glyph paint"
+                );
+                assert!(
+                    (0..20).any(|y| (0..80).any(|x| pixels[(y * 200 + x) * 4] < 200)),
+                    "visible glyph paint establishes the fixture"
+                );
+            }
+        }
+    }
+
     #[test]
     fn wrapping_rows_and_columns_reflow_at_host_limits() {
         use iced::advanced::{layout::Limits, renderer::Headless, widget::Tree};
@@ -2308,6 +2410,8 @@ mod tests {
         for axis in [wire::Axis::Row, wire::Axis::Column] {
             let row = axis == wire::Axis::Row;
             let node = wire::Node::Linear {
+                max_width: None,
+                clip: false,
                 key: "wrap".into(),
                 axis,
                 wrap: Some(wire::Wrap {
@@ -3046,6 +3150,8 @@ mod tests {
             border: None,
             snap: Some(true),
             content: Box::new(wire::Node::Linear {
+                max_width: None,
+                clip: false,
                 wrap: None,
                 key: "App/content".into(),
                 axis: wire::Axis::Column,

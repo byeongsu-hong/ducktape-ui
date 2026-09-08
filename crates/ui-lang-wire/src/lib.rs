@@ -606,6 +606,8 @@ pub enum Node {
         children: Vec<Node>,
     },
     Linear {
+        max_width: Option<f32>,
+        clip: bool,
         key: String,
         wrap: Option<Wrap>,
         axis: Axis,
@@ -1567,6 +1569,7 @@ fn sanitize_node(
             bound_color(background);
         }
         Node::Linear {
+            max_width,
             key,
             wrap,
             spacing,
@@ -1576,6 +1579,7 @@ fn sanitize_node(
             ..
         } => {
             claim(key, taken);
+            bound_optional(max_width);
             bound_optional(spacing);
             if let Some(wrap) = wrap {
                 bound_optional(&mut wrap.spacing);
@@ -2383,6 +2387,8 @@ mod tests {
 
     fn column(children: Vec<Node>) -> Node {
         Node::Linear {
+            max_width: None,
+            clip: false,
             wrap: None,
             key: "App/col".into(),
             axis: Axis::Column,

@@ -1024,7 +1024,11 @@ to native host widgets. Hosts register trusted family names through
 `ui_lang_runtime::view_tree::register_font_family` and load the matching font
 bytes. Unregistered names use native sans-serif. Tracking uses a non-selectable
 grapheme row and shares the host node budget. Boxes support maximum dimensions
-and clipping; buttons support padding utilities. These wire fields require
+and clipping; columns support `max-w=` and non-virtual rows/columns support `clip=`.
+Linear clipping uses the native paint viewport and does not change native
+pointer routing. The surrounding fill surface retains its native width while
+the column bounds its child content. Buttons support padding utilities.
+The Linear wire layout changed; these wire fields require
 host and guest rebuilds together.
 
 ### Tree button accessibility

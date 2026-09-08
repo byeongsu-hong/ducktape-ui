@@ -55,7 +55,13 @@ view
       clip=true
       @px-4
       @py-2
-    col gap=8.0
+    col #settings
+      with
+        w=fill
+        max-w=560.0
+        clip=true
+        gap=8.0
+      text "Settings content" #settings-width w=fill
       KitLabel label="Node overview" #heading
       text "A paragraph that wraps between words and also breaks long_unbroken_identifiers." #wrapped
         with
@@ -117,3 +123,15 @@ view
             opened -> visited _
       text last_link #link-status
       text link_count #link-count
+      col #clipped-column
+        with
+          w=80.0
+          h=20.0
+          clip=true
+        text "Column content extending past its parent" wrap=none size=28.0
+      row #clipped-row
+        with
+          w=80.0
+          h=20.0
+          clip=true
+        text "Row content extending past its parent" wrap=none size=28.0
