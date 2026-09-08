@@ -1568,3 +1568,11 @@ send events to a replacement. Retained identities are capped by `MAX_NODES`,
 and their keys, option labels and search text share `MAX_TEXT_BYTES_PER_FRAME`.
 A combo that exceeds the retained inventory budget displays an explicit rejection
 instead of using a different or outdated state. Rebuild hosts and guests together.
+
+### Tree slider handle shapes
+
+Tree slider faces carry `handle=circle(radius)` or `handle=rect(width)` with
+`handle-r=` corner radii. The active face overlays the host theme; hovered and
+dragged faces overlay the active face. Omitted fields preserve that inheritance;
+an explicit zero circle radius hides the handle. Hosts bound copied radii to their pixel budget and use the native Iced handle geometry.
+Rebuild hosts and guests together: the copied slider face wire layout changes.

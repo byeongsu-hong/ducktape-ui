@@ -1717,3 +1717,7 @@ mod viewer_tests;
 #[cfg(test)]
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
+
+#[cfg(test)]
+#[path = "slider_handle_tests.rs"]
+mod slider_handle_tests;

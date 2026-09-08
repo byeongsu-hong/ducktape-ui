@@ -299,6 +299,18 @@ fn gen_slider_face(rng: &mut Rng) -> Option<SliderFace> {
         rail_border: gen_opt_border(rng),
         handle: gen_opt_color(rng),
         handle_border: gen_opt_border(rng),
+        handle_shape: rng.next_bool().then(|| {
+            if rng.next_bool() {
+                SliderHandleShape::Circle {
+                    radius: gen_f32(rng),
+                }
+            } else {
+                SliderHandleShape::Rectangle {
+                    width: rng.next_u64() as u16,
+                    border_radius: [gen_f32(rng), gen_f32(rng), gen_f32(rng), gen_f32(rng)],
+                }
+            }
+        }),
     })
 }
 
@@ -1244,6 +1256,15 @@ fn check_slider_face(face: &Option<SliderFace>, ctx: &str) {
     check_border(&face.rail_border, ctx);
     check_color(&face.handle, ctx);
     check_border(&face.handle_border, ctx);
+    if let Some(shape) = &face.handle_shape {
+        let radii: &[f32] = match shape {
+            SliderHandleShape::Circle { radius } => std::slice::from_ref(radius),
+            SliderHandleShape::Rectangle { border_radius, .. } => border_radius,
+        };
+        for radius in radii {
+            check_pixels(&Some(*radius), ctx, "slider handle radius");
+        }
+    }
 }
 
 fn check_pick_face(face: &Option<PickFace>, ctx: &str) {

@@ -498,9 +498,15 @@ pub struct RadioStyle {
     pub hovered_off: Option<ControlFace>,
 }
 
+/// A native slider handle, copied independently for each interaction face.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum SliderHandleShape {
+    Circle { radius: f32 },
+    Rectangle { width: u16, border_radius: [f32; 4] },
+}
+
 /// One state of a slider: the rail's two halves and its border, and the
-/// handle's colour and border. A handle's border has no radius: its shape
-/// is the host's.
+/// handle's colour, border and shape. Omitted fields retain the native style.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SliderFace {
     pub rail_start: Option<Rgba>,
@@ -509,6 +515,7 @@ pub struct SliderFace {
     pub rail_border: Option<Border>,
     pub handle: Option<Rgba>,
     pub handle_border: Option<Border>,
+    pub handle_shape: Option<SliderHandleShape>,
 }
 
 /// A hovered or dragged face paints over the active one.
@@ -2226,6 +2233,15 @@ fn sanitize_node(
                 bound_border(&mut face.rail_border);
                 bound_color(&mut face.handle);
                 bound_border(&mut face.handle_border);
+                if let Some(shape) = &mut face.handle_shape {
+                    let radii: &mut [f32] = match shape {
+                        SliderHandleShape::Circle { radius } => std::slice::from_mut(radius),
+                        SliderHandleShape::Rectangle { border_radius, .. } => border_radius,
+                    };
+                    for radius in radii {
+                        *radius = bounded(*radius);
+                    }
+                }
             }
         }
         Node::ComboBox {
