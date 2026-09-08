@@ -1183,3 +1183,18 @@ page before reaching the top. The native scrollable suppresses unchanged
 viewports; routes are opt-in and carry no window coordinates. The widget wasm
 fixture exercises a real wheel event through the native host and generated
 four-argument route. The added Scroll field/event require host and guest rebuilds.
+
+### Pick module options
+
+Tree `pick` supports native padding/text metrics, font/shaping, menu height,
+arrow/static/dynamic/no handle, open/close routes, state styles and menu shadows.
+The host applies the same style inheritance and selection/dismissal behavior as
+native Ice. Rust style callbacks and gradients remain explicit refusals.
+
+```sh
+cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+  -p app-store-pick-fixture --target wasm32-unknown-unknown \
+  --out examples/app-store/target/pick-fixture
+cd examples/app-store
+cargo test -p app-store-host bundled_pick_ -- --ignored
+```

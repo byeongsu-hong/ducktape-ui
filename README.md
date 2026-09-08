@@ -604,3 +604,6 @@ end-anchored scrollback. Offsets are local to the scrollable; window coordinates
 are not exposed. Missing routes produce no guest events. The full `viewport=`
 route and scroll status styles remain refused. Hosts and guests must rebuild
 for the added Scroll field and ScrollOffset event.
+
+Tree pick lists carry native text metrics, menu styling, dynamic handles and
+open/close routes. See [pick module options](examples/app-store/README.md#pick-module-options).

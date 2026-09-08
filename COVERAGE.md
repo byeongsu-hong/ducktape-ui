@@ -1801,3 +1801,21 @@ scroll operation's position. Replacing the forwarded Y offset with zero fails
 the intended absolute-offset assertion in wasm, and restoring it passes.
 Full viewport geometry and scroll styles remain
 outside this support claim.
+
+### Tree pick options evidence
+
+`native_pick_metrics_and_menu_routes_use_copied_options` builds the native host
+pick, verifies its closed geometry and drives open, outside dismissal and menu
+selection through real pointer events. Adding one to forwarded text size fails
+height 49.5 versus 48; changing the open route fails the exact emitted message.
+Both minimal mutations were restored before the same test passed. Wire tests
+bound metrics and share font strings across the text budget. Core tests cover
+all four handle variants and the ShellPick-shaped options and style graph.
+
+The bundled pick fixture compares closed, hovered, opened and menu pixels with
+an independently configured native pick and drives guest open/select/close
+handlers. Removing forwarded menu shadow fails the native pixel comparison;
+restoration passes. Explicit face pixels distinguish active, hovered and opened
+colors, and the reference includes the menu shadow outside its bounds.
+CI bundles it and selects `bundled_pick_`. This support carries copied
+declarative options; Rust style callbacks and gradient backgrounds remain refused.

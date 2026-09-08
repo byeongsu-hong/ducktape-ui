@@ -1311,3 +1311,17 @@ end-anchored scrollback. Offsets are local to the scrollable; window coordinates
 are not exposed. Missing routes produce no guest events. The full `viewport=`
 route and scroll status styles remain refused. Hosts and guests must rebuild
 for the added Scroll field and ScrollOffset event.
+
+## Tree pick-list options
+
+Tree pick lists copy padding, text size/relative line height, shaping, named or
+built-in font, menu height and native arrow/static/dynamic/no-handle options.
+Opening and outside-click dismissal use snapshotted message routes; choosing an
+option uses the existing typed selection route. The host owns menu layout,
+hit testing and the native distinction between selection and dismissal.
+Active styles apply before status overrides; opened-hovered inherits opened.
+Menu color, border/radius and shadow overrides retain native theme defaults for
+unspecified fields. Custom Rust style callbacks and gradients remain refused.
+Text metrics, padding, menu heights, shadow offsets/blur and named font strings
+are sanitized before native rendering. Hosts and guests must rebuild together
+for the extended PickList wire data.
