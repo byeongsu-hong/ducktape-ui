@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "fingerprint": "sha256:85ca7fbc51aa94e7ab17c55c11d1a26830be4662fc3ef01150b1222a79294587",
+  "fingerprint": "sha256:149ecd594c470f4448aad2497efe2a0d01ca280a7467c22b375264c0ff8969d3",
   "language_revision": "2.0",
   "package": {
     "name": "ui-lang-components",
@@ -523,11 +523,109 @@
             "name": "description",
             "ty": "str",
             "access": "read",
-            "required": true,
-            "default": null
+            "required": false,
+            "default": {
+              "kind": "str",
+              "value": ""
+            }
+          },
+          {
+            "name": "error",
+            "ty": "str",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "str",
+              "value": ""
+            }
           },
           {
             "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "Form",
+        "props": [
+          {
+            "name": "max_width",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 640.0
+            }
+          },
+          {
+            "name": "padding",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 24.0
+            }
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [
+          {
+            "name": "children",
+            "required": true
+          }
+        ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "FormSection",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "str",
+              "value": ""
+            }
+          },
+          {
+            "name": "padding",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 20.0
+            }
+          },
+          {
+            "name": "radius",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 11.0
+            }
+          },
+          {
+            "name": "title",
             "ty": "str",
             "access": "read",
             "required": true,
@@ -766,6 +864,99 @@
             "required": true
           }
         ],
+        "lifetime": "retained"
+      },
+      {
+        "name": "TextField",
+        "props": [
+          {
+            "name": "description",
+            "ty": "str",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "str",
+              "value": ""
+            }
+          },
+          {
+            "name": "disabled",
+            "ty": "bool",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          {
+            "name": "error",
+            "ty": "str",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "str",
+              "value": ""
+            }
+          },
+          {
+            "name": "label",
+            "ty": "str",
+            "access": "read",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "padding",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 11.0
+            }
+          },
+          {
+            "name": "placeholder",
+            "ty": "str",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "str",
+              "value": ""
+            }
+          },
+          {
+            "name": "radius",
+            "ty": "f64",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "f64",
+              "value": 10.0
+            }
+          },
+          {
+            "name": "secure",
+            "ty": "bool",
+            "access": "read",
+            "required": false,
+            "default": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          {
+            "name": "value",
+            "ty": "str",
+            "access": "bind",
+            "required": true,
+            "default": null
+          }
+        ],
+        "events": [],
+        "default_output": "unit",
+        "slots": [],
         "lifetime": "retained"
       },
       {

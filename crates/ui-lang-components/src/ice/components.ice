@@ -135,11 +135,28 @@ component Alert.Destructive(title:str, description:str)
             @text-fg
         text description size=13.0 @text-muted
 
-component Field(label:str, description:str)
+component Field(label:str, description:str="", error:str="")
   col #root @field
-    text label @field_label
+    text label #label
+      with
+        w=fill
+        wrap=word
+        @field_label
     slot
-    text description @caption
+    if !empty(description)
+      text description #description
+        with
+          w=fill
+          wrap=word
+          @caption
+    if !empty(error)
+      text error #error
+        with
+          w=fill
+          wrap=word
+          live=polite
+          @caption
+          @text-danger
 
 component Surface()
   box #root r=11.0 @surface

@@ -256,6 +256,7 @@ cargo ice dev -p hotreload-example # side-by-side hot reload preview and Ice edi
 cargo run -p markdown-example  # native Markdown notes app (see examples/markdown-editor/DESIGN.md)
 cargo run -p terminal-example  # native PTY terminal component (see examples/terminal)
 cargo run -p showcase          # the default component catalog (crates/ui-lang-components)
+cargo run -p settings-example # default form layout with customizable native inputs
 cargo run -p ice-starter       # the minimal copyable build/include/test path
 cargo run -p candles-example   # native lightweight financial chart (see examples/candles)
 cargo run -p trading-example   # live Hyperliquid markets, positions, and fills (see examples/trading)

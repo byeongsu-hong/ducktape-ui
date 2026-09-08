@@ -1601,3 +1601,13 @@ stops with nonfinite/out-of-range or nonincreasing offsets are discarded, and
 colors use the shared RGBA bounds. Control faces, other layout surfaces, rich
 spans and canvas gradients remain separate Tree gaps. Rebuild hosts and guests
 together because Container background now carries a color-or-gradient tag.
+
+## Default form composition
+
+The standard component library exposes `Form`, `FormSection`, and `TextField`
+through its existing `default.ice` import. These use ordinary components,
+props, slots, recipes and native input binding; they introduce no Core syntax.
+Form owns vertical scrolling and bounded content width. Field accepts optional
+help and error text without allocating empty rows; TextField supplies a native
+input while keeping padding and radius customizable. The exact props and
+ownership contract are documented in `crates/ui-lang-components/README.md`.

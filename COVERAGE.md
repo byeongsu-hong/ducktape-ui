@@ -2234,3 +2234,24 @@ scrim, hero and resized-bound assertions respectively. Rebuilding the Wasm
 fixture with Recolor retaining the original palette fails the recolored hero
 pixels. Omitting wire background sanitization fails `gradient stop must be
 finite and within 0..=1`. All mutations are restored before final gates.
+
+## Composable form defaults
+
+`ui-lang-components` exports `Form`, `FormSection`, and `TextField` through
+`default.ice`. These are ordinary Ice components: Form owns a centered,
+width-bounded vertical scroller; FormSection provides wrapping headings and a
+caller-owned body; TextField binds a native input with optional help/error text
+and customizable padding/radius. Field remains the slot-based custom-control
+path and omits empty help/error nodes. No Core syntax or platform support is
+added.
+
+`cargo test -p settings-example` exercises 360px and 960px layouts, long labels,
+multiline errors, customized input geometry/binding/focus, short-window scrolling,
+and omitted help spacing. Each authored regression has assertion-level Red
+mutation evidence: fixed input width (200 vs 272), binding workspace to name
+(workspace failed to become Studio), error height 10 (multiline height assertion),
+horizontal-only Form scrolling (Save remained invisible), and unconditional
+empty help (field bottom differed from input bottom). Restored sources pass the
+same tests. PNG/JSON captures use scale 1 and the app's light palette; the wide,
+narrow and error tests pin en-US, Linux and reduced motion. Screenshots are in
+`examples/settings/screenshots`; tests render real generated native widgets.
