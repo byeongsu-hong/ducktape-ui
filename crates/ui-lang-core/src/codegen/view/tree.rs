@@ -2507,8 +2507,7 @@ fn surface(
     Ok(format!("{{ let __surface_key = {key}; {content} }}"))
 }
 
-/// Encode a borrowed expression or decode an owned wire value. The generated
-/// decoder returns Option<T>, so one mismatched nested field drops the event.
+/// A bad nested surface payload drops the event at the declared boundary.
 fn surface_value_code(
     ty: &Type,
     value: &str,
@@ -2517,115 +2516,15 @@ fn surface_value_code(
     origin: OriginId,
     visiting: &mut Vec<String>,
 ) -> Result<String, Error> {
-    let v = format!("{WIRE}::SurfaceValue");
-    let scalar = match ty {
-        Type::Unit => Some("Unit"),
-        Type::Bool => Some("Bool"),
-        Type::I64 => Some("I64"),
-        Type::F64 => Some("F64"),
-        Type::Str => Some("Str"),
-        _ => None,
-    };
-    if let Some(tag) = scalar {
-        return Ok(if decode {
-            let pattern = if tag == "Unit" {
-                format!("{v}::Unit")
-            } else {
-                format!("{v}::{tag}(__item)")
-            };
-            let guard = if tag == "F64" {
-                " if __item.is_finite()"
-            } else {
-                ""
-            };
-            let result = if tag == "Unit" { "()" } else { "__item" };
-            format!(
-                "match {value} {{ {pattern}{guard} => ::std::option::Option::Some({result}), _ => ::std::option::Option::None }}"
-            )
-        } else {
-            match tag {
-                "Unit" => format!("{{ let _ = {value}; {v}::Unit }}"),
-                "Str" => format!("{v}::Str(::std::string::ToString::to_string({value}))"),
-                _ => format!("{v}::{tag}(*({value}))"),
-            }
-        });
-    }
-    match ty {
-        Type::List(inner) => {
-            let item = surface_value_code(inner, "__item", decode, program, origin, visiting)?;
-            Ok(if decode {
-                format!(
-                    "match {value} {{ {v}::List(__items) => __items.into_iter().map(|__item| {item}).collect::<::std::option::Option<::std::vec::Vec<_>>>(), _ => ::std::option::Option::None }}"
-                )
-            } else {
-                format!("{v}::List(({value}).iter().map(|__item| {item}).collect())")
-            })
-        }
-        Type::Option(inner) => {
-            let item = surface_value_code(
-                inner,
-                if decode { "*__item" } else { "__item" },
-                decode,
-                program,
-                origin,
-                visiting,
-            )?;
-            Ok(if decode {
-                format!(
-                    "match {value} {{ {v}::Option(::std::option::Option::None) => ::std::option::Option::Some(::std::option::Option::None), {v}::Option(::std::option::Option::Some(__item)) => ({item}).map(::std::option::Option::Some), _ => ::std::option::Option::None }}"
-                )
-            } else {
-                format!(
-                    "{v}::Option(({value}).as_ref().map(|__item| ::std::boxed::Box::new({item})))"
-                )
-            })
-        }
-        Type::Named(name) => {
-            let declaration = program
-                .struct_declarations()
-                .iter()
-                .find(|item| &item.name == name)
-                .filter(|item| !item.fields.is_empty())
-                .ok_or_else(|| refused(program, origin, "an opaque extern widget value"))?;
-            if visiting.contains(name) {
-                return Err(refused(program, origin, "a recursive extern widget value"));
-            }
-            visiting.push(name.clone());
-            let mut fields = Vec::new();
-            for (index, field) in declaration.fields.iter().enumerate() {
-                let field_value = if decode {
-                    format!("__field_{index}")
-                } else {
-                    format!("&({value}).{}", field.name)
-                };
-                let item =
-                    surface_value_code(&field.ty, &field_value, decode, program, origin, visiting)?;
-                fields.push(if decode {
-                    format!("{}: ({item})?", field.name)
-                } else {
-                    format!("(::std::string::String::from({:?}), {item})", field.name)
-                });
-            }
-            visiting.pop();
-            if decode {
-                let extract = declaration.fields.iter().enumerate().map(|(index, field)| format!(
-                    "let (__name, __field_{index}) = __fields.next()?; if __name != {:?} {{ return ::std::option::Option::None; }}", field.name
-                )).collect::<Vec<_>>().join(" ");
-                Ok(format!(
-                    "(|| {{ let {v}::Record {{ name: __name, fields: __fields }} = {value} else {{ return ::std::option::Option::None; }}; if __name != {name:?} || __fields.len() != {} {{ return ::std::option::Option::None; }} let mut __fields = __fields.into_iter(); {extract} ::std::option::Option::Some({} {{ {} }}) }})()",
-                    declaration.fields.len(),
-                    declaration.rust_path,
-                    fields.join(", ")
-                ))
-            } else {
-                Ok(format!(
-                    "{v}::Record {{ name: ::std::string::String::from({name:?}), fields: ::std::vec![{}] }}",
-                    fields.join(", ")
-                ))
-            }
-        }
-        _ => Err(refused(program, origin, "a non-data extern widget value")),
-    }
+    crate::codegen::value::code(
+        ty,
+        value,
+        decode,
+        program,
+        crate::codegen::value::ValueTarget::Surface,
+        visiting,
+    )
+    .map_err(|what| refused(program, origin, &what))
 }
 
 fn markdown_surface(

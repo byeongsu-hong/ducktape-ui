@@ -199,6 +199,22 @@ impl<T> MountedComponentState<T> {
         self.values.borrow_mut()
     }
 
+    /// Copies boot markers, including instances without materialized values.
+    /// Snapshot callers sort these scopes before encoding deterministic bytes.
+    pub fn booted_scopes(&self) -> Vec<String> {
+        self.booted.borrow().iter().cloned().collect()
+    }
+
+    /// Restores decoded owned state into fresh render/task bookkeeping.
+    /// The next tree render prunes scopes absent from the replacement view.
+    pub fn from_snapshot(values: HashMap<String, T>, booted: HashSet<String>) -> Self {
+        Self {
+            values: RefCell::new(values),
+            booted: RefCell::new(booted),
+            ..Self::default()
+        }
+    }
+
     /// Returns a render-lifetime-stable generation for async completion filters.
     pub fn next_generation(&self) -> u64 {
         let next = self.next_generation.get().wrapping_add(1);
@@ -4059,6 +4075,53 @@ mod tests {
         state.begin_render();
         assert!(state.mount_boot("App/Id(1)/pane".to_owned()));
         state.finish_render("App/Id(1)");
+    }
+
+    #[test]
+    fn mounted_snapshot_keeps_boot_only_scopes_and_allows_later_remount() {
+        let original = MountedComponentState::<i32>::default();
+        original.begin_render();
+        for scope in ["app/kept", "app/boot-only", "app/removed"] {
+            assert!(original.mount_boot(scope.into()));
+        }
+        original.values_mut().insert("app/kept".into(), 42);
+        original.values_mut().insert("app/removed".into(), 7);
+        original.finish_tree_render("app");
+        original.next_generation();
+        original.next_generation();
+
+        let restored = MountedComponentState::from_snapshot(
+            original.values().clone(),
+            original.booted_scopes().into_iter().collect(),
+        );
+        drop(original);
+        assert_eq!(
+            restored.next_generation(),
+            1,
+            "old task generations are retired"
+        );
+        restored.begin_render();
+        assert!(
+            !restored.mount_boot("app/kept".into()),
+            "restoration must not replay boot"
+        );
+        assert!(
+            !restored.mount_boot("app/boot-only".into()),
+            "unmaterialized state also booted already"
+        );
+        restored.finish_tree_render("app");
+        assert_eq!(restored.values().get("app/kept"), Some(&42));
+        assert!(!restored.values().contains_key("app/removed"));
+        assert!(!restored.booted_scopes().contains(&"app/removed".into()));
+
+        restored.begin_render();
+        restored.finish_tree_render("app");
+        restored.begin_render();
+        assert!(
+            restored.mount_boot("app/kept".into()),
+            "a removed instance boots on reappearance"
+        );
+        assert!(restored.mount_boot("app/boot-only".into()));
     }
 
     #[test]

@@ -2324,7 +2324,15 @@ fn scoped_component_state_read_code(
             &declaration.name,
         ));
     }
-    let initial = resolved_initializer_code(&declaration.initializer, program)?;
+    let initial = if program.target() == Target::Tree {
+        format!(
+            "self.{}.{}.clone()",
+            component_state_initial_field(&component.name),
+            declaration.name
+        )
+    } else {
+        resolved_initializer_code(&declaration.initializer, program)?
+    };
     Ok(component_state_read_code(
         &states,
         scope,

@@ -1228,7 +1228,7 @@ existing Iced subscription tracker and settles after each event, so filters,
 burst cannot overflow the tracker's queue before it is polled. Key, modified
 key, physical/native code, location, modifiers, text and repeat cross as data.
 
-`ice:view` now exports `init(macos: bool)` and `tick`. The host supplies platform
+`ice:view` initializes with `init(macos: bool)`. The host supplies platform
 semantics before boot. Tree `key.command_modifiers()` and modifier `.command`,
 `.jump` and `.macos_command` projections use this per-instance setting. Guest
 Rust externs must use `ui_lang_guest::keyboard` helpers for these meanings;
@@ -1239,3 +1239,36 @@ A shared-window host must route keyboard input only to the selected module,
 never broadcast another module's or host input's text. This is a host routing
 contract; window/global subscriptions, mouse and IME subscription transport are
 not introduced here.
+
+
+## Tree guest state snapshots
+
+`ice:view` exports `snapshot() -> result<list<u8>, string>` and
+`restore(state: list<u8>, macos: bool) -> result<_, string>` alongside `init` and
+`tick`. Restore can initialize a fresh instance without `init`; it decodes all
+persistent fields before constructing the app and runs neither state initializers
+nor boot tasks. Errors preserve an already initialized driver. Native exports
+provide `snapshot_native` and `restore_native` with the same behavior.
+
+The envelope carries a SHA-256 state schema and complete root state, component
+initial state, retained/mounted instance maps and mounted boot markers. Schema
+identity covers state names/types and reachable record/enum shapes plus component
+storage modes, excluding view layout and initializer values. Restored untouched
+components read and materialize from saved initials. Memo revisions, handlers,
+task lanes and subscription trackers start fresh. A new render prunes removed
+mounted scopes; subsequent reappearance boots normally.
+
+Supported values are unit, bool, i64, finite f64, strings, bytes, editor text,
+markdown source, lists, options, results, declared data records/enums, palettes
+and keyboard modifiers. Recursive or opaque/native state and secret stores reject
+the entire snapshot; no fields are silently dropped. There are no migrations.
+The codec bounds the entire snapshot to 8 MiB, depth 32 and 65,536 values and
+rejects trailing bytes, duplicate instance scopes and malformed nested types.
+
+Hosts must deliver pending UI events first. Busy frames, deferred component boot
+and any live Task (including long-running Task streams) reject capture. Tracker
+subscriptions restart from restored state on the next tick. The replacement's
+first tick sends a complete tree and new routes. Rebuild hosts and guests for the
+extended component interface. Export support does not implement catalog watching
+or transactional host replacement: preserving host windows, native focus/scroll,
+resource/consent boundaries and rejecting stale replies remains host work.

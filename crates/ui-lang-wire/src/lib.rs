@@ -23,6 +23,9 @@
 
 use serde::{Deserialize, Serialize};
 
+mod snapshot;
+pub use snapshot::{MAX_SNAPSHOT_BYTES, Snapshot, SnapshotValue};
+
 mod flex;
 pub use flex::{
     FlexBasis, FlexContentAlignment, FlexDirection, FlexItem, FlexItemAlignment, FlexLayout,

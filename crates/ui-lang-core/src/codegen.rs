@@ -1415,6 +1415,9 @@ pub fn generate(program: &LoweredProgram, source_path: &str) -> Result<String, E
     generate_theme(&mut out, program)?;
     writeln!(out, "{phase}").unwrap();
     generate_boot(&mut out, program, &message, source_path)?;
+    if program.target() == Target::Tree {
+        snapshot::generate(&mut out, program)?;
+    }
     generate_tray(&mut out, program, &message)?;
     writeln!(out, "{phase}").unwrap();
     generate_presets(&mut out, program, &message, source_path)?;
@@ -1478,6 +1481,7 @@ mod expr;
 mod probes;
 mod runtime;
 mod settings;
+mod snapshot;
 mod state_write;
 mod statement;
 mod style;
@@ -1485,6 +1489,7 @@ mod subscription;
 mod template;
 mod testing;
 mod type_code;
+mod value;
 mod view;
 
 pub(crate) use expr::copy_expression_type;

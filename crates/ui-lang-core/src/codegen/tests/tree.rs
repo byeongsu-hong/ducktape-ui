@@ -1504,3 +1504,32 @@ fn tree_linear_layout_options_cross_the_wire() {
     assert!(generated.contains("clip: true"));
     assert!(generated.contains("clip: false"));
 }
+
+#[test]
+fn snapshot_schema_tracks_state_shape_but_not_view_layout() {
+    let source = format!(
+        "app Snap\n{PALETTE}state\n  draft = \"hello\"\ncomponent Counter()\n  lifetime retained\n  state\n    count = 0\n  text count\nview\n  col\n    text draft\n    Counter #counter\n"
+    );
+    let schema = |source: &str| {
+        let generated = compile_for(source, "snapshot.ice", Target::Tree).unwrap();
+        generated
+            .lines()
+            .find(|line| line.contains("const __SNAPSHOT_SCHEMA:"))
+            .unwrap()
+            .to_owned()
+    };
+    let original = schema(&source);
+    assert_eq!(original, schema(&source.replace("  col\n", "  row\n")));
+    assert_eq!(
+        original,
+        schema(&source.replace("hello", "different initializer"))
+    );
+    assert_ne!(
+        original,
+        schema(&source.replace("count = 0", "count = 0.5"))
+    );
+    assert_ne!(
+        original,
+        schema(&source.replace("lifetime retained", "lifetime mounted"))
+    );
+}
