@@ -18,6 +18,42 @@ palette app for AppTheme
 "#;
 
 #[test]
+fn tree_editor_binding_uses_a_deferred_commit_and_logical_document_identity() {
+    let source = format!(
+        "app Docs\n{PALETTE}extern crate::keys\n  editor-binding keys(readonly:bool) -> str\nstate\n  notes:editor = \"hello\"\non command(_value)\nview\n  col\n    editor #one <-> notes key-binding=keys(false) -> command _\n    editor #two <-> notes\n"
+    );
+    let result = compile_for(&source, "docs.ice", Target::Tree);
+    assert!(
+        result.is_ok(),
+        "Tree must emit checked editor bindings: {result:?}"
+    );
+    let code = result.unwrap();
+    assert!(code.contains("EditorTransaction<"));
+    assert!(code.contains(".apply(&mut self.notes)"));
+    assert!(code.contains(".register("));
+    assert_eq!(
+        code.matches("document: (\"app:notes\").to_owned()").count(),
+        2
+    );
+}
+
+#[test]
+fn tree_editor_binding_captures_route_arguments_and_component_scope() {
+    let source = format!(
+        "app Docs\n{PALETTE}extern crate::keys\n  editor-binding keys(readonly:bool) -> str\ncomponent Pad(label:str)\n  lifetime retained\n  state\n    draft:editor = \"hello\"\n  on command(_value, _label)\n  col\n    editor #one <-> draft key-binding=keys(false) -> command _ label\n    editor #two <-> draft\nview\n  col\n    Pad label=\"A\" #a\n    Pad label=\"B\" #b\n"
+    );
+    let code = compile_for(&source, "pads.ice", Target::Tree).expect("component editor binding");
+    assert!(code.contains("component:{{:?}}") || code.contains("component:{:?}"));
+    assert!(code.contains(".apply(&mut __local.draft)"));
+    assert!(
+        code.contains("let __route_arg_0 ="),
+        "callback must own its authored argument"
+    );
+    assert!(code.contains("Clone::clone(&__route_arg_0)"));
+    assert!(code.contains("__scope.clone(), __transaction"));
+}
+
+#[test]
 fn tree_container_linear_background_uses_native_gradient_stops() {
     let source = format!(
         "app Hero\n{PALETTE}view\n  box w=160.0 h=100.0 bg=linear(1.57, bg/10@0.0, primary/72@1.0)\n    text \"Hero\"\n"
@@ -1031,11 +1067,10 @@ const COVERAGE: &[Coverage] = &[
         "  editor <-> notes action=track_edits()\n",
         "an editor action",
     ),
-    refused(
+    emitted(
         "editor: key binding",
         "on command(_value)\n",
         "  editor <-> notes key-binding=editor_keys(busy) -> command _\n",
-        "an editor key binding",
     ),
     refused(
         "editor: highlight",
