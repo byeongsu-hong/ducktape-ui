@@ -55,6 +55,17 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
             ButtonContent::Child(child) => collect_texts(child, out),
         },
         Node::Toggle { label, .. } | Node::Radio { label, .. } => out.push(label.clone()),
+        Node::ComboBox {
+            options,
+            selected,
+            placeholder,
+            ..
+        } => out.push(
+            selected
+                .and_then(|index| options.get(index as usize))
+                .cloned()
+                .unwrap_or_else(|| placeholder.clone()),
+        ),
         Node::PickList {
             options,
             selected,
@@ -128,6 +139,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         | Node::Radio { .. }
         | Node::Slider { .. }
         | Node::PickList { .. }
+        | Node::ComboBox { .. }
         | Node::Progress { .. }
         | Node::Canvas { .. }
         | Node::Surface { .. } => None,
@@ -229,7 +241,9 @@ fn control<'a>(frame: &'a Frame, name: &str) -> Option<&'a Node> {
         Node::Toggle { key, label, .. } | Node::Radio { key, label, .. } => {
             key == name || label == name
         }
-        Node::Slider { key, .. } | Node::PickList { key, .. } => key == name,
+        Node::Slider { key, .. } | Node::PickList { key, .. } | Node::ComboBox { key, .. } => {
+            key == name
+        }
         _ => false,
     })
 }
@@ -273,9 +287,14 @@ pub fn slide(frame: &Frame, name: &str, value: f32) -> Vec<Event> {
 /// The events the host sends when the user picks the option reading
 /// `option` from the pick list with key `name`.
 pub fn pick(frame: &Frame, name: &str, option: &str) -> Vec<Event> {
-    let Some(Node::PickList {
-        options, on_select, ..
-    }) = control(frame, name)
+    let Some(
+        Node::PickList {
+            options, on_select, ..
+        }
+        | Node::ComboBox {
+            options, on_select, ..
+        },
+    ) = control(frame, name)
     else {
         panic!("no pick list {name:?} in {:?}", keys(frame));
     };
@@ -429,6 +448,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         | Node::Radio { .. }
         | Node::Slider { .. }
         | Node::PickList { .. }
+        | Node::ComboBox { .. }
         | Node::Progress { .. }
         | Node::Canvas { .. }
         | Node::Surface { .. } => {}

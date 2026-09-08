@@ -1681,6 +1681,10 @@ mod keyboard_tests;
 mod editor_tests;
 
 #[cfg(test)]
+#[path = "combo_tests.rs"]
+mod combo_tests;
+
+#[cfg(test)]
 #[path = "pick_tests.rs"]
 mod pick_tests;
 

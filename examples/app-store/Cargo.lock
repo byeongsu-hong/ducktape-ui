@@ -292,6 +292,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "app-store-combo-fixture"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "app-store-component-fixture"
 version = "0.1.0"
 dependencies = [

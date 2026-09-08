@@ -596,7 +596,13 @@ pub(in crate::codegen) fn generate_statements(
                         rust_string(&target.name)
                     ))
                 } else if matches!(target.ty, Type::Combo(_)) {
-                    StateWrite::Replace(format!("::iced::widget::combo_box::State::new({code})"))
+                    if program.target() == Target::Tree {
+                        StateWrite::Mutate(format!("{state}.{}.replace({code})", target.name))
+                    } else {
+                        StateWrite::Replace(format!(
+                            "::iced::widget::combo_box::State::new({code})"
+                        ))
+                    }
                 } else if let Type::Animation(inner) = &target.ty {
                     let code = if **inner == Type::F64 {
                         format!("({code}) as f32")

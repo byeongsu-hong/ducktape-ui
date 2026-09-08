@@ -2735,7 +2735,13 @@ fn resolved_expr_use_code_in(
     Ok(match &expression_use.coercion {
         ResolvedInitializerCoercion::None => code,
         ResolvedInitializerCoercion::ListToCombo { .. } => {
-            format!("::iced::widget::combo_box::State::new({code})")
+            format!(
+                "{}::new({code})",
+                match context.program.target() {
+                    Target::Tree => "::ui_lang_guest::Combo",
+                    Target::Native => "::iced::widget::combo_box::State",
+                }
+            )
         }
         ResolvedInitializerCoercion::ValueToAnimation { value } => {
             let code = if *value == Type::F64 {

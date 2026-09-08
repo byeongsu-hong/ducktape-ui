@@ -225,7 +225,7 @@ fn finish(running: &[Running], serial: i64, reload: Reload) -> Result<Loaded, St
     fresh.inputs = std::mem::take(&mut guest.inputs);
     fresh.pictures = std::mem::take(&mut guest.pictures);
     if let Some(root) = &mut fresh.frame.root {
-        fresh.inputs.adopt(root);
+        fresh.inputs.adopt_after_reload(root);
         fresh.pictures.adopt(root);
         root.for_each_mut(&mut |node| match node {
             wire::Node::Svg { bytes, .. } => *bytes = None,

@@ -64,10 +64,10 @@ pub(super) fn options(
         route(pick.close.as_ref())?
     ))
 }
-fn shaping(value: Option<ResolvedSelectionShaping>) -> String {
+pub(super) fn shaping(value: Option<ResolvedSelectionShaping>) -> String {
     option_code(value.map(|value| format!("{WIRE}::Shaping::{value:?}")))
 }
-fn font(value: Option<&ResolvedTextFont>) -> String {
+pub(super) fn font(value: Option<&ResolvedTextFont>) -> String {
     option_code(value.map(|value| match value {
         ResolvedTextFont::Named(value) => text::named_font(value, None),
         value => {

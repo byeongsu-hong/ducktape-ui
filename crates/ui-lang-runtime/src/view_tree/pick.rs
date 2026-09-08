@@ -72,7 +72,7 @@ pub(super) fn render(node: &wire::Node) -> IceElement<'static, Output> {
         .value(chosen.map(|choice| choice.1).unwrap_or_default())
         .into()
 }
-fn shaping(value: wire::Shaping) -> widget::text::Shaping {
+pub(super) fn shaping(value: wire::Shaping) -> widget::text::Shaping {
     match value {
         wire::Shaping::Auto => widget::text::Shaping::Auto,
         wire::Shaping::Basic => widget::text::Shaping::Basic,

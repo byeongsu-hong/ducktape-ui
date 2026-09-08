@@ -41,6 +41,7 @@ mod tooltip;
 pub use text::register_font_family;
 mod button;
 mod canvas;
+mod combo;
 mod editor;
 mod layers;
 mod operations;
@@ -72,6 +73,13 @@ pub enum Output {
     Edit {
         key: String,
         handler: u32,
+        text: String,
+    },
+    /// Native combo search changed; retain its bounded host text even without
+    /// a guest input route.
+    ComboInput {
+        key: String,
+        handler: Option<u32>,
         text: String,
     },
     /// The user did `action` in an editor: a keystroke, a paste, a click,
@@ -158,6 +166,7 @@ pub struct Inputs {
     instance: u64,
     fields: HashMap<String, Field>,
     editors: HashMap<String, EditorField>,
+    combos: HashMap<String, combo::Field>,
 }
 
 impl Default for Inputs {
@@ -173,6 +182,7 @@ impl Default for Inputs {
             instance,
             fields: HashMap::new(),
             editors: HashMap::new(),
+            combos: HashMap::new(),
         }
     }
 }
@@ -183,6 +193,7 @@ impl Inputs {
     /// it; one that reports the same value keeps whatever the user typed
     /// since. Inputs no longer in the tree are forgotten.
     pub fn adopt(&mut self, root: &wire::Node) {
+        combo::adopt(root, &mut self.combos);
         // A map, not a list: the retain below asks after every field this
         // holds, and a tree of a thousand inputs asking a list a thousand
         // times is a million comparisons on the window thread.
@@ -237,6 +248,14 @@ impl Inputs {
         }
     }
 
+    /// Restore only a matching combo identity, reset revision and option set.
+    /// Ordinary frame adoption also permits append-only option changes; reload
+    /// requires the exact snapshotted guest contract before retaining search.
+    pub fn adopt_after_reload(&mut self, root: &wire::Node) {
+        combo::retain_restored(root, &mut self.combos);
+        self.adopt(root);
+    }
+
     /// The text to show for an input; `fallback` is the guest's value for a
     /// key the host has not adopted yet.
     pub fn text<'a>(&'a self, key: &str, fallback: &'a str) -> &'a str {
@@ -273,6 +292,23 @@ impl Inputs {
             Output::Activate(index) => wire::Event::Message(index),
             Output::Link { handler, mut text } => {
                 wire::truncate_string(&mut text);
+                wire::Event::Input { handler, text }
+            }
+            Output::ComboInput {
+                key,
+                handler,
+                mut text,
+            } => {
+                let used = combo::stored_bytes(&self.combos);
+                let Some(field) = self.combos.get_mut(&key) else {
+                    return;
+                };
+                let available =
+                    wire::MAX_TEXT_BYTES_PER_FRAME.saturating_sub(used - field.query_bytes());
+                field.bound_input(&mut text, available);
+                let Some(handler) = handler else {
+                    return;
+                };
                 wire::Event::Input { handler, text }
             }
             Output::Surface { handler, mut value } => {
@@ -446,6 +482,7 @@ fn collect_inputs(
         | wire::Node::Radio { .. }
         | wire::Node::Slider { .. }
         | wire::Node::PickList { .. }
+        | wire::Node::ComboBox { .. }
         | wire::Node::Progress { .. }
         | wire::Node::Canvas { .. }
         | wire::Node::Surface { .. } => {}
@@ -544,6 +581,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures, frame_pixels: &mut u
         | wire::Node::Radio { .. }
         | wire::Node::Slider { .. }
         | wire::Node::PickList { .. }
+        | wire::Node::ComboBox { .. }
         | wire::Node::Progress { .. }
         | wire::Node::Canvas { .. }
         | wire::Node::Surface { .. } => {}
@@ -694,6 +732,9 @@ fn apply_input_face(face: wire::InputFace, style: &mut widget::text_input::Style
     if let Some(value) = face.value {
         style.value = color(value);
         style.icon = color(value);
+    }
+    if let Some(icon) = face.icon {
+        style.icon = color(icon);
     }
     if let Some(placeholder) = face.placeholder {
         style.placeholder = color(placeholder);
@@ -2084,6 +2125,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 .on_decrement_maybe(down)
                 .into()
         }
+        wire::Node::ComboBox { state_key, .. } => combo::render(node, inputs.combos.get(state_key)),
         wire::Node::PickList { .. } => pick::render(node),
         wire::Node::Progress {
             key,

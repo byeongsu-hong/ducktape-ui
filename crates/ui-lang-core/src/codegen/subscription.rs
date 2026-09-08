@@ -506,7 +506,11 @@ pub(in crate::codegen) fn resolved_type_code(
             resolved_type_code(program, error, span)?
         ),
         ResolvedType::Combo(inner) => format!(
-            "::iced::widget::combo_box::State<{}>",
+            "{}<{}>",
+            match program.target() {
+                Target::Tree => "::ui_lang_guest::Combo",
+                Target::Native => "::iced::widget::combo_box::State",
+            },
             resolved_type_code(program, inner, span)?
         ),
         ResolvedType::Animation(inner)

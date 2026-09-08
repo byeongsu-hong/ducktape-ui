@@ -909,11 +909,10 @@ const COVERAGE: &[Coverage] = &[
         "`pane grid`",
     ),
     emitted("rich text", "", "  rich-text\n    span \"a\"\n"),
-    refused(
+    emitted(
         "combo box",
         CHOOSE,
         "  combo search choice \"Search\" -> choose _\n",
-        "`combo box`",
     ),
     emitted("qr code", "", "  qr draft\n"),
     emitted(
@@ -1822,4 +1821,39 @@ fn tree_window_effects_refuse_explicit_native_window_ids() {
     let error = compile_for(&source, "window-effects.ice", Target::Tree).unwrap_err();
     assert_eq!(error.code, "E190");
     assert!(error.message.contains("own host window"));
+}
+
+#[test]
+fn combo_tree_retains_typed_options_routes_and_reset_snapshot() {
+    let source = format!(
+        "app Search\n{PALETTE}state\n  options:combo[str] = [\"Apple\", \"Berry\"]\n  selected:str? = none\n  query = \"\"\non choose(value)\n  selected = some(value)\non input(value)\n  query = value\non hover(value)\n  query = value\non opened\non closed\non reset\n  options = [\"Apple\", \"Berry\"]\non append\n  combo options push \"Blueberry\"\nview\n  combo options selected \"Search\" input=input hover=hover open=opened close=closed -> choose _\n"
+    );
+    compile_for(&source, "combo.ice", Target::Native).unwrap();
+    let tree = compile_for(&source, "combo.ice", Target::Tree).unwrap();
+    assert!(tree.contains("Node::ComboBox"));
+    assert!(tree.contains("::ui_lang_guest::Combo<"));
+    assert!(tree.contains("self.options.replace("));
+    assert!(tree.contains("self.options.push("));
+    assert!(tree.contains("reset_revision()"));
+    assert!(tree.contains("::ui_lang_guest::Combo::restore("));
+    assert!(tree.contains("__table.get(__sent as usize).cloned()"));
+}
+
+#[test]
+fn combo_tree_refuses_rust_style_callbacks_and_unowned_parameters() {
+    let styled = format!(
+        "app Search\nextern crate::backend\n  input-style custom()\n{PALETTE}state\n  values:combo[str] = [\"One\"]\n  selected:str? = none\non choose(value)\nview\n  combo values selected \"Search\" style=custom() -> choose _\n"
+    );
+    let parameter = format!(
+        "app Search\n{PALETTE}state\n  values:combo[str] = [\"One\"]\ncomponent Picker(values:combo[str])\n  state\n    selected:str? = none\n  on choose(value)\n    selected = some(value)\n  combo values selected \"Search\" -> choose _\nview\n  Picker values=values\n"
+    );
+    for (source, message) in [
+        (&styled, "custom combo"),
+        (&parameter, "without owned app state"),
+    ] {
+        compile_for(source, "combo.ice", Target::Native).unwrap();
+        let error = compile_for(source, "combo.ice", Target::Tree).unwrap_err();
+        assert_eq!(error.code, "E190");
+        assert!(error.message.contains(message), "{}", error.message);
+    }
 }
