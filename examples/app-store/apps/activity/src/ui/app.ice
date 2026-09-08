@@ -27,10 +27,9 @@ state
 
 // Whatever any other app publishes shows up here, newest first. The host's
 // colour mode arrives the same way, on its own subscription.
-on mount
-  parallel
-    stream every events("*") -> arrived _ | bus_failed _
-    stream every theme_changes() -> themed _ | theme_failed _
+subscribe
+  run events("*") -> arrived _ | bus_failed _
+  run theme_changes() -> themed _ | theme_failed _
 
 on themed(mode)
   dark = mode == "dark"

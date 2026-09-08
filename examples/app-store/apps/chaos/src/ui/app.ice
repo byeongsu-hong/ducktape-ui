@@ -25,8 +25,8 @@ state
   dark = false
 
 // The colour mode needs no capability, so even this manifest gets it.
-on mount
-  stream every theme_changes() -> themed _ | theme_failed _
+subscribe
+  run theme_changes() -> themed _ | theme_failed _
 
 on themed(mode)
   dark = mode == "dark"

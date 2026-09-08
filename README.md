@@ -704,3 +704,7 @@ not the app-store process. The host checks current instance identity before nati
 submission; explicit native window IDs are rejected. See the
 [guest task boundary](examples/app-store/README.md#tasks-and-runtime) for acknowledgement
 semantics and remaining native Task gaps.
+
+The app-store apps use persistent subscriptions for theme, bus-feed and clock
+streams, allowing quiescent state transfer while those streams remain live. See
+[the parity ledger](examples/app-store/PARITY.md).

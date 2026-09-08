@@ -78,14 +78,10 @@ fn native_and_wasm_counter_share_mounted_route_pixels_and_host_bus() {
                 Some("Shared on the bus"),
                 "host reply must complete the task"
             );
-            assert!(
-                guest
-                    .backend
-                    .snapshot()
-                    .unwrap_err()
-                    .contains("pending work"),
-                "the existing on-mount stream snapshot restriction applies to both backends"
-            );
+            guest
+                .backend
+                .snapshot()
+                .expect("persistent subscriptions must allow state transfer");
         }
         ui.draw(
             &mut renderer,
@@ -215,5 +211,188 @@ fn native_and_wasm_accessibility_click_updates_counter() {
             Some("1"),
             "accessible click must update actual guest, native={native}"
         );
+    }
+}
+
+fn state_field(guest: &mut Guest, name: &str) -> wire::SnapshotValue {
+    let state = wire::Snapshot::decode(&guest.backend.snapshot().unwrap()).unwrap();
+    let wire::SnapshotValue::Record { fields, .. } = state.state else {
+        panic!("app state record")
+    };
+    fields
+        .into_iter()
+        .find(|(field, _)| field == name)
+        .expect("state field")
+        .1
+}
+
+fn pump_theme(
+    mut ui: super::layers_tests::Ui,
+    surface: &Surface,
+    renderer: &mut iced::Renderer,
+    now: &mut Instant,
+    dark: bool,
+) -> super::layers_tests::Ui {
+    for _ in 0..4 {
+        ui = iced_test::runtime::UserInterface::build(
+            wasm_view(surface.clone(), dark),
+            iced::Size::new(480.0, 600.0),
+            ui.into_cache(),
+            renderer,
+        );
+        *now += Duration::from_secs(1);
+        ui.update(
+            &[iced::Event::Window(iced::window::Event::RedrawRequested(
+                *now,
+            ))],
+            iced::mouse::Cursor::Unavailable,
+            renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut vec![],
+        );
+        assert!(surface.0.lock().unwrap().fault.is_none());
+    }
+    ui
+}
+
+#[test]
+#[ignore = "requires current native and wasm Counter/Todo bundles and isolated APP_STORE_DATA"]
+fn native_and_wasm_subscriptions_preserve_state_and_restart_once_on_reload() {
+    assert!(std::env::var_os("APP_STORE_DATA").is_some());
+    for native in [false, true] {
+        for name in ["Counter", "Todo"] {
+            let entry = entry(native, name);
+            let surface = Surface(Arc::new(Mutex::new(Guest::load(&entry).unwrap())));
+            let running = Running {
+                id: entry.id.clone(),
+                name: entry.name.clone(),
+                surface: surface.clone(),
+                window: iced::window::Id::unique(),
+            };
+            let mut renderer = renderer();
+            let mut ui = build(
+                &surface.0,
+                user_interface::Cache::default(),
+                &mut renderer,
+                480.0,
+            );
+            let mut now = Instant::now();
+            ui = pump_theme(ui, &surface, &mut renderer, &mut now, false);
+            assert_eq!(
+                state_field(&mut surface.0.lock().unwrap(), "dark"),
+                wire::SnapshotValue::Bool(false)
+            );
+            if name == "Counter" {
+                click(&mut ui, &mut renderer, "+");
+            } else {
+                assert!(super::layers_tests::focus(
+                    &mut ui,
+                    &renderer,
+                    "Todo/app/content/composer/draft"
+                ));
+                for character in "unsaved draft".chars() {
+                    super::layers_tests::type_text(&mut ui, &mut renderer, &character.to_string());
+                    ui = pump_theme(ui, &surface, &mut renderer, &mut now, false);
+                }
+            }
+            ui = pump_theme(ui, &surface, &mut renderer, &mut now, true);
+            assert_eq!(
+                state_field(&mut surface.0.lock().unwrap(), "dark"),
+                wire::SnapshotValue::Bool(true)
+            );
+            if name == "Counter" {
+                let mut guest = surface.0.lock().unwrap();
+                let id = guest.theme_subscriptions[0];
+                guest.pending.push(wire::Event::Response {
+                    id,
+                    result: Err("theme temporarily unavailable".into()),
+                    done: false,
+                });
+                drop(guest);
+                ui = pump_theme(ui, &surface, &mut renderer, &mut now, true);
+                assert_eq!(
+                    state_field(&mut surface.0.lock().unwrap(), "answer"),
+                    wire::SnapshotValue::Str("theme temporarily unavailable".into()),
+                    "fallible subscription error reaches existing handler"
+                );
+                ui = pump_theme(ui, &surface, &mut renderer, &mut now, false);
+                assert_eq!(
+                    state_field(&mut surface.0.lock().unwrap(), "dark"),
+                    wire::SnapshotValue::Bool(false),
+                    "success still arrives after a nonterminal error"
+                );
+                ui = pump_theme(ui, &surface, &mut renderer, &mut now, true);
+            }
+            for serial in 1..=3 {
+                let before = {
+                    let mut guest = surface.0.lock().unwrap();
+                    assert_eq!(guest.theme_subscriptions.len(), 1, "one live theme stream");
+                    if name == "Counter" {
+                        assert_eq!(
+                            state_field(&mut guest, "count"),
+                            wire::SnapshotValue::I64(1)
+                        );
+                    } else {
+                        assert_eq!(
+                            state_field(&mut guest, "draft"),
+                            wire::SnapshotValue::Str("unsaved draft".into())
+                        );
+                    }
+                    guest
+                        .backend
+                        .snapshot()
+                        .expect("a live subscription must not block reload")
+                };
+                let old_alive = surface.0.lock().unwrap().alive.clone();
+                let reload = iced::futures::executor::block_on(prepare_reload(
+                    entry.clone(),
+                    vec![running.clone()],
+                    serial,
+                ));
+                let loaded =
+                    super::reload::finish_reload(std::slice::from_ref(&running), serial, reload)
+                        .unwrap();
+                assert_eq!(loaded.surface, surface);
+                assert!(
+                    !old_alive.load(Ordering::Relaxed),
+                    "retired instance and its streams must be released"
+                );
+                {
+                    let mut guest = surface.0.lock().unwrap();
+                    assert_eq!(
+                        guest.backend.snapshot().unwrap(),
+                        before,
+                        "complete count/draft/theme/editor state survives replacement"
+                    );
+                }
+                ui = pump_theme(ui, &surface, &mut renderer, &mut now, true);
+                let mut guest = surface.0.lock().unwrap();
+                assert_eq!(
+                    guest.theme_subscriptions.len(),
+                    1,
+                    "reload must replace, not accumulate subscriptions"
+                );
+                assert_eq!(
+                    guest.backend.snapshot().unwrap(),
+                    before,
+                    "restart does not replay mount or duplicate state updates"
+                );
+            }
+            ui = pump_theme(ui, &surface, &mut renderer, &mut now, false);
+            assert_eq!(
+                state_field(&mut surface.0.lock().unwrap(), "dark"),
+                wire::SnapshotValue::Bool(false),
+                "replacement receives later host theme changes"
+            );
+            if name == "Counter" {
+                click(&mut ui, &mut renderer, "+");
+                let _ui = pump_theme(ui, &surface, &mut renderer, &mut now, false);
+                assert_eq!(
+                    state_field(&mut surface.0.lock().unwrap(), "count"),
+                    wire::SnapshotValue::I64(2),
+                    "replacement still routes events"
+                );
+            }
+        }
     }
 }

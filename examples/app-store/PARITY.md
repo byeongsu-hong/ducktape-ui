@@ -14,7 +14,7 @@ lowering diagnostics; those refusals apply to both Tree execution paths.
 |---|---|---|---|
 | Build, catalog, explicit install, independent app windows | Direct executable | Native package backend in this PR; wasm component backend exists | Build all five apps; never execute during scan; consent binds manifest and executable |
 | Input routes, host requests, palettes and native painting | Native toolkit | Shared host and Tree protocol | Same mounted Counter click, bus reply, owned state and pixels on both backends |
-| Snapshot and approved reload | Native app-specific lifecycle | Shared owned-state snapshot and host replacement; shipped on-mount theme streams currently prevent quiescence | Preserve state and window; stale completion cannot replace live app |
+| Snapshot and approved reload | Native app-specific lifecycle | Shared owned-state snapshot and host replacement; shipped persistent streams use subscriptions | Preserve state and window; stale completion cannot replace live app |
 | Fault containment | Application process | Native process deadline; wasm fuel, memory and epoch limits | Chaos runaway ends while another app remains usable |
 | Accessibility | Native runtime semantics | Mapped host widgets preserve roles, names and semantic action targets | Identical mounted semantic actions and results on both backends; OS bridge smoke remains a separate platform gate |
 | Combo boxes, images, gradients | Existing native widgets/options | Tree refusals remain | Real selection/image decode/gradient pixels, not codegen strings |
@@ -35,12 +35,12 @@ not wire values. Functional parity requires declarative data or explicitly
 registered host providers that retain native behavior. Their current rejection
 is a tracked implementation gap where it blocks an authored user capability.
 
-The shipped Counter's `on mount / stream every theme_changes()` is currently a
-non-subscription Driver task and prevents snapshots indefinitely on both
-backends. Existing `subscribe / run theme_changes()` can represent the stream
-as a persistent subscription; its Result routing and both-backend reload need
-a focused follow-up. The native backend's reload evidence uses the existing
-versioned reload fixtures, and does not claim this shipped-app gap is fixed.
+The five shipped apps declare theme changes as persistent subscriptions. Activity's
+bus feed and Clock's ticks also use subscriptions; Todo's storage reads and
+Clock's initial wall-clock query remain finite mount tasks. Counter and Todo
+have actual native/Wasm repeated-reload coverage for complete state, including
+count, unsaved draft and theme, with exactly one restarted theme subscription.
+Pending user writes still prevent reload until they settle.
 
 Mounted native and Wasm Counter tests dispatch AccessKit Click through the
 host message boundary and observe the actual counter increment. Native
