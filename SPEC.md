@@ -1422,3 +1422,12 @@ The example store scans `<id>.native/{app[.exe],manifest}` without execution,
 binds both byte sequences to consent and launches the verified executable copy.
 All exchanges have a host deadline. Hosted capabilities and native widgets are
 shared with wasm; arbitrary native OS access is explicitly trusted.
+
+### Tree sensor continuity
+
+Sensor `key=` is copied independently of the node identity and compared by the
+host's native sensor. A changed key re-arms its show notification, preserving
+its delay, local measurement and child state. The language's `bool`, `i64`,
+`f64` and `str` keys use the bounded SurfaceValue codec; opaque extern keys
+remain E190. Reset data shares frame text/value budgets. The existing per-frame sensor
+loop limit still applies. Host and guest must rebuild for the new reset field.

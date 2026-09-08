@@ -1436,6 +1436,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         }
         wire::Node::Sensor {
             key: _,
+            reset,
             on_show,
             on_resize,
             on_hide,
@@ -1450,7 +1451,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     height: size.height,
                 }
             };
-            let mut sensor = widget::sensor(render_node(child, kept));
+            let mut sensor = widget::sensor(render_node(child, kept)).key(reset.clone());
             if let Some(handler) = on_show {
                 sensor = sensor.on_show(size(*handler));
             }
@@ -2210,6 +2211,72 @@ fn selected_children<'a>(children: &'a [wire::Node], kept: &Kept<'_>) -> Vec<&'a
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sensor_reset_value_retriggers_show_without_changing_widget_identity() {
+        use iced::advanced::renderer::Headless;
+        use iced_test::runtime::{UserInterface, user_interface};
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let inputs = Inputs::default();
+        let mut cache = user_interface::Cache::default();
+        let now = std::time::Instant::now();
+        for (reset, expected) in [
+            (Some("a"), 1),
+            (Some("a"), 0),
+            (Some("b"), 1),
+            (Some("b"), 0),
+            (None, 1),
+            (None, 0),
+        ] {
+            let node = wire::Node::Sensor {
+                key: "stable-sensor".into(),
+                reset: reset.map(|value| wire::SurfaceValue::Str(value.into())),
+                on_show: Some(7),
+                on_resize: None,
+                on_hide: None,
+                anticipate: None,
+                delay: None,
+                child: Box::new(wire::Node::Space {
+                    width: Some(wire::Length::Fixed(20.0)),
+                    height: Some(wire::Length::Fixed(10.0)),
+                }),
+            };
+            let element = render(&node, &inputs, &Pictures::default(), &Surfaces::new());
+            let mut ui =
+                UserInterface::build(element, iced::Size::new(200.0, 100.0), cache, &mut renderer);
+            let mut outputs = Vec::new();
+            ui.update(
+                &[iced::Event::Window(iced::window::Event::RedrawRequested(
+                    now,
+                ))],
+                iced::mouse::Cursor::Unavailable,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut outputs,
+            );
+            assert_eq!(
+                outputs.len(),
+                expected,
+                "only changed reset values re-notify an already visible, same-size sensor: {reset:?}"
+            );
+            for output in outputs {
+                assert!(matches!(
+                    output,
+                    Output::Size {
+                        handler: 7,
+                        width: 20.0,
+                        height: 10.0
+                    }
+                ));
+            }
+            cache = ui.into_cache();
+        }
+    }
+
     #[test]
     fn pin_keeps_default_fill_and_explicit_dimensions() {
         use iced::advanced::{layout::Limits, renderer::Headless, widget::Tree};
@@ -3434,6 +3501,7 @@ mod tests {
                     },
                     wire::Node::Sensor {
                         key: "App/content/watch".into(),
+                        reset: None,
                         on_show: Some(0),
                         on_resize: Some(1),
                         on_hide: Some(2),

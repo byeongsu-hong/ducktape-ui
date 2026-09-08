@@ -681,3 +681,8 @@ processes. Both backends share host rendering and snapshots; native executables
 require explicit OS-code trust and are not Wasm sandboxes. See the
 [native execution guide](examples/app-store/README.md#trusted-native-tree-applications)
 and [functional parity worklist](examples/app-store/PARITY.md).
+
+Tree sensors accept copied `key=` continuity values. A changed value re-arms
+the native show notification without replacing the child's widget identity.
+`bool`, `i64`, `f64` and `str` keys cross within wire budgets;
+opaque extern keys remain E190. Rebuild hosts and guests together.

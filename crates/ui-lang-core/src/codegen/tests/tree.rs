@@ -1083,11 +1083,15 @@ const COVERAGE: &[Coverage] = &[
     emitted("rule: style preset", "", "  rule horizontal style=weak\n"),
     emitted("rule: snap", "", "  rule horizontal snap=busy\n"),
     emitted("rule: radius", "", "  rule horizontal r=2.0\n"),
-    refused(
+    emitted(
         "sensor: key",
         MEASURE,
         "  sensor show=measured key=draft\n    text \"a\" @text-fg\n",
-        "a sensor key",
+    ),
+    emitted(
+        "sensor: boolean key",
+        MEASURE,
+        "  sensor show=measured key=busy\n    text \"a\" @text-fg\n",
     ),
     refused(
         "rule: fill",
