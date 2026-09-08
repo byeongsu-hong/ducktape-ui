@@ -1637,3 +1637,13 @@ Tree factories return `ui_lang_guest::EditorBinding<Payload>`; Native factories
 retain the native Iced key-binding signature. The authored route still receives
 its declared `Payload`. See [the transaction contract](docs/editor-transactions.md)
 for admission, ordering, cancellation and guest-owned history.
+
+## Default page insets
+
+The standard component library exports `Page(padding:f64=24.0)`. Page fills its
+available bounds, uses the semantic background, and insets one content root on
+all four sides. Padding is customizable, including explicit zero for full-bleed
+content. Page does not own scrolling or maximum content width. Form already
+provides its own outer padding and should not be nested inside Page merely to
+obtain a screen inset. This is ordinary library composition, not implicit margin
+on every widget or a new Core construct.

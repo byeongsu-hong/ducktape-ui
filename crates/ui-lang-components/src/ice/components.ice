@@ -1,3 +1,13 @@
+// Page owns viewport insets; surfaces own padding inside their borders.
+component Page(padding:f64=24.0)
+  box #root
+    with
+      w=fill
+      h=fill
+      p=padding
+      bg=bg
+    slot
+
 component PageHeader(title:str, description:str="")
   col #root @field
     text title #title
