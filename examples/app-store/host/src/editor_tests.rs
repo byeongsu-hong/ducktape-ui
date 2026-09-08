@@ -179,7 +179,11 @@ fn editor_wasm_preserves_presentation_selection_editing_and_disabled_state() {
     );
     let pixels = renderer.screenshot(Size::new(240, 200), 1.0, iced::Color::WHITE);
     assert!(
-        pixels.chunks_exact(4).any(|p| p[..3] == [0, 255, 255]),
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p[..3] == [0, 255, 255]),
         "native selection paints the guest's cyan color"
     );
     send(

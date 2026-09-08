@@ -535,7 +535,11 @@ mod tests {
             "focused background"
         );
         assert!(
-            pixels.chunks_exact(4).any(|p| p[..3] == [0, 255, 255]),
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .any(|p| p[..3] == [0, 255, 255]),
             "native selection uses copied cyan paint"
         );
         let pixels = paint(&mut ui, &mut renderer, inside);
