@@ -102,7 +102,7 @@ pub(in crate::codegen) fn render_tree_node(
             env,
             scope,
         )?,
-        ResolvedViewKind::Media => svg(node, identity, document, env, scope)?,
+        ResolvedViewKind::Media => media(node, identity, document, env, scope)?,
         ResolvedViewKind::Input => input(node, identity, document, message, env, scope)?,
         ResolvedViewKind::TextEditor => editor(node, identity, document, message, env, scope)?,
         ResolvedViewKind::Markdown => {
@@ -1249,7 +1249,7 @@ fn text(
     }
 }
 
-fn svg(
+fn media(
     id: ViewId,
     identity: Option<&ResolvedViewIdentity>,
     program: &LoweredProgram,
@@ -1258,7 +1258,7 @@ fn svg(
 ) -> Result<String, Error> {
     let media = program.resolved_media(id)?;
     let origin = media.origin;
-    if media.kind != ResolvedMediaKind::Svg {
+    if media.kind == ResolvedMediaKind::Viewer {
         return Err(refused(program, origin, "media"));
     }
     let options = &media.options;
@@ -1266,7 +1266,7 @@ fn svg(
         program,
         origin,
         options.accessibility_description.is_some(),
-        "an accessibility description on an svg",
+        "an accessibility description on media",
     )?;
     refuse_when(
         program,
@@ -1275,7 +1275,19 @@ fn svg(
         "an svg style callback",
     )?;
     let inherit = options.svg_inherits_button_ink;
-    let bytes = if options.svg_memory {
+    let bytes = if media.kind == ResolvedMediaKind::Image {
+        if let Some(bytes) = embedded_asset_bytes_code(program, media.source) {
+            format!("::iced::advanced::image::Handle::from_bytes({bytes})")
+        } else if media.source_type == Type::Image {
+            resolved_expr_use_code(program, media.source, env, ValueMode::Owned)?
+        } else {
+            return Err(refused(
+                program,
+                origin,
+                "an image read from a path (use an embedded asset or encoded bytes)",
+            ));
+        }
+    } else if options.svg_memory {
         match media.source_type {
             Type::Bytes => resolved_expr_use_code(program, media.source, env, ValueMode::Owned)?,
             _ => format!(
@@ -1353,6 +1365,22 @@ fn svg(
         .opacity
         .map(|opacity| clamped_f32_code(opacity, "0.0", "1.0", program, env))
         .transpose()?;
+    if media.kind == ResolvedMediaKind::Image {
+        let filter = match options.filter {
+            Some(ResolvedMediaFilter::Nearest) => "Nearest",
+            _ => "Linear",
+        };
+        return Ok(format!(
+            "match {SLOTS}::image(&({bytes})) {{ ::std::option::Option::Some((__hash, __data)) => {WIRE}::Node::Image {{ key: {}, hash: __hash, data: __data, label: {}, fit: {}, rotation: {}, opacity: {}, filter: {WIRE}::ImageFilter::{filter}, width: {}, height: {} }}, ::std::option::Option::None => {WIRE}::Node::empty() }}",
+            key_code(identity, "media", origin, scope, env, program)?,
+            option_code(label),
+            option_code(fit),
+            option_code(rotation),
+            option_code(opacity),
+            dimension(options.width.as_ref())?,
+            dimension(options.height.as_ref())?,
+        ));
+    }
     Ok(format!(
         "{{ let (__hash, __bytes) = {SLOTS}::picture({bytes}); {WIRE}::Node::Svg {{ inherit_button_ink: {inherit}, key: {}, hash: __hash, bytes: __bytes, label: {}, color: {}, hover: {}, fit: {}, rotation: {}, opacity: {}, width: {}, height: {} }} }}",
         key_code(identity, "media", origin, scope, env, program)?,

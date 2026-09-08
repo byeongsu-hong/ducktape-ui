@@ -708,3 +708,19 @@ semantics and remaining native Task gaps.
 The app-store apps use persistent subscriptions for theme, bus-feed and clock
 streams, allowing quiescent state transfer while those streams remain live. See
 [the parity ledger](examples/app-store/PARITY.md).
+
+### Tree raster images
+
+Tree guests copy embedded image assets, `encoded(bytes)` and
+`rgba(width, height, bytes)` to the host. Native image sizing, content fit,
+rotation, opacity and filtering apply there. SVG and raster caches are separate;
+RGBA dimensions participate in image identity. Relative literal paths embed at
+build time. Other path expressions are refused; an opaque runtime image handle
+containing a filesystem path emits a guest diagnostic and draws no image.
+The host never opens that path. `viewer` and native image allocation operations
+remain outside this Tree support. Rebuild hosts and guests together for the
+new wire variant.
+
+The existing tiny-skia renderer can misplace enlarged images at fractional or
+nonaligned origins. This change preserves native rendering parity; correcting
+that renderer positioning remains separate work.

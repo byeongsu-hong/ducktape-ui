@@ -450,15 +450,39 @@ fn gen_text(rng: &mut Rng) -> Node {
 }
 
 /// A picture whose bytes cross about half the time, and about one time in
-/// sixteen run past `MAX_SVG_BYTES_PER_FRAME` on their own.
+/// sixteen run past `MAX_PICTURE_BYTES_PER_FRAME` on their own.
 fn gen_svg(rng: &mut Rng) -> Node {
     let bytes = rng.next_bool().then(|| {
         let len = match rng.next_range(16) {
-            0 => MAX_SVG_BYTES_PER_FRAME + 1 + rng.next_range(64),
+            0 => MAX_PICTURE_BYTES_PER_FRAME + 1 + rng.next_range(64),
             _ => rng.skewed(4096, 2),
         };
         vec![b'<'; len]
     });
+    if rng.next_bool() {
+        return Node::Image {
+            key: gen_key(rng),
+            hash: rng.next_u64(),
+            data: bytes.map(|bytes| {
+                if rng.next_bool() {
+                    ImageData::Encoded(bytes)
+                } else {
+                    ImageData::Rgba {
+                        width: rng.next_u64() as u32,
+                        height: rng.next_u64() as u32,
+                        pixels: bytes,
+                    }
+                }
+            }),
+            label: rng.next_bool().then(|| gen_string(rng)),
+            fit: None,
+            rotation: Some(Rotation::Solid(gen_f32(rng))),
+            opacity: Some(gen_f32(rng)),
+            filter: ImageFilter::Linear,
+            width: gen_opt_length(rng),
+            height: gen_opt_length(rng),
+        };
+    }
     Node::Svg {
         inherit_button_ink: true,
         key: gen_key(rng),
@@ -1543,6 +1567,31 @@ fn check_bounds(
             check_color(color, ctx);
             check_length(width, ctx);
         }
+        Node::Image {
+            data,
+            label,
+            rotation,
+            opacity,
+            width,
+            height,
+            ..
+        } => {
+            if let Some(data) = data {
+                *svg_bytes += data.byte_len();
+                assert!(data.valid_rgba(), "{ctx}: invalid RGBA");
+            }
+            if let Some(label) = label {
+                check_string(label, ctx, "image label");
+            }
+            if let Some(Rotation::Floating(radians) | Rotation::Solid(radians)) = rotation {
+                check_finite(*radians, ctx, "image rotation");
+            }
+            if let Some(opacity) = opacity {
+                assert!(opacity.is_finite() && (0.0..=1.0).contains(opacity));
+            }
+            check_length(width, ctx);
+            check_length(height, ctx);
+        }
         Node::Svg {
             bytes,
             label,
@@ -1994,8 +2043,8 @@ fn check_frame(frame: &Frame, ctx: &str) {
         let mut svg_bytes = 0;
         check_bounds(root, 0, &mut keys, &mut svg_bytes, ctx);
         assert!(
-            svg_bytes <= MAX_SVG_BYTES_PER_FRAME,
-            "{ctx}: {svg_bytes} picture bytes, over MAX_SVG_BYTES_PER_FRAME"
+            svg_bytes <= MAX_PICTURE_BYTES_PER_FRAME,
+            "{ctx}: {svg_bytes} picture bytes, over MAX_PICTURE_BYTES_PER_FRAME"
         );
     }
     for request in &frame.requests {

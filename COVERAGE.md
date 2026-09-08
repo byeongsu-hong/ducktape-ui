@@ -2056,3 +2056,50 @@ forcing its condition false fails the one-theme/one-timer assertion. Rebuilding
 native Counter with its theme error display suppressed fails the actual host
 error-message assertion. Both independent temporary mutations are restored
 before the final native/Wasm run.
+
+### Tree copied raster images
+
+Core's Tree table emits image sources and retains explicit E190 diagnostics for
+nonembedded filesystem paths. The guest test checks dimension-sensitive RGBA
+identity, per-driver picture history and an explicit `host.log` refusal for a
+runtime path handle. Wire tests cover copied-byte roundtrips, refusal of a
+malicious vector header before reading elements, invalid RGBA dimensions/lengths,
+and the shared SVG/raster frame allowance. Hostile-frame generation includes
+raster nodes and checks their sanitized bounds.
+
+Runtime tests decode real PNG pixels, refuse excess dimensions, charge corrupt
+pixel decoding against the work allowance, retain failures without retrying, and
+share copied-byte and entry caps with SVG. Red evidence: corrupt PNG work left
+the frame allowance at 3 instead of 1 before the accounting fix. Temporary
+fresh-frame-budget, omitted-RGBA-dimensions and failed-cache-retry mutations fail
+the shared-budget, identity and retention assertions respectively; all sources
+were restored byte for byte before the passing checks.
+
+`bundled_images_preserve_native_pixels_shape_lazy_resync_and_instance_lifetime`
+loads the same image fixture as an actual Wasm component and native IPC package.
+It compares embedded PNG, encoded PNG, RGBA and native image options against a
+complete native image scene, then clicks native buttons to change RGBA dimensions
+and hide/remount the lazy picture. It also checks Resync, approved snapshot reload
+and fresh instance pixels. The intermediate hidden-node assertion proves the
+first toggle really unmounts the picture. The native comparison includes all
+neighboring images so renderer overpaint is not mistaken for a transport error.
+
+Commands: `cargo test -p ui-lang-core -p ui-lang-guest -p ui-lang-wire --lib`,
+`cargo test -p ui-lang-wire --test hostile_frames`,
+`cargo test -p ui-lang-runtime view_tree::image::tests --lib`,
+`cargo ice bundle --manifest-path examples/app-store/Cargo.toml -p app-store-image-fixture --target wasm32-unknown-unknown --out examples/app-store/target/image-fixture`,
+and in app-store `python3 scripts/build-native.py -p app-store-image-fixture --out target/image-native`
+then `cargo test -p app-store-host bundled_images_ -- --ignored`.
+Image viewer, dynamic filesystem sources, native image allocation tasks and total
+codec/process memory guarantees are not covered by this support.
+
+JPEG EXIF orientations 1 through 8 are compared byte-for-byte against Iced's
+native image loader. Omitting orientation application fails the orientation-2
+pixel assertion. Forwarding Nearest as Linear fails the actual-Wasm native pixel
+comparison. These are behavioral Red checks, followed by exact source restoration.
+
+Known limitation: tiny-skia truncates destination origins in source-pixel units
+before scaling. The complete-scene comparator preserves this native behavior;
+it is not evidence that image ink stays inside nominal widget bounds. Correct
+positioning and its independent outside-bounds assertion belong to the separate
+renderer follow-up.

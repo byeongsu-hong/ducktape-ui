@@ -43,6 +43,7 @@ fn rust_type_code_with_named(
         Type::F64 => "f64".into(),
         Type::Str => "::std::string::String".into(),
         Type::Bytes => "::std::vec::Vec<u8>".into(),
+        Type::Image if target == Target::Tree => "::iced::advanced::image::Handle".into(),
         Type::Image => "::iced::widget::image::Handle".into(),
         Type::ImageAllocation => "::iced::widget::image::Allocation".into(),
         Type::ImageMemory => "::std::sync::Weak<::iced::advanced::image::Memory>".into(),

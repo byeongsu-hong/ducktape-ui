@@ -269,10 +269,10 @@ impl<A: App> Driver<A> {
             // the same tree — and the tree the host keeps, which drops the
             // bytes the same way once it has the pictures.
             let mut kept = root.clone();
-            kept.for_each_mut(&mut |node| {
-                if let wire::Node::Svg { bytes, .. } = node {
-                    *bytes = None;
-                }
+            kept.for_each_mut(&mut |node| match node {
+                wire::Node::Svg { bytes, .. } => *bytes = None,
+                wire::Node::Image { data, .. } => *data = None,
+                _ => {}
             });
             self.last_root = Some(kept);
         }

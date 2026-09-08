@@ -522,7 +522,7 @@ For module packaging requirements and the connected implementation phases, see
   extern's name (`clock_face` is the one this store paints, with a sweeping
   second hand the guest never ticks), given the call's copied data arguments
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
-  the host lacks renders a placeholder. Remaining refusals include combo box, images,
+  the host lacks renders a placeholder. Remaining refusals include combo box, image viewer and dynamic image paths,
   mounted components inside lazy or host container conditions, gradients, and
   unsupported interaction utility styles. These fail the app's build at
   its `.ice` line with E190 and need additional lowering or host contracts.
@@ -1389,3 +1389,21 @@ cd examples/app-store
 python3 scripts/build-native.py -p app-store-window-effects-fixture --out target/window-effects-native
 APP_STORE_DATA="$(mktemp -d)" cargo test --locked -p app-store-host bundled_window_effects_ -- --ignored --test-threads=1
 ```
+
+### Copied raster pictures
+
+Tree-native and Wasm guests use the same `image` transport for embedded files,
+`encoded(bytes)` and `rgba(width, height, bytes)`. The host decodes once, applies
+native dimensions, fit, rotation, opacity and filtering, and retains typed
+SVG/raster handles through lazy remount and Resync. Approved replacement adopts
+the new guest's first picture payloads into the existing bounded host cache.
+Raster bytes share SVG frame/session allowances; pixel work and cache entry
+counts are additionally bounded as described in the root SPEC. Malformed or
+excess images occupy their specified empty space. Runtime path handles emit a
+guest diagnostic and never cause host filesystem reads. Viewer, dynamic path
+loading and native image allocation task effects remain separate gaps.
+
+The current tiny-skia renderer can place enlarged images outside their nominal
+bounds by truncating destination coordinates in source-pixel units. The image
+fixture proves parity with that native renderer; positioning correction is
+tracked separately in PARITY.md.

@@ -1165,10 +1165,10 @@ impl Guest {
                             // The guest remembers its tree without the
                             // picture bytes; the tree its patches build on
                             // has to be that one.
-                            root.for_each_mut(&mut |node| {
-                                if let wire::Node::Svg { bytes, .. } = node {
-                                    *bytes = None;
-                                }
+                            root.for_each_mut(&mut |node| match node {
+                                wire::Node::Svg { bytes, .. } => *bytes = None,
+                                wire::Node::Image { data, .. } => *data = None,
+                                _ => {}
                             });
                         }
                     }
@@ -1691,3 +1691,7 @@ mod reload_tests;
 #[cfg(test)]
 #[path = "native_tests.rs"]
 mod native_tests;
+
+#[cfg(test)]
+#[path = "image_tests.rs"]
+mod image_tests;

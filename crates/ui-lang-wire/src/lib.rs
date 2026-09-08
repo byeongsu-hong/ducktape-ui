@@ -28,6 +28,9 @@ pub use wit::WIT;
 
 use serde::{Deserialize, Serialize};
 
+mod image;
+pub use image::{ImageData, ImageFilter};
+
 mod snapshot;
 pub use snapshot::{MAX_SNAPSHOT_BYTES, Snapshot, SnapshotValue};
 
@@ -813,6 +816,19 @@ pub enum Node {
         width: Option<Length>,
         align_x: Option<AlignX>,
     },
+    /// A raster picture sent once per typed content hash.
+    Image {
+        key: String,
+        hash: u64,
+        data: Option<ImageData>,
+        label: Option<String>,
+        fit: Option<ContentFit>,
+        rotation: Option<Rotation>,
+        opacity: Option<f32>,
+        filter: ImageFilter,
+        width: Option<Length>,
+        height: Option<Length>,
+    },
     /// A vector picture. Its bytes cross ONCE: the frame that first shows a
     /// picture carries them under `hash`, and every frame after — a changed
     /// tree re-sends every node — names the hash alone. The host keeps what
@@ -1090,6 +1106,7 @@ impl Node {
             | Self::RichText { key, .. }
             | Self::Text { key, .. }
             | Self::Svg { key, .. }
+            | Self::Image { key, .. }
             | Self::Input { key, .. }
             | Self::Editor { key, .. }
             | Self::Button { key, .. }
@@ -1142,6 +1159,7 @@ impl Node {
             | Self::RichText { .. }
             | Self::Text { .. }
             | Self::Svg { .. }
+            | Self::Image { .. }
             | Self::Input { .. }
             | Self::Editor { .. }
             | Self::Space { .. }
@@ -1202,6 +1220,7 @@ impl Node {
             | Self::PickList { .. }
             | Self::Progress { .. }
             | Self::Svg { .. }
+            | Self::Image { .. }
             | Self::Canvas { .. }
             | Self::Surface { .. } => &mut [],
         }
@@ -1243,6 +1262,7 @@ impl Node {
             | Self::PickList { .. }
             | Self::Progress { .. }
             | Self::Svg { .. }
+            | Self::Image { .. }
             | Self::Canvas { .. }
             | Self::Surface { .. } => None,
         }
@@ -1312,12 +1332,12 @@ pub const MAX_STRING_BYTES: usize = 64 << 10;
 /// Han or emoji costs some twenty times a byte of ASCII to shape.
 pub const MAX_TEXT_BYTES_PER_FRAME: usize = MAX_STRING_BYTES;
 /// The most picture bytes one frame may carry in total, over every
-/// [`Node::Svg`] that brings its `bytes`. A picture that does not fit in
+/// [`Node::Svg`] or [`Node::Image`] that brings its payload. A picture that does not fit in
 /// what is left is dropped whole, not cut: half an SVG is not an SVG, and
 /// the host draws an unknown hash as empty space. A guest sends each
 /// picture once, so this bounds what a frame can make the host parse, not
 /// what an app can show over its life; an icon is a few kilobytes.
-pub const MAX_SVG_BYTES_PER_FRAME: usize = 1 << 20;
+pub const MAX_PICTURE_BYTES_PER_FRAME: usize = 1 << 20;
 /// The most options one [`Node::PickList`] may offer: a menu, not a table.
 /// Each option is shaped text and spends the frame's text budget too.
 pub const MAX_OPTIONS: usize = 256;
@@ -1334,7 +1354,7 @@ const MAX_TEXT_PIXELS: f32 = 512.0;
 /// lay out: the tree is truncated past [`MAX_DEPTH`] and [`MAX_NODES`],
 /// strings past [`MAX_STRING_BYTES`], shaped text past
 /// [`MAX_TEXT_BYTES_PER_FRAME`] in total, picture bytes past
-/// [`MAX_SVG_BYTES_PER_FRAME`] in total, text sizes to [`MAX_TEXT_PIXELS`],
+/// [`MAX_PICTURE_BYTES_PER_FRAME`] in total, text sizes to [`MAX_TEXT_PIXELS`],
 /// every other size, colour and spacing clamped to a finite range, and a key
 /// used twice moved off the one already taken. A frame from a well-behaved
 /// guest passes through unchanged.
@@ -1356,7 +1376,7 @@ fn sanitize_tree(root: &mut Node) {
     let mut budget = MAX_NODES;
     let mut budgets = Budgets {
         text: MAX_TEXT_BYTES_PER_FRAME,
-        svg: MAX_SVG_BYTES_PER_FRAME,
+        pictures: MAX_PICTURE_BYTES_PER_FRAME,
         surface_values: MAX_SURFACE_VALUES,
         canvas_parts: MAX_CANVAS_PARTS,
         qr_codes: MAX_QR_CODES,
@@ -1621,7 +1641,7 @@ struct Budgets {
     canvas_parts: usize,
     surface_values: usize,
     text: usize,
-    svg: usize,
+    pictures: usize,
 }
 
 /// Truncates one shaped string to what is left of the frame's text budget
@@ -1934,6 +1954,26 @@ fn sanitize_node(
             }
             bound_color(color);
         }
+        Node::Image {
+            key,
+            data,
+            label,
+            rotation,
+            opacity,
+            ..
+        } => {
+            claim(key, taken);
+            ImageData::sanitize(data, &mut budgets.pictures);
+            if let Some(label) = label {
+                truncate_string(label);
+            }
+            if let Some(Rotation::Floating(radians) | Rotation::Solid(radians)) = rotation {
+                *radians = finite(*radians);
+            }
+            if let Some(opacity) = opacity {
+                *opacity = finite(*opacity).clamp(0.0, 1.0);
+            }
+        }
         Node::Svg {
             key,
             bytes,
@@ -1945,7 +1985,7 @@ fn sanitize_node(
             ..
         } => {
             claim(key, taken);
-            spend_svg(bytes, &mut budgets.svg);
+            spend_svg(bytes, &mut budgets.pictures);
             if let Some(label) = label {
                 truncate_string(label);
             }
@@ -2271,6 +2311,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Scroll { width, height, .. }
         | Node::Button { width, height, .. }
         | Node::Svg { width, height, .. }
+        | Node::Image { width, height, .. }
         | Node::Slider { width, height, .. }
         | Node::Canvas { width, height, .. }
         | Node::Space { width, height } => vec![width, height],
@@ -3627,18 +3668,52 @@ mod tests {
         }
     }
 
+    #[test]
+    fn svg_and_raster_images_share_the_frame_picture_budget() {
+        let image = Node::Image {
+            key: "App/raster".into(),
+            hash: 8,
+            data: Some(ImageData::Encoded(vec![
+                0;
+                MAX_PICTURE_BYTES_PER_FRAME / 2 + 1
+            ])),
+            label: None,
+            fit: None,
+            rotation: None,
+            opacity: None,
+            filter: ImageFilter::Linear,
+            width: None,
+            height: None,
+        };
+        let mut frame = Frame {
+            root: Some(column(vec![
+                picture(Some(vec![0; MAX_PICTURE_BYTES_PER_FRAME / 2])),
+                image,
+            ])),
+            ..Frame::default()
+        };
+        sanitize(&mut frame);
+        let children = frame.root.as_ref().unwrap().children();
+        assert!(matches!(children[0], Node::Svg { bytes: Some(_), .. }));
+        assert!(
+            matches!(children[1], Node::Image { data: None, .. }),
+            "SVG consumption must reduce raster admission"
+        );
+        assert!(decode::<Frame>(&encode(&frame)).is_ok());
+    }
+
     /// A picture past what is left of the frame's budget is dropped whole,
     /// never cut: half an SVG is not an SVG. The head of the frame keeps
     /// its pictures; a hash without bytes passes as the reference it is.
     #[test]
     fn a_frame_past_the_picture_budget_drops_whole_pictures_from_its_tail() {
-        const EACH: usize = MAX_SVG_BYTES_PER_FRAME / 4 * 3;
+        const EACH: usize = MAX_PICTURE_BYTES_PER_FRAME / 4 * 3;
         let mut frame = Frame {
             root: Some(column(vec![
                 picture(Some(vec![b'<'; EACH])),
                 picture(Some(vec![b'<'; EACH])),
                 picture(None),
-                picture(Some(vec![b'<'; MAX_SVG_BYTES_PER_FRAME / 4])),
+                picture(Some(vec![b'<'; MAX_PICTURE_BYTES_PER_FRAME / 4])),
             ])),
             ..Frame::default()
         };
@@ -3655,7 +3730,12 @@ mod tests {
             .collect();
         assert_eq!(
             carried,
-            [Some(EACH), None, None, Some(MAX_SVG_BYTES_PER_FRAME / 4)]
+            [
+                Some(EACH),
+                None,
+                None,
+                Some(MAX_PICTURE_BYTES_PER_FRAME / 4)
+            ]
         );
     }
 
