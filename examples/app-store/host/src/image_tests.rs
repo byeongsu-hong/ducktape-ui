@@ -88,8 +88,7 @@ fn reference(
             iced::widget::pin(image).x(rect.x).y(rect.y).into()
         })
         .collect();
-    // Compare the whole native image scene. The renderer can paint beyond a
-    // widget's nominal bounds, so isolated reference crops omit neighboring ink.
+    // Compare the complete image scene, including rotation and adjacent images.
     let mut ui: Ui = UserInterface::build(
         iced::widget::stack(images),
         Size::new(600.0, 600.0),
@@ -209,4 +208,62 @@ fn bundled_images_preserve_native_pixels_shape_lazy_resync_and_instance_lifetime
         }
         assert_pictures(&mut ui, &replacement, &mut renderer, false);
     }
+}
+
+fn assert_destination_origin(native: bool) {
+    let guest = guest(native);
+    let mut renderer = renderer();
+    let mut ui = build(
+        &guest,
+        user_interface::Cache::default(),
+        &mut renderer,
+        600.0,
+    );
+    let mut now = Instant::now();
+    for _ in 0..4 {
+        ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
+    }
+    ui = UserInterface::build(
+        iced::widget::container(wasm_view(Surface(guest.clone()), false)).padding(iced::Padding {
+            left: 13.5,
+            ..Default::default()
+        }),
+        Size::new(600.0, 600.0),
+        ui.into_cache(),
+        &mut renderer,
+    );
+    let node_key = key(guest.lock().unwrap().frame.root.as_ref().unwrap(), "/rgba").unwrap();
+    let bounds = container_bounds(&mut ui, &renderer, &node_key);
+    let pixels = draw(&mut ui, &mut renderer);
+    let pixel = |x: f32, y: f32| {
+        let start = (y as usize * 600 + x as usize) * 4;
+        &pixels[start..start + 4]
+    };
+    assert_eq!(
+        pixel(bounds.x + 8.0, bounds.y - 3.0),
+        [255, 255, 255, 255],
+        "image ink must not escape above its destination bounds ({bounds:?}, native={native})"
+    );
+    assert_eq!(
+        pixel(bounds.x - 3.0, bounds.y + 8.0),
+        [255, 255, 255, 255],
+        "image ink must not escape left of its destination bounds"
+    );
+    assert_eq!(pixel(bounds.x + 8.0, bounds.y + 8.0), [255, 0, 0, 255]);
+    assert_eq!(pixel(bounds.x + 48.0, bounds.y + 8.0), [0, 0, 255, 255]);
+    if let Ok(path) = std::env::var("ICE_RASTER_CAPTURE") {
+        std::fs::write(format!("{path}.{native}.rgba"), pixels).unwrap();
+    }
+}
+
+#[test]
+#[ignore = "requires bundled image fixture"]
+fn bundled_images_keep_wasm_destination_origin() {
+    assert_destination_origin(false);
+}
+
+#[test]
+#[ignore = "requires native image fixture"]
+fn bundled_images_keep_native_destination_origin() {
+    assert_destination_origin(true);
 }

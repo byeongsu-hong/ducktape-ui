@@ -5,6 +5,10 @@ handful of local changes. Every headless capture in this workspace renders
 with this backend, so each of them reaches every `canvas`, every capture and
 every `tiny-skia` window.
 
+- **Raster destinations keep their fractional origin.** Translation stays in
+  the floating-point transform before source scaling, instead of truncating
+  the destination to source-pixel integers. Actual native and Wasm image
+  fixtures assert clear margins and interior colors.
 - **A canvas group's clip is translated once.** The release translated it by
   the group's own transformation twice, so geometry drawn at an offset was
   clipped to a rectangle displaced by that offset. Applied as

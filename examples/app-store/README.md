@@ -1403,7 +1403,6 @@ excess images occupy their specified empty space. Runtime path handles emit a
 guest diagnostic and never cause host filesystem reads. Viewer, dynamic path
 loading and native image allocation task effects remain separate gaps.
 
-The current tiny-skia renderer can place enlarged images outside their nominal
-bounds by truncating destination coordinates in source-pixel units. The image
-fixture proves parity with that native renderer; positioning correction is
-tracked separately in PARITY.md.
+The image fixture also checks fractional destination positioning independently
+of native parity: margins above and beside the image stay white while the
+interior retains the expected source colors on both backends.
