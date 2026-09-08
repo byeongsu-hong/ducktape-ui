@@ -1502,29 +1502,7 @@ fn input(
             .map(|v| format!("({v}) as f32")),
     );
     let align = option_code(input.align.map(|a| format!("{WIRE}::AlignX::{a:?}")));
-    let fallback = ResolvedDefaultFont {
-        family: FontFamily::SansSerif,
-        weight: FontWeight::Normal,
-        stretch: FontStretch::Normal,
-        style: FontStyle::Normal,
-        origin,
-    };
-    let font = option_code(match &input.font {
-        Some(ResolvedTextFont::Named(font)) => Some(text::named_font(font, None)),
-        Some(ResolvedTextFont::Default) => Some(text::named_font(&fallback, None)),
-        Some(ResolvedTextFont::Monospace) => Some(text::named_font(
-            &ResolvedDefaultFont {
-                family: FontFamily::Monospace,
-                ..fallback
-            },
-            None,
-        )),
-        None => program
-            .settings()
-            .default_font
-            .as_ref()
-            .map(|font| text::named_font(font, None)),
-    });
+    let font = editable_font_code(input.font.as_ref(), program, origin);
     let options = format!(
         "{WIRE}::InputOptions {{ label: ({label}).to_string(), description: {description}, disabled: {disabled}, padding: {padding}, text_size: {size}, line_height: {line_height}, align: {align}, font: {font} }}"
     );
@@ -1586,6 +1564,36 @@ fn input(
     ))
 }
 
+fn editable_font_code(
+    font: Option<&ResolvedTextFont>,
+    program: &LoweredProgram,
+    origin: OriginId,
+) -> String {
+    let fallback = ResolvedDefaultFont {
+        family: FontFamily::SansSerif,
+        weight: FontWeight::Normal,
+        stretch: FontStretch::Normal,
+        style: FontStyle::Normal,
+        origin,
+    };
+    option_code(match font {
+        Some(ResolvedTextFont::Named(font)) => Some(text::named_font(font, None)),
+        Some(ResolvedTextFont::Default) => Some(text::named_font(&fallback, None)),
+        Some(ResolvedTextFont::Monospace) => Some(text::named_font(
+            &ResolvedDefaultFont {
+                family: FontFamily::Monospace,
+                ..fallback
+            },
+            None,
+        )),
+        None => program
+            .settings()
+            .default_font
+            .as_ref()
+            .map(|font| text::named_font(font, None)),
+    })
+}
+
 fn editor(
     id: ViewId,
     identity: Option<&ResolvedViewIdentity>,
@@ -1609,27 +1617,11 @@ fn editor(
         editor.highlight.is_some() || editor.highlighter.is_some(),
         "an editor highlighter",
     )?;
-    let styles = &editor.styles;
     refuse_when(
         program,
         origin,
-        editor.custom_style.is_some()
-            || styles.active.is_some()
-            || styles.hovered.is_some()
-            || styles.focused.is_some()
-            || styles.focused_hovered.is_some()
-            || styles.disabled.is_some(),
+        editor.custom_style.is_some(),
         "a style on an editor",
-    )?;
-    refuse_when(
-        program,
-        origin,
-        editor.size.is_some()
-            || editor.padding.is_some()
-            || editor.line_height.is_some()
-            || editor.wrapping.is_some()
-            || editor.font.is_some(),
-        "this editor option",
     )?;
     let state = resolved_editor_state(editor, env, program)?;
     let constructor = match &state.state {
@@ -1678,9 +1670,69 @@ fn editor(
             })
             .transpose()
     };
+    let styles = &editor.styles;
+    let active = input_face_code(styles.active.as_ref(), program, env, origin)?
+        .unwrap_or_else(|| "Default::default()".into());
+    let style = format!(
+        "{WIRE}::InputStyle {{ active: {active}, hovered: {}, focused: {}, focused_hovered: {}, disabled: {}, ..Default::default() }}",
+        option_code(input_face_code(
+            styles.hovered.as_ref(),
+            program,
+            env,
+            origin
+        )?),
+        option_code(input_face_code(
+            styles.focused.as_ref(),
+            program,
+            env,
+            origin
+        )?),
+        option_code(input_face_code(
+            styles.focused_hovered.as_ref(),
+            program,
+            env,
+            origin
+        )?),
+        option_code(input_face_code(
+            styles.disabled.as_ref(),
+            program,
+            env,
+            origin
+        )?)
+    );
+    let line_height = option_code(
+        editor
+            .line_height
+            .as_ref()
+            .map(|line| {
+                let (kind, value) = match line {
+                    ResolvedTextLineHeight::Relative(value) => ("Relative", *value),
+                    ResolvedTextLineHeight::Absolute(value) => ("Absolute", *value),
+                };
+                clamped_f32_code(value, "f32::EPSILON", "f32::MAX", program, env)
+                    .map(|value| format!("{WIRE}::LineHeight::{kind}({value})"))
+            })
+            .transpose()?,
+    );
+    let wrapping = option_code(
+        editor
+            .wrapping
+            .map(|value| format!("{WIRE}::Wrapping::{value:?}")),
+    );
+    let font = editable_font_code(editor.font.as_ref(), program, origin);
+    let size = option_code(pixels(editor.size)?.or_else(|| {
+        program
+            .settings()
+            .default_text_size
+            .map(|value| format!("{:?}f32", value.min(f64::from(f32::MAX))))
+    }));
+    let options = format!(
+        "Box::new({WIRE}::EditorOptions {{ size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
+        option_code(pixels(editor.padding)?)
+    );
     let key = key_code(identity, "editor", origin, scope, env, program)?;
     Ok(format!(
-        "{WIRE}::Node::Editor {{ key: {key}, placeholder: {}, text: ({}).to_string(), on_edit: {on_edit}, width: {}, height: {}, min_height: {}, max_height: {} }}",
+        "{WIRE}::Node::Editor {{ options: {options}, key: {key}, placeholder: {}, text: ({}).to_string(), on_edit: {on_edit}, width: {}, height: {}, min_height: {}, max_height: {} }}",
         editor
             .placeholder
             .map(|value| resolved_expr_use_code(program, value, env, ValueMode::Owned))

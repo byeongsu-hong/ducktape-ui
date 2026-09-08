@@ -541,11 +541,16 @@ For module packaging requirements and the connected implementation phases, see
 - An `editor` is its text in a view module: the host owns the
   `text_editor::Content` (caret, selection, undo) and the guest's `editor`
   state is a `String` it hears whole after every edit, like an input's. It
-  carries a hint, a width in pixels, a height and min/max heights, and
-  `disabled=`. Everything the host would have to call back into the guest
-  for is refused with E190: an `editor-action`, `editor-binding`,
-  `editor-highlighter` or `editor-style` extern, `highlight=`, a status
-  style, and the text options (`size=`, `p=`, `line-h=`, `wrap=`, `font=`).
+  carries a hint, a width in pixels, a height and min/max heights,
+  `disabled=`, and text options (`size=`, `p=`, `line-h=`, `wrap=`, `font=`).
+  Declarative active, hovered, focused, focused-hovered and disabled faces
+  preserve native background, border/radius, value, placeholder and selection
+  colors. Hosts and guests must rebuild together for `EditorOptions`. The
+  [editor fixture](tests/editor-guest/src/ui/app.ice) and
+  [host test](host/src/editor_tests.rs) exercise native layout, selection, edits,
+  disabled state and paint through a real wasm bundle. Everything requiring
+  a native callback remains E190: an `editor-action`, `editor-binding`,
+  `editor-highlighter` or `editor-style` extern and `highlight=`.
   The caret builtins (`editor_cursor_line`, `editor_cursor_column`,
   `editor_has_selection`) are refused too — the guest never sees the caret
   — and, because an expression carries no origin, that E190 names the

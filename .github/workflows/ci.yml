@@ -649,6 +649,15 @@ jobs:
         run: cargo test --locked -p app-store-host text_wasm_ -- --ignored
 
 
+      - name: Bundle editor presentation fixture
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-editor-fixture --target wasm32-unknown-unknown \
+            --out examples/app-store/target/editor-fixture
+      - name: Check native editor presentation and editing through wasm
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host editor_wasm_ -- --ignored
+
       - name: Bundle keyed and virtual rows
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \

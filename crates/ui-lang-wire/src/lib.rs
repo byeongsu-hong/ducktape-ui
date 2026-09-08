@@ -393,6 +393,40 @@ pub struct InputOptions {
     pub font: Option<NamedFont>,
 }
 
+/// Copied native multiline editor presentation; state faces share input semantics.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct EditorOptions {
+    pub size: Option<f32>,
+    pub padding: Option<f32>,
+    pub line_height: Option<LineHeight>,
+    pub wrapping: Option<Wrapping>,
+    pub font: Option<NamedFont>,
+    pub style: InputStyle,
+}
+
+impl InputStyle {
+    fn sanitize(&mut self) {
+        bound_color(&mut self.focus_border);
+        for face in [
+            Some(&mut self.utility),
+            Some(&mut self.active),
+            self.hovered.as_mut(),
+            self.focused.as_mut(),
+            self.focused_hovered.as_mut(),
+            self.disabled.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            bound_color(&mut face.background);
+            bound_border(&mut face.border);
+            bound_color(&mut face.value);
+            bound_color(&mut face.placeholder);
+            bound_color(&mut face.selection);
+        }
+    }
+}
+
 /// One state of a checkbox, toggler or radio: the box, track or ring; the
 /// mark inside it (the check, the knob, the dot); the label; and the border
 /// around the box or track. `None` leaves the host's theme.
@@ -797,8 +831,9 @@ pub enum Node {
     },
     /// A multiline text editor. The host owns the `text_editor::Content` —
     /// caret, selection, undo — and the guest sees the text alone, as with
-    /// [`Node::Input`]. It crosses unstyled.
+    /// [`Node::Input`]. Presentation crosses as copied data.
     Editor {
+        options: Box<EditorOptions>,
         key: String,
         placeholder: String,
         /// The guest's copy of the text. The host owns the live value and
@@ -1898,26 +1933,10 @@ fn sanitize_node(
                 font.sanitize(&mut budgets.text);
             }
 
-            bound_color(&mut style.focus_border);
-            for face in [
-                Some(&mut style.utility),
-                Some(&mut style.active),
-                style.hovered.as_mut(),
-                style.focused.as_mut(),
-                style.focused_hovered.as_mut(),
-                style.disabled.as_mut(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                bound_color(&mut face.background);
-                bound_border(&mut face.border);
-                bound_color(&mut face.value);
-                bound_color(&mut face.placeholder);
-                bound_color(&mut face.selection);
-            }
+            style.sanitize();
         }
         Node::Editor {
+            options,
             key,
             placeholder,
             text,
@@ -1926,9 +1945,21 @@ fn sanitize_node(
             max_height,
             ..
         } => {
+            bound_optional(&mut options.size);
+            if let Some(size) = &mut options.size {
+                *size = size.clamp(f32::EPSILON, MAX_TEXT_PIXELS);
+            }
+            bound_optional(&mut options.padding);
+            if let Some(line_height) = &mut options.line_height {
+                line_height.sanitize();
+            }
+            options.style.sanitize();
             claim(key, taken);
             spend_text(placeholder, &mut budgets.text);
             spend_text(text, &mut budgets.text);
+            if let Some(font) = &mut options.font {
+                font.sanitize(&mut budgets.text);
+            }
             bound_optional(width);
             bound_optional(min_height);
             bound_optional(max_height);
@@ -2608,6 +2639,7 @@ mod tests {
                     style: Box::default(),
                 },
                 Node::Editor {
+                    options: Default::default(),
                     key: "App/e".into(),
                     placeholder: "Notes".into(),
                     text: "line\nline".into(),
@@ -2913,6 +2945,7 @@ mod tests {
         let mut frame = Frame {
             root: Some(column(vec![
                 Node::Editor {
+                    options: Default::default(),
                     key: "App/e".into(),
                     placeholder: long.clone(),
                     text: long,

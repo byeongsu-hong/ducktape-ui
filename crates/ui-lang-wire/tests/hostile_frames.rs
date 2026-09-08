@@ -385,6 +385,23 @@ fn gen_input(rng: &mut Rng) -> Node {
 
 fn gen_editor(rng: &mut Rng) -> Node {
     Node::Editor {
+        options: Box::new(EditorOptions {
+            size: gen_opt_f32(rng),
+            padding: gen_opt_f32(rng),
+            line_height: Some(if rng.next_bool() {
+                LineHeight::Relative(gen_f32(rng))
+            } else {
+                LineHeight::Absolute(gen_f32(rng))
+            }),
+            wrapping: Some(Wrapping::Word),
+            font: Some(NamedFont {
+                family: FontFamily::Named(gen_string(rng)),
+                weight: Weight::Normal,
+                stretch: FontStretch::Normal,
+                style: FontStyle::Normal,
+            }),
+            style: gen_input_style(rng),
+        }),
         key: gen_key(rng),
         placeholder: gen_string(rng),
         text: gen_string(rng),
@@ -1884,6 +1901,7 @@ fn check_bounds(
             }
         }
         Node::Editor {
+            options,
             placeholder,
             text,
             width,
@@ -1892,6 +1910,41 @@ fn check_bounds(
             max_height,
             ..
         } => {
+            check_pixels(&options.padding, ctx, "editor padding");
+            if let Some(size) = options.size {
+                assert!(size.is_finite() && size > 0.0 && size <= TEXT_PIXEL_BOUND);
+            }
+            if let Some(line_height) = options.line_height {
+                let (value, max) = match line_height {
+                    LineHeight::Relative(v) => (v, PIXEL_BOUND / TEXT_PIXEL_BOUND),
+                    LineHeight::Absolute(v) => (v, PIXEL_BOUND),
+                };
+                assert!(value.is_finite() && value > 0.0 && value <= max);
+            }
+            if let Some(NamedFont {
+                family: FontFamily::Named(name),
+                ..
+            }) = &options.font
+            {
+                check_string(name, ctx, "editor font");
+            }
+            for face in [
+                Some(&options.style.utility),
+                Some(&options.style.active),
+                options.style.hovered.as_ref(),
+                options.style.focused.as_ref(),
+                options.style.focused_hovered.as_ref(),
+                options.style.disabled.as_ref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                check_color(&face.background, ctx);
+                check_border(&face.border, ctx);
+                check_color(&face.value, ctx);
+                check_color(&face.placeholder, ctx);
+                check_color(&face.selection, ctx);
+            }
             check_string(placeholder, ctx, "editor placeholder");
             check_string(text, ctx, "editor text");
             check_length(height, ctx);

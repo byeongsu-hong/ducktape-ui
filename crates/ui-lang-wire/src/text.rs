@@ -68,16 +68,23 @@ impl TextOptions {
         if let Some(Length::Fixed(height)) = &mut self.height {
             *height = bounded(*height);
         }
-        match &mut self.line_height {
-            Some(LineHeight::Relative(value)) => {
-                *value = bounded(*value).clamp(f32::EPSILON, MAX_PIXELS / MAX_TEXT_PIXELS)
-            }
-            Some(LineHeight::Absolute(value)) => *value = bounded(*value).max(f32::EPSILON),
-            None => {}
+        if let Some(line_height) = &mut self.line_height {
+            line_height.sanitize();
         }
         self.tracking = bounded(self.tracking).min(MAX_TEXT_PIXELS);
         if let Some(font) = &mut self.font {
             font.sanitize(text_budget);
+        }
+    }
+}
+
+impl LineHeight {
+    pub(super) fn sanitize(&mut self) {
+        match self {
+            Self::Relative(value) => {
+                *value = bounded(*value).clamp(f32::EPSILON, MAX_PIXELS / MAX_TEXT_PIXELS)
+            }
+            Self::Absolute(value) => *value = bounded(*value).max(f32::EPSILON),
         }
     }
 }

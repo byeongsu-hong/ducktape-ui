@@ -168,6 +168,14 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
             guest.window_resized();
         }
         if !outputs.is_empty() {
+            // Native editor actions mutate host Content immediately. Refresh its
+            // shaped line cache before the next event or input-method query.
+            if outputs
+                .iter()
+                .any(|output| matches!(output, view_tree::Output::EditorAction { .. }))
+            {
+                shell.invalidate_layout();
+            }
             for output in outputs {
                 guest.deliver(output);
             }

@@ -1563,6 +1563,44 @@ guest disabled state first. Removing the focus-border pass fails the native
 style precedence assertion (red instead of green). CI runs the widget fixture
 through the `bundled_widget_` filter, including these assertions.
 
+### Tree editor presentation evidence
+
+Tree codegen covers typography and all declarative status faces while retaining
+E190 for native action, binding, highlighter and style callbacks. Hostile frames
+generate editor sizes, padding, relative/absolute line heights, font metadata and
+all face colors/borders, then assert their sanitized limits.
+
+The runtime test
+`presentation_preserves_native_layout_selection_editing_and_disabled_state`
+measures two absolute 30px lines plus 7px padding as 200x74. Native pointer and
+keyboard events select all text and replace it, preserve selection across a
+rebuilt view, and refuse edits when disabled. Tiny-skia pixels distinguish active,
+hovered, focused, focused-hovered and disabled backgrounds and cyan selection.
+A second native test measures a 20px monospace line at relative height 1.5
+with 5px padding as 40px, then observes word wrapping increase its height.
+
+The actual [editor fixture](examples/app-store/tests/editor-guest/src/ui/app.ice)
+and [host test](examples/app-store/host/src/editor_tests.rs) exercise the same
+path through a wasm guest: native min-height 80 plus 6.6px padding measures
+200x93.2, selection paints cyan, typing replaces the guest string, and disabling
+through a guest button prevents a different character from changing it while
+painting the disabled face. Editor action delivery invalidates layout before
+subsequent native caret/input-method queries.
+
+Red: temporarily removing selection-color forwarding makes the bundled test
+fail its cyan-pixel assertion; restoring it passes. Forcing relative line height
+to 1.0 makes the typography test report 30px instead of 40px; restoration passes. Before retaining paint
+status in the owning host widget, the native hovered-pixel assertion failed
+(red instead of green). The tests assert behavior, not generated strings alone.
+
+Commands: `cargo test -p ui-lang-core -p ui-lang-wire -p ui-lang-runtime --lib`;
+`cargo test -p ui-lang-wire --test hostile_frames`;
+`cargo ice bundle --manifest-path examples/app-store/Cargo.toml
+-p app-store-editor-fixture --target wasm32-unknown-unknown
+--out examples/app-store/target/editor-fixture`;
+`cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host
+editor_wasm_ -- --ignored`. CI bundles and runs the fixture explicitly.
+
 ### Tree keyed and virtual row evidence
 
 The keyed codegen table and native configured-keyed tests cover the wire/native

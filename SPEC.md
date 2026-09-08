@@ -950,6 +950,23 @@ interaction options, host `canvas_width`/`canvas_height` bindings, gradient
 paint, canvas text and raster/SVG drawing remain E190 on this target.
 
 
+## Declarative editors on the tree target
+
+An `editor` carries its string binding, hint, disabled state and native dimensions,
+plus copied `size=`, `p=`, relative or absolute `line-h=`, `wrap=` and `font=`.
+Omitted size and font use the guest application defaults. Declarative faces
+copy background, partial border/radius, value, placeholder and selection colors.
+The native status default is followed by active and then the applicable hovered,
+focused or disabled face; focused-hovered applies after focused. Native focus,
+selection, caret, undo and edit actions stay in the host. The guest receives the
+whole text after an edit. The owning host wrapper derives paint status from the
+native focus state and cursor, preserving it between native widget calls.
+
+Typography, colors and font names share wire sanitization and frame budgets.
+`EditorOptions` changes the wire layout; rebuild hosts and guests together.
+Opaque Rust editor style, action, binding and highlighter callbacks, `highlight=`
+and guest caret inspection remain E190.
+
 ## Native editor surfaces in the example host
 
 A named terminal surface may retain a host-owned PTY independently from its

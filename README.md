@@ -550,6 +550,13 @@ Rebuild hosts and guests together for InputOptions and the extended InputStyle.
 Secret handles, input icons, paste routes and Rust style callbacks remain
 refused.
 
+Tree editors copy size, padding, relative/absolute line height, wrapping, fonts
+and declarative status faces to the native host editor. Caret, selection and
+undo remain host-owned; disabled editors produce no edits. Rebuild hosts and
+guests together for `EditorOptions`. Native editor callbacks remain refused.
+The [bundled fixture](examples/app-store/tests/editor-guest/src/ui/app.ice)
+exercises layout, selection colors and guest-bound edits.
+
 Tree module views support keyed row identity and `virtual-row=` columns. The
 host preserves row input state and focus across reordering and owns viewport
 mounting; see [the bundled evidence](examples/app-store/README.md#keyed-and-virtual-rows).
