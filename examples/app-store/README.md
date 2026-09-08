@@ -552,10 +552,10 @@ For module packaging requirements and the connected implementation phases, see
 - Only a button's press, an input's edit and submit, a checkbox's or
   toggler's flip, a radio's or pick list's selection, a slider's drag and
   release, and what a `mouse` area hears — its buttons, enter and exit, the
-  pointer's position in its own pixels, the wheel — cross. Keys, scroll
-  position, drag and drop, window focus and close requests are the host's
-  widgets' and never reach the guest; the pointer over anything but a
-  `mouse` area does not either.
+  pointer's position in its own pixels, the wheel — cross. Keyboard events
+  cross after native handling, preserving captured/ignored status. Scroll
+  position, drag and drop, window focus and close requests remain host-side;
+  the pointer over anything but a `mouse` area does too.
 - Checked `task widget` statements can focus a named input, move focus
   forward/backward, query focus, move/select input text and scroll/snap a
   named region. `snap-end` respects either content anchor. Requests use
