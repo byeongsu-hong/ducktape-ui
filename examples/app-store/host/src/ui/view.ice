@@ -465,7 +465,7 @@ view
                             for capability in entry.capabilities
                               lazy capability as asked
                                 row gap=12.0 align=center
-                                  Chip capability=asked
+                                  Chip #capability(asked.name) capability=asked
                                   text capability_hint(asked.name) size=13.0 @text-fg
                             if empty(entry.capabilities)
                               text "Nothing beyond drawing its window. It can still write to the store's log and ask for random bytes."
@@ -564,7 +564,7 @@ view
                         for capability in entry.capabilities
                           lazy capability as granted
                             row gap=12.0 align=center
-                              Chip capability=granted
+                              Chip #capability(granted.name) capability=granted
                               text capability_hint(granted.name) size=13.0 @text-fg
                         if empty(entry.capabilities)
                           text "Nothing beyond drawing its window. It can still write to the store's log and ask for random bytes."

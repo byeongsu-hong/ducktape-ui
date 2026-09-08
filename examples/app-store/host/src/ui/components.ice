@@ -221,7 +221,7 @@ component Card(entry:CatalogEntry, installed:bool, changed:bool, running:bool, g
       row gap=6.0 wrap
         for capability in entry.capabilities
           lazy capability as granted
-            Chip capability=granted
+            Chip #capability(granted.name) capability=granted
         if empty(entry.capabilities)
           text "draws its window, nothing else" size=11.0 @text-muted
       space w=fill h=fill
@@ -383,7 +383,7 @@ component LibraryRow(entry:CatalogEntry, changed:bool, running:bool, gauge:Gauge
       row gap=6.0
         for capability in entry.capabilities
           lazy capability as granted
-            Chip capability=granted
+            Chip #capability(granted.name) capability=granted
       space w=fill
       if running
         Dot on=gauge.live

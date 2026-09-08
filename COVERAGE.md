@@ -1941,6 +1941,14 @@ but fails the actual wasm host identity assertion; exact restoration passes.
 
 ## Trusted native Tree backend
 
+App-store capability chips carry a name-scoped instance ID in catalog, library,
+consent, and detail views. Catalog display values keep the first occurrence of
+each capability; the original manifest, executable/component bytes, and consent
+hash remain unchanged. The catalog regression fails its ordered-list assertion
+without the display filter and passes with it. A populated five-native-package
+`cargo ice inspect` captures the catalog successfully, including a Counter
+manifest containing repeated `clock` and `bus` declarations.
+
 `host/src/native_tests.rs` runs the actual packaged Counter and the actual
 `cargo ice bundle` Counter through the same mounted host UI. Native pointer
 clicks increment state, complete the host bus task, and produce identical
