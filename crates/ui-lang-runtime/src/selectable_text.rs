@@ -135,9 +135,14 @@ where
         let content = paragraph.content();
         let state: &mut State = tree.state.downcast_mut();
 
+        let origin = glyph_origin(paragraph.raw(), layout.bounds());
+
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                let Some(position) = cursor.position_in(layout.bounds()) else {
+                if !cursor.is_over(layout.bounds()) {
+                    return;
+                }
+                let Some(position) = cursor.position_from(origin) else {
                     return;
                 };
                 let Some(offset) = hit(paragraph.raw(), position, false) else {
@@ -151,7 +156,7 @@ where
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
-                let Some(position) = cursor.position_from(layout.position()) else {
+                let Some(position) = cursor.position_from(origin) else {
                     return;
                 };
                 if let Some(offset) = hit(paragraph.raw(), position, true)
@@ -235,7 +240,7 @@ where
             ];
             let selected =
                 Renderer::Paragraph::with_spans(paragraph.as_text().with_content(spans.as_slice()));
-            let translation = layout.position() - Point::ORIGIN;
+            let translation = glyph_origin(paragraph.raw(), layout.bounds()) - Point::ORIGIN;
             let color = style.text_color.scale_alpha(0.28);
 
             for bounds in selected.span_bounds(1) {
@@ -283,9 +288,23 @@ where
     }
 }
 
+/// Where the glyphs are painted, which is not the corner of the widget's box.
+/// `iced::widget::text` anchors a paragraph inside its bounds by the
+/// alignment it was shaped with, and everything a paragraph reports —
+/// `hit_test`, `span_bounds` — is measured from that anchor. Reading them
+/// against `layout.position()` puts a centred, right- or bottom-aligned
+/// label's selection a whole glyph box away from its letters.
+fn glyph_origin<P: Paragraph>(paragraph: &P, bounds: Rectangle) -> Point {
+    bounds.anchor(
+        paragraph.min_bounds(),
+        paragraph.align_x(),
+        paragraph.align_y(),
+    )
+}
+
 fn hit<P: Paragraph>(paragraph: &P, mut point: Point, clamp: bool) -> Option<usize> {
     if clamp {
-        let bounds = paragraph.bounds();
+        let bounds = paragraph.min_bounds();
         point.x = point.x.clamp(0.0, bounds.width.max(0.0));
         point.y = point.y.clamp(0.0, bounds.height.max(0.0));
     }
