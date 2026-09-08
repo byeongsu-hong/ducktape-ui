@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 #[derive(Default)]
 struct Tables {
+    editor_responses: Vec<crate::wire::EditorResponse>,
+    editor_pending: Vec<crate::wire::EditorTransactionId>,
     macos: bool,
     mouse_interest: bool,
     deferred: Vec<Box<dyn Any>>,
@@ -421,4 +423,45 @@ mod tests {
         assert_eq!(take_message::<u32>(hit), Some(7));
         assert_eq!(take_message::<u32>(miss), Some(9));
     }
+}
+
+pub(crate) fn editor_response(response: crate::wire::EditorResponse) {
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    tables.editor_pending.retain(|id| {
+        !(id.instance == response.id.instance
+            && id.document == response.id.document
+            && id.sequence == response.id.sequence)
+    });
+    tables.editor_pending.push(response.id.clone());
+    tables.editor_responses.push(response);
+}
+pub(crate) fn editor_acknowledge(event: &crate::wire::EditorTransactionEvent) {
+    use crate::wire::EditorTransactionEvent;
+    let id = match event {
+        EditorTransactionEvent::Commit { id, .. }
+        | EditorTransactionEvent::Fault { id, .. }
+        | EditorTransactionEvent::Cancelled { id, .. } => id,
+    };
+    tables()
+        .borrow_mut()
+        .editor_pending
+        .retain(|pending| pending != id);
+}
+pub(crate) fn take_editor_responses() -> Vec<crate::wire::EditorResponse> {
+    std::mem::take(&mut tables().borrow_mut().editor_responses)
+}
+pub(crate) fn editor_pending() -> bool {
+    !tables().borrow().editor_pending.is_empty()
+}
+
+pub(crate) fn has_handler<A: 'static, M: 'static>(index: u32) -> bool {
+    let tables = tables();
+    let tables = tables.borrow();
+    let handler = if index & CACHED != 0 {
+        tables.cached_handlers.get(&index)
+    } else {
+        tables.handlers.get(index as usize)
+    };
+    handler.is_some_and(|handler| handler.is::<Box<dyn Fn(A) -> Option<M>>>())
 }
