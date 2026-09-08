@@ -773,3 +773,10 @@ active, hovered and dragged faces in both native-child and Wasm hosts.
 Container `bg=linear(...)` preserves native angle, color-stop alpha and eight-stop
 semantics in native-child and Wasm hosts. Other widget gradient fields remain
 tracked in the app-store parity ledger.
+
+## UI quality worklist
+
+The [UI quality worklist](docs/ui-quality-roadmap.md) tracks default composition,
+layout robustness and customization evidence separately from widget/API coverage.
+It records acceptance scenarios and focused deliveries rather than treating a
+shipped component as proof of every screen-level behavior.
