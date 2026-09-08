@@ -555,7 +555,8 @@ removal. See [component module lifetimes](examples/app-store/README.md#mounted-c
 Tree `qr` copies UTF-8 or byte payloads and encoding/style options to the native
 host. See [QR module views](examples/app-store/README.md#qr-module-views).
 
-Native `log_timeline` and `virtual_list` accept temporary row slices when the row
+Native `log_timeline` and `virtual_list`, including their themed components
+wrappers, accept temporary row slices when the row
 closure returns owned elements, allowing static host surfaces without retaining
 the source rows. See [the log surface](examples/app-store/README.md#retained-host-session-fixture).
 
