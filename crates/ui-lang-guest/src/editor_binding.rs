@@ -101,3 +101,67 @@ impl<M: 'static> EditorTransaction<M> {
         mapped
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn native_message_envelope_is_send_and_stale_commit_cannot_acknowledge() {
+        fn is_send<T: Send>() {}
+        is_send::<EditorTransaction<()>>();
+        let context = slots::Context::default();
+        let _entered = context.enter();
+        let mut editor = Editor::new("before");
+        let id = wire::EditorTransactionId {
+            instance: 1,
+            document: "app:draft".into(),
+            reset: 0,
+            sequence: 1,
+            attempt: 1,
+            text_revision: 0,
+            revision: 0,
+        };
+        slots::editor_response(wire::EditorResponse {
+            id: id.clone(),
+            decision: wire::EditorDecision::Noop,
+        });
+        let mapped = Rc::new(std::cell::Cell::new(0));
+        let counted = mapped.clone();
+        let map = slots::handler::<wire::EditorTransactionEvent, ()>(Box::new(move |_| {
+            counted.set(counted.get() + 1);
+            None
+        }));
+        let before = wire::EditorState {
+            text: "before".into(),
+            ..Default::default()
+        };
+        let mut after = before.clone();
+        after.text = "after".into();
+        after.revision = 1;
+        after.reset = 99;
+        let event = |after| wire::EditorTransactionEvent::Commit {
+            id: id.clone(),
+            before: before.clone(),
+            after,
+            kind: wire::EditorEditKind::GuestPatch,
+            history: wire::EditorHistoryEffect::NewGroup,
+            input_time_ms: 1,
+        };
+        let tx = |event| EditorTransaction::<()> {
+            event,
+            map,
+            message: std::marker::PhantomData,
+        };
+        tx(event(after.clone())).apply(&mut editor);
+        assert!(slots::editor_pending());
+        assert_eq!(mapped.get(), 0);
+        after.reset = 0;
+        let valid = tx(event(after));
+        valid.clone().apply(&mut editor);
+        assert_eq!(editor.text(), "after");
+        assert_eq!(mapped.get(), 1);
+        assert!(!slots::editor_pending());
+        valid.apply(&mut editor);
+        assert_eq!(mapped.get(), 1, "duplicate commit does not re-run history");
+    }
+}
