@@ -2425,3 +2425,29 @@ that path; no new app-store geometry test was run for this patch. External
 consumers do not inherit workspace Cargo patches from published Ice packages
 and need the same patch for this behavior. See
 [the vendor provenance and scope](vendor/iced_widget/README.md).
+
+## Two-axis text alignment and selection
+
+`examples/showcase/tests/cases/ui/text_alignment.ice` measures painted text
+bounds for left/top, center/center and right/bottom inside fixed-size widgets,
+plus fill-width and unequal explicit multiline shrink/fill text. Dropping only
+native `.align_x()` emission fails the center and right-edge assertions;
+dropping only `.align_y()` fails the vertical center assertion. Restoring the
+unchanged emitter passes all four harness tests. These are glyph coordinates,
+not assertions about the enclosing widget alone.
+
+`crates/ui-lang-runtime/tests/selectable_text_alignment.rs` drags across the
+renderer-reported glyph bounds of padded centered and bottom-right text, copies
+through a test clipboard, and checks the highlight against those same painted
+bounds. Before the selection-origin fix both aligned cases copied nothing
+instead of `Aligned`, while left/top passed. Reverting only the highlight
+translation fails its location assertion (for example, x=24 instead of about
+136.42 for centered text) while copy still works. Exact restoration passes all
+three cases. Selection hit testing and highlight drawing now use the paragraph
+anchor used to paint the text.
+
+The Ice fixture proves placement; the owning runtime test proves selection and
+copy because the current Ice test driver cannot assert those effects. This
+slice does not assert justified text or soft-wrapped line geometry; its multiline
+case uses explicit newlines. Rich-span decoration and link hit testing have a
+separate owning-layer contract.
