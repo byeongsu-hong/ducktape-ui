@@ -406,8 +406,11 @@ Ordered widget payload routes, including sensor show/resize dimensions, may
 emit those named events directly from a component view.
 An explicit `forward` block accepts only outer events with the exact same name
 and payload signature; wildcard and verbose identity forwarding are rejected.
-Component contracts also support required and optional slots; missing optional
-slots lower to no child, and `provided(Name)` is folded at each call site.
+Component contracts support required and optional single-root slots and
+zero-or-more `slot name*` content. Missing optional or multi-child slots lower
+to no child, and `provided(Name)` is folded at each call site. Multi-child
+content expands into the receiving layout without an implicit grouping widget;
+explicit caller layouts remain grouped.
 Canonical `with` metadata blocks preserve long checked property and utility
 lists without changing the view tree; the formatter alone decides inline versus
 wrapped form and orders metadata before events, forwarding, slots/statuses, and
@@ -961,7 +964,7 @@ cancellation.
 
 | iced surface | Ice status | Current representation / missing work |
 | --- | --- | --- |
-| `button` | native | native string or arbitrary child content, compact-label typography utilities, disabled route, optional checked/toggled or expanded accessibility state, typed size/padding/clip, all eight iced presets, every concrete field across all four statuses including linear backgrounds, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes; hands its status-resolved text ink to child content — color-less text inherits it, an svg child joins it with `color=inherit`, and an explicitly-colored text child may declare a `disabled:text-*` arm keyed on the button's status |
+| `button` | native | native string or arbitrary child content, compact-label typography utilities, disabled route, optional checked/toggled or expanded accessibility state, typed size/padding/clip, a compact label centered in the content box on every axis sized past it — fixed, `fill` and `fill(n)` alike, while `shrink` hugs its content and written-out child content keeps its own layout under fill dimensions, all eight iced presets, every concrete field across all four statuses including linear backgrounds, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes; hands its status-resolved text ink to child content — color-less text inherits it, an svg child joins it with `color=inherit`, and an explicitly-colored text child may declare a `disabled:text-*` arm keyed on the button's status |
 | `canvas` | native | declarative rectangle/circle/line/text/path geometry; complete path builder segments, fill rules, solid/linear fill and stroke, caps/joins/dashes, transforms, clips, typed `if`/`for`, complete raster/SVG frame drawing fields, dependency-keyed geometry cache with shared named groups, typed local `Program::State`, all five event families and every variant, state updates, publish/capture/next-frame/timed-redraw actions, pointer routes, and static/state-dependent/out-of-bounds interaction cover the complete public Program behavior |
 | `checkbox` | native | native label/value/disabled event, size/width/spacing, text typography/wrapping, complete font descriptors and custom icon; all four presets, every concrete Style field across active/hovered/disabled checked and unchecked statuses, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
 | `column` | native | children, typed spacing/per-side padding, all `Length` bounds, max width, cross-axis alignment, clipping and wrapping column spacing/alignment, and `virtual-row=` viewport-bounded layout whose generated scroll synchronization cannot be outrun by a rapid wheel transaction |
@@ -2380,3 +2383,273 @@ forcing the sanitizer report to false fails `actual shortened text must be
 reported`; dropping the prepared candidate report fails the actual reload oracle
 at `candidate's already-sanitized first full frame carries its local report into
 installation`. Both mutations are restored for Green.
+
+## Wrapping line alignment
+
+`row wrap`/`col wrap` with `wrap-align=center|end` align each wrapped line
+against the main-axis size the layout actually assigns, not against the widest
+line of content. Published `iced_widget` 0.14.2 aligned against the intrinsic
+content size, which it computes before `Limits::resolve`, so a `w=fill` or a
+larger `w=<fixed>` wrapping row ended its lines at the widest line's edge
+instead of its own. It also detected a new line by testing the next child's
+`x` against `0.0` while every child had already been offset by `padding.left`,
+so with nonzero leading padding no interior line break was recognised and one
+translation was applied to every child at once; the column had the same two
+defects on `y`/`padding.top`.
+
+`vendor/iced_widget` carries the published 0.14.2 sources (`Cargo.toml`,
+`.cargo_vcs_info.json`, `src`, `assets`, copied unmodified from the crates.io
+registry checkout) with `[patch.crates-io]` pointing at it, following the
+existing `iced_winit`/`iced_tiny_skia` vendoring. The wrapping patch changes `src/row.rs` and
+`src/column.rs`: each records its wrapped line ranges as it produces
+them, resolves the size before aligning, measures line extents from the content
+origin, and falls back to the intrinsic size when an unbounded `Fill` resolves
+to infinity. A `Fill` child still spans its line, and a wrapping row under a
+compressing parent still aligns against its own content, because `resolve`
+returns the intrinsic size when the parent compresses that axis.
+
+Owning tests: `examples/showcase/tests/cases/ui/wrap_alignment.ice`, seven
+first-class Ice tests over direct `row wrap`/`col wrap` with fixed-size `space`
+children, so every expected coordinate is derived arithmetic. They cover end
+alignment on a `w=fill` multi-line row, end alignment on a single-line
+`w=400.0` row, end alignment with `p=16.0` on both axes, center alignment, and
+the two counterexamples above.
+
+Red evidence: restoring the published 0.14.2 `row.rs` and `column.rs` fails
+five of the seven — `a.left` reads 0.0 instead of 52.0 (fill), 0.0 instead of
+192.0 (fixed), 0.0 instead of 26.0 (center), and 128.0 instead of 68.0 for both
+padded cases — while the `Fill`-child and shrink-parent tests keep passing,
+which is what makes them counterexamples rather than duplicates. Restoring the
+patched sources passes all seven with
+`cargo test -p showcase --test wrap_alignment`, and the whole showcase suite
+(`cargo test -p showcase`, 355 tests) stays green.
+
+Both the root workspace and `examples/app-store` select the vendored widget
+crate. Locked Linux Cargo metadata confirms the separate workspace resolves
+that path; no new app-store geometry test was run for this patch. External
+consumers do not inherit workspace Cargo patches from published Ice packages
+and need the same patch for this behavior. See
+[the vendor provenance and scope](vendor/iced_widget/README.md).
+
+## Two-axis text alignment and selection
+
+`examples/showcase/tests/cases/ui/text_alignment.ice` measures painted text
+bounds for left/top, center/center and right/bottom inside fixed-size widgets,
+plus fill-width and unequal explicit multiline shrink/fill text. Dropping only
+native `.align_x()` emission fails the center and right-edge assertions;
+dropping only `.align_y()` fails the vertical center assertion. Restoring the
+unchanged emitter passes all four harness tests. These are glyph coordinates,
+not assertions about the enclosing widget alone.
+
+`crates/ui-lang-runtime/tests/selectable_text_alignment.rs` drags across the
+renderer-reported glyph bounds of padded centered and bottom-right text, copies
+through a test clipboard, and checks the highlight against those same painted
+bounds. Before the selection-origin fix both aligned cases copied nothing
+instead of `Aligned`, while left/top passed. Reverting only the highlight
+translation fails its location assertion (for example, x=24 instead of about
+136.42 for centered text) while copy still works. Exact restoration passes all
+three cases. Selection hit testing and highlight drawing now use the paragraph
+anchor used to paint the text.
+
+The Ice fixture proves placement; the owning runtime test proves selection and
+copy because the current Ice test driver cannot assert those effects. This
+slice does not assert justified text or soft-wrapped line geometry; its multiline
+case uses explicit newlines. Rich-span decoration and link hit testing have a
+separate owning-layer contract.
+
+## Multi-child component content
+
+Core `tests/multi_child_slots.rs` covers cardinality, formatting, scalar-position
+and forwarding rejection, ordered expansion and caller/callee binding. The
+existing app-store component guest additionally runs through a freshly bundled
+Wasm app in the host test: direct siblings retain order, an explicit caller row
+remains grouped, and forwarded routes and conditional removal reach the actual
+Tree. Inserting a column around the slot made its direct-child-count assertion
+fail (1 versus 3); rebuilding the restored guest and rerunning the same host test
+passed. This test requires explicit bundle preparation and is ignored by the
+ordinary workspace test command.
+
+Native `multi_child_slots.ice` exercises omitted/conditional content, forwarded
+keyed local state through reordering, explicit grouping and ButtonGroup wrapping.
+The forwarded counter initially remained 0 after a click: forwarded-slot memo
+reads now preserve that caller state dependency, and the same test passes with
+count 1 retained after reordering while its sibling remains 0.
+
+Minimal compiling mutations fail their intended geometry assertions: an empty
+placeholder adds a spurious 10px gap; changing a custom column to a row breaks
+its vertical placement; removing ButtonGroup wrapping keeps the second action
+at y=24 instead of y=62.25; adding a 4px group gap breaks the touching-edge
+assertion (180 versus 176). Restoring each mutation and rerunning its focused
+`cargo test -p showcase --test multi_child_slots <test-name>` passes. Captures
+under `examples/showcase/screenshots/multi-child-slots` accompany these bounds
+and real keyboard/pointer route assertions; captures alone are not the oracle.
+
+The action-card tests now place buttons directly in Card.Footer. Removing its
+wrapping fails the narrow next-line assertion; inserting an implicit column
+around its slot fails the wide same-line assertion (167.10 versus 119.85).
+Both focused `action_layout` cases pass after exact restoration. This rejects
+the original caller-wrapper limitation as well as loss of default reflow.
+
+After the wrapping dependency fix in PR #1027, the unchanged Dialog.Actions
+right-edge assertions pass at both widths: the last action reaches x=236 in
+the narrow dialog and x=422 in the wide one (previously 225.25/385.25). All 10
+`multi_child_slots` tests and 5 `action_layout` tests pass together. Inspected
+narrow/wide dialog captures accompany the existing card/group captures; the
+narrow case routes Tab/Enter through the wrapped actions, while the wide case
+routes a pointer click. No caller row or fill spacer is needed.
+
+Final integration on the merged wrapping base passes the full showcase suite
+(365 tests, one existing ignored case). A freshly rebuilt component guest also
+passes both explicitly selected host tests for direct/forwarded siblings and
+independent repeated scalar/many-slot state. The former rejects an implicit
+column (1 child instead of 3); the latter previously observed scalar counters
+`[1, 1]` instead of `[1, 0]`. These are execution assertions, not generated-Rust
+string checks. The guest was rebuilt before the host runs against the current
+wire epoch; no stale fixture or timeout adjustment was used.
+
+## Rich text decoration and link alignment
+
+A `rich-text` with `align-x=center|right` or `align-y=center|bottom` decorates
+and routes clicks where its glyphs are painted. `iced` fills a paragraph at
+`bounds.anchor(min_bounds, align_x, align_y)`, but published `iced_widget`
+0.14.2 translated span highlights, borders, underlines and strikethroughs by
+`layout.position()` and hit-tested links against it, so an aligned label
+underlined empty box and its links answered from empty box instead of from the
+letters. Ice reaches both axes: `codegen::view::text` and
+`view_tree::rich_text` pass `align_x`, `align_y` and `on_link_click` straight
+through.
+
+`vendor/iced_widget/src/text/rich.rs` computes that anchored area once
+(`text_bounds`) and uses it for both: `draw` translates the span regions by it,
+and `update` hit-tests inside it while still requiring the cursor to be over
+the widget. Confining the hit test matters on its own — `Paragraph::hit_span`
+delegates to `cosmic_text::Buffer::hit`, which answers with the nearest cursor
+position, so a click on the empty part of an aligned label's box used to
+activate the first span.
+
+Owning test: `crates/ui-lang-runtime/tests/rich_text_alignment.rs`, five cases
+over an underlined link span in a 300x120 box inside a padded container —
+`align-x=center`, `align-x=right`, `align-y=bottom`, `align-y=center`, and a
+top-left control. The oracle is the paint: the glyph box and the underline quad
+are both read back out of the tiny-skia renderer, and the click is aimed at the
+glyph box's middle, so no expected coordinate repeats the anchor arithmetic.
+
+Red evidence (`cargo test -p ui-lang-runtime --test rich_text_alignment`
+against the published `rich.rs`): each of the four aligned cases reports
+`(clicks on the glyphs, clicks at the box's corner)` as `(0, 1)` where `(1, 0)`
+is required — the painted link is dead and the empty corner is the link — and,
+with that assertion ordered after it, the centred case's underline is painted
+at `x = 24.0` with the glyphs at `x = 123.3`, and the bottom-aligned case's at
+`y = 45.4` with the glyphs at `y = 118.0`. The top-left control passes
+throughout, which is what makes it a control. All five pass after the fix.
+
+Vertical alignment is why the oracle is the paint rather than the hit test
+alone: `cosmic_text` clamps a click below the buffer to the last line, so a
+bottom-aligned label's own hit test fails silently rather than out of range.
+
+Both the root workspace and `examples/app-store` select the vendored widget
+crate. External consumers do not inherit workspace Cargo patches from published
+Ice packages and need the same patch for this behavior. See
+[the vendor provenance and scope](vendor/iced_widget/README.md).
+
+### Default Item content allocation
+
+`examples/showcase/tests/cases/ui/item_layout.ice` mounts the real default
+`Item`, `Surface`, `Page` and `Avatar` with the required Geist fonts. At 280px,
+primary title and description paint inside their allocated column beside long
+metadata; at 640px, metadata retains the width and height of a same-font
+intrinsic reference. Short metadata stays compact. A caller-owned leading
+button retains its dimensions and actual click route inside custom Page insets.
+
+The native regression originally observed a 9.94px title allocation for text
+whose reference word needs 56.86px. Separate temporary mutations also exercise
+zero-basis primary starvation, unnecessary 72px metadata capping at wide width,
+and leading-content compression. The latter two fail at 60.04px versus 162.67px
+metadata width and 13.56px versus 30px avatar width. No primitive row sizing
+rule changes; the component uses existing content-based flex layout.
+
+This covers native Item composition. A caller-authored label/input/action row
+with too much fixed content still needs a compact composition; these tests do
+not claim arbitrary narrow inputs or every list component is now verified.
+
+### Native layout fill portions
+
+`examples/showcase/tests/cases/ui/layout_fill_portions.ice` checks that the
+native generator preserves explicit `fill(n)` through layout decoration
+containers: horizontal columns, vertical rows, stacks, flex layouts and grid
+height retain their declared ratios. Fixed and shrink widths, unsized content
+and padding remain covered by a passing control. The wrapper forwards only
+literal portions; dynamic dimensions are not evaluated again.
+
+The pre-fix horizontal layout allocated 224/224 instead of 336/112 and the
+vertical layout allocated 164/164 instead of 246/82. The grid height assertion
+also exercises the separate grid length representation. This evidence applies
+to native generated layout wrappers; Tree host surfaces and identified-control
+wrappers remain separate verification work.
+
+### Compact input and trailing action
+
+`examples/showcase/tests/cases/ui/compact_input.ice` is a complete native Ice
+example using the existing Field and InputGroup components. Two authored tests
+at 280px and 640px compare the edited input's visible text width to an intrinsic
+reference with the same font, size and advanced shaping. They also check label
+separation, action containment, custom Page insets and the real Apply click.
+
+Adding a label inside the control row reduces visible input text to 16.42px
+against the required 44.80px and fails the intended assertion. Restoring the
+example passes all five tests, including generated checks. Captures were
+inspected at both widths. This supplies a canonical narrow composition; it
+does not change primitive row sizing or introduce a new library component.
+
+### Fixed actions around a bounded Form
+
+`examples/showcase/tests/cases/ui/scroll_ownership.ice` uses an existing Form
+between sibling heading and Save regions. At 320×300, a real wheel reaches an
+initially hidden final control; its click and Save both update state. Heading
+and Save retain their 24px outer insets. A second test scrolls 100px, clicks
+Save and checks that the offset remains 100px through the state update.
+
+A temporary 600px body allocation moves Save's bottom to 300px instead of
+276px and fails the inset assertion. A temporary scroll-to-zero in Save fails
+with 0px instead of 100px. Both mutations were restored; the focused five tests
+pass, including generated checks. Captures were inspected at scale 1, en-US,
+Linux, reduced motion, the app palette and Geist. This is native single-body
+composition evidence, not nested-scroll or inserted-content anchoring evidence.
+
+### Nested native wheel ownership
+
+`examples/showcase/tests/cases/ui/nested_scroll.ice` runs a 120px preview inside
+a bounded document at 360×300. Real wheel input moves the inner offset to 40px,
+then its 240px end, while the outer offset stays zero. Continued edge input
+stays with the preview, whose final button is clicked through the actual route.
+A second test moves the pointer out of the window and back, then verifies edge input
+moves the outer offset to 40px while the inner remains at 240px.
+
+Removing active-transaction capture temporarily from native Scrollable makes
+the continuing-input assertion fail with 40px instead of zero. Always
+capturing fresh exhausted input makes the handoff assertion fail with zero
+instead of 40px. The native source was restored byte-for-byte; all five focused
+tests pass. Both captures were inspected with the app palette, Geist, scale 1,
+en-US, Linux and reduced motion. No runtime behavior changes in this delivery;
+this evidence excludes touch, elapsed-time expiry and Tree host behavior.
+
+### Controlled transcript updates keep the live viewport
+
+`examples/showcase/tests/scroll_reading_anchor.rs` drives the generated Ice app
+in `tests/cases/ui/scroll_reading_anchor.ice` through the production showcase
+MessageScroller transition adapter. Native wheel input is followed by actual
+prepend and remove clicks on a twelve-row capped transcript with 24px/40px rows.
+The fully visible retained row stays at y=144.25px through both changes.
+
+The old task-returned state pattern processes viewport and intent events from
+the same old snapshot; the later result loses the live viewport. Temporarily
+restoring that adapter pattern fails the intended assertion, `prepend hid the
+reading row`. Restoring immediate state assignment and event-only follow-ups
+passes all four focused tests, including generated checks. No fake measurement
+is injected. Rust Driver targets native row containers because Ice's static
+target resolver cannot name arbitrary extern-widget descendants.
+
+Before/after captures were inspected at 400×320, app palette, Geist, scale 1,
+en-US, Linux and reduced motion. Deleting the anchoring row itself, touch and
+Tree hosts are separate evidence; the component's native anchoring algorithm
+is unchanged. The fix is in the showcase's typed Rust/Ice integration.

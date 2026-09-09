@@ -152,14 +152,18 @@ pub(in crate::codegen) fn component_slot_context(
 ) -> Result<Option<SlotContext>, Error> {
     let mut entries = Vec::new();
     for slot in slots {
-        let Some(content) = slot.content else {
-            continue;
-        };
-        if !node_is_omitted(content, document, env, parent)? {
+        debug_assert!(slot.multiple || slot.content.len() <= 1);
+        let mut views = Vec::new();
+        for &content in &slot.content {
+            if !node_is_omitted(content, document, env, parent)? {
+                views.push(content);
+            }
+        }
+        if !views.is_empty() {
             entries.push(SlotContent {
                 slot: slot.slot,
                 name: slot.name.clone(),
-                view: content,
+                views,
                 env: env.snapshot(),
                 recorder: innermost_recorder(),
             });
@@ -203,7 +207,14 @@ pub(in crate::codegen) fn node_is_omitted(
             }) else {
                 return Ok(true);
             };
-            node_is_omitted(content.view, document, &content.env, parent)?
+            let mut omitted = true;
+            for &view in &content.views {
+                if !node_is_omitted(view, document, &content.env, parent)? {
+                    omitted = false;
+                    break;
+                }
+            }
+            omitted
         }
         ResolvedViewKind::Component { call } => {
             let call = document.component_call_by_id(*call)?;

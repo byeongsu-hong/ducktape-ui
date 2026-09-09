@@ -31,8 +31,11 @@ view
       button "Save" -> save
 ```
 
-Indentation determines parentage. If two nodes need to occupy one slot or root,
-wrap them in a layout node. Do not use JSX fragments or sibling roots.
+Indentation determines parentage. A view, component root, or single-root slot
+needs one layout node around multiple children. A multi-child slot declared
+`slot name*` receives caller siblings directly and lets the receiving layout
+arrange them. Explicit nested layouts remain grouped children. Ice does not use
+JSX fragment syntax.
 
 Most lines follow:
 
@@ -186,6 +189,19 @@ Rust text-style call.
 
 Text expressions may be `str`, numbers, booleans, or other checker-supported
 display values. Do not call `.toString()`.
+
+Alignment on a text is its own vocabulary and its own box:
+
+- `align-x=default|left|center|right|justified` and
+  `align-y=top|center|bottom` place the glyphs **inside the text's own
+  bounds**. A parent's `align=` uses `start|center|end` and places the whole
+  text among its siblings; the two do not substitute for each other.
+- Alignment needs room to spare. A `shrink` text is exactly as wide and tall
+  as its glyphs, so `align-x`/`align-y` move nothing — give it `w=`/`h=` first.
+  The one exception is a multi-line `shrink` text, where `align-x` ranks the
+  lines against the widest one without moving the box.
+- Canvas `text` takes the same two properties but anchors around the `x=`/`y=`
+  point it is given rather than inside a widget box.
 
 ### Input
 
@@ -513,8 +529,9 @@ claiming the same native adapter coverage.
 
 Before finishing a view:
 
-- Confirm one root per view, component, and slot.
-- Confirm all component props and slots are explicit.
+- Confirm one root per view/component and each single-root slot; pass siblings
+  directly to multi-child slots when the component should own their layout.
+- Supply required props and slots; optional and multi-child slots may be omitted.
 - Use `for`/`keyed` instead of duplicated nodes.
 - Use typed properties before utilities.
 - Use only declared theme tokens.

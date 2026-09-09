@@ -1336,7 +1336,13 @@ fn component_contract_completions(component: &ui_lang_core::Component) -> Vec<Va
         })
         .collect::<Vec<_>>();
     items.extend(component_slots(&component.root).into_iter().map(|slot| {
-        let optional = if slot.optional { "optional " } else { "" };
+        let optional = if slot.multiple {
+            "multi-child "
+        } else if slot.optional {
+            "optional "
+        } else {
+            ""
+        };
         json!({
             "label": format!("{}:", slot.name),
             "kind": 10,
@@ -1446,15 +1452,23 @@ fn visit_view<'a>(
 struct ComponentSlotInfo<'a> {
     name: &'a str,
     optional: bool,
+    multiple: bool,
 }
 
 fn component_slots(node: &ui_lang_core::ViewNode) -> Vec<ComponentSlotInfo<'_>> {
     let mut output = Vec::new();
     visit_view(node, &mut |node| {
-        if let ui_lang_core::ViewNode::Slot { name, optional, .. } = node {
+        if let ui_lang_core::ViewNode::Slot {
+            name,
+            optional,
+            multiple,
+            ..
+        } = node
+        {
             output.push(ComponentSlotInfo {
                 name,
                 optional: *optional,
+                multiple: *multiple,
             });
         }
     });
@@ -1840,7 +1854,17 @@ fn component_hover(component: &ui_lang_core::Component) -> String {
             "  slots: {}",
             slots
                 .iter()
-                .map(|slot| format!("{}{}", slot.name, if slot.optional { "?" } else { "" }))
+                .map(|slot| format!(
+                    "{}{}",
+                    slot.name,
+                    if slot.multiple {
+                        "*"
+                    } else if slot.optional {
+                        "?"
+                    } else {
+                        ""
+                    }
+                ))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -5566,6 +5590,34 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("slots: Header, Footer?")
+        );
+        let many_documents = Documents::from([(
+            uri.to_owned(),
+            source.replace("slot Footer?", "slot Footer*"),
+        )]);
+        let many = completion_items_at(
+            &many_documents,
+            &json!({
+                "textDocument": { "uri": uri }, "position": { "line": 19, "character": 6 }
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            many.iter().find(|item| item["label"] == "Footer:").unwrap()["detail"],
+            "multi-child component slot"
+        );
+        let many_hover = hover_at(
+            &many_documents,
+            &json!({
+                "textDocument": { "uri": uri }, "position": { "line": 13, "character": 12 }
+            }),
+        )
+        .unwrap();
+        assert!(
+            many_hover["contents"]["value"]
+                .as_str()
+                .unwrap()
+                .contains("slots: Header, Footer*")
         );
         let patterns = complete(21, 8);
         assert!(patterns.iter().any(|item| item["label"] == "none"));

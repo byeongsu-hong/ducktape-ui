@@ -241,6 +241,7 @@ pub enum ViewNode {
     Slot {
         name: String,
         optional: bool,
+        multiple: bool,
         span: Span,
     },
     ExternComponent {

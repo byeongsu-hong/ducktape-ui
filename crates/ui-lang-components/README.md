@@ -100,6 +100,40 @@ Page does not scroll or choose a readable maximum width. A long ordinary page
 can put one scroll viewport inside Page; Form provides the bounded scrolling
 composition for forms. An intentionally full-bleed region may live outside Page.
 
+## Input with a trailing action
+
+Let `Field` own the label above the control, and let `InputGroup` own the input
+and trailing action on the same line:
+
+```ice
+Field label="Project slug"
+  InputGroup
+    row w=fill gap=6.0 align=center
+      input "" <-> slug label="Project slug" w=fill p=6.0
+      button "Apply" @secondary_action -> apply slug
+```
+
+`fill` receives the space left by its siblings. Putting another long label or
+origin string on that line can leave an editable but unreadable input. Keep
+that context in the field label or description when narrow widths are supported.
+Page supplies the outer inset; this pattern needs no extra page padding around
+the input group.
+
+The [complete compiling example](../../examples/showcase/tests/cases/ui/compact_input.ice)
+includes application state, a bound reusable field, the action route and Geist
+font loading. Its tests check the whole painted input value and actual Apply
+click at 280px and 640px, including custom Page padding.
+
+## List item sizing
+
+`Item(title, description, meta)` keeps its leading content at its chosen size.
+The title/description and trailing metadata share constrained space using their
+content sizes; metadata keeps its natural width when the row has enough room.
+Long text wraps rather than giving all remaining width to the trailing value.
+The leading slot accepts caller-owned content, including interactive controls,
+without replacing their routes. Use the existing `flex` and `box` primitives
+for a different content allocation policy.
+
 ## Form defaults and customization
 
 Import `src/ice/default.ice` and declare a form with application-owned state:
@@ -115,6 +149,28 @@ bounded content. `FormSection(title, description="", padding=20.0, radius=11.0)`
 provides a section surface and heading. Each accepts one content root; use a
 `col w=fill gap=20.0` for multiple fields. Text wraps rather than using fixed
 row heights. Do not wrap Form in another vertical scroll container.
+
+To keep a heading and Save action visible in a short window, make them siblings
+of Form inside a bounded `col w=fill h=fill`. Form receives the remaining
+height; only its content scrolls:
+
+```ice
+col w=fill h=fill
+  box p=24.0 w=fill
+    text "Project settings" @section_title
+  Form
+    col w=fill gap=20.0
+      TextField label="Display name" value<->name
+  box p=24.0 w=fill
+    button "Save" @primary_action -> save
+```
+
+Keep the Form instance and its identity stable when state changes. Putting the
+whole column inside another scroll also makes its heading and actions scroll.
+The [complete scroll example](../../examples/showcase/tests/cases/ui/scroll_ownership.ice)
+checks reaching the final control with a wheel and preserving the reading
+position through an actual Save click. This pattern covers a single body
+scroller; nested panes and anchoring during inserted content are separate cases.
 
 `TextField(label, bind value, description="", error="", placeholder="",
 disabled=false, secure=false, padding=11.0, radius=10.0)` supplies the native
@@ -139,6 +195,42 @@ The [settings example](../../examples/settings/README.md) demonstrates default
 and custom geometry, a checkbox slot, narrow layouts and validation feedback.
 These are reusable Ice components, not new language keywords or automatic
 platform-native controls.
+
+## Reading position in a changing transcript
+
+Use `MessageScroller` with stable item IDs when a capped list inserts and
+removes rows while someone is reading. `anchor-y=keep` observes height growth;
+it cannot identify a retained row when the total height stays constant.
+
+The [Ice transcript example](../../examples/showcase/tests/cases/ui/scroll_reading_anchor.ice)
+and its [Rust boundary](../../examples/showcase/tests/scroll_reading_anchor.rs)
+exercise variable-height rows, prepending while dropping the tail, and removing
+the first row while appending at the tail. The surviving reading row stays at
+the same screen coordinate.
+
+Apply each controlled-widget event synchronously to the current state. The
+showcase [transition adapter](../../examples/showcase/src/message_scroller_adapter.rs)
+returns the updated state immediately and a separately consumed follow-up task.
+Assign the state first, then route task events back through that same reducer.
+Returning state snapshots from asynchronous tasks can lose one of the multiple
+events a single wheel produces. The example protects this integration boundary;
+it does not cover deletion of the currently anchoring row.
+
+## A bounded scroll area inside a document
+
+Prefer one vertical scroll owner for ordinary forms. When a document needs an
+independently scrollable preview, give that inner `scroll` an explicit height;
+the outer document still needs its own bounded viewport. Do not nest two
+unbounded fill-height scrollers and expect either to choose a useful height.
+
+The [complete nested preview example](../../examples/showcase/tests/cases/ui/nested_scroll.ice)
+uses Page for the inset, an outer fill-height scroll and a 120px inner preview.
+With the pinned native renderer, a wheel sequence stays with the inner preview
+even when it reaches its end. After the pointer leaves the window and returns
+to the preview, fresh wheel input at that edge can move the outer document. This keeps the document
+from jumping during a continuing inner scroll. The example tests both offsets
+and the actual final preview action. This is native wheel behavior; touch,
+timeout-based handoff and Tree hosts have separate evidence requirements.
 
 ## Optional header descriptions
 
@@ -276,24 +368,29 @@ cargo check -p ui-lang-components --no-default-features --features button,x11
 cargo check -p ui-lang-components --target wasm32-unknown-unknown --no-default-features --features button
 ```
 
-## Action rows at narrow widths
+## Component-owned action layout
 
-When actions should retain their natural label widths and move to the next line
-as space runs out, put wrapping on the row that directly owns the buttons:
+`Card.Footer`, `Dialog.Actions`, and `ButtonGroup` accept ordinary buttons
+as direct children. The component owns the row and its wrapping policy:
 
 ```ice
 Card.Footer
-  row wrap w=fill gap=8.0 wrap-gap=8.0
-    button "Discard all changes" @secondary_action -> cancel
-    button "Save workspace settings" @primary_action -> save
+  button "Discard all changes" @secondary_action -> cancel
+  button "Save workspace settings" @primary_action -> save
 ```
 
-At 280px the demonstrated card places these actions on separate lines; at 640px
-they share one line. Wrapping preserves source order for keyboard navigation.
-The [compiling example and tests](../../examples/showcase/tests/cases/ui/action_layout.ice)
-check placement, label containment, Tab/Enter and pointer activation.
+Card.Footer uses a 9px gap; Dialog.Actions uses an 8px gap and right-aligns each
+wrapped line. Their `gap` prop changes spacing on both axes. ButtonGroup retains
+zero spacing inside its shared border. Narrow space moves whole buttons to the
+next line instead of assigning the remaining width only to the last button.
 
-The slot accepts one root: the caller owns this inner row and its reflow policy.
-Wrapping only an outer Card.Footer, Dialog.Actions or ButtonGroup container does
-not rearrange descendants inside the caller's row. This pattern demonstrates
-explicit layout; those components do not yet choose that policy automatically.
+These are multi-child slots (`slot children*`). Callers retain native buttons,
+custom content, conditions and iteration. An explicit nested layout remains a
+single grouped child, so a custom composition can keep its own internal layout.
+Use such grouping intentionally; a wrapper around all actions gives that wrapper
+responsibility for arranging its descendants again.
+
+The [action example](../../examples/showcase/tests/cases/ui/action_layout.ice)
+and [slot interaction tests](../../examples/showcase/tests/cases/ui/multi_child_slots.ice)
+exercise the actual shared components. Page still owns screen insets; action
+layout does not add a second page boundary.

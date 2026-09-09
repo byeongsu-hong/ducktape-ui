@@ -117,7 +117,7 @@ pub(in crate::parser) fn parse_component_children(
                 .map(|(child, name)| {
                     Ok(ComponentSlot {
                         name: name.expect("all compound slots are present"),
-                        content: Box::new(parse_view(child)?),
+                        content: vec![parse_view(child)?],
                         span: Span::line(child.number),
                     })
                 })
@@ -134,19 +134,14 @@ pub(in crate::parser) fn parse_component_children(
                 "use only `{component}.Name` children, or wrap direct children in one layout"
             )));
         }
-        let slots = match children.as_slice() {
-            [content] => Ok(vec![ComponentSlot {
-                name: "children".into(),
-                content: Box::new(parse_view(content)?),
-                span: Span::line(content.number),
-            }]),
-            _ => Err(error(
-                "E040",
-                line,
-                "component children need one root or named `slot:` blocks",
-            )
-            .hint("wrap siblings in row or col, or write `header:` and `body:` blocks")),
-        }?;
+        let slots = vec![ComponentSlot {
+            name: "children".into(),
+            content: children
+                .iter()
+                .map(|child| parse_view(child))
+                .collect::<Result<_, _>>()?,
+            span: Span::line(line.number),
+        }];
         return Ok((slots, event_routes));
     }
 
@@ -160,16 +155,13 @@ pub(in crate::parser) fn parse_component_children(
                     "cannot mix a direct child with named component slots",
                 ));
             };
-            if section.children.len() != 1 {
-                return Err(error(
-                    "E040",
-                    section,
-                    format!("component slot `{}` needs exactly one root", name.trim()),
-                ));
-            }
             Ok(ComponentSlot {
                 name: identifier(name.trim(), section)?,
-                content: Box::new(parse_view(&section.children[0])?),
+                content: section
+                    .children
+                    .iter()
+                    .map(parse_view)
+                    .collect::<Result<_, _>>()?,
                 span: Span::line(section.number),
             })
         })

@@ -217,15 +217,16 @@ component Card.Body()
       pb=18.0
     slot
 
-component Card.Footer()
-  row #root
+component Card.Footer(gap:f64=9.0)
+  row #root wrap
     with
       w=fill
       px=18.0
       pb=18.0
-      gap=9.0
+      gap=gap
+      wrap-gap=gap
       align=center
-    slot
+    slot children*
 
 component ButtonGroup()
   box #root
@@ -234,8 +235,8 @@ component ButtonGroup()
       border=control_line
       border-w=1.0
       r=9.0
-    row gap=0.0
-      slot
+    row #items wrap gap=0.0 wrap-gap=0.0
+      slot children*
 
 component Breadcrumb(current:str)
   row #root
@@ -287,18 +288,30 @@ component Avatar.Agent(initials:str)
         @text-primary_fg
 
 component Item(title:str, description:str, meta:str)
-  row #root
+  flex #root
     with
       w=fill
       gap=9.0
       px=9.0
       py=7.0
-      align=center
-    slot
-    col w=fill gap=3.0
-      text title @list text-fg
-      text description @caption
-    text meta @meta_compact
+      items=center
+    box shrink=0.0
+      slot
+    box grow=1.0 basis=content
+      col #content w=shrink gap=3.0
+        text title #title
+          with
+            w=shrink
+            wrap=word
+            @list
+            @text-fg
+        text description #description
+          with
+            w=shrink
+            wrap=word
+            @caption
+    box basis=content
+      text meta #meta @meta_compact
 
 component Attachment(name:str, meta:str)
   row #root
@@ -637,13 +650,15 @@ component Dialog.Body()
   box #root w=fill
     slot
 
-component Dialog.Actions()
-  row #root
+component Dialog.Actions(gap:f64=8.0)
+  row #root wrap
     with
       w=fill
-      gap=8.0
+      gap=gap
+      wrap-gap=gap
       align=end
-    slot
+      wrap-align=end
+    slot children*
 
 test unmounted_component_coverage
   mount

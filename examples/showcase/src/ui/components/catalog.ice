@@ -267,27 +267,20 @@ component Catalog(bind email:str, bind project_slug:str, bind textarea_notes:edi
                   initials="UI"
                   outgoing=false
           Card.Footer
-            row
-              with
-                w=fill
-                gap=8.0
-                align=center
-              Marker label="stable" active=true
-              Marker label="native" active=false
-              space w=fill h=1.0
-              ButtonGroup
-                row
-                  button "Cancel" -> emit(card_cancel)
-                    with
-                      h=36.0
-                      @ghost_action
-                      @py-8px
-                  button "Apply" -> emit(card_apply)
-                    with
-                      h=36.0
-                      @primary_action
-                      @py-8px
-              text card_action size=12.0 @text-muted
+            Marker label="stable" active=true
+            Marker label="native" active=false
+            ButtonGroup
+              button "Cancel" -> emit(card_cancel)
+                with
+                  h=36.0
+                  @ghost_action
+                  @py-8px
+              button "Apply" -> emit(card_apply)
+                with
+                  h=36.0
+                  @primary_action
+                  @py-8px
+            text card_action size=12.0 @text-muted
         Separator
         Bubble copy="Incoming and outgoing content keep explicit alignment." outgoing=false
         Bubble copy="Caller state still owns the conversation." outgoing=true

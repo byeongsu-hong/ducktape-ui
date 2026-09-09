@@ -62,9 +62,10 @@ impl ApiSurface {
 
                 let mut slots = crate::check::component_slots(&component.root)
                     .into_iter()
-                    .map(|(name, optional, _)| ApiComponentSlot {
+                    .map(|(name, optional, multiple, _)| ApiComponentSlot {
                         name: name.to_owned(),
                         required: !optional,
+                        multiple,
                     })
                     .collect::<Vec<_>>();
                 slots.sort_by(|left, right| left.name.cmp(&right.name));
@@ -237,6 +238,7 @@ pub struct ApiComponentEvent {
 pub struct ApiComponentSlot {
     pub name: String,
     pub required: bool,
+    pub multiple: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

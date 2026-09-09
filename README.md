@@ -301,6 +301,13 @@ The [default Ice components](crates/ui-lang-components/README.md) include
 `PageHeader` and `Panel` with optional descriptions: omitted help adds no blank
 row, while long titles and descriptions wrap within the available content width.
 
+Default list rows use content-based sizing so long trailing metadata shares
+narrow space with the main text. See [Item sizing](crates/ui-lang-components/README.md#list-item-sizing)
+for the leading-content customization boundary.
+
+For an input with a trailing action, use [Field and InputGroup](crates/ui-lang-components/README.md#input-with-a-trailing-action):
+keep the label above the control so the editable value retains room at narrow widths.
+
 ## First-class tests
 
 Tree guests can run authored presets, typed state expectations and dispatch,
@@ -802,7 +809,16 @@ For ordinary screen content, the default library's `Page` supplies a customizabl
 24px outer inset. Surface components retain their own interior padding; Form
 already owns its screen padding. See the [page and surface guidance](crates/ui-lang-components/README.md#page-edges-and-surface-padding).
 
+Wrapping alignment fixes use the workspace's [patched Iced widget crate](vendor/iced_widget/README.md).
+External applications must select the same patch until an upstream release includes them.
+
 Tree display text retains the existing 64 KiB aggregate budget. Actual sanitizer
 loss now produces a typed report on full frames and applied patches; app-store
 logs it once per module installation generation. Producer reports remain distinct
 from host observations. Editable `Editor` document loss still rejects the frame.
+
+Components can own the layout of caller content with `slot children*`, accepting
+zero or more direct siblings. `Card.Footer`, `Dialog.Actions` and `ButtonGroup`
+use this contract to arrange ordinary caller buttons; an explicit caller layout
+remains one custom group. See the [component library](crates/ui-lang-components/README.md)
+and [slot contract](SPEC.md#component-slot-cardinality).

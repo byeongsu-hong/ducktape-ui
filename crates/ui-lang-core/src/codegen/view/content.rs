@@ -421,8 +421,14 @@ pub(in crate::codegen) fn render_content(
             let memo_reads = if document.target() == crate::Target::Tree {
                 None
             } else {
-                match memo::component_use_memo_reads(document, call, component, &component_env, env)
-                {
+                match memo::component_use_memo_reads(
+                    document,
+                    call,
+                    component,
+                    &component_env,
+                    env,
+                    slot,
+                ) {
                     Ok(reads) => Some(reads),
                     Err(reason) => {
                         if std::env::var_os("ICE_MEMO_DEBUG").is_some() {
@@ -632,8 +638,15 @@ pub(in crate::codegen) fn render_content(
             slot: slot_id,
             name,
             optional,
+            multiple,
             ..
         } => {
+            if *multiple {
+                return Err(document.invariant_at_origin(
+                    view.origin,
+                    "multi-child slot reached scalar rendering",
+                ));
+            }
             let slot = slot.ok_or_else(|| {
                 document.invariant_at_origin(
                     view.origin,
@@ -668,10 +681,14 @@ pub(in crate::codegen) fn render_content(
             let mut content_env = ScopedBindingEnv::new(&captured);
             content_env.insert(
                 RECONCILIATION_SCOPE_BINDING.into(),
-                reconciliation_scope_binding(scope.to_owned()),
+                reconciliation_scope_binding(reconciliation_scope(scope, env).to_owned()),
             );
+            let [content_view] = content.views.as_slice() else {
+                return Err(document
+                    .invariant_at_origin(view.origin, "single-root slot has multiple children"));
+            };
             let rendered = render_node(
-                content.view,
+                *content_view,
                 document,
                 message,
                 &content_env,

@@ -217,6 +217,26 @@ bind their own Rust modules beside the application's backend. Bare extern type
 and function names are graph-global and duplicates are errors; aliased imports
 retain their namespace identity instead.
 
+### Component slot cardinality
+
+A component declaration uses `slot` (the default `children` name) or `slot name`
+for a required single-root slot, `slot name?` for an optional single-root slot,
+and `slot name*` for zero or more caller roots. A multi-child slot can be omitted.
+Multiple direct component children fill its default `children` slot; named
+`name:` blocks may similarly contain multiple roots. Compound component children
+continue to map to their family's named slots.
+
+A multi-child slot expands into the receiving layout's sibling list, including
+conditional and iterative branches. It may forward to another multi-child slot.
+It is invalid as scalar content in a box, button, scroll viewport or component
+root, or when forwarded into a single-root slot. No implicit column or other
+widget is introduced, and an explicit caller layout remains one grouped child.
+Empty content contributes no child or inter-child spacing. Expression/handler
+bindings stay in the caller; rendered scopes stay at the receiving placement.
+API extraction records whether each slot is required and accepts multiple roots.
+`stack under=N` counts the resulting rendered children, including children
+expanded by slots, conditions and loops; it does not count source declarations.
+
 ## 5. The Rust boundary
 
 This is the one part of the contract the schema does not carry: what a
@@ -1129,8 +1149,11 @@ The tree target copies resolved button preset, recipe colors, border, label
 size/relative line height/font and focus-visible ring color. Hosts resolve the
 native preset, recipe base/status colors, typed active face, typed status face,
 then recipe disabled treatment unless a typed disabled face exists. Guest
-default font and text size apply to compact labels; fixed dimensions center
-content on the corresponding axes. Explicit zero padding overrides native
+default font and text size apply to compact labels; a fixed dimension centers
+content on that axis, and a fill or fill-portion dimension centers a compact
+label the same way, in the content box the padding leaves. Written-out child
+content keeps its own layout under a fill dimension, and `shrink` keeps the
+button hugging its content. Explicit zero padding overrides native
 defaults, including `@p-0px`. Font names share the frame text budget and trusted
 host registry; numeric recipe values are sanitized. Unsupported utility
 properties and Rust style callbacks remain E190. ButtonStyle changes require
@@ -1637,6 +1660,15 @@ Tree factories return `ui_lang_guest::EditorBinding<Payload>`; Native factories
 retain the native Iced key-binding signature. The authored route still receives
 its declared `Payload`. See [the transaction contract](docs/editor-transactions.md)
 for admission, ordering, cancellation and guest-owned history.
+
+## Default list item sizing
+
+The standard library's `Item(title, description, meta)` preserves its leading
+slot's chosen size. Its primary text and metadata use content-based flex sizing:
+they shrink together under constraint, while metadata retains its intrinsic
+width when space is available. Text wraps in the allocated columns. This is
+ordinary library composition over existing `flex` and `box` behavior; it does
+not change primitive row fill/shrink semantics or add a layout property.
 
 ## Default page insets
 

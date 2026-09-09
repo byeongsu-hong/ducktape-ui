@@ -1,6 +1,7 @@
 # Multi-child slots for component-owned layout
 
-Status: implementation design; the syntax below is not supported yet.
+Status: implemented language contract; component layout acceptance is tracked in
+the UI quality worklist and COVERAGE.md.
 Owner: UI quality worklist L04b. This does not close L04 or any other audit row.
 
 ## Problem and evidence

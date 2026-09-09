@@ -24,6 +24,12 @@ pub(super) fn render(
     let key = key_code(identity, "layout", layout.origin, scope, env, program)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     let mut body = String::from("{ let mut __items = ::std::vec::Vec::new();");
+    if let Some(min_cell) = flex.min_cell {
+        // Grid sizing belongs to the receiving layout, before slot expansion
+        // switches to the caller's bindings.
+        let minimum = clamped_f32_code(min_cell, "f32::EPSILON", "f32::MAX", program, env)?;
+        write!(body, " let __ice_min_cell = {minimum};").unwrap();
+    }
     render_flex_children(
         &mut body,
         children,
@@ -32,7 +38,7 @@ pub(super) fn render(
         env,
         &child_scope,
         slot,
-        flex.min_cell,
+        flex.min_cell.map(|_| "__ice_min_cell"),
     )?;
     let number = |value: CheckedExprUseId| {
         resolved_expr_use_code(program, value, env, ValueMode::Owned)
@@ -130,12 +136,11 @@ pub(super) fn render(
 pub(in crate::codegen::view) fn item_code(
     child: &str,
     options: Option<&ResolvedContainerFlexItem>,
-    min_cell: Option<ResolvedExpressionId>,
+    min_cell: Option<&str>,
     program: &LoweredProgram,
     env: &dyn BindingEnvironment,
 ) -> Result<String, Error> {
-    if let Some(min_cell) = min_cell {
-        let pixels = clamped_f32_code(min_cell, "f32::EPSILON", "f32::MAX", program, env)?;
+    if let Some(pixels) = min_cell {
         return Ok(format!(
             "({WIRE}::FlexItem {{ grow: Some(1.0), shrink: 0.0, basis: {WIRE}::FlexBasis::Fixed({pixels}), ..Default::default() }}, {child})"
         ));

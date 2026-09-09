@@ -178,6 +178,7 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit", "vendor/alacritty_termi
 [patch.crates-io]
 alacritty_terminal = { path = "vendor/alacritty_terminal" }
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
+iced_widget = { path = "vendor/iced_widget" }
 iced_winit = { path = "vendor/iced_winit" }
 
 [workspace.package]

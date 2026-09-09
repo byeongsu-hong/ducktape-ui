@@ -633,7 +633,7 @@ pub(in crate::check) fn check_font(
 
 pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
     let view_slots = slots(&document.view);
-    if let Some((_, _, span)) = view_slots.first() {
+    if let Some((_, _, _, span)) = view_slots.first() {
         return Err(Error::new(
             "E124",
             span,
@@ -642,7 +642,7 @@ pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
     }
     for test in &document.tests {
         if let Some(mount) = &test.mount
-            && let Some((_, _, span)) = slots(mount).first()
+            && let Some((_, _, _, span)) = slots(mount).first()
         {
             return Err(Error::new(
                 "E124",
@@ -652,8 +652,9 @@ pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
         }
     }
     for component in &document.components {
+        check_slot_placement(&component.root, false, document)?;
         let mut names = HashSet::new();
-        for (name, _, span) in slots(&component.root) {
+        for (name, _, _, span) in slots(&component.root) {
             if !names.insert(name) {
                 return Err(Error::new(
                     "E124",
@@ -669,15 +670,70 @@ pub(in crate::check) fn check_slots(document: &Document) -> Result<(), Error> {
     Ok(())
 }
 
-pub(in crate::check) fn slots(node: &ViewNode) -> Vec<(&str, bool, &Span)> {
-    fn collect<'a>(node: &'a ViewNode, output: &mut Vec<(&'a str, bool, &'a Span)>) {
+fn check_slot_placement(node: &ViewNode, siblings: bool, document: &Document) -> Result<(), Error> {
+    if let ViewNode::Slot {
+        multiple: true,
+        span,
+        ..
+    } = node
+    {
+        if !siblings {
+            return Err(Error::new(
+                "E124",
+                span,
+                "multi-child slot requires a layout child list or forwarding to a multi-child slot",
+            )
+            .hint("supply an explicit row, col, grid, flex, or stack layout"));
+        }
+        return Ok(());
+    }
+    if let ViewNode::Component {
+        name,
+        slots: supplied,
+        ..
+    } = node
+    {
+        if let Some(component) = document
+            .components
+            .iter()
+            .find(|component| component.name == *name)
+        {
+            let declared = slots(&component.root);
+            for supplied in supplied {
+                let multiple = declared
+                    .iter()
+                    .any(|(name, _, multiple, _)| *name == supplied.name && *multiple);
+                for child in &supplied.content {
+                    check_slot_placement(child, multiple, document)?;
+                }
+            }
+        }
+        return Ok(());
+    }
+    let siblings = match node {
+        ViewNode::Layout { kind, .. } => matches!(
+            kind,
+            Layout::Column | Layout::Row | Layout::Grid | Layout::Stack
+        ),
+        ViewNode::If { .. } | ViewNode::For { .. } | ViewNode::Match { .. } => siblings,
+        _ => false,
+    };
+    for child in view_children(node) {
+        check_slot_placement(child, siblings, document)?;
+    }
+    Ok(())
+}
+
+pub(in crate::check) fn slots(node: &ViewNode) -> Vec<(&str, bool, bool, &Span)> {
+    fn collect<'a>(node: &'a ViewNode, output: &mut Vec<(&'a str, bool, bool, &'a Span)>) {
         if let ViewNode::Slot {
             name,
             optional,
+            multiple,
             span,
         } = node
         {
-            output.push((name, *optional, span));
+            output.push((name, *optional, *multiple, span));
         }
         for child in view_children(node) {
             collect(child, output);

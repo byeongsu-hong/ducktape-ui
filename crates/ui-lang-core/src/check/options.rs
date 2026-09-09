@@ -105,7 +105,9 @@ pub(in crate::check) fn check_lazy_subtree(
             name, slots, span, ..
         } => {
             for slot in slots {
-                check_lazy_subtree(&slot.content, document, components, supplied_slot)?;
+                for content in &slot.content {
+                    check_lazy_subtree(content, document, components, supplied_slot)?;
+                }
             }
             if !components.insert(name.clone()) {
                 return Err(Error::new(

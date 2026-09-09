@@ -372,6 +372,31 @@ fn render_resolved_regular_layout(
         write!(body, ".padding({padding})").unwrap();
     }
     append_size(&mut body, style);
+    match &layout.mode {
+        ResolvedLayoutMode::Linear(linear) => append_forwarded_fill_portions(
+            &mut body,
+            [linear.width.as_ref(), linear.height.as_ref()],
+        ),
+        ResolvedLayoutMode::Stack(stack) => {
+            append_forwarded_fill_portions(&mut body, [stack.width.as_ref(), stack.height.as_ref()])
+        }
+        // A grid's own height is the cell length verbatim — iced's `Grid::size`
+        // returns the `EvenlyDistribute` one and `Shrink` for an aspect ratio —
+        // and its width is numeric, so only that one length can carry a portion.
+        ResolvedLayoutMode::Grid(grid) => append_forwarded_fill_portions(
+            &mut body,
+            [
+                None,
+                match &grid.height {
+                    Some(ResolvedGridHeight::EvenlyDistribute(height)) => Some(height),
+                    _ => None,
+                },
+            ],
+        ),
+        ResolvedLayoutMode::Hover(_)
+        | ResolvedLayoutMode::Flex(_)
+        | ResolvedLayoutMode::Scroll(_) => {}
+    }
     if let Some(max_width) = style.max_width {
         write!(body, ".max_width({max_width})").unwrap();
     }
@@ -416,6 +441,12 @@ fn render_resolved_flexbox(
         resolved_accessibility_key_code(identity, "layout", layout.origin, scope, env, document)?;
     let child_scope = rendered_child_scope(identity, scope)?;
     let mut body = String::from("{ let mut __items = ::std::vec::Vec::new();");
+    if let Some(min_cell) = flex.min_cell {
+        // Grid sizing belongs to the receiving layout, before slot expansion
+        // switches to the caller's bindings.
+        let minimum = clamped_f32_code(min_cell, "f32::EPSILON", "f32::MAX", program, env)?;
+        write!(body, " let __ice_min_cell = {minimum};").unwrap();
+    }
     render_flex_children(
         &mut body,
         children,
@@ -424,7 +455,7 @@ fn render_resolved_flexbox(
         env,
         &child_scope,
         slot,
-        flex.min_cell,
+        flex.min_cell.map(|_| "__ice_min_cell"),
     )?;
     write!(
         body,
@@ -542,6 +573,7 @@ fn render_resolved_flexbox(
     body.push(';');
     body.push_str(" let __content = ::iced::widget::container(__layout)");
     append_size(&mut body, style);
+    append_forwarded_fill_portions(&mut body, [flex.width.as_ref(), flex.height.as_ref()]);
     if let Some(max_width) = style.max_width {
         write!(body, ".max_width({max_width})").unwrap();
     }
@@ -785,7 +817,9 @@ pub(super) fn contains_virtual_rows(
                 return Ok(true);
             }
             any(
-                call.slots.iter().filter_map(|slot| slot.content),
+                call.slots
+                    .iter()
+                    .flat_map(|slot| slot.content.iter().copied()),
                 document,
                 slots,
             )
@@ -799,8 +833,8 @@ pub(super) fn contains_virtual_rows(
             else {
                 return Ok(false);
             };
-            contains_virtual_rows(
-                content.view,
+            any(
+                content.views.iter().copied(),
                 document,
                 slots.and_then(|slots| slots.parent.as_deref()),
             )
@@ -838,11 +872,40 @@ pub(super) fn render_flex_children(
     env: &dyn BindingEnvironment,
     scope: &str,
     slot: Option<&SlotContext>,
-    min_cell: Option<ResolvedExpressionId>,
+    min_cell: Option<&str>,
 ) -> Result<(), Error> {
     for child in children {
         let view = document.resolved_view(*child)?;
         match &view.kind {
+            ResolvedViewKind::Slot {
+                slot: slot_id,
+                multiple: true,
+                ..
+            } => {
+                let Some(context) = slot else {
+                    continue;
+                };
+                let Some(content) = context.entries.iter().find(|entry| entry.slot == *slot_id)
+                else {
+                    continue;
+                };
+                let captured = SlotRecordingEnv::new(&content.env, content.recorder.as_ref());
+                let mut content_env = ScopedBindingEnv::new(&captured);
+                content_env.insert(
+                    RECONCILIATION_SCOPE_BINDING.into(),
+                    reconciliation_scope_binding(reconciliation_scope(scope, env).to_owned()),
+                );
+                render_flex_children(
+                    out,
+                    &content.views,
+                    document,
+                    message,
+                    &content_env,
+                    scope,
+                    context.parent.as_deref(),
+                    min_cell,
+                )?;
+            }
             ResolvedViewKind::If { children } => {
                 let program = document;
                 let conditional = program.resolved_conditional(*child)?;
@@ -962,7 +1025,7 @@ pub(super) fn render_flex_children(
                 } else if let Some(min_cell) = min_cell {
                     format!(
                         "::ui_lang_runtime::flex_item(__flex_child).grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed({}))",
-                        clamped_f32_code(min_cell, "f32::EPSILON", "f32::MAX", document, env,)?
+                        min_cell
                     )
                 } else {
                     let options = match view.kind {
@@ -1106,6 +1169,25 @@ pub(super) fn resolved_flex_content_alignment_name(
         ResolvedFlexContentAlignment::SpaceBetween => "SpaceBetween",
         ResolvedFlexContentAlignment::SpaceAround => "SpaceAround",
         ResolvedFlexContentAlignment::SpaceEvenly => "SpaceEvenly",
+    }
+}
+
+/// Restates a `fill(n)` dimension on the `container` a layout is decorated
+/// with. `Container::new` takes its own size from its content through
+/// `Length::fluid()`, and that answers `Fill` for every portion — so without
+/// this the wrapper reports a factor of 1 to the parent and a `fill(3)` column
+/// comes out the same width as the `fill(1)` beside it. A portion is a
+/// literal, so restating it evaluates nothing twice; the other lengths already
+/// survive `fluid()` unchanged in the fluidity the parent needs, and `fixed`
+/// keeps its number by measurement, so only this case is written again.
+fn append_forwarded_fill_portions(
+    code: &mut String,
+    dimensions: [Option<&ResolvedContainerLength>; 2],
+) {
+    for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
+        if let Some(ResolvedContainerLength::FillPortion(portion)) = length {
+            write!(code, ".{method}(::iced::Length::FillPortion({portion}))").unwrap();
+        }
     }
 }
 

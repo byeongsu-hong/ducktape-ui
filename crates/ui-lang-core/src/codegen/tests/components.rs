@@ -2421,3 +2421,17 @@ view
         "the Inner key reads the title's revision and its own instance's: {generated}"
     );
 }
+
+#[test]
+fn memo_follows_forwarded_slot_dependencies() {
+    for cardinality in ["", "*"] {
+        let generated = memo_program(&format!(
+            "component Counter()\n  state\n    count = 0\n  on bump\n    count = count + 1\n  button label=\"Count\" -> bump\n    text count\ncomponent Inner()\n  row\n    slot children{cardinality}\ncomponent Outer()\n  Inner\n    slot children{cardinality}\nview\n  Outer\n    Counter #counter\n"
+        ));
+        assert_eq!(
+            generated.matches("::ui_lang_runtime::rev_memo(").count(),
+            1,
+            "only the Counter may cache its own state; forwarded parents must observe updates: {generated}"
+        );
+    }
+}

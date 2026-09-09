@@ -8,7 +8,7 @@ use ui_lang_core::{
     ApiSurface, ApiThemeContract,
 };
 
-const FINGERPRINT_SCHEMA_VERSION: u32 = 1;
+const FINGERPRINT_SCHEMA_VERSION: u32 = 2;
 const DIFF_SCHEMA_VERSION: u32 = 1;
 
 pub(crate) fn run(root: &Path, args: &[String]) -> Result<(), String> {
@@ -732,20 +732,50 @@ fn diff_slots(
                 };
                 push_change(changes, classification, code, path, message);
             }
-            (Some(left), Some(right)) if !left.required && right.required => push_change(
-                changes,
-                ChangeClassification::Breaking,
-                "slot_became_required",
-                format!("{path}.required"),
-                "optional slot became required",
-            ),
-            (Some(left), Some(right)) if left.required && !right.required => push_change(
-                changes,
-                ChangeClassification::Additive,
-                "slot_became_optional",
-                format!("{path}.required"),
-                "required slot became optional",
-            ),
+            (Some(left), Some(right)) => {
+                if left.required != right.required {
+                    push_change(
+                        changes,
+                        if right.required {
+                            ChangeClassification::Breaking
+                        } else {
+                            ChangeClassification::Additive
+                        },
+                        if right.required {
+                            "slot_became_required"
+                        } else {
+                            "slot_became_optional"
+                        },
+                        format!("{path}.required"),
+                        if right.required {
+                            "optional slot became required"
+                        } else {
+                            "required slot became optional"
+                        },
+                    );
+                }
+                if left.multiple != right.multiple {
+                    push_change(
+                        changes,
+                        if right.multiple {
+                            ChangeClassification::Additive
+                        } else {
+                            ChangeClassification::Breaking
+                        },
+                        if right.multiple {
+                            "slot_accepts_multiple"
+                        } else {
+                            "slot_requires_single_root"
+                        },
+                        format!("{path}.multiple"),
+                        if right.multiple {
+                            "slot now accepts multiple roots"
+                        } else {
+                            "slot now requires a single root"
+                        },
+                    );
+                }
+            }
             _ => {}
         }
     }
@@ -1039,6 +1069,48 @@ view
     }
 
     #[test]
+    fn classifies_slot_cardinality_in_both_directions() {
+        let single = fingerprint(&source(
+            "component Actions()\n  row\n    slot children",
+            "p-2",
+            "extra",
+        ));
+        let many = fingerprint(&source(
+            "component Actions()\n  row\n    slot children*",
+            "p-2",
+            "extra",
+        ));
+        let widening = diff(&single, &many);
+        assert!(
+            widening
+                .changes
+                .iter()
+                .any(|change| change.code == "slot_accepts_multiple"
+                    && change.classification == ChangeClassification::Additive)
+        );
+        assert!(
+            widening
+                .changes
+                .iter()
+                .any(|change| change.code == "slot_became_optional")
+        );
+        let narrowing = diff(&many, &single);
+        assert!(
+            narrowing
+                .changes
+                .iter()
+                .any(|change| change.code == "slot_requires_single_root"
+                    && change.classification == ChangeClassification::Breaking)
+        );
+        assert!(
+            narrowing
+                .changes
+                .iter()
+                .any(|change| change.code == "slot_became_required")
+        );
+    }
+
+    #[test]
     fn classifies_breaking_behavioral_and_additive_changes() {
         let before = source(
             "component Card(title:str=\"Draft\")\n  col\n    slot Body?",
@@ -1272,10 +1344,12 @@ view
         let document = fingerprint(&source);
         let path = temp.path().join("api.json");
 
-        let mut value = serde_json::to_value(&document).unwrap();
-        value["schema_version"] = serde_json::json!(FINGERPRINT_SCHEMA_VERSION + 1);
-        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        assert!(read_fingerprint(&path).unwrap_err().contains("unsupported"));
+        for version in [1, FINGERPRINT_SCHEMA_VERSION + 1] {
+            let mut value = serde_json::to_value(&document).unwrap();
+            value["schema_version"] = serde_json::json!(version);
+            fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(read_fingerprint(&path).unwrap_err().contains("unsupported"));
+        }
 
         let mut value = serde_json::to_value(&document).unwrap();
         value["api"]["components"][0]["name"] = serde_json::json!("Changed");

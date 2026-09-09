@@ -330,19 +330,13 @@ view
               title="No Rust view code"
               description="The build script emits ordinary iced code at compile time."
         Dialog.Actions
-          row
+          button "Cancel" -> cancel_dialog
             with
-              w=fill
-              gap=8.0
-              align=end
-            space w=fill h=1.0
-            button "Cancel" -> cancel_dialog
-              with
-                h=36.0
-                @secondary_action
-                @py-8px
-            button "Continue" -> continue_dialog
-              with
-                h=36.0
-                @primary_action
-                @py-8px
+              h=36.0
+              @secondary_action
+              @py-8px
+          button "Continue" -> continue_dialog
+            with
+              h=36.0
+              @primary_action
+              @py-8px
