@@ -3235,3 +3235,12 @@ with real `Text file busy` errors; restoring it passes all launches. A separate
 with it. Standalone helper tests and strict Clippy pass; this is native Unix
 process evidence, not a Windows process-race claim. Final mounted package and
 authored tests remain validated by the app-store CI job.
+
+The host-inclusive lint gate also covers generated authored target paths. Keyed
+paths now evaluate the root and each key once into scoped locals before one
+format operation, including window-qualified daemon roots. The nested-key
+code-generation assertion rejects the old nested formatting; all eight focused
+code-generation tests pass. Full app-store workspace strict Clippy (host included,
+`--release --locked --workspace --tests --no-deps -- -D warnings`) passes locally;
+CI uses the debug profile. Two host pixel oracles use complete four-byte array
+chunks with their original color and count assertions unchanged.

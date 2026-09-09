@@ -437,7 +437,9 @@ fn native_and_wasm_caret_menu_commits_one_edit_and_preserves_undo_across_reload(
         );
         let pixels = renderer.screenshot(Size::new(720, 400), 1.0, iced::Color::WHITE);
         let green = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[..3] == [0, 255, 0])
             .count();
         assert!(
