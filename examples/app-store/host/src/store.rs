@@ -13,6 +13,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 #[cfg(test)]
+#[path = "authored_input_tests.rs"]
+mod authored_input_tests;
+#[cfg(test)]
 #[path = "authored_tests.rs"]
 mod authored_tests;
 

@@ -3136,6 +3136,12 @@ mounted test fail its intended width assertion (`160` instead of `230`). Exact
 source restoration passes the complete native/Wasm test with no skips, including
 unreleased-grab removal and reload. Final native and Wasm RGBA pixels match.
 
+Authored Tree input evidence: `examples/app-store/tests/authored-input` runs the
+same Ice scenarios through native-process and Wasm test artifacts with the mounted
+host Driver. It checks two-input focus, selected-text replacement, Unicode typing,
+cursor/Backspace, and native key metadata using guest state assertions. Literal
+input arguments are supported; state-derived action arguments remain E190.
+
 ### Native scroll handoff during guest replacement
 
 The default Tree scope releases a retired instance's parked and mounted native

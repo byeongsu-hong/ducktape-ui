@@ -1566,13 +1566,19 @@ is added to production guest artifacts.
 
 The Tree host-test subset accepts named presets, typed state expressions and
 direct dispatch, target paths with checked live-state key expressions, click steps,
+focus/next/previous/blur, type/clear/replace, select/select-all, cursor/front/end,
+key/key-down/key-up/modifiers/chord/repeat,
 `exists`/`missing` and literal text expectations, including `within` and
 negation, with viewport and timeout configuration. Before every target use, the
 host redraws to settle widget events, then requests the checked target path from
 the guest using its test and step IDs. The read-only guest callback evaluates
 keys against that rendered state, including aliases and nested keys. The reply
 is bounded by the existing string limit; no app state is serialized. Keys retain
-the native bool/i64/f64 restriction. Other steps,
+the native bool/i64/f64 restriction. Input text, selection/cursor indices and repeat
+counts currently require literal arguments; state-derived values produce E190
+rather than evaluating against the host Surface. These actions use the existing
+native semantic Driver and deliver mounted widget events, without direct dispatch
+as a substitute for user input. Other steps,
 mounts, environment overrides and daemon windows produce E190 at their authored source origin;
 the generator never silently drops an unsupported test. Direct `cfg(test)` builds
 of a Tree guest containing authored tests explain the host harness requirement

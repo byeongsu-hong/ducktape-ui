@@ -12,7 +12,20 @@ fn driver(
     test: u32,
     fingerprint: u64,
 ) -> Driver<impl iced::Program<State = Surface, Message = String, Theme = iced::Theme>> {
-    let entry = test_entry(native);
+    driver_for(
+        fixture_entry(native, "authored-counter"),
+        config,
+        test,
+        fingerprint,
+    )
+}
+
+pub(super) fn driver_for(
+    entry: CatalogEntry,
+    config: Config,
+    test: u32,
+    fingerprint: u64,
+) -> Driver<impl iced::Program<State = Surface, Message = String, Theme = iced::Theme>> {
     let started = Instant::now();
     let mut backend = authored_backend::Backend::load(&entry).expect("load authored test artifact");
     let rejected = backend.call(wire::authored::Request::Begin {
@@ -84,12 +97,15 @@ mod wasm {
     include!(env!("COUNTER_TREE_TESTS"));
 }
 
-fn test_entry(native: bool) -> CatalogEntry {
+pub(super) fn fixture_entry(native: bool, id: &str) -> CatalogEntry {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target");
     let path = if native {
-        root.join("authored-native/authored-counter.native")
+        root.join(format!("authored-native/{id}.native"))
     } else {
-        root.join("authored-wasm/app_store_authored_counter.wasm")
+        root.join(format!(
+            "authored-wasm/app_store_{}.wasm",
+            id.replace('-', "_")
+        ))
     };
     let (manifest, hash) = if native {
         let (text, bytes) =
@@ -109,7 +125,7 @@ fn test_entry(native: bool) -> CatalogEntry {
         "test artifacts never enter the production catalog"
     );
     CatalogEntry {
-        id: "authored-counter".into(),
+        id: id.into(),
         name: manifest.name,
         description: manifest.description,
         capabilities: manifest
@@ -124,7 +140,7 @@ fn test_entry(native: bool) -> CatalogEntry {
     }
 }
 
-fn __ice_tree_test_step<P>(
+pub(super) fn __ice_tree_test_step<P>(
     driver: &mut Driver<P>,
     test: u32,
     step: u32,
@@ -147,7 +163,7 @@ fn __ice_tree_test_step<P>(
     driver.redraw(location);
 }
 
-fn __ice_tree_test_target<P>(
+pub(super) fn __ice_tree_test_target<P>(
     driver: &mut Driver<P>,
     test: u32,
     step: u32,

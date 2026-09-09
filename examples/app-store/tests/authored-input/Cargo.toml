@@ -1,0 +1,18 @@
+[package]
+name = "app-store-authored-input"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+test = false
+
+[dependencies]
+iced.workspace = true
+ui-lang.workspace = true
+ui-lang-runtime.workspace = true
+ui-lang-guest = { workspace = true, features = ["authored-tests"] }
+
+[build-dependencies]
+ui-lang-build.workspace = true

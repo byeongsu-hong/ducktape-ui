@@ -1096,7 +1096,7 @@ where
             state.semantics.focused = false;
             state.focus_visible = false;
         }
-        operation.custom(None, layout.bounds(), &mut state.semantics);
+        operation.custom(Some(&focus_id), layout.bounds(), &mut state.semantics);
         operation.custom(Some(&focus_id), layout.bounds(), state);
         if let Some(mut caret) = text_caret(
             &tree.children[0],
