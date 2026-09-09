@@ -2598,3 +2598,18 @@ against the required 44.80px and fails the intended assertion. Restoring the
 example passes all five tests, including generated checks. Captures were
 inspected at both widths. This supplies a canonical narrow composition; it
 does not change primitive row sizing or introduce a new library component.
+
+### Fixed actions around a bounded Form
+
+`examples/showcase/tests/cases/ui/scroll_ownership.ice` uses an existing Form
+between sibling heading and Save regions. At 320×300, a real wheel reaches an
+initially hidden final control; its click and Save both update state. Heading
+and Save retain their 24px outer insets. A second test scrolls 100px, clicks
+Save and checks that the offset remains 100px through the state update.
+
+A temporary 600px body allocation moves Save's bottom to 300px instead of
+276px and fails the inset assertion. A temporary scroll-to-zero in Save fails
+with 0px instead of 100px. Both mutations were restored; the focused five tests
+pass, including generated checks. Captures were inspected at scale 1, en-US,
+Linux, reduced motion, the app palette and Geist. This is native single-body
+composition evidence, not nested-scroll or inserted-content anchoring evidence.

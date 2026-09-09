@@ -298,3 +298,8 @@ surface's own padding. Containment alone permits a zero-pixel edge gap. Record
 actual distances at narrow and wide sizes, and inspect the image. For scrolling
 content, check the end inset after reaching the last item rather than requiring
 the whole document to fit the initial viewport.
+
+For fixed screen headings/actions around a long form, use a bounded
+`col w=fill h=fill` with the heading, Form and actions as siblings. Form owns
+the remaining height and the only vertical scroll; keep its identity stable
+through ordinary state updates. See the [compiling scroll example](../../../examples/showcase/tests/cases/ui/scroll_ownership.ice).

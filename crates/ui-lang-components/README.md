@@ -150,6 +150,28 @@ provides a section surface and heading. Each accepts one content root; use a
 `col w=fill gap=20.0` for multiple fields. Text wraps rather than using fixed
 row heights. Do not wrap Form in another vertical scroll container.
 
+To keep a heading and Save action visible in a short window, make them siblings
+of Form inside a bounded `col w=fill h=fill`. Form receives the remaining
+height; only its content scrolls:
+
+```ice
+col w=fill h=fill
+  box p=24.0 w=fill
+    text "Project settings" @section_title
+  Form
+    col w=fill gap=20.0
+      TextField label="Display name" value<->name
+  box p=24.0 w=fill
+    button "Save" @primary_action -> save
+```
+
+Keep the Form instance and its identity stable when state changes. Putting the
+whole column inside another scroll also makes its heading and actions scroll.
+The [complete scroll example](../../examples/showcase/tests/cases/ui/scroll_ownership.ice)
+checks reaching the final control with a wheel and preserving the reading
+position through an actual Save click. This pattern covers a single body
+scroller; nested panes and anchoring during inserted content are separate cases.
+
 `TextField(label, bind value, description="", error="", placeholder="",
 disabled=false, secure=false, padding=11.0, radius=10.0)` supplies the native
 input and default control recipe. Change just geometry when needed:
