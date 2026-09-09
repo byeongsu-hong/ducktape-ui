@@ -148,3 +148,6 @@ pub mod tree_view;
 pub mod typography;
 #[cfg(feature = "virtual-list")]
 pub mod virtual_list;
+
+#[cfg(any(feature = "command", feature = "menu"))]
+mod reveal_item;

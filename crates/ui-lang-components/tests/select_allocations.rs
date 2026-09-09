@@ -45,7 +45,9 @@ fn performance_contract_select_reuses_owned_groups() {
 
     let mut pending: Vec<_> = (0..WINDOWS).map(|_| groups()).collect();
     let mut element = None;
-    let stats = clean_window((23_428, 1_148_890), || {
+    // One scrollable menu adds three allocations; its longer derived scroll
+    // ID grows once. These costs are independent of the option count.
+    let stats = clean_window((23_431, 1_150_266), || {
         element = Some(build(black_box(pending.pop().unwrap()), black_box(&state)));
     });
     let element = element.unwrap();
@@ -55,8 +57,8 @@ fn performance_contract_select_reuses_owned_groups() {
         "{OPTIONS} select options: {} allocations / {} reallocations / {} bytes / {} reallocated bytes",
         stats.allocations, stats.reallocations, stats.bytes_allocated, stats.bytes_reallocated
     );
-    assert_eq!(stats.allocations, 23_428, "{stats:?}");
-    assert_eq!(stats.reallocations, 11_314, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, 1_148_890, "{stats:?}");
-    assert_eq!(stats.bytes_reallocated, 750_290, "{stats:?}");
+    assert_eq!(stats.allocations, 23_431, "{stats:?}");
+    assert_eq!(stats.reallocations, 11_315, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 1_150_266, "{stats:?}");
+    assert_eq!(stats.bytes_reallocated, 750_334, "{stats:?}");
 }

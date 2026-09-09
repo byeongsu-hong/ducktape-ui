@@ -25,7 +25,10 @@ fn performance_contract_menu_reuses_child_storage() {
     let state = MenuState::initial(&entries);
 
     render(&entries, &state);
-    let stats = clean_window((1_279_104, 52_307_840), || {
+    // The scrollable wrapper and stable scroll ID add three allocations and
+    // 1,332 bytes per menu, independent of item count. Child-storage
+    // reallocations remain unchanged.
+    let stats = clean_window((1_279_488, 52_478_336), || {
         for _ in 0..RENDERS {
             render(&entries, &state);
         }
@@ -36,8 +39,8 @@ fn performance_contract_menu_reuses_child_storage() {
          {} bytes / {} reallocated bytes",
         stats.allocations, stats.reallocations, stats.bytes_allocated, stats.bytes_reallocated,
     );
-    assert_eq!(stats.allocations, 1_279_104, "{stats:?}");
+    assert_eq!(stats.allocations, 1_279_488, "{stats:?}");
     assert_eq!(stats.reallocations, 74_752, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, 52_307_840, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 52_478_336, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 20_307_968, "{stats:?}");
 }

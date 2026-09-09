@@ -233,7 +233,10 @@ where
         },
         theme,
     );
-    let actions = directed_row([cancel, action], direction).spacing(theme.spacing.sm);
+    let actions = directed_row([cancel, action], direction)
+        .spacing(theme.spacing.sm)
+        .wrap()
+        .align_x(action_alignment.horizontal(direction));
     let panel = dialog_message_panel(
         title,
         description,

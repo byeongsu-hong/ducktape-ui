@@ -1,8 +1,8 @@
 //! A controlled command palette with a native Iced text input.
 //!
 //! The input is wrapped only to intercept list-navigation keys while it owns
-//! focus. All editing, paste, selection, and input-method events are delegated
-//! unchanged to Iced's native [`iced::widget::TextInput`].
+//! focus; Escape is left to the enclosing surface. Editing, paste, selection,
+//! and input-method events are delegated unchanged to Iced's native [`iced::widget::TextInput`].
 
 use std::rc::Rc;
 
@@ -131,7 +131,11 @@ impl<Value> CommandEvent<Value> {
                 item_id,
                 focus_item,
             } => navigate_to_command_item(command_id, item_id, *focus_item),
-            Self::QueryChanged(_) | Self::Selected { .. } => Task::none(),
+            Self::QueryChanged(_) => iced::widget::operation::scroll_to(
+                command_results_id(command_id),
+                iced::widget::operation::AbsoluteOffset { x: 0.0, y: 0.0 },
+            ),
+            Self::Selected { .. } => Task::none(),
         }
     }
 }
@@ -748,89 +752,11 @@ fn navigate_to_command_item<Message>(
 where
     Message: Send + 'static,
 {
-    widget::operate(RevealCommandItem {
-        results: command_results_id(command_id),
-        item: command_item_id(command_id, item_id),
+    super::reveal_item::reveal_item(
+        command_results_id(command_id),
+        command_item_id(command_id, item_id),
         focus_item,
-        viewport: None,
-        item_bounds: None,
-    })
-}
-
-struct RevealCommandItem {
-    results: widget::Id,
-    item: widget::Id,
-    focus_item: bool,
-    viewport: Option<(Rectangle, Vector)>,
-    item_bounds: Option<Rectangle>,
-}
-
-impl<T: 'static> widget::Operation<T> for RevealCommandItem {
-    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation<T>)) {
-        operate(self);
-    }
-
-    fn scrollable(
-        &mut self,
-        id: Option<&widget::Id>,
-        bounds: Rectangle,
-        _content_bounds: Rectangle,
-        translation: Vector,
-        _state: &mut dyn widget::operation::Scrollable,
-    ) {
-        if id == Some(&self.results) {
-            self.viewport = Some((bounds, translation));
-        }
-    }
-
-    fn focusable(
-        &mut self,
-        id: Option<&widget::Id>,
-        bounds: Rectangle,
-        state: &mut dyn widget::operation::Focusable,
-    ) {
-        if id == Some(&self.item) {
-            self.item_bounds = Some(bounds);
-        }
-
-        if self.focus_item {
-            if id == Some(&self.item) {
-                state.focus();
-            } else {
-                state.unfocus();
-            }
-        }
-    }
-
-    fn finish(&self) -> widget::operation::Outcome<T> {
-        let Some((viewport, translation)) = self.viewport else {
-            return widget::operation::Outcome::None;
-        };
-        let Some(item) = self.item_bounds else {
-            return widget::operation::Outcome::None;
-        };
-        let Some(y) = visibility_delta(viewport, item, translation.y) else {
-            return widget::operation::Outcome::None;
-        };
-
-        widget::operation::Outcome::Chain(Box::new(widget::operation::scrollable::scroll_by(
-            self.results.clone(),
-            widget::operation::scrollable::AbsoluteOffset { x: 0.0, y },
-        )))
-    }
-}
-
-fn visibility_delta(viewport: Rectangle, item: Rectangle, scroll_y: f32) -> Option<f32> {
-    let top = item.y - scroll_y;
-    let bottom = item.y + item.height - scroll_y;
-
-    if top < viewport.y {
-        Some(top - viewport.y)
-    } else if bottom > viewport.y + viewport.height {
-        Some(bottom - viewport.y - viewport.height)
-    } else {
-        None
-    }
+    )
 }
 
 pub fn command_surface_style(theme: &Theme) -> iced::widget::container::Style {
@@ -1014,6 +940,18 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        // A command's enclosing surface owns Escape dismissal. Native
+        // TextInput would consume it just to blur, stranding an open popover.
+        if matches!(
+            event,
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Named(Named::Escape),
+                ..
+            })
+        ) {
+            return;
+        }
+
         let focused = tree.children[0]
             .state
             .downcast_ref::<text_input::State<Renderer::Paragraph>>()
@@ -1275,7 +1213,7 @@ mod tests {
         let viewport = Rectangle::new(iced::Point::new(0.0, 100.0), Size::new(200.0, 80.0));
 
         assert_eq!(
-            visibility_delta(
+            super::super::reveal_item::visibility_delta(
                 viewport,
                 Rectangle::new(iced::Point::new(0.0, 60.0), Size::new(200.0, 20.0)),
                 0.0,
@@ -1283,7 +1221,7 @@ mod tests {
             Some(-40.0)
         );
         assert_eq!(
-            visibility_delta(
+            super::super::reveal_item::visibility_delta(
                 viewport,
                 Rectangle::new(iced::Point::new(0.0, 220.0), Size::new(200.0, 20.0)),
                 20.0,
@@ -1291,7 +1229,7 @@ mod tests {
             Some(40.0)
         );
         assert_eq!(
-            visibility_delta(
+            super::super::reveal_item::visibility_delta(
                 viewport,
                 Rectangle::new(iced::Point::new(0.0, 140.0), Size::new(200.0, 20.0)),
                 20.0,

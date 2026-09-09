@@ -2878,3 +2878,55 @@ against a declared `[i64]` parameter. Before the fix its intended success
 assertion failed with E196 during Native lowering. Retaining the extern
 parameter destination in checked interaction facts passes both targets;
 lowering's expression/type invariants remain unchanged.
+
+### Overlay lifecycle and custom content
+
+`examples/showcase/tests/overlay_focus_customization.rs` drives the public native
+Dialog, Alert Dialog, Select and Command/Popover APIs through real widgets.
+Long copy/custom bodies at 320×300 and 360×300 retain reachable actions;
+Tab reveals a custom body control. Custom alert actions at 360×260 wrap without
+compressing their labels, safe Cancel receives initial focus, Tab remains
+contained, backdrop input is inert, and dismissal restores the trigger.
+A native ComboBox supplied as the dialog body closes its nested menu on the
+first Escape and dismisses the dialog on the next.
+
+Custom selector triggers and variable-height Command result rows are exercised
+at all four 240×240 viewport corners. Navigation skips disabled results, reveals
+the active row without stealing text-input focus, selection restores the trigger,
+empty results cannot select, and a new query resets a previously scrolled list.
+The shared Menu owner also serves Dropdown Menu, Context Menu and Menubar;
+those families retain their existing event/focus policies.
+
+`examples/showcase/tests/native_combobox_focus.rs` separately tests the actual
+patched Iced ComboBox focus operation, pointer/keyboard selection, empty query,
+Escape and touch reopening. The selected-row paint oracle first establishes a
+visible highlight, then requires it after navigating to the last option at the
+window edge. The first-class Showcase ComboBox test checks semantic focus,
+real native input/selection, and the accessible role/name/value through Ice.
+No fake selection reducer or replacement widget supplies these observations.
+
+Intended pre-fix assertion Reds cover clipped dialog actions, invisible Select
+and ComboBox active rows, query reset, swallowed Escape, custom-body focus
+reveal, wrapped alert actions, long alert copy, native focus traversal and
+selection focus, nested Escape, and touch reopening. Additional temporary
+mutations validate the custom-search and Ice integration assertions; exact
+production source is restored before Green checks.
+
+Reviewed captures are in `examples/showcase/screenshots/overlay-focus/`.
+The native fixture tuple is light component theme, default native font, scale 1,
+en-US, Linux and reduced motion; each test specifies its viewport. The Ice seam
+uses the Showcase test preset and bundled app fonts. These are native tiny-skia
+assertions/captures, not platform accessibility, Tree-host or all-component
+customization parity. Ice structural Dialog slots alone do not establish modal
+focus/dismissal behavior. External apps need the workspace widget patch for the
+native ComboBox fixes and its optional `.id(...)` customization builder.
+
+Validation passes 337 Showcase binary tests and 106 Showcase integration tests,
+including six native ComboBox and ten custom-overlay regressions. Components
+pass 473 library tests (two existing ignored); runtime passes 391 library tests
+(eight existing ignored), and their integration targets pass after the measured
+Menu/Select allocation baselines are updated. The scrollable wrapper and stable
+ID add three allocations per menu, independent of item count; Select's longer
+derived ID adds one string-growth reallocation. Existing child/group reuse
+assertions remain. Obsolete direct-child-count checks were removed when the
+scroll container became the owner of those children.

@@ -6295,6 +6295,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "iced",
+ "iced_runtime",
  "stats_alloc",
  "tokio",
  "ui-lang-runtime",
