@@ -1654,6 +1654,7 @@ struct SemanticActionTarget {
 
 struct SemanticActionSelector<Message> {
     logical_id: String,
+    native_id: widget::Id,
     occurrences: HashMap<StableId, u64>,
     marker: PhantomData<fn() -> Message>,
 }
@@ -1662,6 +1663,7 @@ impl<Message> SemanticActionSelector<Message> {
     fn new(logical_id: &str) -> Self {
         Self {
             logical_id: logical_id.to_owned(),
+            native_id: logical_id.to_owned().into(),
             occurrences: HashMap::new(),
             marker: PhantomData,
         }
@@ -1672,14 +1674,16 @@ impl<Message: Clone + 'static> Selector for SemanticActionSelector<Message> {
     type Output = SemanticActionTarget;
 
     fn select(&mut self, candidate: Candidate<'_>) -> Option<Self::Output> {
-        let Candidate::Custom { state, .. } = candidate else {
+        let Candidate::Custom { id, state, .. } = candidate else {
             return None;
         };
         let state = state.downcast_ref::<SemanticState>()?;
         let occurrence = self.occurrences.entry(state.semantics.id).or_default();
         let current = *occurrence;
         *occurrence += 1;
-        (state.semantics.logical_id.as_deref() == Some(&self.logical_id)).then(|| {
+        (state.semantics.logical_id.as_deref() == Some(&self.logical_id)
+            || id == Some(&self.native_id))
+        .then(|| {
             let node = crate::SemanticFocus {
                 base: state.semantics.id,
                 occurrence: current,
@@ -7373,6 +7377,32 @@ mod tests {
         input.select_all(HERE);
         input.cursor_front(HERE);
         assert!(input.target("Accessible/input", HERE).focused());
+    }
+
+    #[test]
+    fn semantic_input_without_test_logical_id_has_one_focus_target() {
+        fn view(state: &State) -> Element<'_, Message> {
+            crate::accessible(
+                text_input("", &state.input)
+                    .id("Production/input")
+                    .on_input(Message::Input),
+                StableId::new("Production/input"),
+                crate::Role::TextInput,
+            )
+            .focus_id("Production/input")
+            .value(state.input.clone())
+            .into()
+        }
+        let mut input = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(boot, update, view),
+            Config::new("production_input_selection").viewport(320.0, 240.0),
+        );
+        input.focus("Production/input", HERE);
+        input.typewrite("hello", HERE);
+        input.select(1, 4, HERE);
+        input.typewrite("i", HERE);
+        assert_eq!(input.state().input, "hio");
+        assert!(input.target("Production/input", HERE).focused());
     }
 
     #[test]

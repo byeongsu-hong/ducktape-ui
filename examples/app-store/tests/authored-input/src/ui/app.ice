@@ -64,6 +64,8 @@ test typing_selection_and_keyboard_reach_the_focused_input
 test uncaptured_native_key_metadata_reaches_guest_subscription
   viewport 600 400
   blur
+  key-down "å" modified=enter location=right physical=KeyQ text="Å"
+  expect metadata == false
   key-down "å" modified=enter location=right physical=KeyQ text="Å" repeat=true
   expect metadata == true
   key-up "å" modified=enter location=right physical=KeyQ
