@@ -17,6 +17,7 @@ struct Tables {
     editor_pending: Vec<crate::wire::EditorTransactionId>,
     macos: bool,
     mouse_interest: bool,
+    event_interest: crate::wire::events::Interest,
     deferred: Vec<Box<dyn Any>>,
     messages: Vec<Rc<dyn Any>>,
     handlers: Vec<Rc<dyn Any>>,
@@ -301,6 +302,18 @@ pub(crate) fn run_handler<A: 'static, M: 'static>(index: u32, value: A) -> Optio
 
 pub(crate) fn macos() -> bool {
     tables().borrow().macos
+}
+
+pub(crate) fn include_event_interest(interest: crate::wire::events::Interest) {
+    tables().borrow_mut().event_interest.include(interest);
+}
+
+pub(crate) fn clear_event_interest() {
+    tables().borrow_mut().event_interest = Default::default();
+}
+
+pub(crate) fn event_interest() -> crate::wire::events::Interest {
+    tables().borrow().event_interest
 }
 
 pub(crate) fn set_mouse_interest(interested: bool) {

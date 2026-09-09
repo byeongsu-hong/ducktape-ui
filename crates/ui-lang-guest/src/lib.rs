@@ -42,6 +42,7 @@ pub use editor_binding::{
     EditorTransactionEvent,
 };
 pub use editor_documents::EditorDocumentUpdate;
+pub mod events;
 pub mod keyboard;
 mod markdown;
 mod memo;
@@ -185,6 +186,21 @@ impl<A: App> Driver<A> {
         self.settle();
         for event in events {
             let message = match event {
+                wire::Event::Observation { event, captured } => {
+                    if event.validate().is_ok() {
+                        self.tracker.broadcast(subscription::Event::Interaction {
+                            window: self.window,
+                            event: event.into(),
+                            status: if captured {
+                                iced::event::Status::Captured
+                            } else {
+                                iced::event::Status::Ignored
+                            },
+                        });
+                        self.settle();
+                    }
+                    None
+                }
                 wire::Event::Mouse { event, captured } => {
                     if let Some(event) = event.sanitize() {
                         self.tracker.broadcast(subscription::Event::Interaction {
@@ -359,6 +375,7 @@ impl<A: App> Driver<A> {
             editor_decisions,
             editor_documents: slots::take_editor_documents(),
             mouse_interest: slots::mouse_interest(),
+            event_interest: slots::event_interest(),
             root: Some(root),
             patches,
             requests: host::drain_outbox(),
@@ -390,6 +407,7 @@ impl<A: App> Driver<A> {
 
     fn subscribe(&mut self) {
         slots::set_mouse_interest(false);
+        slots::clear_event_interest();
         let recipes = subscription::into_recipes(self.app.subscription());
         for future in self
             .tracker

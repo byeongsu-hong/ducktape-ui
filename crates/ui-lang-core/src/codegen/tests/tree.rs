@@ -18,6 +18,24 @@ palette app for AppTheme
 "#;
 
 #[test]
+fn tree_window_geometry_subscriptions_refuse_instead_of_waiting_forever() {
+    for (source, payload) in [("window moved", "_x, _y"), ("window frame", "")] {
+        let source = format!(
+            "app Events\n{PALETTE}on observed({payload})\nsubscribe\n  {source} -> observed{}\nview\n  text \"Events\"\n",
+            if payload.contains(',') { " _ _" } else { "" }
+        );
+        compile_for(&source, "window-events.ice", Target::Native).expect("native window source");
+        let error = compile_for(&source, "window-events.ice", Target::Tree)
+            .expect_err("unsupported window source must not silently starve");
+        assert_eq!(error.code, "E190");
+        assert!(
+            error.message.contains("window geometry or frame clocks"),
+            "{error:?}"
+        );
+    }
+}
+
+#[test]
 fn editor_highlighter_keeps_declared_empty_collection_argument_types() {
     let source = format!(
         "app Docs\n{PALETTE}extern crate::paint\n  editor-highlighter paint(dark:bool, commented:[i64])\nstate\n  notes:editor = \"hello\"\nview\n  editor <-> notes highlighter=paint(false, [])\n"

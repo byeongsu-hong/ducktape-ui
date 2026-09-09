@@ -1141,6 +1141,33 @@ impl Guest {
         self.due.push((now, one_shot(id, result)));
     }
 
+    /// A destroyed native window gets one bounded final notification. Its
+    /// outgoing frame is never installed and its requests are never executed.
+    pub(crate) fn window_closed(&mut self) -> Option<wire::Frame> {
+        if !self.alive.swap(false, Ordering::Relaxed) {
+            return None;
+        }
+        if self.fault.is_some() || !self.frame.event_interest.close {
+            self.pending.clear();
+            return None;
+        }
+        let mut events = std::mem::take(&mut self.pending);
+        events.push(wire::Event::Observation {
+            event: wire::events::Event::Window(wire::events::Window::Closed),
+            captured: false,
+        });
+        match self.tick_inner(&wire::encode(&events)) {
+            Ok((frame, _)) => Some(frame),
+            Err(reason) => {
+                eprintln!(
+                    "[{}] final close observation failed: {reason}",
+                    self.entry.id
+                );
+                None
+            }
+        }
+    }
+
     /// One call into the module with the pending events, inside the fuel
     /// budget. A trap ends the app; the store keeps the message and moves on.
     fn tick(&mut self) {
@@ -1510,6 +1537,7 @@ mod tests {
             editor_decisions: Vec::new(),
             editor_documents: Vec::new(),
             mouse_interest: false,
+            event_interest: Default::default(),
             root: Some(wire::Node::empty()),
             requests: vec![kind(wire::MAX_STRING_BYTES * 2)],
             cancels: Vec::new(),
@@ -1879,6 +1907,10 @@ mod viewer_tests;
 #[cfg(test)]
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
+
+#[cfg(test)]
+#[path = "window_events_tests.rs"]
+mod window_events_tests;
 
 #[cfg(test)]
 #[path = "slider_handle_tests.rs"]

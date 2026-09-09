@@ -847,3 +847,8 @@ zero or more direct siblings. `Card.Footer`, `Dialog.Actions` and `ButtonGroup`
 use this contract to arrange ordinary caller buttons; an explicit caller layout
 remains one custom group. See the [component library](crates/ui-lang-components/README.md)
 and [slot contract](SPEC.md#component-slot-cardinality).
+
+Hosted Tree native/Wasm apps support opt-in window focus, close, file-drop and
+IME observations after native widget handling. See the
+[window observation contract](examples/app-store/README.md#window-and-ime-observations)
+for lifecycle limits and the remaining platform gaps.
