@@ -105,6 +105,15 @@ impl State {
         self.focus_visible = false;
     }
 
+    fn blur_from_pointer(&mut self) {
+        self.blur();
+        // A different pointer can move focus without cancelling the first
+        // pointer's retained release. Keyboard activation needs current focus.
+        if matches!(self.press, Some(Press::Enter | Press::Space)) {
+            self.press = None;
+        }
+    }
+
     pub fn unfocus(&mut self) {
         self.blur();
         self.press = None;
@@ -642,22 +651,26 @@ fn handle_event<Message: Clone>(
     match event {
         Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
             if is_over {
-                state.focus_from_pointer();
-                state.press = Some(Press::Mouse);
+                if state.press.is_none() {
+                    state.focus_from_pointer();
+                    state.press = Some(Press::Mouse);
+                }
                 shell.capture_event();
                 shell.request_redraw();
             } else {
-                state.unfocus();
+                state.blur_from_pointer();
             }
         }
         Event::Touch(touch::Event::FingerPressed { id, .. }) => {
             if is_over {
-                state.focus_from_pointer();
-                state.press = Some(Press::Touch(*id));
+                if state.press.is_none() {
+                    state.focus_from_pointer();
+                    state.press = Some(Press::Touch(*id));
+                }
                 shell.capture_event();
                 shell.request_redraw();
             } else {
-                state.unfocus();
+                state.blur_from_pointer();
             }
         }
         Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {

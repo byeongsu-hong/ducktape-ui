@@ -317,3 +317,13 @@ For fixed screen headings/actions around a long form, use a bounded
 `col w=fill h=fill` with the heading, Form and actions as siblings. Form owns
 the remaining height and the only vertical scroll; keep its identity stable
 through ordinary state updates. See the [compiling scroll example](../../../examples/showcase/tests/cases/ui/scroll_ownership.ice).
+
+For keyboard and localized composition, follow the
+[keyboard and localized-defaults guide](../../../crates/ui-lang-components/docs/accessible-localized-defaults.md).
+PageHeader owns a level-1 heading; Panel and FormSection own level-2 headings.
+Use explicit `heading=` text for other hierarchies. Keep semantic names on raw
+slotted controls, focus a surviving rendered ID after removal, and test the
+retained error value/live property. Use actual translated strings, explicitly
+larger text metrics and loaded script-covering fonts in layout evidence.
+`Direction::RightToLeft` reverses native row positions while preserving logical
+keyboard order; it does not translate copy or implicitly reverse a whole screen.

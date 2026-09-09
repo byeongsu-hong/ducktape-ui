@@ -55,7 +55,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | D02 | P0 · Done | [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047), [typography owner](../crates/ui-lang-components/src/ui/typography.rs), [font guide](../crates/ui-lang-components/docs/design-metrics.md) | All 13 native Rust/Ice text roles agree on size, font, line height, measured height, baseline offset and semantic color. Longer wrapped copy and Korean editing use explicitly loaded IBM Plex Sans KR faces; omission of those assets fails actual glyph-width assertions. |
 | D03 | P0 · Done | [PR #1048](https://github.com/byeongsu-hong/ducktape-ui/pull/1048), [default palette](../crates/ui-lang-components/src/ice/default.ice), [theme contract](../SPEC.md) | Changing an application's semantic palette keeps fields, surfaces and control states coherent; light/dark and custom accent examples do not require copying component source. Distinguish existing complete palettes from proposed partial overrides. |
 | D04 | P0 · Done | [PR #1048](https://github.com/byeongsu-hong/ducktape-ui/pull/1048), [native state fixture](../examples/showcase/tests/cases/ui/theme_state_defaults.ice), [control/action recipes](../crates/ui-lang-components/src/ice/recipes.ice), [button-status tests](../examples/showcase/tests/cases/ui/button_status_children.ice) | Default, hover, focus, pressed, disabled and invalid states remain legible; overriding one geometric or color property does not reset unrelated states. |
-| D05 | P1 · Audit | [component slots and custom content](../crates/ui-lang-components/README.md) | Replace a row/trigger/body visual through the public interface while retaining its selection, dismissal, keyboard and accessibility contract. Identify actual source-copy requirements before adding new extension points. |
+| D05 | P1 · Done | [PR #1056](https://github.com/byeongsu-hong/ducktape-ui/pull/1056), [native semantic contracts](../examples/showcase/tests/custom_interaction_contracts.rs), [component slots and custom content](../crates/ui-lang-components/README.md) | Replace a row/trigger/body visual through the public interface while retaining its selection, dismissal, keyboard and accessibility contract. Identify actual source-copy requirements before adding new extension points. |
 
 ## Common compositions
 
@@ -80,10 +80,10 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
-| A01 | P0 · Audit | [focus tests](../examples/showcase/tests/cases/ui/focus_visible.ice), [modal/selection contracts](../crates/ui-lang-components/docs/parity.md) | Keyboard-only completion works through default and custom content; focus stays visible, moves predictably after removal and returns from overlays. C01 is evidence for its form only. |
-| A02 | P1 · Audit | [accessibility contract](../SPEC.md), [test driver](testing.md) | Visible names, descriptions, heading levels, errors and disabled states produce matching semantic output; interactive content is not a decorative text substitute. |
-| A03 | P1 · Audit | [direction/localization support](../crates/ui-lang-components/docs/parity.md), [environment tests](testing.md) | Translated long labels, larger text and RTL reading order have explicit tested layouts; scale/locale metadata alone is not proof of translated content or larger text. |
-| A04 | P2 · Audit | [drawer/carousel behavior](../crates/ui-lang-components/docs/parity.md), [motion guidance](../skills/design-ice-ui/references/design-workflow.md) | Pointer/touch cancellation and interrupted motion preserve state; reduced motion remains usable; customization does not remove the alternative keyboard action. |
+| A01 | P0 · Done | [PR #1057](https://github.com/byeongsu-hong/ducktape-ui/pull/1057), [localized keyboard fixture](../examples/showcase/tests/cases/ui/accessible_localized_defaults.ice), [list/detail #1049](https://github.com/byeongsu-hong/ducktape-ui/pull/1049), [overlay #1052](https://github.com/byeongsu-hong/ducktape-ui/pull/1052) | Default/custom form Tab/Enter/Shift-Tab completes removal, validation, correction and save; removal explicitly focuses the surviving field and disabled controls are skipped. Native RTL focus paint is asserted. List/detail Back restoration and default/custom modal/menu/ComboBox focus entry, containment, reveal and restoration complete the overlay/navigation slices. |
+| A02 | P1 · Done | [PR #1057](https://github.com/byeongsu-hong/ducktape-ui/pull/1057), [native semantic fixture](../examples/showcase/tests/cases/ui/accessible_localized_defaults.ice), [composition guide](../crates/ui-lang-components/docs/accessible-localized-defaults.md) | PageHeader exports level 1; Panel/FormSection level 2. Native keyboard tests verify matching names, descriptions, heading values/levels, polite errors and disabled actions in default and custom forms. Retained output is covered; platform announcements remain a separate boundary. |
+| A03 | P1 · Done | [PR #1057](https://github.com/byeongsu-hong/ducktape-ui/pull/1057), [localized fixture](../examples/showcase/tests/cases/ui/accessible_localized_defaults.ice), [native RTL matrix](../examples/showcase/tests/accessible_localized_defaults.rs), [captures](../crates/ui-lang-components/docs/accessible-localized-defaults.md) | Actual German labels fit 640/420px forms and 260px sections, including long compound headings; custom input/actions render at 21px. Explicit Hebrew font assets and native RTL rows preserve logical Tab order, wrapped line groups and physical alignment; keyboard focus paint and pointer activation are asserted. Locale/scale metadata is not the oracle. |
+| A04 | P2 · Done | [PR #1056](https://github.com/byeongsu-hong/ducktape-ui/pull/1056), [native gesture contracts](../examples/showcase/tests/custom_interaction_contracts.rs), [drawer/carousel behavior](../crates/ui-lang-components/docs/parity.md), [motion guidance](../skills/design-ice-ui/references/design-workflow.md) | Pointer/touch cancellation and interrupted motion preserve state; reduced motion remains usable; customization does not remove the alternative keyboard action. |
 
 ## Agent authoring and evidence
 
@@ -451,12 +451,11 @@ queries, Escape and touch reopening; a ComboBox custom dialog body verifies
 inner-menu dismissal before outer-modal dismissal. See the overlay lifecycle
 section in [COVERAGE](../COVERAGE.md) for assertion Red/Green and capture inputs.
 
-This completes the C04/C05 representative native acceptance. A01 still includes
-non-overlay traversal and removal behavior. D05 now has row/trigger/body evidence
-here, alongside the Item and Form custom-content checks. Remaining D05 work is
-direct semantic/accessibility evidence for these representative public custom
-row/trigger/body paths. Native Rust custom controls still own their semantic
-labels. Structural
+This completes the C04/C05 representative native acceptance. A01 combines this
+overlay evidence with the localized form traversal and removal checks above.
+D05 combines these row/trigger/body lifecycle checks with the direct semantic
+checks below and the Item/Form custom-content checks. Native Rust custom
+controls still own their semantic labels. Structural
 Ice Dialog presentation alone does not supply modal lifecycle behavior. S02's
 request/save completion policies are covered separately below.
 
@@ -474,3 +473,25 @@ seams; intended assertion Reds and inspected captures are described in
 [COVERAGE](../COVERAGE.md#native-state-feedback-and-request-ownership) and the
 [state feedback guide](../crates/ui-lang-components/docs/state-feedback.md).
 Delivered in [PR #1053](https://github.com/byeongsu-hong/ducktape-ui/pull/1053).
+
+### D05/A04 — accessible customization and interrupted gestures
+
+The [public custom-content tests](../examples/showcase/tests/custom_interaction_contracts.rs)
+complete the finite representative D05 acceptance: an Item row retains native
+keyboard and semantic activation with checked state; a Select visual trigger
+retains role/name/value/expanded state, selection, Escape and focus restoration;
+a Drawer body retains its named group, checkbox semantics and keyboard close.
+These use existing public `Accessible`, visual slots and focus tasks. No source
+copy or added extension API is required for these representative compositions.
+Earlier Item/Form and C04/C05 evidence remains linked above; this does not claim
+a semantic audit of every component or OS accessibility integration.
+
+A04 evidence includes simultaneous touch/mouse press ownership, a fresh swipe
+after touch loss, pointer-window blur in Carousel and Drawer, and a stale swipe
+interrupted by an explicit selection. Drawer cancellation forwards blur to a
+body control holding Space, preventing a delayed activation after refocusing.
+Both motion settings preserve selection and reachable keyboard close; reduced
+motion emits a nonanimated snap-back request. Native Carousel selection is
+immediate. Tests do not claim interpolated animation or operating-system gesture
+recognition. Assertion Reds, fixture settings and captures are recorded in
+[COVERAGE](../COVERAGE.md). Product I/O completion has separate S02 evidence above.

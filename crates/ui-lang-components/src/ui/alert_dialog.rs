@@ -6,11 +6,12 @@ use super::direction::{Direction, directed_row};
 use super::focus_control::{FocusControl, Status as FocusStatus, Style as FocusStyle};
 use super::modal::{DismissReason, DismissRules, FocusScope, ModalEvent, modal};
 use super::theme::Theme;
-use iced::alignment::Vertical;
+use iced::alignment::{Horizontal, Vertical};
 use iced::widget::text::IntoFragment;
 use iced::widget::{container, text};
 use iced::{Border, Color, Element, Task, widget};
 use std::rc::Rc;
+use ui_lang_runtime::{FlexWrap, JustifyContent};
 
 /// Stable IDs for the least-destructive control, action, and opening trigger.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,9 +235,13 @@ where
         theme,
     );
     let actions = directed_row([cancel, action], direction)
-        .spacing(theme.spacing.sm)
-        .wrap()
-        .align_x(action_alignment.horizontal(direction));
+        .gap(theme.spacing.sm)
+        .wrap(FlexWrap::Wrap)
+        .justify_content(match action_alignment.horizontal(direction) {
+            Horizontal::Left => JustifyContent::Start,
+            Horizontal::Center => JustifyContent::Center,
+            Horizontal::Right => JustifyContent::End,
+        });
     let panel = dialog_message_panel(
         title,
         description,

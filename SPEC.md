@@ -617,6 +617,10 @@ its equal-column and narrower-than-minimum behavior remains separate work.
 
 ### Accessibility
 
+First-class native test targets expose `accessibility_level:i64` for retained
+heading or hierarchy levels. The accessor fails when no level is present;
+capture manifests include the nullable `accessibility.level` property.
+
 Ice owns a checked accessibility layer above stock iced. Generated Core nodes
 produce a deterministic AccessKit tree:
 

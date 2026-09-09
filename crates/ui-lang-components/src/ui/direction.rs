@@ -1,6 +1,9 @@
 use iced::Element;
+use iced::Length;
 use iced::alignment::Horizontal;
-use iced::widget::Row;
+use ui_lang_runtime::{
+    AlignContent, AlignItems, Flex, FlexDirection, JustifyContent, flex, flex_item,
+};
 
 /// Explicit layout direction for components that cannot inherit DOM-style context.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -26,21 +29,38 @@ impl Direction {
     }
 }
 
-/// Builds a row in reading order while preserving each caller-owned element.
+/// Places items in reading order while preserving logical keyboard and semantic order.
 pub fn directed_row<'a, Message>(
     items: impl IntoIterator<Item = Element<'a, Message>>,
     direction: Direction,
-) -> Row<'a, Message>
+) -> Flex<'a, Message>
 where
     Message: 'a,
 {
-    let items = items.into_iter();
-    if direction == Direction::LeftToRight {
-        return Row::with_children(items);
-    }
-    let mut items = items.collect::<Vec<_>>();
-    items.reverse();
-    Row::from_vec(items)
+    let mut width = Length::Shrink;
+    let mut height = Length::Shrink;
+    let items = items
+        .into_iter()
+        .filter_map(|item| {
+            let size = item.as_widget().size_hint();
+            if size.is_void() {
+                return None;
+            }
+            width = width.enclose(size.width);
+            height = height.enclose(size.height);
+            Some(flex_item(item).shrink(0.0))
+        })
+        .collect();
+    flex(items)
+        .width(width)
+        .height(height)
+        .direction(match direction {
+            Direction::LeftToRight => FlexDirection::Row,
+            Direction::RightToLeft => FlexDirection::RowReverse,
+        })
+        .justify_content(JustifyContent::Start)
+        .align_items(AlignItems::Start)
+        .align_content(AlignContent::Start)
 }
 
 #[cfg(test)]

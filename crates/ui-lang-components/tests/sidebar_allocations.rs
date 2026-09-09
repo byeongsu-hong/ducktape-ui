@@ -29,7 +29,9 @@ fn performance_contract_sidebar_streams_menu_button_content() {
     const RENDERS: usize = 4_096;
 
     render();
-    let stats = clean_window((24_576, 2_326_528), || {
+    // Flex keeps logical item order and sizing metadata: 280 extra bytes per
+    // three-item row, with unchanged allocation count and no reallocations.
+    let stats = clean_window((24_576, 3_473_408), || {
         for _ in 0..RENDERS {
             render();
         }
@@ -42,6 +44,6 @@ fn performance_contract_sidebar_streams_menu_button_content() {
     );
     assert_eq!(stats.allocations, 24_576, "{stats:?}");
     assert_eq!(stats.reallocations, 0, "{stats:?}");
-    assert_eq!(stats.bytes_allocated, 2_326_528, "{stats:?}");
+    assert_eq!(stats.bytes_allocated, 3_473_408, "{stats:?}");
     assert_eq!(stats.bytes_reallocated, 0, "{stats:?}");
 }

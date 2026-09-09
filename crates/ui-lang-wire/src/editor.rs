@@ -22,13 +22,9 @@ pub fn editor_lines(text: &str) -> impl Iterator<Item = &str> {
     let mut remaining = Some(text);
     std::iter::from_fn(move || {
         let text = remaining.take()?;
-        // CR/LF are ASCII bytes, so their offsets are always UTF-8 boundaries.
-        // Avoid decoding every character on each presentation validation pass.
-        let end = text
-            .as_bytes()
-            .iter()
-            .position(|byte| matches!(byte, b'\r' | b'\n'))
-            .unwrap_or(text.len());
+        // ASCII delimiters are UTF-8 boundaries. The portable byte search skips
+        // whole words of ordinary prose on repeated presentation validations.
+        let end = memchr::memchr2(b'\r', b'\n', text.as_bytes()).unwrap_or(text.len());
         if end < text.len() {
             let ending = &text[end..];
             let width = if ending.starts_with("\r\n") || ending.starts_with("\n\r") {

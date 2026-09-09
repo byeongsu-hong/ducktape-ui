@@ -3001,3 +3001,94 @@ light theme, scale 1, en-US, Linux, reduced motion and each app's bundled fonts.
 The music API is a deterministic example; Markdown owner tests use actual local
 files. This evidence does not establish platform accessibility or network
 service behavior. Media painting is covered by the separate content audit.
+
+## Accessible customization and gesture cancellation (D05/A04)
+
+`examples/showcase/tests/custom_interaction_contracts.rs` uses real public
+FocusControl, Item, Select, Carousel and Drawer widgets with the native Driver.
+Ten tests cover a selectable custom row, selector trigger and drawer body with
+role/name/state/actions/focus, actual keyboard and accessibility activation,
+selection, dismissal and restored trigger focus. Existing Item/Form and overlay
+lifecycle evidence supplies the corresponding structural/custom slot coverage.
+No component source is copied and no new customization API is introduced.
+
+Three pre-fix assertion Reds establish real owner bugs: a second finger steals a
+press (activation 1 instead of 0), an older swipe overrides an explicit selection
+(index 2 instead of 1), and a Drawer body activates a held Space press after blur.
+The fixes preserve the first press, invalidate a swipe when controlled context
+changes and forward blur before capturing drag cancellation. Additional minimal
+mutations fail the checked-state and selected-value semantics, mouse-vs-touch
+ownership, fresh swipe after touch cancellation, nonanimated snap-back request
+and pointer-blur cancellation assertions. All mutations are restored for Green.
+
+The fixture tuple is 360×260, native default font, light component theme, scale 1,
+en-US and Linux. Reduced motion is enabled except the explicit normal-motion
+half of the drawer test. Reviewed captures are in
+`examples/showcase/screenshots/custom-interactions/`. The tests establish native
+semantic operations and immediate controlled transitions, not OS accessibility
+or interpolated animation. Custom Rust visuals remain responsible for labels,
+state projection and actions; these examples use the public Accessible wrapper
+and native focus IDs. D05 is the representative row/trigger/body contract, not
+an all-component semantic parity claim.
+
+
+Validation: `cargo test -p showcase -p ui-lang-components -p ui-lang-runtime
+--features ui-lang-components/full -j4 --no-fail-fast` passes 337 Showcase binary,
+473 component library (two existing ignored) and 398 runtime library tests
+(eight existing ignored), plus their integration and doc tests, including all
+nine custom-interaction tests. Existing allocation budgets pass unchanged.
+
+A review-driven tenth native test then proved that an outside second pointer
+also cancelled the first finger's release (0 activations instead of 1). Outside
+presses now move focus away while preserving retained pointer ownership and
+cancelling keyboard presses. All ten native tests pass after this refinement;
+17 affected owner tests and Clippy (`--all-targets --no-deps -- -D warnings`)
+also pass without repeating the full suite.
+
+### Keyboard, semantic headings and localized defaults
+
+`examples/showcase/tests/cases/ui/accessible_localized_defaults.ice` and its
+native Rust companion cover default and custom German forms, native heading
+levels and Hebrew RTL action layouts. PageHeader now exports heading level 1;
+Panel and FormSection export level 2. Their word-or-glyph wrapping keeps a
+German compound heading within a 260px section or 420px custom form. Native
+inspection retains `accessibility.level`; the typed `accessibility_level`
+accessor fails when absent.
+
+The form tests use actual Tab/Enter/Shift-Tab and text input to remove the
+optional address, restore focus to the surviving primary input, skip disabled
+controls, submit invalid input, read the polite error value, correct it and
+Save. Names, descriptions, disabled activation and heading values are asserted.
+The custom form uses real 21px input/action text, not scale metadata. The RTL
+matrix checks unequal widths, asymmetric padding, wrapped logical lines,
+physical right alignment, all ten LTR/RTL Tab stops, visible focus pixels and a
+pointer activation. `directed_row` now uses the existing runtime Flex reversal,
+retaining source order for logical traversal instead of reversing the child vector. All affected
+AlertDialog, Sidebar and Sheet callers use the same public Flex builders, and
+the downstream fixture enables these features against packaged stock Iced.
+The exact Sheet header allocation contract retains 18,432 allocations and zero
+reallocations for 1,024 LTR/RTL pairs; Flex item metadata adds 312 bytes per
+header (2,228,224 total bytes, previously 1,589,248). The 4,096 three-item Sidebar
+rows retain 24,576 allocations and zero reallocations, adding 280 bytes per row
+(3,473,408 total bytes, previously 2,326,528).
+
+Pre-fix native assertion Reds observed `label` instead of `heading`, action 2
+instead of action 1 after the first RTL Tab/Enter, and an overflowing German
+heading. Additional temporary mutations reached intended assertion Reds for a
+wrong heading level, omitted removal focus in both forms, reduced large text,
+omitted bundled font declarations, the old RTL vector reversal, removed focus
+border paint and word-only section wrapping. Final Flex mutations independently
+fail fill-growth, fixed-width preservation and RTL position assertions. A
+packaged downstream consumer compiles all affected component features against
+stock crates.io `iced_widget` 0.14.2, with no workspace source or Iced patches.
+Restoring the exact sources passed
+the focused suite. The font-declaration mutation fails native settings' font
+count; actual Hebrew glyph width is also asserted, but the latter alone cannot
+distinguish explicitly loaded DejaVu from this host's installed copy.
+
+Captures use native Linux/tiny-skia at scale 1 with light theme, German forms at
+640×800 and 420×800, narrow sections at 260×500, and Hebrew RTL layouts at
+520×700 and 400×180. The [composition guide](crates/ui-lang-components/docs/accessible-localized-defaults.md)
+records explicit font loading and supported keyboard/layout semantics. This
+proves retained native semantic output, not platform announcements, Tree-host
+parity, automatic translation, or automatic application-wide direction changes.
