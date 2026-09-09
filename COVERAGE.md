@@ -3217,3 +3217,21 @@ per-frame key ownership. The release allocation and latency limits are unchanged
 Bypassing exact comparison and omitting render cache lookup independently reach
 intended owner assertion Reds; restored tests retain the focus and scroll
 replacement checks. Final release performance validation remains in CI.
+
+### Concurrent native package launch
+
+Parallel native authored tests twice exposed `ETXTBSY` while launching uniquely
+named verified executable copies. Closing our writer before spawn was insufficient:
+a peer fork can still hold an inherited writable descriptor until its own exec.
+The native launcher now serializes only opening/writing the private copy and
+spawning it. It releases the lock before pipe exchange or child waiting; package
+hash/protocol checks, private permissions, create-new semantics, deadlines and
+cleanup are unchanged.
+
+The actual std-only launch helper is exercised by 16 concurrent threads launching
+512 unique copies of `/bin/true`. Omitting its launch lock reaches an assertion
+with real `Text file busy` errors; restoring it passes all launches. A separate
+3,200-launch reproduction measured 1,134 errors without serialization and zero
+with it. Standalone helper tests and strict Clippy pass; this is native Unix
+process evidence, not a Windows process-race claim. Final mounted package and
+authored tests remain validated by the app-store CI job.

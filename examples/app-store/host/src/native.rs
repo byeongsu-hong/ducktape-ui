@@ -3,9 +3,10 @@
 //! but a native executable has the user's full operating-system permissions.
 use crate::catalog::{CatalogEntry, native_hash, native_package};
 use crate::limits::TICK_DEADLINE;
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
+#[path = "native_launch.rs"]
+mod launch;
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use ui_lang_wire::native::{Request, Response, read_packet, write_packet};
 
@@ -75,25 +76,8 @@ impl Process {
         let executable = directory
             .0
             .join(if cfg!(windows) { "app.exe" } else { "app" });
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o700);
-        }
-        let mut file = options
-            .open(&executable)
-            .map_err(|error| error.to_string())?;
-        file.write_all(&bytes).map_err(|error| error.to_string())?;
-        drop(file);
-        let mut child = Command::new(executable)
-            .arg(argument)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|error| error.to_string())?;
+        let mut child =
+            launch::spawn(&executable, &bytes, argument).map_err(|error| error.to_string())?;
         let mut input = child.stdin.take().expect("piped stdin");
         let mut output = child.stdout.take().expect("piped stdout");
         let (requests, incoming) = sync_channel::<Vec<u8>>(1);
