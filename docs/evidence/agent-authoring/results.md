@@ -58,6 +58,16 @@ with the viewport. The agent inspected a diagnostic capture and accounted for
 `form.scroll_y`. This is a concrete test-authoring obstacle to compare with the
 after run, even though it did not require coordinator intervention.
 
+The coordinator's follow-up source/capture audit found a real tool defect:
+structured paint inspection compared transformed screen primitives with
+unscrolled layout bounds. In the stored short-window manifest, the visible
+notification description had no attached text, while an invisible profile
+heading inherited another field's text. The PNG and `visible_*` geometry agreed
+with the actual screen. A focused runtime inspection fix is being verified
+separately; it is not silently included in either comparison baseline. This
+finding explains part of the authoring friction without treating successful
+compilation as proof that the inspection tool was correct.
+
 Evidence is currently retained in the task worktree's
 `.superpowers/authoring-run/`: `timing.tsv`, `review.md`, the three Red logs,
 `final-tests.log`, `root-review-tests.log`, `clippy.log`,
