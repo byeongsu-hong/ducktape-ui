@@ -1549,18 +1549,22 @@ This adapter forwards the checked IDs to the same guest instance and reports any
 guest error as a test failure at the supplied source `Location`. It redraws before
 and after the step, publishing dispatch changes to mounted widgets before the
 next rendered UI assertion. The app-store host's authored test adapter implements
-both hooks.
+these hooks. Targeted actions additionally call
+`__ice_tree_test_target(&mut Driver<P>, test_id: u32, step_id: u32, Location) -> String`
+after redraw, returning the checked guest-generated widget path.
 Generated tests are ignored by default because they require separately built
 guest packages; host CI must explicitly execute them. No test command or export
 is added to production guest artifacts.
 
 The Tree host-test subset accepts named presets, typed state expressions and
-direct dispatch, target paths whose keys are literals, click steps,
+direct dispatch, target paths with checked live-state key expressions, click steps,
 `exists`/`missing` and literal text expectations, including `within` and
-negation, with viewport and timeout configuration. A target path is lowered
-into the host, whose state is its own mounted surface rather than the guest's,
-so a key that reads state has nothing to read there. Other steps, keys that are
-not literals,
+negation, with viewport and timeout configuration. Before every target use, the
+host redraws to settle widget events, then requests the checked target path from
+the guest using its test and step IDs. The read-only guest callback evaluates
+keys against that rendered state, including aliases and nested keys. The reply
+is bounded by the existing string limit; no app state is serialized. Keys retain
+the native bool/i64/f64 restriction. Other steps,
 mounts, environment overrides and daemon windows produce E190 at their authored source origin;
 the generator never silently drops an unsupported test. Direct `cfg(test)` builds
 of a Tree guest containing authored tests explain the host harness requirement
@@ -1569,9 +1573,10 @@ existing authored test generation and semantics are unchanged.
 
 Explicit authored test artifacts enable the guest `authored-tests` feature, include
 `compile_tree_guest_tests(root)` beside the generated app, and use
-`export_test_app!`. Their `ice.test.manifest.v2` header and test-only `authored`
+`export_test_app!`. Their `ice.test.manifest.v3` header and test-only `authored`
 export are never accepted as production packages. The host and guest compare a
-source-graph fingerprint before beginning a selected test. Presets use the same
+source-graph fingerprint before beginning a selected test. Previous test-manifest
+versions are rejected before initialization or target-resolution commands. Presets use the same
 generated boot function and Driver initialization; dispatch constructs the checked
 message and runs ordinary update/task settling. Predicates read live typed state
 inside the guest and return success or an error, without serializing application

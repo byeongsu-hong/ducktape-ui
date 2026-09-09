@@ -74,15 +74,17 @@ test a_state_key_is_resolved_again_for_every_alias_use
   click choose
   expect picked == 1
 
-test nested_unicode_keys_use_live_state
+test nested_state_keys_select_unicode_labels
   viewport 640 900
-  target choose = #app/content/groups/key(group)/names/key(label)/pick
+  target choose = #app/content/groups/key(group)/names/key(label)/label_row/label_pick
   click choose
-  expect picked_label == "한글"
-  dispatch select_label("café")
+  expect picked_label == 1
+  expect text "한글" within #app/content/groups/key(group)/names/key(label)/label_row
+  dispatch select_label(2)
   click choose
-  expect picked_label == "café"
-  expect exists #app/content/groups/key(group)/names/key(label)/pick
+  expect picked_label == 2
+  expect text "café" within #app/content/groups/key(group)/names/key(label)/label_row
+  expect exists #app/content/groups/key(group)/names/key(label)/label_row/label_pick
 
 use "theme.ice"
 
@@ -105,11 +107,11 @@ state
   rows = [1, 2]
   picked = 0
   selected = 1
-  group = "그룹"
-  groups = ["그룹"]
-  label = "한글"
-  labels = ["한글", "café"]
-  picked_label = ""
+  group = 1
+  groups = [1]
+  label = 1
+  labels = [1, 2]
+  picked_label = 0
   auto = false
   published = false
   answer = "Ask host sends a question through the host and shows what comes back."
@@ -275,6 +277,11 @@ view
             text "picked" #mark size=12.0 @text-muted
       keyed group_name in groups by=group_name #groups
         keyed name in labels by=name #names
-          button name #pick -> pick_label(name)
+          row #label_row gap=4.0
+            button "Choose" #label_pick -> pick_label(name)
+            if name == 1
+              text "한글"
+            if name == 2
+              text "café"
       text answer #answer size=12.0 @text-muted
       text shared_label(published) #shared size=11.0 @text-muted
