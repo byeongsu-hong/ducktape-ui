@@ -44,6 +44,7 @@ mod button;
 mod canvas;
 mod combo;
 mod editor;
+mod editor_presentation;
 mod editor_transactions;
 mod layers;
 mod operations;

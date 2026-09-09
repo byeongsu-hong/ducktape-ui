@@ -51,6 +51,9 @@ use composition::*;
 mod document;
 pub use document::Format;
 use document::*;
+#[path = "rich_text_editor/presentation.rs"]
+mod presentation;
+pub use presentation::{PresentedLine, PresentationHighlighter};
 #[path = "rich_text_editor/movement.rs"]
 mod movement;
 #[path = "rich_text_editor/paint.rs"]
