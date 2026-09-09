@@ -2119,7 +2119,7 @@ fn expr_builtin_group_5(
                 expr_node_code(args.value(1)?, env, context, ValueMode::Owned)?
             ),
             "len" => format!(
-                "({}).len() as i64",
+                "(({}).len() as i64)",
                 expr_node_code(
                     args.value(0)?,
                     env,
