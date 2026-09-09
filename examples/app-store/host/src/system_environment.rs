@@ -71,10 +71,18 @@ mod tests {
         assert!(environment.request(100, true, &[]).unwrap().is_none());
         let answers = environment.update(Theme::None);
         assert_eq!(answers.len(), MAX_WAITERS);
-        assert!(!answers.iter().any(|event| matches!(event, Event::Response { id: 0, .. })));
+        assert!(
+            !answers
+                .iter()
+                .any(|event| matches!(event, Event::Response { id: 0, .. }))
+        );
         assert!(answers.iter().all(|event| matches!(event, Event::Response { result: Ok(bytes), .. } if Theme::decode(bytes) == Ok(Theme::None))));
         assert!(environment.update(Theme::None).is_empty());
-        assert_eq!(environment.update(Theme::Dark).len(), 1, "only stream remains after one-shot answers");
+        assert_eq!(
+            environment.update(Theme::Dark).len(),
+            1,
+            "only stream remains after one-shot answers"
+        );
         environment.cancel(100);
         assert!(environment.update(Theme::Light).is_empty());
     }

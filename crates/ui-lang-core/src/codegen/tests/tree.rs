@@ -27,6 +27,7 @@ fn tree_system_theme_uses_host_environment_and_refuses_unhosted_operations() {
     assert!(code.contains("::ui_lang_guest::system::theme_changes()"));
     for operation in [
         "system info -> mode _",
+        "window move -10.0 20.0",
         "window maximize true",
         "window minimize false",
         "window resizable false",
@@ -41,7 +42,7 @@ fn tree_system_theme_uses_host_environment_and_refuses_unhosted_operations() {
         );
         compile_for(&source, "environment.ice", Target::Native).unwrap();
         let result = compile_for(&source, "environment.ice", Target::Tree);
-        if operation.starts_with("system info") {
+        if operation.starts_with("system info") || operation.starts_with("window move") {
             assert_eq!(result.unwrap_err().code, "E190");
         } else {
             assert!(result.unwrap().contains("::ui_lang_guest::window::perform"));
