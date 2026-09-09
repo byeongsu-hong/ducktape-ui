@@ -9,7 +9,7 @@ in the protocol. These observations do not isolate documentation's causal effect
 
 Source baseline: `ffb89ea1920bb42ef529276495868708ad8210c4`.
 Submitted revision: `dd2706193b21c360945cf77d889f2a331d175b6e`,
-[draft PR #1058](https://github.com/byeongsu-hong/ducktape-ui/pull/1058).
+[original draft PR #1058](https://github.com/byeongsu-hong/ducktape-ui/pull/1058).
 The agent used inherited model/reasoning defaults with a fresh conversation.
 
 | Observation | Result |
@@ -78,7 +78,7 @@ The archive was copied and byte-verified before worktree cleanup.
 
 Source baseline: `c4524da0`, the same framework/app baseline plus six guidance
 files. Submitted revision: `85fb44ba034481ba5975a8f1f9c9307978062a96`,
-[draft PR #1060](https://github.com/byeongsu-hong/ducktape-ui/pull/1060).
+[original draft PR #1060](https://github.com/byeongsu-hong/ducktape-ui/pull/1060).
 The reused agent retained prior repository context and inherited model settings.
 
 | Observation | Result |
@@ -150,6 +150,11 @@ not recreated mockups:
 | ![Before: reachable notification control and Save](before-short.png) | ![After: reachable notification control and Save](after-short.png) |
 
 ## Integration verification
+
+The original comparison PRs #1058 and #1060 were closed without merging.
+The selected Settings implementation, authoring guidance and this report are
+consolidated in [PR #1061](https://github.com/byeongsu-hong/ducktape-ui/pull/1061).
+The archived original commits remain the evidence for the two runs.
 
 The chosen Settings commit was applied to the guidance branch on the current
 framework. All nine native tests passed. The coordinator then checked the

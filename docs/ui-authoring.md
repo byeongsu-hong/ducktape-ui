@@ -72,6 +72,11 @@ empty and long content, and the interaction states affected by the change.
 For each, assert useful geometry and perform the user's actual click, typing
 or keyboard route. A direct state dispatch does not prove the button works.
 
+For scrolling, use the [visible-coordinate convention](testing.md#targets-and-assertions):
+layout bounds are unscrolled; `visible_*` describes the clipped screen region.
+Check `visible` before reading those fields, and compare visible height with
+full height when a control must be fully reachable.
+
 Capture and inspect those states after assertions. Confirm edge spacing,
 readable text, action reachability and focus visibility in the rendered image;
 a correct outer rectangle does not prove its text fits. For a regression,
