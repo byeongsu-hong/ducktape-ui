@@ -28,6 +28,33 @@ test preset_and_typed_dispatch_update_live_count
   expect count == 9
   expect text "9" within count_label
 
+// A ROW IS ITS KEY, NOT ITS PLACE. Every target here addresses one row by the
+// key it was built with, so the scenario can click one of two rows, watch the
+// other stay untouched, and then shuffle and shorten the list under those same
+// keys. A row that answered by position would pass the first half and fail
+// from the reorder on.
+test keyed_rows_answer_to_their_key_through_reorder_and_removal
+  viewport 480 600
+  target first_row = #app/content/rows/key(1)/row
+  target second_row = #app/content/rows/key(2)/row
+  target second_pick = #app/content/rows/key(2)/row/pick
+  expect no text "picked" within first_row
+  expect no text "picked" within second_row
+  click second_pick
+  // only the row that was clicked
+  expect text "picked" within second_row
+  expect no text "picked" within first_row
+  // the list reorders; the mark travels with the key, not the slot it left
+  dispatch reorder_rows
+  expect text "picked" within second_row
+  expect no text "picked" within first_row
+  // and the key stops answering once its row is gone, rather than resolving to
+  // whichever row now stands where it used to
+  dispatch drop_second_row
+  expect missing second_row
+  expect exists first_row
+  expect no text "picked" within first_row
+
 use "theme.ice"
 
 extern crate::host
@@ -43,6 +70,11 @@ extern crate::host
 
 state
   count = 0
+  // Two keyed rows. Their identity is the number, not the position: the list
+  // reorders and shrinks under the same keys so a test can address one row
+  // and watch it stay itself.
+  rows = [1, 2]
+  picked = 0
   auto = false
   published = false
   answer = "Ask host sends a question through the host and shows what comes back."
@@ -85,6 +117,15 @@ subscribe
 
 on toggle_auto
   auto = !auto
+
+on pick(number)
+  picked = number
+
+on reorder_rows
+  rows = [2, 1]
+
+on drop_second_row
+  rows = [1]
 
 on elapsed
   count = count + 1
@@ -177,5 +218,16 @@ view
         button "Ask host" #ask w=fill -> ask
           active bg=raised text=fg r=8.0
           hovered bg=border text=fg r=8.0
+      // Keyed rows: `by=number` makes the number the row's identity, so each
+      // row scopes as `…/rows/key(<number>)` and keeps that address through a
+      // reorder. Only the picked row draws its mark.
+      keyed number in rows by=number #rows w=fill gap=4.0
+        row #row gap=8.0 align=center
+          text number #number size=12.0 @text-fg
+          button "Pick" #pick -> pick(number)
+            active bg=raised text=fg r=6.0
+            hovered bg=border text=fg r=6.0
+          if picked == number
+            text "picked" #mark size=12.0 @text-muted
       text answer #answer size=12.0 @text-muted
       text shared_label(published) #shared size=11.0 @text-muted

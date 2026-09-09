@@ -9,7 +9,7 @@ pub(crate) fn generate_tree_tests(
     for test in program.tests() {
         let unsupported = |origin, detail| {
             program.error_at_origin(
-            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: presets, typed state expectations and dispatch, static targets, click, and literal text expectations"),
+            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: presets, typed state expectations and dispatch, targets with literal keys, click, exists/missing, and literal text expectations"),
         )
         };
         if program.settings().kind == ProgramKind::Daemon
@@ -25,21 +25,45 @@ pub(crate) fn generate_tree_tests(
                 "daemon windows, mounts, or environment overrides",
             ));
         }
-        let static_path = |path: &ResolvedTestTargetPath| {
-            path.segments.iter().all(|segment| segment.key.is_none())
+        let literal = |value| {
+            let expressions = program.expressions();
+            matches!(
+                expressions
+                    .expression(expressions.expression_use(value).root)
+                    .kind,
+                crate::lower::ResolvedExpressionKind::Bool(_)
+                    | crate::lower::ResolvedExpressionKind::I64(_)
+                    | crate::lower::ResolvedExpressionKind::F64(_)
+                    | crate::lower::ResolvedExpressionKind::Str(_)
+            )
         };
-        let static_ref = |target: &ResolvedTestTargetRef| match target {
+        // A TARGET PATH IS LOWERED INTO THE HOST, and the host's `__test.state()`
+        // is its own mounted surface, not the guest's Ice state — typed steps go
+        // to the guest precisely because the two are different states. So a key
+        // that READS state has nothing to read here, while a literal key lowers
+        // to a constant and needs no state at all. Same rule, same reason, as
+        // the literal text expectation below.
+        let host_path = |path: &ResolvedTestTargetPath| {
+            path.segments
+                .iter()
+                .all(|segment| segment.key.is_none_or(&literal))
+        };
+        // An alias names a target this loop already checked.
+        let host_ref = |target: &ResolvedTestTargetRef| match target {
             ResolvedTestTargetRef::Alias(_) => true,
-            ResolvedTestTargetRef::Id(path) => static_path(path),
+            ResolvedTestTargetRef::Id(path) => host_path(path),
         };
         for target in &test.targets {
-            if !static_path(&target.path) {
-                return Err(unsupported(target.origin, "keyed targets"));
+            if !host_path(&target.path) {
+                return Err(unsupported(
+                    target.origin,
+                    "a keyed target whose key reads state; write the key as a literal",
+                ));
             }
         }
         for step in &test.steps {
             let supported = match &step.kind {
-                ResolvedTestStepKind::Click { target, .. } => static_ref(target),
+                ResolvedTestStepKind::Click { target, .. } => host_ref(target),
                 ResolvedTestStepKind::Expect(ResolvedTestExpectation::Text {
                     value,
                     within,
@@ -51,8 +75,15 @@ pub(crate) fn generate_tree_tests(
                             .expression(expressions.expression_use(*value).root)
                             .kind,
                         crate::lower::ResolvedExpressionKind::Str(_)
-                    ) && within.as_ref().is_none_or(static_ref)
+                    ) && within.as_ref().is_none_or(host_ref)
                 }
+                // Whether a target resolves at all IS the keyed oracle: a row
+                // that was removed must stop answering to its key rather than
+                // silently resolving to whichever row now sits in its place.
+                ResolvedTestStepKind::Expect(
+                    ResolvedTestExpectation::Exists(target)
+                    | ResolvedTestExpectation::Missing(target),
+                ) => host_ref(target),
                 ResolvedTestStepKind::Dispatch { .. }
                 | ResolvedTestStepKind::Expect(ResolvedTestExpectation::Equality { .. })
                 | ResolvedTestStepKind::Expect(ResolvedTestExpectation::Expr { .. }) => true,

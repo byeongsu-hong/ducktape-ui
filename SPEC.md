@@ -1537,9 +1537,12 @@ guest packages; host CI must explicitly execute them. No test command or export
 is added to production guest artifacts.
 
 The Tree host-test subset accepts named presets, typed state expressions and
-direct dispatch, static target paths, click steps and
-literal text expectations, including `within` and negation, with viewport and
-timeout configuration. Other steps, keyed targets,
+direct dispatch, target paths whose keys are literals, click steps,
+`exists`/`missing` and literal text expectations, including `within` and
+negation, with viewport and timeout configuration. A target path is lowered
+into the host, whose state is its own mounted surface rather than the guest's,
+so a key that reads state has nothing to read there. Other steps, keys that are
+not literals,
 mounts, environment overrides and daemon windows produce E190 at their authored source origin;
 the generator never silently drops an unsupported test. Direct `cfg(test)` builds
 of a Tree guest containing authored tests explain the host harness requirement
