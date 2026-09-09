@@ -73,12 +73,24 @@ fn image_radius_rounds_the_widget_clip_instead_of_the_cover_bounds() {
     );
     let rgba = renderer.screenshot(Size::new(SCREEN, SCREEN), 1.0, Color::BLACK);
     assert_eq!(pixel(&rgba, 80, 80), [255; 3], "the image remains visible");
-    assert_eq!(
-        pixel(&rgba, 21, 61),
-        [0; 3],
-        "round the logical widget corner"
-    );
+    for (corner, x, y) in [
+        ("top-left", 21, 61),
+        ("top-right", 138, 61),
+        ("bottom-left", 21, 98),
+        ("bottom-right", 138, 98),
+    ] {
+        assert_eq!(
+            pixel(&rgba, x, y),
+            [0; 3],
+            "round the {corner} widget corner"
+        );
+    }
     assert_eq!(pixel(&rgba, 80, 61), [255; 3], "keep the straight top edge");
+    assert_eq!(
+        pixel(&rgba, 80, 98),
+        [255; 3],
+        "keep the straight bottom edge"
+    );
 }
 
 #[test]
