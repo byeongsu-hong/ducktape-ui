@@ -39,6 +39,7 @@ extern crate::codex
   pure sample_running(dark:bool) -> [Entry]
   sync sample_session(dark:bool) -> Session
   sync sample_answer() -> [Entry]
+  pure sample_rich_content() -> [Entry]
   stream codex_entries(session:Session) -> [Entry]
   sip codex_turn(session:Session) progress=Chunk -> [Entry] ! CodexError
 
@@ -76,3 +77,7 @@ extern crate::store
   sync recent_chats() -> [Chat]
   stream scan_chats() -> Scan
   open_recent(session:Session, path:str) -> [Entry] ! CodexError
+
+extern crate::render
+  pure thinking_boundary(ended:bool) -> ThinkingBoundary
+  task follow_latest(following:bool) -> unit

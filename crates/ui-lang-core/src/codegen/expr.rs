@@ -2793,6 +2793,14 @@ pub(in crate::codegen) fn embedded_asset_bytes_code(
     None
 }
 
+/// Embedded bytes never change. Retain their image ID so the native renderer
+/// can reuse its decoded image across view rebuilds and canvas redraws.
+pub(in crate::codegen) fn embedded_image_handle_code(bytes: &str) -> String {
+    format!(
+        "{{ static __ICE_IMAGE: ::std::sync::OnceLock<::iced::widget::image::Handle> = ::std::sync::OnceLock::new(); __ICE_IMAGE.get_or_init(|| ::iced::widget::image::Handle::from_bytes({bytes})).clone() }}"
+    )
+}
+
 pub(in crate::codegen) fn resolved_expr_node_code(
     program: &LoweredProgram,
     expression_use: ResolvedExpressionId,

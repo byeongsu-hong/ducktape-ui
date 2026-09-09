@@ -3244,3 +3244,74 @@ code-generation tests pass. Full app-store workspace strict Clippy (host include
 `--release --locked --workspace --tests --no-deps -- -D warnings`) passes locally;
 CI uses the debug profile. Two host pixel oracles use complete four-byte array
 chunks with their original color and count assertions unchanged.
+
+### Content workspaces: readable media and retained active work
+
+[PR #1064](https://github.com/byeongsu-hong/ducktape-ui/pull/1064) and the
+[content workspace guide](crates/ui-lang-components/docs/content-workspaces.md)
+connect native AI chat, bounded media/editor, and default DataGrid/TreeView/
+LogTimeline compositions. The data fixture reuses the Showcase's actual typed
+renderers, reducers and focus tasks with small deterministic payloads. It does
+not introduce replacement widgets or a new language API.
+
+AI chat uses a start-relative transcript and a native viewport-derived follow
+flag. Actual wheel input pauses following; actual Latest input resumes it.
+Background row updates and streamed text preserve a visible historical row.
+Terminal settlement with no queued turn leaves a unique marker after 120 final
+paragraphs visible. Original forced snaps and end anchoring fail offset or
+visibility assertions; removing the new guards or disabling Latest fails the
+restored native tests. The long unbroken link owner fails with 1951-pixel ink
+inside a 180-pixel column before word-or-glyph wrapping. Switching code from
+horizontal to vertical scrolling fails the one-line height assertion. A wider
+column mutation fails the native 760-pixel cap, and actual composer input
+survives 1180-to-760 resizing.
+
+The media fixture verifies a 160-pixel cover above an editable 120-pixel native
+editor, actual typing across resize, and caller-selected 720/480-pixel caps.
+A 240-pixel height mutation fails both geometry assertions. Separate renderer
+pixel tests fail against the original software engine for raster/SVG cover
+paint outside the image clip and a raster corner that should be rounded away.
+The fix intersects the widget and parent clips, restores the parent clip for
+siblings, and reuses one rounded scratch mask. It does not add a decoded-image
+cache. Native embedded raster literals instead retain their handle at each
+image/viewer/canvas call site, allowing the existing renderer cache to work.
+The Core assertion first observes zero retained sites where three are required.
+A deterministic native oracle reads the actual raster primitive handle ID,
+then types in the editor and resizes the window. A temporary fresh-handle
+expression changes that ID from 2 to 48 and fails equality; the restored literal
+keeps its identity. This uses a Rust test-target accessor, not a new Ice test
+statement or a wall-clock threshold.
+
+The retained-data fixture verifies empty descriptions, real grid F2 editing,
+real tree renaming, background appends while the native draft has focus,
+continued typing and Enter commit, historical log selection and explicit tail
+resumption. Mutations to the empty title, grid/tree draft, forced log following
+and custom 640-pixel cap each reach and fail their intended text or geometry
+assertions. The existing 100,000-row, fixed-height virtualization and release
+allocation/frame contracts remain the owning performance evidence; the finite
+24-row fixture establishes composition and retained work.
+
+[Inspected captures](examples/showcase/screenshots/content-workspaces/README.md)
+record roots, presets, viewports, fonts and input sequences. Native Ice captures
+use light mode, scale 1, en-US, Linux and reduced motion; the terminal-settlement
+Rust test uses the app's default light theme. Markdown image references still
+render alt text without remote fetching. The existing Markdown-editor long
+last-line test and real save-owner evidence are reused. These are native
+contracts, not platform accessibility, Tree-host parity or durable-save claims
+for the data sample.
+
+Validation includes 1040 Core library tests (62 existing ignored),
+345 Showcase binary tests and six media checks, with focused restored checks
+for all new native assertions. AI chat passes 83 tests (nine existing ignored
+performance probes). The runtime broad run passes 397 tests with eight ignored;
+its timing-sensitive seeded latency-cliff test fails under concurrent load and
+passes its exact isolated rerun. The five focused renderer integration targets
+pass. The gallery separates native frame-phase measurements from the explicit
+release twelve-cover full-raster probe; neither replaces large-data budgets.
+
+After integration with main at `7d86ab98`, 23 affected checks pass: six Core
+graphics tests, six AI chat regressions, eight data-workspace checks and three
+media regressions. Strict Clippy passes all targets of Core, runtime, Showcase
+and AI chat. Rust and Ice formatting pass. All data/media/terminal screenshots
+remain byte-identical; the joint test feature graph adds syntax colors to the
+reviewed rich-chat code blocks, as recorded in the gallery.
