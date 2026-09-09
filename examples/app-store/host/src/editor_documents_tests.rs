@@ -39,7 +39,7 @@ fn settle(
                 .pending
                 .iter()
                 .map(|event| match event {
-                    wire::Event::EditorKeyRequest { .. } => "decision",
+                    wire::Event::EditorRequest { .. } => "decision",
                     wire::Event::EditorTransaction { .. } => "commit",
                     _ => "other",
                 })
@@ -365,5 +365,134 @@ fn native_and_wasm_one_mib_documents_edit_restore_and_undo_without_reinitializin
             initial,
             "Undo atomically reinserts one MiB, exceeding the display string budget"
         );
+    }
+}
+
+#[test]
+#[ignore = "requires current native and Wasm editor-presentation fixtures"]
+fn native_and_wasm_caret_menu_commits_one_edit_and_preserves_undo_across_reload() {
+    struct FocusEditor(String);
+    impl Operation for FocusEditor {
+        fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+            visit(self);
+        }
+        fn focusable(
+            &mut self,
+            id: Option<&iced::widget::Id>,
+            _: Rectangle,
+            state: &mut dyn iced::advanced::widget::operation::Focusable,
+        ) {
+            if id == Some(&iced::widget::Id::from(self.0.clone())) {
+                state.focus();
+            }
+        }
+    }
+    for native in [false, true] {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if native {
+            "../target/editor-presentation-native"
+        } else {
+            "../target/editor-presentation-fixture"
+        });
+        let entries = crate::catalog::scan_dir(&directory);
+        assert_eq!(
+            entries.len(),
+            1,
+            "build presentation fixture native={native}"
+        );
+        let entry = entries[0].clone();
+        let guest = Arc::new(Mutex::new(Guest::load(&entry).unwrap()));
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut ui = build(&guest, &mut renderer, user_interface::Cache::default());
+        let mut now = Instant::now();
+        ui = settle(ui, &guest, &mut renderer, &mut now, "presentation boot");
+        let initial = document(&guest);
+        assert_eq!(initial.0, "Title\n- [ ] 한글");
+        let id = editor(guest.lock().unwrap().frame.root.as_ref().unwrap())
+            .unwrap()
+            .0
+            .to_owned();
+        ui.operate(&renderer, &mut FocusEditor(id));
+        ui.draw(
+            &mut renderer,
+            &iced::Theme::Light,
+            &iced::advanced::renderer::Style {
+                text_color: iced::Color::BLACK,
+            },
+            mouse::Cursor::Unavailable,
+        );
+        let pixels = renderer.screenshot(Size::new(720, 400), 1.0, iced::Color::WHITE);
+        let green = pixels
+            .chunks_exact(4)
+            .filter(|pixel| pixel[..3] == [0, 255, 0])
+            .count();
+        assert!(
+            green > 2_000,
+            "guest line background must reach actual native paint ({green} pixels)"
+        );
+        // Real native menu handling intercepts Enter before ordinary editor input.
+        send(
+            &mut ui,
+            &mut renderer,
+            Point::ORIGIN,
+            key(
+                keyboard::Key::Named(keyboard::key::Named::Enter),
+                keyboard::Modifiers::empty(),
+            ),
+        );
+        ui = settle(ui, &guest, &mut renderer, &mut now, "menu pick commit");
+        let edited = document(&guest);
+        assert_eq!(
+            edited.0, "Chosen\n- [ ] 한글",
+            "caret menu must run the guest interaction decider, not insert a newline"
+        );
+        assert_eq!(
+            edited.1.text_revision,
+            initial.1.text_revision + 1,
+            "one atomic guest patch"
+        );
+        let running = Running {
+            id: entry.id.clone(),
+            name: entry.name.clone(),
+            surface: Surface(guest.clone()),
+            window: iced::window::Id::unique(),
+        };
+        let prepared =
+            iced::futures::executor::block_on(prepare_reload(entry, vec![running.clone()], 1));
+        finish_reload(std::slice::from_ref(&running), 1, prepared).unwrap();
+        assert_eq!(
+            document(&guest),
+            edited,
+            "no-init restore retains interaction result before redraw"
+        );
+        ui = build(&guest, &mut renderer, ui.into_cache());
+        let command = if cfg!(target_os = "macos") {
+            keyboard::Modifiers::LOGO
+        } else {
+            keyboard::Modifiers::CTRL
+        };
+        send(
+            &mut ui,
+            &mut renderer,
+            Point::ORIGIN,
+            key(keyboard::Key::Character("z".into()), command),
+        );
+        ui = settle(
+            ui,
+            &guest,
+            &mut renderer,
+            &mut now,
+            "interaction undo after reload",
+        );
+        assert_eq!(
+            document(&guest).0,
+            initial.0,
+            "guest history must Undo the menu transaction without refocus"
+        );
+        drop(ui);
     }
 }

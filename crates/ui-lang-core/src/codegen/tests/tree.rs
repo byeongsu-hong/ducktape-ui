@@ -1108,11 +1108,10 @@ const COVERAGE: &[Coverage] = &[
         "  editor <-> notes highlight=\"rs\"\n",
         "an editor highlighter",
     ),
-    refused(
+    emitted(
         "editor: highlighter",
         "",
         "  editor <-> notes highlighter=editor_highlight(draft)\n",
-        "an editor highlighter",
     ),
     refused(
         "editor: style callback",

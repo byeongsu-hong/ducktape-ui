@@ -46,6 +46,7 @@ mod combo;
 mod editor;
 mod editor_documents;
 pub use editor_documents::EditorDocument;
+#[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
 mod editor_presentation;
 mod editor_transactions;
 mod layers;
@@ -105,6 +106,15 @@ pub enum Output {
         reset: u64,
         key: String,
         action: text_editor::Action,
+    },
+    EditorInteraction {
+        reference: wire::editor_document::EditorDocumentRef,
+        action: wire::editor_presentation::EditorInteraction,
+    },
+    RichEditorAction {
+        reset: u64,
+        key: String,
+        action: crate::editor_action::Action,
     },
     /// Accessibility asked the editor under `key` to move its caret.
     MoveCaret {
@@ -374,12 +384,21 @@ impl Inputs {
                 self.apply_editor_batch(batch, pending);
                 return;
             }
-            Output::EditorClaim { .. } => return,
+            Output::EditorClaim { .. } | Output::EditorInteraction { .. } => return,
             Output::EditorAction { reset, key, action } => {
                 self.admit_editor_work(
                     &key,
                     reset,
                     editor_transactions::NativeWork::Actions(vec![action]),
+                    pending,
+                );
+                return;
+            }
+            Output::RichEditorAction { reset, key, action } => {
+                self.admit_editor_work(
+                    &key,
+                    reset,
+                    editor_transactions::NativeWork::RichActions(vec![action]),
                     pending,
                 );
                 return;
@@ -1944,7 +1963,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                 }
             };
             accessible(
-                editor::HostEditor::new(node, content, Some(control)),
+                editor::HostEditor::new(node, content, Some(control), kept.inputs.instance),
                 StableId::new(key),
                 Role::MultilineTextInput,
             )

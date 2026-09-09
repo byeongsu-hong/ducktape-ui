@@ -369,6 +369,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "app-store-editor-presentation-fixture"
+version = "0.1.0"
+dependencies = [
+ "iced",
+ "ui-lang",
+ "ui-lang-build",
+ "ui-lang-guest",
+ "ui-lang-runtime",
+]
+
+[[package]]
 name = "app-store-editor-transactions-fixture"
 version = "0.1.0"
 dependencies = [

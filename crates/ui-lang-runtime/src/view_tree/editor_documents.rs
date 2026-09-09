@@ -763,12 +763,17 @@ pub(crate) mod test_support {
         };
         inputs.apply(
             Output::EditorBatch(Batch {
+                instance: inputs.instance,
                 document,
                 key: key.into(),
                 sequence,
                 reset,
-                actions,
+                actions: actions
+                    .into_iter()
+                    .map(crate::editor_action::Action::Edit)
+                    .collect(),
                 request: None,
+                presentation_reference: None,
             }),
             &mut events,
         );

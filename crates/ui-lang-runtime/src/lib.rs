@@ -8,6 +8,7 @@ mod data_grid;
 #[doc(hidden)]
 pub mod dev;
 mod dynamic_themer;
+pub mod editor_action;
 mod flex;
 mod hover_reveal;
 mod keyed_column;
@@ -19,7 +20,7 @@ mod resize_handle;
 mod responsive;
 pub mod rev;
 mod rev_memo;
-#[cfg(feature = "full-runtime")]
+#[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
 pub mod rich_text_editor;
 mod scroll_anchor;
 mod secret;
@@ -56,7 +57,7 @@ pub use qr::*;
 pub use resize_handle::*;
 pub use responsive::*;
 pub use rev_memo::*;
-#[cfg(feature = "full-runtime")]
+#[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
 pub use rich_text_editor::{ContentVersion, EditorChange, RichTextEditor};
 pub use scroll_anchor::*;
 pub use secret::{Secret, SecretStore};

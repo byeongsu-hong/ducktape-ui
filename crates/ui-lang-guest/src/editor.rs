@@ -22,6 +22,16 @@ impl Editor {
     pub(crate) fn text_ref(&self) -> &str {
         &self.0.text
     }
+    /// Borrow the canonical editor state for deterministic presentation.
+    pub fn state_view(&self) -> crate::EditorStateView<'_> {
+        crate::EditorStateView {
+            text: &self.0.text,
+            cursor: self.0.cursor,
+            reset: self.0.reset,
+            text_revision: self.1,
+            revision: self.0.revision,
+        }
+    }
     pub fn document_reference(&self, document: String) -> wire::editor_document::EditorDocumentRef {
         wire::editor_document::EditorDocumentRef {
             document,

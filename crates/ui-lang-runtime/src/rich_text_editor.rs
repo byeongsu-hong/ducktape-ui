@@ -53,7 +53,7 @@ pub use document::Format;
 use document::*;
 #[path = "rich_text_editor/presentation.rs"]
 mod presentation;
-pub use presentation::{PresentedLine, PresentationHighlighter};
+pub use presentation::{PresentationHighlighter, PresentedLine};
 #[path = "rich_text_editor/movement.rs"]
 mod movement;
 #[path = "rich_text_editor/paint.rs"]
@@ -149,14 +149,7 @@ impl ContentVersion {
     }
 }
 
-/// An edit produced by a [`RichTextEditor`].
-#[derive(Debug, Clone, PartialEq)]
-pub enum Action {
-    /// Apply a regular Iced text editor action.
-    Edit(text_editor::Action),
-    /// Move the content cursor to a position measured in the rich layout.
-    MoveTo(Cursor),
-}
+pub use crate::editor_action::Action;
 
 /// A press interceptor over a rich-layout source position — `Some` consumes
 /// the press.

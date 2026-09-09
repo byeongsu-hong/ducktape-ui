@@ -239,12 +239,22 @@ pub struct EditorTransactionId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EditorKeyRequest {
+pub struct EditorRequest {
     pub id: EditorTransactionId,
     pub state: crate::editor_document::EditorDocumentRef,
-    pub key: crate::keyboard::KeyState,
-    pub repeat: bool,
+    pub input: EditorRequestInput,
     pub input_time_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EditorRequestInput {
+    Key {
+        key: crate::keyboard::KeyState,
+        repeat: bool,
+    },
+    Interaction {
+        action: crate::editor_presentation::EditorInteraction,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -302,6 +312,12 @@ pub enum EditorFault {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditorTransactionEvent {
+    Interaction {
+        id: EditorTransactionId,
+        state: crate::editor_document::EditorDocumentRef,
+        action: crate::editor_presentation::EditorInteraction,
+        input_time_ms: u64,
+    },
     Commit {
         id: EditorTransactionId,
         before: crate::editor_document::EditorDocumentRef,

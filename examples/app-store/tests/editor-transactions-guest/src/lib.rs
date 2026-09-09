@@ -177,7 +177,8 @@ mod fixture {
                 EditorTransactionEvent::Fault { reason, .. } => {
                     panic!("fixture transaction fault: {reason:?}")
                 }
-                EditorTransactionEvent::Cancelled { .. } => None,
+                EditorTransactionEvent::Cancelled { .. }
+                | EditorTransactionEvent::Interaction { .. } => None,
             },
         )
     }

@@ -1,6 +1,6 @@
 # Guest-authored editor presentation
 
-Implementation plan; Tree integration is pending the #1026 document lane.
+Tree integration builds on the #1026 document lane; actual backend verification is in progress.
 
 The guest owns syntax and document actions. The host owns text shaping, caret
 geometry and native input. Tree editors reuse `RichTextEditor`; they do not run
@@ -9,7 +9,7 @@ the app's Markdown parser or construct another document/history model.
 ## Author boundary
 
 Reuse `editor-highlighter` and `highlighter=`. Its Tree specialization receives
-a borrowed guest editor and declared arguments and returns presentation data.
+`EditorStateView` and declared arguments and returns `EditorPresentation`.
 The compiler supplies the editor's logical document identity. Native-target
 highlighter wrappers retain their native typed contract.
 
@@ -36,8 +36,20 @@ the 1 MiB document transport and 8 MiB snapshot allowances.
 
 Reuse native `EditorMenu` / `MenuAnchor::Caret`, gutter buttons/drop boundaries,
 margin marks and line press geometry. Menu and gutter metadata are declarative
-presentation data. Routes use the existing `EditorBinding::on_event` callback
-through a distinct interaction variant, never `Commit` or a history effect.
+presentation data. `EditorBinding::on_interaction` optionally decides an
+`EditorInteractionRequest` against borrowed canonical state. `Apply` uses the
+same atomic patch and Commit/history lane as a claimed key. `Noop` sends a
+separate `on_event(Interaction)` notification without a history Commit.
+`DefaultEditorAction` is invalid for interactions; there is no synthetic key or
+authoritative reset. Existing key callbacks remain `EditorKeyRequest`.
+
+Per editor the limits are 256 formats, 32,768 spans, 32,768 aggregate gutter,
+drop-boundary, margin and hit records, and 64 menu items. Tags and labels are
+bounded to 1,024 UTF-8 bytes each; menu strings also share the normal string
+limit. Decoder allocations share the frame-wide allocation limit. The guest
+factory output is validated before publication; over-budget or malformed
+metadata faults instead of silently removing interactive regions. Native
+geometry values are sanitized, but tags and hit ranges are never truncated.
 
 The host sends the interaction plus its instance/document/reset/revision fence.
 The guest validates the fence before exposing a borrowed current
@@ -50,7 +62,7 @@ callback against the replacement editor.
 
 1. Add the native sparse data highlighter and tests for actual ranges, UTF-8
    boundaries, missing lines and presentation replacement.
-2. After #1026 settles, integrate wire metadata, the existing highlighter
+2. Integrate wire metadata, the existing highlighter
    factory lowering and `RichTextEditor` in the document transaction lane.
 3. Connect caret menu, gutter/drop, margin and line interactions through the
    existing binding route. Preserve disabled and IME behavior.
@@ -81,3 +93,8 @@ With the isolated `tree-reload-focus/target` cache and `-j4`:
 These establish the adapters only. The unattached Tree conversion still has
 unused-function warnings until the document-lane integration; no native/Wasm
 end-to-end or full Pages support claim is made by this checkpoint.
+
+Native host rendering requires `tiny-skia` or `wgpu`, as the native rich editor
+uses a graphics paragraph. Null-renderer guest builds keep the shared native
+Edit/MoveTo action type without enabling a graphics backend. They construct
+wire data and never render presentation.

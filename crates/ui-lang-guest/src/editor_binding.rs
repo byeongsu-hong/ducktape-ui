@@ -32,7 +32,20 @@ pub struct EditorKeyRequest<'a> {
     pub input_time_ms: u64,
 }
 #[derive(Clone, Copy, Debug)]
+pub struct EditorInteractionRequest<'a> {
+    pub id: &'a wire::EditorTransactionId,
+    pub state: EditorStateView<'a>,
+    pub action: &'a wire::editor_presentation::EditorInteraction,
+    pub input_time_ms: u64,
+}
+#[derive(Clone, Copy, Debug)]
 pub enum EditorTransactionEvent<'a> {
+    Interaction {
+        id: &'a wire::EditorTransactionId,
+        state: EditorStateView<'a>,
+        action: &'a wire::editor_presentation::EditorInteraction,
+        input_time_ms: u64,
+    },
     Commit {
         id: &'a wire::EditorTransactionId,
         before: EditorStateView<'a>,
@@ -51,14 +64,17 @@ pub enum EditorTransactionEvent<'a> {
 }
 
 type Decide = Rc<dyn for<'a> Fn(EditorKeyRequest<'a>) -> EditorDecision>;
+type Interact = Rc<dyn for<'a> Fn(EditorInteractionRequest<'a>) -> EditorDecision>;
 type Observe<P> = Rc<dyn for<'a> Fn(EditorTransactionEvent<'a>) -> Option<P>>;
 pub struct EditorBinding<P> {
     claims: Vec<wire::EditorKeyClaim>,
     decide: Decide,
+    interact: Option<Interact>,
     on_event: Observe<P>,
 }
 struct Callbacks<M> {
     decide: Decide,
+    interact: Option<Interact>,
     on_event: Observe<M>,
 }
 impl<P: 'static> EditorBinding<P> {
@@ -74,8 +90,16 @@ impl<P: 'static> EditorBinding<P> {
         Self {
             claims,
             decide: Rc::new(decide),
+            interact: None,
             on_event: Rc::new(on_event),
         }
+    }
+    pub fn on_interaction(
+        mut self,
+        decide: impl for<'a> Fn(EditorInteractionRequest<'a>) -> EditorDecision + 'static,
+    ) -> Self {
+        self.interact = Some(Rc::new(decide));
+        self
     }
     pub fn register<M: 'static>(
         self,
@@ -85,6 +109,7 @@ impl<P: 'static> EditorBinding<P> {
         let observe = self.on_event;
         let callbacks = Rc::new(Callbacks {
             decide: self.decide,
+            interact: self.interact,
             on_event: Rc::new(move |event| observe(event).map(&route)),
         });
         // Existing handler storage already supplies bounded frame-local lifetime
@@ -93,7 +118,7 @@ impl<P: 'static> EditorBinding<P> {
             slots::handler::<(), Rc<Callbacks<M>>>(Box::new(move |()| Some(callbacks.clone())));
         let wrap = Rc::new(wrap);
         let request_wrap = wrap.clone();
-        let on_request = slots::handler::<wire::EditorKeyRequest, M>(Box::new(move |request| {
+        let on_request = slots::handler::<wire::EditorRequest, M>(Box::new(move |request| {
             Some(request_wrap(EditorTransaction {
                 event: Transaction::Request(request),
                 map,
@@ -131,7 +156,7 @@ impl EditorBinding<()> {
 }
 #[derive(Clone, Debug)]
 enum Transaction {
-    Request(wire::EditorKeyRequest),
+    Request(wire::EditorRequest),
     Event(wire::EditorTransactionEvent),
 }
 pub struct EditorTransaction<M> {
@@ -180,13 +205,29 @@ impl<M: 'static> EditorTransaction<M> {
                     }
                     return None;
                 }
-                let decision = (callbacks.decide)(EditorKeyRequest {
-                    id: &request.id,
-                    state: EditorStateView::new(editor.text_ref(), &request.state),
-                    key: &request.key,
-                    repeat: request.repeat,
-                    input_time_ms: request.input_time_ms,
-                });
+                let state = EditorStateView::new(editor.text_ref(), &request.state);
+                let decision = match &request.input {
+                    wire::EditorRequestInput::Key { key, repeat } => {
+                        (callbacks.decide)(EditorKeyRequest {
+                            id: &request.id,
+                            state,
+                            key,
+                            repeat: *repeat,
+                            input_time_ms: request.input_time_ms,
+                        })
+                    }
+                    wire::EditorRequestInput::Interaction { action } => callbacks
+                        .interact
+                        .as_ref()
+                        .map_or(EditorDecision::Noop, |decide| {
+                            decide(EditorInteractionRequest {
+                                id: &request.id,
+                                state,
+                                action,
+                                input_time_ms: request.input_time_ms,
+                            })
+                        }),
+                };
                 slots::editor_response(wire::EditorResponse {
                     id: request.id,
                     decision,
@@ -195,7 +236,8 @@ impl<M: 'static> EditorTransaction<M> {
             }
             Transaction::Event(event) => {
                 let id = match &event {
-                    wire::EditorTransactionEvent::Commit { id, .. }
+                    wire::EditorTransactionEvent::Interaction { id, .. }
+                    | wire::EditorTransactionEvent::Commit { id, .. }
                     | wire::EditorTransactionEvent::Fault { id, .. }
                     | wire::EditorTransactionEvent::Cancelled { id, .. } => id,
                 };
@@ -203,6 +245,22 @@ impl<M: 'static> EditorTransaction<M> {
                     return None;
                 }
                 let mapped = match &event {
+                    wire::EditorTransactionEvent::Interaction {
+                        state,
+                        action,
+                        input_time_ms,
+                        ..
+                    } => {
+                        if editor.document_reference(id.document.clone()) != *state {
+                            return None;
+                        }
+                        (callbacks.on_event)(EditorTransactionEvent::Interaction {
+                            id,
+                            state: EditorStateView::new(editor.text_ref(), state),
+                            action,
+                            input_time_ms: *input_time_ms,
+                        })
+                    }
                     wire::EditorTransactionEvent::Commit {
                         before,
                         after,
@@ -276,6 +334,7 @@ mod tests {
     fn observer(calls: Rc<Cell<usize>>) -> u32 {
         let callbacks = Rc::new(Callbacks::<()> {
             decide: Rc::new(|_| EditorDecision::Noop),
+            interact: None,
             on_event: Rc::new(move |_| {
                 calls.set(calls.get() + 1);
                 None
@@ -320,6 +379,7 @@ mod tests {
         let seen = calls.clone();
         let callbacks = Rc::new(Callbacks::<()> {
             decide: Rc::new(|_| EditorDecision::Noop),
+            interact: None,
             on_event: Rc::new(move |event| {
                 let EditorTransactionEvent::Commit { before, after, .. } = event else {
                     panic!("expected caret commit");

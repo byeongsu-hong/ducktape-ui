@@ -343,7 +343,8 @@ pub(crate) fn editor_matches_pending(id: &crate::wire::EditorTransactionId) -> b
 pub(crate) fn editor_acknowledge(event: &crate::wire::EditorTransactionEvent) {
     use crate::wire::EditorTransactionEvent;
     let id = match event {
-        EditorTransactionEvent::Commit { id, .. }
+        EditorTransactionEvent::Interaction { id, .. }
+        | EditorTransactionEvent::Commit { id, .. }
         | EditorTransactionEvent::Fault { id, .. }
         | EditorTransactionEvent::Cancelled { id, .. } => id,
     };
@@ -355,7 +356,7 @@ pub(crate) fn editor_acknowledge(event: &crate::wire::EditorTransactionEvent) {
         .retain(|response| &response.id != id);
 }
 pub(crate) fn request_editor_mirror(
-    request: &crate::wire::EditorKeyRequest,
+    request: &crate::wire::EditorRequest,
 ) -> Result<(), crate::wire::editor_document::EditorTransferError> {
     use crate::wire::editor_document::{
         EditorDocumentMessage, EditorTransferError, EditorTransferId, EditorTransferReceiver,

@@ -166,15 +166,18 @@ impl EditorAffordances {
                 return Err(PresentationError::Range);
             }
         }
-        for lines in [
-            self.gutters.iter().map(|g| g.line).collect::<Vec<_>>(),
-            self.margins.iter().map(|m| m.line).collect(),
-        ] {
-            if lines.iter().any(|line| *line as usize >= line_count)
-                || lines.windows(2).any(|pair| pair[0] >= pair[1])
-            {
-                return Err(PresentationError::Range);
-            }
+        if self.gutters.iter().any(|g| g.line as usize >= line_count)
+            || self
+                .gutters
+                .windows(2)
+                .any(|pair| pair[0].line >= pair[1].line)
+            || self.margins.iter().any(|m| m.line as usize >= line_count)
+            || self
+                .margins
+                .windows(2)
+                .any(|pair| pair[0].line >= pair[1].line)
+        {
+            return Err(PresentationError::Range);
         }
         if self
             .drop_boundaries
@@ -241,6 +244,41 @@ pub enum PresentationError {
 }
 
 impl EditorPresentation {
+    pub(super) fn sanitize(&mut self, text_budget: &mut usize) {
+        crate::bound_edges(&mut self.padding);
+        for format in &mut self.formats {
+            for color in [
+                &mut format.color,
+                &mut format.background,
+                &mut format.line_background,
+                &mut format.line_rule,
+                &mut format.strikethrough,
+            ] {
+                crate::bound_color(color);
+            }
+            crate::bound_border(&mut format.border);
+            crate::bound_border(&mut format.line_border);
+            if let Some(size) = &mut format.size {
+                *size = crate::bounded(*size).clamp(f32::EPSILON, crate::MAX_TEXT_PIXELS);
+            }
+            if let Some(height) = &mut format.line_height {
+                height.sanitize();
+            }
+            if let Some(font) = &mut format.font {
+                font.sanitize(text_budget);
+            }
+            for edges in [&mut format.padding, &mut format.line_padding] {
+                edges.top = crate::bounded(edges.top);
+                edges.right = crate::bounded(edges.right);
+                edges.bottom = crate::bounded(edges.bottom);
+                edges.left = crate::bounded(edges.left);
+            }
+        }
+        // Interaction tags/ranges are semantic data: never shorten them.
+        // Over-limit metadata is rejected by the bounded decoder, preserving
+        // the previous healthy frame instead of publishing partial controls.
+    }
+
     /// Validate against the exact resident document before any source is hidden.
     pub fn validate(&self, text: &str) -> Result<(), PresentationError> {
         self.affordances.validate(text)?;
@@ -300,30 +338,9 @@ where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
 {
-    struct Bounded<T, const LIMIT: usize>(std::marker::PhantomData<T>);
-    impl<'de, T: Deserialize<'de>, const LIMIT: usize> serde::de::Visitor<'de> for Bounded<T, LIMIT> {
-        type Value = Vec<T>;
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("a bounded editor presentation collection")
-        }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(
-            self,
-            mut seq: A,
-        ) -> Result<Self::Value, A::Error> {
-            if seq.size_hint().is_some_and(|count| count > LIMIT) {
-                return Err(serde::de::Error::custom("editor presentation count limit"));
-            }
-            let mut result = Vec::new();
-            while let Some(value) = seq.next_element()? {
-                if result.len() == LIMIT {
-                    return Err(serde::de::Error::custom("editor presentation count limit"));
-                }
-                result.push(value);
-            }
-            Ok(result)
-        }
-    }
-    d.deserialize_seq(Bounded::<T, LIMIT>(std::marker::PhantomData))
+    let values = crate::editor_transaction::decode_bounded::<D, T, LIMIT>(d)?;
+    crate::budget::spend(values.len()).map_err(serde::de::Error::custom)?;
+    Ok(values)
 }
 
 fn decode_formats<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<EditorFormat>, D::Error> {
@@ -355,6 +372,27 @@ fn decode_hits<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<EditorHit>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overflow_is_rejected_instead_of_silently_truncating_interactions() {
+        let mut value = EditorPresentation::default();
+        value.affordances.menu = Some(EditorMenu {
+            anchor: EditorMenuAnchor::Caret,
+            items: (0..=MAX_EDITOR_MENU_ITEMS)
+                .map(|index| EditorMenuItem {
+                    tag: index.to_string(),
+                    label: format!("Action {index}"),
+                })
+                .collect(),
+            selected: 0,
+        });
+        let mut budget = crate::MAX_STRING_BYTES;
+        value.sanitize(&mut budget);
+        assert!(
+            crate::decode::<EditorPresentation>(&crate::encode(&value)).is_err(),
+            "over-budget action lists must reject the frame, not publish a different menu"
+        );
+    }
 
     fn presentation(spans: Vec<EditorSpan>) -> EditorPresentation {
         EditorPresentation {

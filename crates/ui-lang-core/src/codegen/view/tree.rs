@@ -1733,7 +1733,7 @@ fn editor(
     refuse_when(
         program,
         origin,
-        editor.highlight.is_some() || editor.highlighter.is_some(),
+        editor.highlight.is_some(),
         "an editor highlighter",
     )?;
     refuse_when(
@@ -1881,8 +1881,24 @@ fn editor(
             .default_text_size
             .map(|value| format!("{:?}f32", value.min(f64::from(f32::MAX))))
     }));
+    let presentation = if let Some(highlighter) = &editor.highlighter {
+        let args = highlighter
+            .arguments
+            .iter()
+            .map(|argument| {
+                resolved_expr_use_code(program, *argument, env, ValueMode::Owned)
+                    .map(|value| format!(", {value}"))
+            })
+            .collect::<Result<String, _>>()?;
+        let factory = &program.extern_function(highlighter.function).rust_path;
+        format!(
+            "{{ let __presentation = {factory}(__editor.state_view(){args}); __presentation.validate(__editor.state_view().text).expect(\"invalid editor presentation\"); Some(::std::boxed::Box::new(__presentation)) }}"
+        )
+    } else {
+        "None".into()
+    };
     let options = format!(
-        "::std::boxed::Box::new({WIRE}::EditorOptions {{ binding: {binding}, size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
+        "::std::boxed::Box::new({WIRE}::EditorOptions {{ binding: {binding}, presentation: {presentation}, size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
         option_code(pixels(editor.padding)?)
     );
     let key = key_code(identity, "editor", origin, scope, env, program)?;
