@@ -2308,9 +2308,12 @@ suppressing success fails the saved-state assertion. During integration,
 individual temporary mutations fail radius, empty-heading-row and
 edit-preservation assertions. Each mutation was restored and all nine generated
 native tests passed. The [authoring observation](docs/evidence/agent-authoring/results.md)
-separates original-run evidence from these integration checks. Scrolled text
-uses native bounds/full visible height plus inspected captures because its
-paint lookup cannot reliably match translated content coordinates.
+separates original-run evidence from these integration checks. These Settings
+checks use native bounds/full visible height plus inspected captures. During the
+original authoring runs, paint lookup mismatched translated content coordinates;
+[PR #1063](https://github.com/byeongsu-hong/ducktape-ui/pull/1063) corrects direct
+and captured inspection to use visible screen bounds, with independent nested
+scroll regression evidence.
 
 ## Default header description layout
 

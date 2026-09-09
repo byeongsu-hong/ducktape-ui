@@ -131,9 +131,13 @@ longer, and differing context, cache state, command overlap and review timing
 prevent a causal speed comparison.
 
 The recurring concrete obstacle was test-coordinate interpretation, including
-an actual structured-paint association bug. That finding motivates a focused
-tool correction and coordinate documentation. It does not justify a new layout
-DSL or a rule that agents must read the whole component catalog.
+an actual structured-paint association bug.
+[PR #1063](https://github.com/byeongsu-hong/ducktape-ui/pull/1063) corrects direct
+and captured paint association using translated, clipped visible bounds. Its
+nested-scroll tests reject missing visible text and hidden-neighbor paint;
+[coordinate guidance](../../testing.md) explains the distinction. This finding
+does not justify a new layout DSL or a rule that agents must read the whole
+component catalog.
 
 The maintained example uses the after implementation because it retains field
 explanations and shows an email-error cue beside the always-visible Save action.
