@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WindowCommand {
     Focus,
+    Maximize(bool),
+    Minimize(bool),
+    Resizable(bool),
     Resize { width: f32, height: f32 },
     Close,
 }

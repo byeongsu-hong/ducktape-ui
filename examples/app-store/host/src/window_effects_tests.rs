@@ -387,3 +387,170 @@ fn redraw_notices(
         ui
     }
 }
+
+fn environment_text(app: &Running, suffix: &str) -> String {
+    fn find<'a>(node: &'a wire::Node, suffix: &str) -> Option<&'a str> {
+        if let wire::Node::Text { key, content, .. } = node
+            && key.ends_with(suffix)
+        {
+            return Some(content);
+        }
+        node.children().iter().find_map(|child| find(child, suffix))
+    }
+    find(
+        app.surface.0.lock().unwrap().frame.root.as_ref().unwrap(),
+        suffix,
+    )
+    .unwrap()
+    .to_owned()
+}
+
+#[test]
+#[ignore = "requires current native and Wasm window effects fixtures"]
+fn bundled_environment_keeps_os_mode_separate_and_restores_live_subscriptions() {
+    use super::super::layers_tests::{build, click, redraw, renderer};
+    use iced_test::runtime::user_interface;
+    for native in [false, true] {
+        let app = running(native);
+        let mut renderer = renderer();
+        let mut now = Instant::now();
+        let mut ui = build(
+            &app.surface.0,
+            user_interface::Cache::default(),
+            &mut renderer,
+            640.0,
+        );
+        ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        let mut store = crate::IceStore::__state();
+        store.running = vec![app.clone()];
+        click(&mut ui, &mut renderer, "Read OS mode");
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        assert_eq!(
+            environment_text(&app, "/os-mode"),
+            "unread",
+            "no OS answer is not an invented light/none reply"
+        );
+        store_actions(
+            &mut store,
+            crate::__IceStoreMessage::ChooseTheme("dark".into()),
+        );
+        store_actions(
+            &mut store,
+            crate::__IceStoreMessage::SystemTheme("none".into()),
+        );
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        assert_eq!(environment_text(&app, "/os-mode"), "none");
+        assert!(store.dark, "application palette stays independent");
+        click(&mut ui, &mut renderer, "Watch OS mode");
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        assert_eq!(environment_text(&app, "/os-changes"), "1");
+        for mode in ["dark", "dark"] {
+            store_actions(
+                &mut store,
+                crate::__IceStoreMessage::SystemTheme(mode.into()),
+            );
+        }
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        assert_eq!(environment_text(&app, "/os-mode"), "dark");
+        assert_eq!(
+            environment_text(&app, "/os-changes"),
+            "2",
+            "unchanged mode is not a second change"
+        );
+        click(&mut ui, &mut renderer, "Watch OS mode");
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        store_actions(
+            &mut store,
+            crate::__IceStoreMessage::SystemTheme("light".into()),
+        );
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        assert_eq!(
+            environment_text(&app, "/os-mode"),
+            "dark",
+            "removed subscription gets no updates"
+        );
+        click(&mut ui, &mut renderer, "Watch OS mode");
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        assert_eq!(environment_text(&app, "/os-mode"), "light");
+        let prepared =
+            iced::futures::executor::block_on(prepare_reload(entry(native), vec![app.clone()], 1));
+        super::super::reload::finish_reload(std::slice::from_ref(&app), 1, prepared).unwrap();
+        ui = build(&app.surface.0, ui.into_cache(), &mut renderer, 640.0);
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        assert_eq!(
+            environment_text(&app, "/os-changes"),
+            "4",
+            "one fresh current-mode item after restore"
+        );
+        store_actions(
+            &mut store,
+            crate::__IceStoreMessage::SystemTheme("none".into()),
+        );
+        for _ in 0..4 {
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+        }
+        assert_eq!(environment_text(&app, "/os-mode"), "none");
+        assert_eq!(
+            environment_text(&app, "/os-changes"),
+            "5",
+            "old generation stream is not replayed"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires current native and Wasm window effects fixtures"]
+fn bundled_environment_window_commands_dispatch_only_to_their_guest() {
+    use super::super::layers_tests::{build, click, redraw, renderer};
+    use iced_test::runtime::{user_interface, window::Action as W};
+    for native in [false, true] {
+        for label in ["Maximize guest", "Unminimize guest", "Fix guest size"] {
+            let app = running(native);
+            let mut renderer = renderer();
+            let mut now = Instant::now();
+            let mut ui = build(
+                &app.surface.0,
+                user_interface::Cache::default(),
+                &mut renderer,
+                640.0,
+            );
+            ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+            click(&mut ui, &mut renderer, label);
+            for _ in 0..4 {
+                ui = redraw(ui, &app.surface.0, &mut renderer, &mut now, 640.0);
+            }
+            let effect = prepare(&app);
+            let mut actions = outputs(commit_window_effect(vec![app.clone()], effect));
+            assert_eq!(actions.len(), 2, "native dispatch then acknowledgement");
+            let Action::Window(action) = actions.remove(0) else {
+                panic!("missing native command")
+            };
+            match (label, action) {
+                ("Maximize guest", W::Maximize(id, true))
+                | ("Unminimize guest", W::Minimize(id, false))
+                | ("Fix guest size", W::SetResizable(id, false)) => assert_eq!(id, app.window),
+                (_, action) => panic!("wrong native command: {action:?}"),
+            }
+            let Action::Output(effect) = actions.remove(0) else {
+                panic!("missing acknowledgement")
+            };
+            assert!(complete_window_effect(std::slice::from_ref(&app), effect));
+        }
+    }
+}

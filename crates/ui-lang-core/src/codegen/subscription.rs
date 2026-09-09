@@ -378,7 +378,12 @@ pub(in crate::codegen) fn generate_subscription(
                 writeln!(out, "{observe}::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}){end},").unwrap();
             }
             ResolvedSubscriptionSource::SystemTheme => {
-                writeln!(out, "::iced::system::theme_changes().map(__ice_system_theme){transforms}.map(move |__value| {route}),").unwrap();
+                let source = if program.target() == Target::Tree {
+                    "::ui_lang_guest::system::theme_changes()"
+                } else {
+                    "::iced::system::theme_changes().map(__ice_system_theme)"
+                };
+                writeln!(out, "{source}{transforms}.map(move |__value| {route}),").unwrap();
             }
             ResolvedSubscriptionSource::Touch(event) => {
                 let variant = match event {

@@ -9,6 +9,7 @@ mod limits;
 mod native;
 mod store;
 mod surfaces;
+mod system_environment;
 mod terminal;
 
 ui_lang::include_app!("src/ui/app.ice");

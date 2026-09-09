@@ -309,6 +309,23 @@ fn resolved_run_task_code(
         })
         .transpose()?;
     if let ResolvedEffectTarget::Builtin(function) = target {
+        if program.target() == Target::Tree {
+            match function.as_str() {
+                "__ice_system_theme" => {
+                    return Ok(wrap(format!(
+                        "::ui_lang_guest::system::theme().map(move |value| {success_message})"
+                    )));
+                }
+                "__ice_system_info" | "__ice_font_load" | "__ice_image_allocate" => {
+                    return Err(Error::new(
+                        "E190",
+                        &Span::line(1),
+                        "the tree host does not execute system information, font-load or image-allocation tasks",
+                    ));
+                }
+                _ => {}
+            }
+        }
         if function == "__ice_font_load" {
             let bytes = resolved_expr_use_code(program, args[0], env, ValueMode::Owned)?;
             return Ok(wrap(format!(
@@ -755,7 +772,14 @@ pub(in crate::codegen) fn generate_statements(
                 } else {
                     env
                 };
-                let mut task = resolved_run_task_code(run, program, message, run_env)?;
+                let mut task =
+                    resolved_run_task_code(run, program, message, run_env).map_err(|error| {
+                        if error.code == "E190" {
+                            program.error_at_origin("E190", statement.origin, error.message)
+                        } else {
+                            error
+                        }
+                    })?;
                 if let Some((name, scope)) = route_scope {
                     task = format!(
                         "{{ let {name} = ({}).clone(); {task} }}",
@@ -805,7 +829,13 @@ pub(in crate::codegen) fn generate_statements(
                 }
             }
             ResolvedStatementKind::TaskFlow(flow) => {
-                let task = task_flow_code(flow, program, message, env)?;
+                let task = task_flow_code(flow, program, message, env).map_err(|error| {
+                    if error.code == "E190" {
+                        program.error_at_origin("E190", statement.origin, error.message)
+                    } else {
+                        error
+                    }
+                })?;
                 let mapped = if flow.output.is_none() {
                     task
                 } else {
@@ -1322,6 +1352,18 @@ pub(in crate::codegen) fn generate_statements(
                     let command = match operation {
                         ResolvedWindowOperation::Focus => Some("Focus".to_owned()),
                         ResolvedWindowOperation::Close => Some("Close".to_owned()),
+                        ResolvedWindowOperation::Maximize(value) => Some(format!(
+                            "Maximize({})",
+                            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
+                        )),
+                        ResolvedWindowOperation::Minimize(value) => Some(format!(
+                            "Minimize({})",
+                            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
+                        )),
+                        ResolvedWindowOperation::Resizable(value) => Some(format!(
+                            "Resizable({})",
+                            resolved_expr_use_code(program, *value, env, ValueMode::Owned)?
+                        )),
                         ResolvedWindowOperation::Resize(width, height) => Some(format!(
                             "Resize {{ width: ({}) as f32, height: ({}) as f32 }}",
                             resolved_expr_use_code(program, *width, env, ValueMode::Owned)?,
@@ -1334,6 +1376,11 @@ pub(in crate::codegen) fn generate_statements(
                         writeln!(out, "{SOURCE_MARKER_END}").unwrap();
                         continue;
                     }
+                    return Err(program.error_at_origin(
+                        "E190",
+                        statement.origin,
+                        "the tree host does not execute this window operation",
+                    ));
                 }
                 let target = target
                     .as_ref()

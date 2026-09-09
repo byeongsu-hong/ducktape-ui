@@ -11,6 +11,8 @@ on store_opened(id)
   store_window = some(id)
 
 on system_theme(mode)
+  system_mode = some(mode)
+  running = set_os_theme(running, system_mode)
   system_dark = mode == "dark"
   dark = theme_choice == "dark" || (theme_choice == "auto" && system_dark)
   active_palette = StoreTheme.light
@@ -132,6 +134,7 @@ on instantiated(app)
 // Native open already applied saved placement or the declared preferred size.
 on guest_opened(id)
   running = attach_window(running, opening, id)
+  running = set_os_theme(running, system_mode)
   opening = drop_first(opening)
   rows = build_rows(catalog, query, library, running, generation)
 

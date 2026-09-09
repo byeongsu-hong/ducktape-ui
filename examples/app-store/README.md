@@ -1539,3 +1539,22 @@ and rebuilding host and guests together.
 
 Dropped/hovered file paths must be UTF-8. Non-UTF-8 native paths are refused
 with a host diagnostic, never rewritten with replacement characters.
+
+## OS theme and own-window environment
+
+`task system theme` and `subscribe system theme` use the OS mode observed by
+the host (`none`, `light`, `dark`). They do not use the store's selected palette
+or `host.theme`. A subscription receives the current known mode and subsequent
+changes; before the first OS answer, bounded requests wait and remain cancellable.
+Replacement copies only the current host fact; live guest recipes recreate their
+streams, and cancelled streams receive no new replies. Invalid or unsupported
+replies produce diagnostics, never a fabricated mode.
+
+Tree `task window maximize <bool>`, `minimize <bool>` and `resizable <bool>`
+join focus/resize/close in the host's existing own-window queue. They cannot
+name another native window. Completion acknowledges dispatch to Iced, not
+operating-system application. The added command shapes require wire epoch 6.
+Other window operations and system-information/font-load/image-allocation tasks
+are refused with E190. Raw Rust tasks still receive the runtime's explicit
+unsupported-action diagnostic; font/image/reload toolkit actions are not portable
+guest effects.

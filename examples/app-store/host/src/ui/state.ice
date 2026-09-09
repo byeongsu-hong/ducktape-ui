@@ -28,6 +28,7 @@ state
   // `auto` follows the system; the other two are the user's word.
   theme_choice = "auto"
   system_dark = false
+  system_mode:str? = none
   dark = false
   active_palette:palette[StoreTheme] = StoreTheme.light
   status = ""
