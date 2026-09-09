@@ -196,6 +196,22 @@ and custom geometry, a checkbox slot, narrow layouts and validation feedback.
 These are reusable Ice components, not new language keywords or automatic
 platform-native controls.
 
+## A bounded scroll area inside a document
+
+Prefer one vertical scroll owner for ordinary forms. When a document needs an
+independently scrollable preview, give that inner `scroll` an explicit height;
+the outer document still needs its own bounded viewport. Do not nest two
+unbounded fill-height scrollers and expect either to choose a useful height.
+
+The [complete nested preview example](../../examples/showcase/tests/cases/ui/nested_scroll.ice)
+uses Page for the inset, an outer fill-height scroll and a 120px inner preview.
+With the pinned native renderer, a wheel sequence stays with the inner preview
+even when it reaches its end. After the pointer leaves the window and returns
+to the preview, fresh wheel input at that edge can move the outer document. This keeps the document
+from jumping during a continuing inner scroll. The example tests both offsets
+and the actual final preview action. This is native wheel behavior; touch,
+timeout-based handoff and Tree hosts have separate evidence requirements.
+
 ## Optional header descriptions
 
 `PageHeader(title, description="")` and `Panel(title, description="")` omit the
