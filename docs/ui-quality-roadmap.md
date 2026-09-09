@@ -43,7 +43,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | L02 | P0 · Done | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merged as b709ea51. |
 | L03 | P0 · Done | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
 | L04 | P0 · Done | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
-| L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
+| L05 | P1 · Done | [PR #1043](https://github.com/byeongsu-hong/ducktape-ui/pull/1043), [responsive workspace guide](../crates/ui-lang-components/docs/responsive-workspace.md), [native Ice contract](../examples/showcase/tests/cases/ui/responsive_workspace.ice) | Wide/compact navigation preserves project selection, independent drafts, native focus, selection and caret across 960→360→960 resizing. Exact/custom content breakpoints, readable-width action alignment and reachable Save at 320×240 are verified; 4 authored tests plus 3 generated harness checks pass. |
 | L06 | P1 · Audit | [grid/flex surface](../skills/design-ice-ui/references/extended-surface.md), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Repeated cards use a consistent minimum useful width and aspect ratio; odd item counts and narrow windows leave no clipped or zero-width cells. |
 | L07 | P0 · Done | [text/layout emission](../crates/ui-lang-core/src/codegen/view), [text runtime](../crates/ui-lang-runtime/src) | Horizontal and vertical text alignment inside assigned bounds work independently of parent placement, including fixed/fill/shrink sizes, multiline wrapping and padding. Verify painted text geometry, not only the enclosing widget's rectangle. Added from the user's explicit two-axis text-alignment request. |
 
@@ -345,3 +345,19 @@ The [component guide](../crates/ui-lang-components/README.md#controlled-state-an
 explains the boundary and the distinction between native replacement events
 and field-level updates. S02 remains open for product I/O ownership, failed
 saves and stale network completions; those paths are outside this catalog audit.
+
+### L05: retained editing across responsive layouts
+
+2026-09-09: [PR #1043](https://github.com/byeongsu-hong/ducktape-ui/pull/1043)
+closes L05 with a verified default-component responsive workspace
+composition and agent guidance. An actual selected-word replacement assertion
+failed after resizing when optional navigation shifted the native editor's
+child position; always-present navigation ancestors restore editing continuity.
+Sidebar-width mutation Reds report 208 vs 200 and 168 vs 160; changing Form
+from fill to shrink fails the explicit minimum Save-height assertion (the
+action collapses to zero height). All mutations are restored. Seven focused
+tests pass; captures cover 960×640, 360×640, 320×240 and customized 527×480,
+using scale 1, en-US, Linux metadata, reduced motion, native light theme and
+the default app palette. Native window-manager and touch behavior are outside
+this evidence. Source/API support is unchanged; the delivered scope is a
+reusable composition, executable examples, screenshots and guidance.
