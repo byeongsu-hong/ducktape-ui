@@ -9,18 +9,48 @@ use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Event, Length, Rectangle, Size, Vector};
 
+/// Accepted frame inventory, shared by every render of the same Inputs.
+#[derive(Debug)]
+pub(super) struct Targets {
+    focus: focus::Targets,
+    scroll: scroll::Targets,
+}
+impl Targets {
+    pub(super) fn new(root: &ui_lang_wire::Node) -> Self {
+        Self {
+            focus: focus::Targets::new(root),
+            scroll: scroll::Targets::new(root),
+        }
+    }
+}
+enum ScopeTargets {
+    Adopted(std::sync::Arc<Targets>),
+    Unadopted(Targets),
+}
+impl std::ops::Deref for ScopeTargets {
+    type Target = Targets;
+    fn deref(&self) -> &Targets {
+        match self {
+            Self::Adopted(targets) => targets,
+            Self::Unadopted(targets) => targets,
+        }
+    }
+}
+
 pub(super) fn scope(
     content: IceElement<'static, Output>,
-    instance: u64,
+    inputs: &super::Inputs,
     handle: MemoParkingHandle,
     root: &ui_lang_wire::Node,
 ) -> IceElement<'static, Output> {
     iced::Element::new(Scope {
         content,
-        instance,
+        instance: inputs.instance,
         handle,
-        focus: focus::Targets::new(root),
-        scroll: scroll::Targets::new(root),
+        targets: match &inputs.targets {
+            Some(targets) => ScopeTargets::Adopted(targets.clone()),
+            None => ScopeTargets::Unadopted(Targets::new(root)),
+        },
     })
 }
 
@@ -42,6 +72,7 @@ pub(super) fn render(
         editor_revision: kept.inputs.editor_revision,
         editor_sequence: kept.inputs.editor_sequence.clone(),
         combos: HashMap::new(),
+        targets: None,
         editor_transactions: kept.inputs.editor_transactions.clone(),
         editor_bindings: kept.inputs.editor_bindings.clone(),
         editor_reported: kept.inputs.editor_reported.clone(),
@@ -173,8 +204,7 @@ struct Scope {
     content: IceElement<'static, Output>,
     instance: u64,
     handle: MemoParkingHandle,
-    focus: focus::Targets,
-    scroll: scroll::Targets,
+    targets: ScopeTargets,
 }
 
 struct State {
@@ -188,7 +218,7 @@ struct State {
 
 impl Scope {
     fn observe_focus(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &iced::Renderer) {
-        let focused = self.focus.capture(|operation| {
+        let focused = self.targets.focus.capture(|operation| {
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
                 layout,
@@ -200,7 +230,7 @@ impl Scope {
     }
 
     fn observe_scroll(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &iced::Renderer) {
-        let positions = self.scroll.capture(|operation| {
+        let positions = self.targets.scroll.capture(|operation| {
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
                 layout,
@@ -248,7 +278,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             let restore = state
                 .focused
                 .take()
-                .filter(|target| self.focus.contains(target));
+                .filter(|target| self.targets.focus.contains(target));
             let positions = std::mem::take(&mut state.positions);
             *state = self.fresh_state();
             state.restore_positions = positions;
@@ -278,7 +308,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits);
         if let Some(target) = tree.state.downcast_mut::<State>().restore.take() {
-            focus::restore(&target, &self.focus, |operation| {
+            focus::restore(&target, &self.targets.focus, |operation| {
                 self.content.as_widget_mut().operate(
                     &mut tree.children[0],
                     Layout::new(&layout),
@@ -288,7 +318,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             });
         }
         let positions = std::mem::take(&mut tree.state.downcast_mut::<State>().restore_positions);
-        self.scroll.restore(positions, |operation| {
+        self.targets.scroll.restore(positions, |operation| {
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
                 Layout::new(&layout),
@@ -436,7 +466,15 @@ mod tests {
         } else {
             iced::widget::text("hidden").into()
         };
-        scope(content, instance, handle, &ui_lang_wire::Node::empty())
+        scope(
+            content,
+            &super::super::Inputs {
+                instance,
+                ..Default::default()
+            },
+            handle,
+            &ui_lang_wire::Node::empty(),
+        )
     }
 
     fn headless() -> iced::Renderer {

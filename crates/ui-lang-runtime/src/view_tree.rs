@@ -228,6 +228,7 @@ pub struct Inputs {
     editor_reported: HashMap<String, (u64, u64)>,
     editor_notifications: Vec<wire::Event>,
     combos: HashMap<String, combo::Field>,
+    targets: Option<Arc<memo::Targets>>,
 }
 
 impl Default for Inputs {
@@ -254,6 +255,7 @@ impl Default for Inputs {
             editor_reported: HashMap::new(),
             editor_notifications: Vec::new(),
             combos: HashMap::new(),
+            targets: None,
         }
     }
 }
@@ -298,6 +300,7 @@ impl Inputs {
         self.editor_references = editors;
         editor_transactions::adopt(self, root);
         editor_documents::adopt(self);
+        self.targets = Some(Arc::new(memo::Targets::new(root)));
     }
 
     /// Restore only a matching combo identity, reset revision and option set.
@@ -1236,6 +1239,9 @@ impl std::fmt::Display for Choice {
 
 /// Renders a tree. Strings are cloned out of it, so the element outlives the
 /// frame it came from; the next frame's tree can replace it freely.
+/// Adopt each accepted frame into `inputs` before rendering it. Unadopted
+/// Inputs can render a standalone tree, collecting its focus/scroll inventory
+/// locally; adopted frames reuse their immutable inventory across redraws.
 pub fn render(
     root: &wire::Node,
     inputs: &Inputs,
@@ -1255,7 +1261,7 @@ pub fn render(
             memo: handle.clone(),
         },
     );
-    memo::scope(content, inputs.instance, handle, root)
+    memo::scope(content, inputs, handle, root)
 }
 
 /// What the host keeps across frames, as one borrow for the render walk.

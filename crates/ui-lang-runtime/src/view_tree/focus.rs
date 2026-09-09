@@ -4,7 +4,7 @@ use iced::{Rectangle, widget::Id};
 use std::collections::{HashMap, HashSet};
 use ui_lang_wire::{Node, ToggleKind};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
     Input,
     Editor,
@@ -22,7 +22,7 @@ pub(super) struct Target {
     kind: Kind,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct Targets {
     controls: HashMap<Id, Option<Kind>>,
     surfaces: HashSet<crate::StableId>,
@@ -228,5 +228,105 @@ impl Operation for WithoutSurfaces<'_> {
         if !self.excluded {
             self.inner.focusable(id, bounds, state);
         }
+    }
+}
+
+#[cfg(test)]
+mod inventory_tests {
+    use super::*;
+    use crate::view_tree::Inputs;
+    fn button(key: &str) -> Node {
+        Node::Button {
+            key: key.into(),
+            content: ui_lang_wire::ButtonContent::Label(key.into()),
+            label: None,
+            checked: None,
+            expanded: None,
+            description: None,
+            on_press: Some(1),
+            width: None,
+            height: None,
+            padding: None,
+            style: Default::default(),
+        }
+    }
+    #[test]
+    fn accepted_frames_refresh_shared_focus_inventory_without_reusing_old_keys() {
+        let mut inputs = Inputs::default();
+        inputs.adopt(&button("old"));
+        let mut next = inputs.clone();
+        assert!(std::sync::Arc::ptr_eq(
+            inputs.targets.as_ref().unwrap(),
+            next.targets.as_ref().unwrap()
+        ));
+        next.adopt(&button("new"));
+        let inventory = &next.targets.as_ref().unwrap().focus;
+        assert!(!inventory.controls.contains_key(&Id::from("old")));
+        assert_eq!(
+            inventory.controls.get(&Id::from("new")),
+            Some(&Some(Kind::Button))
+        );
+        assert!(
+            inputs
+                .targets
+                .as_ref()
+                .unwrap()
+                .focus
+                .controls
+                .contains_key(&Id::from("old"))
+        );
+        let duplicate = Node::Linear {
+            key: "root".into(),
+            axis: ui_lang_wire::Axis::Column,
+            max_width: None,
+            clip: false,
+            wrap: None,
+            spacing: None,
+            padding: None,
+            width: None,
+            height: None,
+            align: None,
+            background: None,
+            border: None,
+            children: vec![button("new"), button("new")],
+        };
+        next.adopt(&duplicate);
+        assert_eq!(
+            next.targets
+                .as_ref()
+                .unwrap()
+                .focus
+                .controls
+                .get(&Id::from("new")),
+            Some(&None)
+        );
+        let accepted = next.targets.as_ref().unwrap().clone();
+        let invalid = Node::Editor {
+            options: Box::default(),
+            key: "invalid".into(),
+            placeholder: String::new(),
+            document: ui_lang_wire::editor_document::EditorDocumentRef {
+                document: String::new(),
+                reset: 0,
+                text_revision: 0,
+                revision: 0,
+                cursor: Default::default(),
+                byte_len: 0,
+            },
+            on_document: 0,
+            editable: true,
+            width: None,
+            height: None,
+            min_height: None,
+            max_height: None,
+        };
+        next.adopt(&invalid);
+        assert!(next.editor_document_fault.is_some());
+        assert!(std::sync::Arc::ptr_eq(
+            &accepted,
+            next.targets.as_ref().unwrap()
+        ));
+        next.adopt(&Node::empty());
+        assert!(next.targets.as_ref().unwrap().focus.controls.is_empty());
     }
 }

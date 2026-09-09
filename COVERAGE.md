@@ -1731,6 +1731,14 @@ rows before and after reordering, checking sibling cache generations and state.
 Removing scope from the guest cache key fails the unchanged-sibling generation
 assertion. Restored bundles pass. CI builds the fixture and runs `store::lazy_tests`.
 
+Accepted `Inputs` frames share immutable focus/scroll target inventories across
+redraws; each successful adoption replaces the inventory, while a rejected
+editor reference preserves it. The release input render stays at 65,537
+allocations for 8,191 inputs without raising its budget. The inventory regression
+covers changed/removed keys, duplicate refusal and failed adoption; retaining the
+old inventory after adoption fails its old-key assertion, then passes restored.
+Standalone rendering with unadopted Inputs retains local inventory collection.
+
 The release render contract preserves the per-node allocation/time bounds. The
 module root adds two fixed allocations (weak slot and wrapper); a scope-free
 measurement separates that from the current renderer's seven fixed allocations.

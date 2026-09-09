@@ -814,7 +814,7 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
             node = gen_list(rng, children);
             continue;
         }
-        node = match rng.next_range(7) {
+        node = match rng.next_range(8) {
             6 => Node::Tooltip {
                 key: gen_key(rng),
                 position: TooltipPosition::Bottom,
@@ -846,6 +846,14 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                 anticipate: gen_opt_f32(rng),
                 delay: gen_opt_f32(rng),
                 child: Box::new(node),
+            },
+            7 => Node::ResizeHandle {
+                key: gen_key(rng),
+                on_press: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_release: None,
+                on_drag: rng.next_bool().then(|| rng.next_u64() as u32),
+                cursor: None,
+                content: Box::new(node),
             },
             5 => Node::MouseArea {
                 key: gen_key(rng),
@@ -1207,6 +1215,7 @@ fn tree_depth(node: &Node) -> usize {
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
+        | Node::ResizeHandle { content, .. }
         | Node::MouseArea { content, .. }
         | Node::Pin { content, .. }
         | Node::Float { content, .. }
@@ -1627,7 +1636,7 @@ fn check_bounds(
             }
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
-        Node::MouseArea { content, .. } => {
+        Node::MouseArea { content, .. } | Node::ResizeHandle { content, .. } => {
             check_bounds(content, depth + 1, keys, svg_bytes, ctx);
         }
         Node::Qr { code, .. } => {
