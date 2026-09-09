@@ -3160,3 +3160,20 @@ theme, default native font, en-US and reduced motion. The
 remaining 40px of the blue card and the fixed footer. The coordinate distinction
 is documented in [testing guidance](docs/testing.md); Tree-host and platform
 renderers are outside this evidence.
+
+### Review binary selection and baseline maintenance
+
+`cargo ice review ROOT --bin <name>` restricts Cargo to the selected application
+binary while `--test` continues to select declared Ice tests. CI's previous
+package-wide Showcase review reached the execution-count assertion with 17
+copies of `unmounted_component_coverage`; the explicit binary retains the
+exactly-one-execution guard. Full and selected review CI calls name the Showcase
+binary, and Windows preserves its review bundle even when the child process
+fails so captured compiler/test stderr remains inspectable. Local review option
+checks pass 17 tests (one existing allocation test ignored). The actual CI
+review script passes 24 full-review tests and one selected test, each executed
+once, and rejects the deliberately removed capture in its full baseline.
+
+The component API baseline records eight already-merged optional-property
+additions and five reviewed action-recipe focus styles. Regeneration reports
+zero breaking changes; this maintenance does not alter public component code.

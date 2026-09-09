@@ -712,7 +712,10 @@ direct utility that owns the same field is an error.
 A top-level `test` is part of the same checked source graph as production
 declarations — there is no second test-file grammar and no Rust registration
 step. Each declaration lowers to an ordinary `#[cfg(test)] #[test]` function, so
-`cargo test` and `cargo ice test` both discover it.
+`cargo test` and `cargo ice test` both discover it. Native review runs each
+selected Ice test exactly once. `cargo ice review ROOT --bin NAME` selects the
+Cargo application binary independently of `--test`, which selects an Ice test;
+this avoids duplicate generated tests across a package's integration targets.
 
 Every interaction, environment event, time step, capture, and accessibility
 action lowers to the semantic, raw-event-independent `Action` enum and crosses

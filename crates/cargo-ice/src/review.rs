@@ -19,6 +19,7 @@ const REVIEW_STACK_SIZE: usize = 8 * 1024 * 1024;
 struct ReviewOptions {
     source: PathBuf,
     package: Option<String>,
+    binary: Option<String>,
     output: Option<PathBuf>,
     baseline: Option<PathBuf>,
     tests: Vec<String>,
@@ -203,9 +204,11 @@ fn review_opened(
         if options.trace {
             command.arg("--release");
         }
+        command.args(["--package", &package]);
+        if let Some(binary) = &options.binary {
+            command.args(["--bin", binary]);
+        }
         command.args([
-            "--package",
-            &package,
             &format!("__ice_tests::{test}"),
             "--",
             "--exact",
@@ -234,7 +237,7 @@ fn review_opened(
                     "cargo reported success without executing exact Ice test `{test}`; ensure the root is included with `ui_lang::include_app!`"
                 )),
                 count => Some(format!(
-                    "cargo executed exact Ice test `{test}` {count} times; select a package target with one generated test"
+                    "cargo executed exact Ice test `{test}` {count} times; pass `--bin <name>` to select the application target"
                 )),
             }
         } else {
@@ -703,6 +706,7 @@ fn parse_review(args: &[String]) -> Result<ReviewOptions, String> {
             .ok_or_else(|| format!("{flag} requires a value"))?;
         match flag {
             "--package" => set_once(&mut options.package, value.clone(), flag)?,
+            "--bin" => set_once(&mut options.binary, value.clone(), flag)?,
             "--output" => set_once(&mut options.output, value.clone().into(), flag)?,
             "--baseline" => set_once(&mut options.baseline, value.clone().into(), flag)?,
             "--test" => {
@@ -1329,6 +1333,8 @@ mod tests {
     fn parses_review_inputs_and_selects_declared_tests() {
         let options = parse_review(&[
             "src/ui/app.ice".into(),
+            "--bin".into(),
+            "showcase".into(),
             "--test".into(),
             "wide".into(),
             "--baseline".into(),
@@ -1338,7 +1344,19 @@ mod tests {
             "--trace".into(),
         ])
         .unwrap();
+        assert_eq!(options.binary.as_deref(), Some("showcase"));
         assert_eq!(options.tests, ["wide"]);
+        assert!(parse_review(&["app.ice".into(), "--bin".into()]).is_err());
+        assert!(
+            parse_review(&[
+                "app.ice".into(),
+                "--bin".into(),
+                "one".into(),
+                "--bin".into(),
+                "two".into(),
+            ])
+            .is_err()
+        );
         assert_eq!(options.thresholds.max_changed_ratio, 0.01);
         assert!(options.trace);
         assert!(parse_review(&["app.ice".into(), "--trace".into(), "--trace".into()]).is_err());
