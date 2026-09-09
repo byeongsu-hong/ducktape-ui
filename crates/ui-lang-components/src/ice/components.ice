@@ -288,18 +288,30 @@ component Avatar.Agent(initials:str)
         @text-primary_fg
 
 component Item(title:str, description:str, meta:str)
-  row #root
+  flex #root
     with
       w=fill
       gap=9.0
       px=9.0
       py=7.0
-      align=center
-    slot
-    col w=fill gap=3.0
-      text title @list text-fg
-      text description @caption
-    text meta @meta_compact
+      items=center
+    box shrink=0.0
+      slot
+    box grow=1.0 basis=content
+      col #content w=shrink gap=3.0
+        text title #title
+          with
+            w=shrink
+            wrap=word
+            @list
+            @text-fg
+        text description #description
+          with
+            w=shrink
+            wrap=word
+            @caption
+    box basis=content
+      text meta #meta @meta_compact
 
 component Attachment(name:str, meta:str)
   row #root

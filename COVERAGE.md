@@ -2549,3 +2549,23 @@ Both the root workspace and `examples/app-store` select the vendored widget
 crate. External consumers do not inherit workspace Cargo patches from published
 Ice packages and need the same patch for this behavior. See
 [the vendor provenance and scope](vendor/iced_widget/README.md).
+
+### Default Item content allocation
+
+`examples/showcase/tests/cases/ui/item_layout.ice` mounts the real default
+`Item`, `Surface`, `Page` and `Avatar` with the required Geist fonts. At 280px,
+primary title and description paint inside their allocated column beside long
+metadata; at 640px, metadata retains the width and height of a same-font
+intrinsic reference. Short metadata stays compact. A caller-owned leading
+button retains its dimensions and actual click route inside custom Page insets.
+
+The native regression originally observed a 9.94px title allocation for text
+whose reference word needs 56.86px. Separate temporary mutations also exercise
+zero-basis primary starvation, unnecessary 72px metadata capping at wide width,
+and leading-content compression. The latter two fail at 60.04px versus 162.67px
+metadata width and 13.56px versus 30px avatar width. No primitive row sizing
+rule changes; the component uses existing content-based flex layout.
+
+This covers native Item composition. A caller-authored label/input/action row
+with too much fixed content still needs a compact composition; these tests do
+not claim arbitrary narrow inputs or every list component is now verified.

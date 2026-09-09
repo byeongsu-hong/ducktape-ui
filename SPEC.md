@@ -1661,6 +1661,15 @@ retain the native Iced key-binding signature. The authored route still receives
 its declared `Payload`. See [the transaction contract](docs/editor-transactions.md)
 for admission, ordering, cancellation and guest-owned history.
 
+## Default list item sizing
+
+The standard library's `Item(title, description, meta)` preserves its leading
+slot's chosen size. Its primary text and metadata use content-based flex sizing:
+they shrink together under constraint, while metadata retains its intrinsic
+width when space is available. Text wraps in the allocated columns. This is
+ordinary library composition over existing `flex` and `box` behavior; it does
+not change primitive row fill/shrink semantics or add a layout property.
+
 ## Default page insets
 
 The standard component library exports `Page(padding:f64=24.0)`. Page fills its
