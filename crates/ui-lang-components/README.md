@@ -196,6 +196,26 @@ and custom geometry, a checkbox slot, narrow layouts and validation feedback.
 These are reusable Ice components, not new language keywords or automatic
 platform-native controls.
 
+## Reading position in a changing transcript
+
+Use `MessageScroller` with stable item IDs when a capped list inserts and
+removes rows while someone is reading. `anchor-y=keep` observes height growth;
+it cannot identify a retained row when the total height stays constant.
+
+The [Ice transcript example](../../examples/showcase/tests/cases/ui/scroll_reading_anchor.ice)
+and its [Rust boundary](../../examples/showcase/tests/scroll_reading_anchor.rs)
+exercise variable-height rows, prepending while dropping the tail, and removing
+the first row while appending at the tail. The surviving reading row stays at
+the same screen coordinate.
+
+Apply each controlled-widget event synchronously to the current state. The
+showcase [transition adapter](../../examples/showcase/src/message_scroller_adapter.rs)
+returns the updated state immediately and a separately consumed follow-up task.
+Assign the state first, then route task events back through that same reducer.
+Returning state snapshots from asynchronous tasks can lose one of the multiple
+events a single wheel produces. The example protects this integration boundary;
+it does not cover deletion of the currently anchoring row.
+
 ## A bounded scroll area inside a document
 
 Prefer one vertical scroll owner for ordinary forms. When a document needs an

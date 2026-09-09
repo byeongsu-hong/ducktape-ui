@@ -1714,28 +1714,15 @@ pub fn message_scroller_state() -> MessageScrollerState {
     MessageScrollerState::new("ice-default-transcript").auto_scroll(true)
 }
 
-fn message_scroller_settle(
-    mut state: MessageScrollerState,
-    event: MessageScrollerEvent,
-) -> iced::Task<MessageScrollerState> {
-    let followup = state.update(event);
-    let next = state.clone();
-    iced::Task::done(next)
-        .chain(followup.then(move |event| message_scroller_settle(state.clone(), event)))
-}
+pub use crate::message_scroller_adapter::{
+    MessageScrollerTransition, message_scroller_apply, message_scroller_effects,
+};
 
-pub fn message_scroller_bootstrap(state: MessageScrollerState) -> iced::Task<MessageScrollerState> {
-    message_scroller_settle(
+pub fn message_scroller_bootstrap(state: MessageScrollerState) -> MessageScrollerTransition {
+    message_scroller_apply(
         state,
         MessageScrollerEvent::ItemsChanged(transcript_metadata()),
     )
-}
-
-pub fn message_scroller_apply(
-    state: MessageScrollerState,
-    event: MessageScrollerEvent,
-) -> iced::Task<MessageScrollerState> {
-    message_scroller_settle(state, event)
 }
 
 pub fn message_scroller(state: &MessageScrollerState) -> Element<'_, MessageScrollerEvent> {

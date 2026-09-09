@@ -262,5 +262,21 @@ control is visible and clickable. Moving the pointer out of the window and
 back clears the sequence, allowing edge input to move the document. Tests assert
 both offsets so neither double movement nor trapped fresh input can pass.
 
-L03 still needs reading-position preservation under inserted/removed content.
+Reading-position preservation under inserted/removed content is covered below.
 These native pointer tests do not cover touch or elapsed-time transaction expiry.
+
+### L03: live transcript updates exposed a state race
+
+The showcase MessageScroller adapter returned deferred state snapshots. One
+wheel emits viewport and intent events before those snapshots return; the
+intent snapshot could erase the new viewport. Updating the transcript then
+restored a stale reading position. The adapter now assigns state synchronously
+and routes only follow-up events back through the current state.
+
+A native driver runs [the Ice transcript](../examples/showcase/tests/cases/ui/scroll_reading_anchor.ice)
+through the same production adapter. It checks a surviving row's full visible
+height and screen coordinate after capped prepend/tail removal and head
+removal/tail append. The previous deferred-state path hides the reading row;
+the corrected path retains it. L03 remains open for deleting the currently
+anchoring row. Similar deferred-state adapters belong to the S02 state audit;
+this delivery changes only MessageScroller.

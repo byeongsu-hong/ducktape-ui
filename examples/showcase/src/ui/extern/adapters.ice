@@ -20,6 +20,7 @@ extern crate::adapters
   MenubarEvent()
   MessageScrollerState()
   MessageScrollerEvent()
+  MessageScrollerTransition(state:MessageScrollerState)
   LogTimelineState()
   LogTimelineEvent()
   VirtualListState()
@@ -96,8 +97,9 @@ extern crate::adapters
   component radio_group(selected:&str) -> str
   task radio_apply(next:str) -> str
   sync message_scroller_state() -> MessageScrollerState
-  task message_scroller_bootstrap(state:MessageScrollerState) -> MessageScrollerState
-  task message_scroller_apply(state:MessageScrollerState, event:MessageScrollerEvent) -> MessageScrollerState
+  sync message_scroller_bootstrap(state:MessageScrollerState) -> MessageScrollerTransition
+  sync message_scroller_apply(state:MessageScrollerState, event:MessageScrollerEvent) -> MessageScrollerTransition
+  task message_scroller_effects(transition:MessageScrollerTransition) -> MessageScrollerEvent
   component message_scroller(state:&MessageScrollerState) -> MessageScrollerEvent
   sync log_timeline_state() -> LogTimelineState
   pure log_timeline_apply(state:LogTimelineState, event:LogTimelineEvent) -> LogTimelineState

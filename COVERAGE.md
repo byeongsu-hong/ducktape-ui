@@ -2630,3 +2630,24 @@ instead of 40px. The native source was restored byte-for-byte; all five focused
 tests pass. Both captures were inspected with the app palette, Geist, scale 1,
 en-US, Linux and reduced motion. No runtime behavior changes in this delivery;
 this evidence excludes touch, elapsed-time expiry and Tree host behavior.
+
+### Controlled transcript updates keep the live viewport
+
+`examples/showcase/tests/scroll_reading_anchor.rs` drives the generated Ice app
+in `tests/cases/ui/scroll_reading_anchor.ice` through the production showcase
+MessageScroller transition adapter. Native wheel input is followed by actual
+prepend and remove clicks on a twelve-row capped transcript with 24px/40px rows.
+The fully visible retained row stays at y=144.25px through both changes.
+
+The old task-returned state pattern processes viewport and intent events from
+the same old snapshot; the later result loses the live viewport. Temporarily
+restoring that adapter pattern fails the intended assertion, `prepend hid the
+reading row`. Restoring immediate state assignment and event-only follow-ups
+passes all four focused tests, including generated checks. No fake measurement
+is injected. Rust Driver targets native row containers because Ice's static
+target resolver cannot name arbitrary extern-widget descendants.
+
+Before/after captures were inspected at 400×320, app palette, Geist, scale 1,
+en-US, Linux and reduced motion. Deleting the anchoring row itself, touch and
+Tree hosts are separate evidence; the component's native anchoring algorithm
+is unchanged. The fix is in the showcase's typed Rust/Ice integration.
