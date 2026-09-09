@@ -2067,6 +2067,21 @@ Native generation intact and verify that an unsupported test imported from a
 fragment reports E190 at that fragment's line. Mounts and other unsupported
 authored actions remain follow-up work.
 
+A third scenario in the same source addresses rows by key rather than by place.
+Counter draws two `keyed … by=number` rows, so each scopes as
+`…/rows/key(<number>)`; `keyed_rows_answer_to_their_key_through_reorder_and_removal`
+targets both, clicks the second row's own button, and asserts the mark appears
+`within` that row and not the other. It then dispatches a reorder that swaps the
+two rows and repeats both assertions under the same keys, and a removal after
+which the vanished key must report `missing` while the surviving key still
+reports `exists`. Positional resolution passes the first half and fails from the
+reorder on. The owning behavioral mutation changes `pick` from `picked = number`
+to `picked = 1`, so the mark is drawn in the wrong keyed row: both backends fail
+at the `within` assertion, and pass after exact restoration and rebuilding. A
+target path is lowered into the host, whose state is the mounted surface rather
+than the guest's, so keys must be literals; keys that read state keep their
+E190.
+
 The same Counter source also boots preset `seven`, asserts typed count and drawn
 `7`, clicks the mounted increment control, asserts count and drawn `8`, directly
 dispatches the typed wheel handler, and asserts count and drawn `9`. Explicit

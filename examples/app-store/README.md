@@ -474,9 +474,10 @@ mirror. A source fingerprint rejects stale test artifacts; their distinct
 manifest keeps them out of the production catalog. Normal guest exports remain
 unchanged, including when the test feature is enabled elsewhere in the workspace.
 
-Presets, typed state expectations and dispatch, static targets, clicks and
-literal text expectations are supported. Mounts, keyed targets and other test
-actions still report a source-position diagnostic. Direct Tree guest library
+Presets, typed state expectations and dispatch, targets with literal keys,
+clicks, `exists`/`missing` and literal text expectations are supported. A key
+that reads state, mounts and other test actions still report a source-position
+diagnostic. Direct Tree guest library
 tests continue to explain that authored scenarios need the host harness;
 Native-language tests keep their existing generated harness.
 
