@@ -17,6 +17,11 @@ The workspace follows that split:
 
 ## Ice interface in this workspace
 
+The [Settings application](../../examples/settings/README.md) is the runnable
+default-form entry point. The [screen authoring guide](../../docs/ui-authoring.md)
+maps other common screens to focused executable examples and their customization
+boundaries.
+
 Ice `use` paths are relative to the importing `.ice` file; Cargo packages do
 not currently provide package-aware Ice imports. The workspace showcase uses
 the checked source interface directly:

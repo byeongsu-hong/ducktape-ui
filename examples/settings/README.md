@@ -5,6 +5,11 @@ application supplies labels, bound values, help text and handlers; Form owns
 scrolling and readable content width, and FormSection/TextField supply the
 shared spacing and control treatment.
 
+Start here for a default-styled form. For list/detail, dialog or collection
+screens, use the [screen authoring guide](../../docs/ui-authoring.md). This form
+scrolls its Save action with its fields; the guide also links the existing
+composition that keeps Save visible in a short window.
+
 ```sh
 cargo run -p settings-example
 cargo test -p settings-example
