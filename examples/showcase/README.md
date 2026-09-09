@@ -1,5 +1,9 @@
 # Ice component showcase
 
+For an application screen, use the [small composition examples](../../docs/ui-authoring.md#choose-the-closest-working-composition)
+for forms, list/detail, dialogs and collections. Each entry identifies its
+state/layout owner and a focused command; the full catalog below is for browsing.
+
 Run the complete default component catalog with:
 
 ```sh

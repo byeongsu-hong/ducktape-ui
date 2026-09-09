@@ -235,8 +235,11 @@ validator covering the published required fields, source provenance, nested
 geometry/accessibility/paint shapes, and sibling PNG identity. Every failure
 after opening an output directory publishes a new run-ID failure bundle; an
 already-written detailed failure report for that run is retained.
-`--package`, `--output`, and the same pixel/ratio/value tolerance flags control
-execution and policy. The output contains `report.json`, `report.html`,
+`--package`, `--bin <Cargo binary>`, `--output`, and the same pixel/ratio/value
+tolerance flags control execution and policy. Select `--bin showcase` for the
+Showcase application: a package can also contain integration targets with the
+same generated test name, and a review requires exactly one execution. The
+output contains `report.json`, `report.html`,
 `diagnostics.json`, test logs, current PNGs/manifests, and per-capture
 `diff.png`/`report.json` files.
 Passing `--trace` runs the selected tests in release mode and adds strict trace

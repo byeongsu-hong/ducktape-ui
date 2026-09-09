@@ -2712,6 +2712,10 @@ fn italic_font() -> Font {
 }
 
 #[cfg(test)]
+#[path = "content_workspace.rs"]
+mod content_workspace;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

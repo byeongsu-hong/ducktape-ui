@@ -599,8 +599,46 @@ impl SplitMix64 {
     }
 }
 
+// Campaign logic tests advance only action time from real update callbacks.
+// Production traces and performance probes continue to measure wall time.
+#[cfg(test)]
+pub(super) mod action_clock {
+    use std::cell::Cell;
+    use std::time::Duration;
+
+    thread_local! {
+        static NOW: Cell<Option<Duration>> = const { Cell::new(None) };
+    }
+
+    pub(crate) struct Guard(std::marker::PhantomData<std::rc::Rc<()>>);
+
+    pub(crate) fn scoped() -> Guard {
+        NOW.with(|now| {
+            assert!(now.get().is_none(), "action clocks must not nest");
+            now.set(Some(Duration::ZERO));
+        });
+        Guard(std::marker::PhantomData)
+    }
+
+    pub(crate) fn now() -> Option<Duration> {
+        NOW.with(Cell::get)
+    }
+
+    pub(crate) fn advance(duration: Duration) {
+        NOW.with(|now| now.set(Some(now.get().expect("scoped action clock") + duration)));
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            NOW.with(|now| now.set(None));
+        }
+    }
+}
+
 struct CurrentAction {
     started: Instant,
+    #[cfg(test)]
+    test_started: Option<Duration>,
     index: usize,
 }
 
@@ -696,6 +734,8 @@ impl Recorder {
             .push(record_action(index, action, source, target_source));
         self.current = Some(CurrentAction {
             started: Instant::now(),
+            #[cfg(test)]
+            test_started: action_clock::now(),
             index,
         });
         index
@@ -730,11 +770,16 @@ impl Recorder {
         let Some(current) = self.current.take() else {
             return;
         };
+        let elapsed = current.started.elapsed();
+        #[cfg(test)]
+        let elapsed = current.test_started.map_or(elapsed, |started| {
+            action_clock::now().expect("action clock outlives its recorder") - started
+        });
         self.artifact.samples.push(Sample {
             run: 0,
             action_index: current.index,
             phase: Phase::Action,
-            duration_ns: duration_ns(current.started.elapsed()),
+            duration_ns: duration_ns(elapsed),
         });
     }
 

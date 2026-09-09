@@ -247,6 +247,7 @@ jobs:
         run: |
           cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
+            --bin showcase \
             --output target/ci-review/full
           python3 - <<'PY'
           import json
@@ -285,11 +286,13 @@ jobs:
           PY
           cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
+            --bin showcase \
             --test generated_control_accessibility \
             --baseline target/ci-review/selected-invalid-baseline \
             --output target/ci-review/selected
           if cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
+            --bin showcase \
             --baseline target/ci-review/full-removed-baseline \
             --output target/ci-review/full-removed-check; then
             echo "::error::full review accepted a removed baseline capture"
@@ -411,8 +414,16 @@ jobs:
         run: |
           cargo ice review examples/showcase/src/ui/app.ice \
             --package showcase \
+            --bin showcase \
             --test generated_control_accessibility \
             --output target/platform-review
+      - name: Preserve selected review evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: platform-review-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/platform-review
+          if-no-files-found: ignore
 
   accessibility:
     name: Accessibility (Linux and Windows)

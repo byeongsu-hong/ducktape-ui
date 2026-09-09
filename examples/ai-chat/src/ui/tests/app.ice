@@ -5,6 +5,35 @@
 // The rows are carried on the row itself rather than in component state,
 // because a settled row is drawn behind `lazy`, which redraws it only when the
 // row changes and cannot see state held anywhere else.
+test rich_content_uses_a_readable_column_at_both_window_sizes
+  preset rich_content
+  viewport 1180 800
+  theme light
+  scale 1.0
+  locale "en-US"
+  platform linux
+  reduced-motion true
+  target transcript = #shell/app/transcript
+  target answer = #shell/app/transcript/rows/key(-31)/answer(-31)/root
+  target composer = #shell/app/composer/field/draft
+  expect answer.width <= 760.0
+  expect answer.width > 700.0
+  scroll-to transcript 0.0 0.0
+  expect text "Publication notes"
+  capture rich_content_wide
+  click composer
+  type "Keep this draft"
+  window resize 760 600
+  expect answer.width <= 463.0
+  expect answer.width > 450.0
+  expect composer.value == "Keep this draft"
+  scroll-to transcript 0.0 0.0
+  expect text "Publication notes"
+  capture rich_content_compact
+  snap-end transcript
+  expect text "Diagram supplied by the author"
+  capture rich_content_code_and_media_reference
+
 test folding_a_finished_turn_reveals_what_it_did
   preset conversation
   viewport 920 800
