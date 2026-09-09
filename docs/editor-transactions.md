@@ -87,9 +87,11 @@ Large-document product completion is tracked in [#1014](https://github.com/byeon
 Fault and cancellation notifications return to the widget that admitted the input, even when several widgets share a document. Cancellation carries the retired identity for mirror cleanup; its callback runs after an explicit document reset without applying the retired snapshot to the new Editor. Unmounted callbacks may be absent, but transport cancellation still releases their pending decision.
 
 Replacement retires the old native widget Tree as part of instance isolation.
-The large-document fixture explicitly refocuses the new editor through a native
-widget operation after asserting restored text/caret and before testing history.
-Automatic focus continuity is tracked separately in [#1034](https://github.com/byeongsu-hong/ducktape-ui/issues/1034).
+A native focus operation transfers only the eligible focused identity into the
+new Tree; no old widget state is reused. The actual native/Wasm one-MiB fixture
+asserts restored text/caret before redraw, then performs Undo without refocusing.
+Native commits from plain renderings of a shared document use its authored
+history route; explicitly authored bindings retain their own routes.
 
 Independent editor responses share a one-MiB replacement budget per frame. The
 guest drains complete responses in order and remains busy while later responses

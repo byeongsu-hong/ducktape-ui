@@ -637,9 +637,9 @@ For module packaging requirements and the connected implementation phases, see
   acceptance and authored history reduction. Atomic patches preserve native
   `Content`; native fallback edits and guest patches reach the same guest-owned
   history reducer. See [the transaction contract](../../docs/editor-transactions.md).
-  The large-document reload fixture verifies text/caret before redraw, then uses
-  a native focus operation before Undo. Replacing the instance currently resets
-  widget focus; automatic continuity remains [#1034](https://github.com/byeongsu-hong/ducktape-ui/issues/1034).
+  The actual native/Wasm one-MiB reload fixture verifies text/caret before redraw
+  and Undo without refocusing. Replacement transfers eligible focus identity
+  into fresh native widgets while retiring old input sessions.
   Native action/highlighter/style callbacks and `highlight=` stay E190. Native
   word/line selection modes are not copied by the cursor/anchor contract.
 - No scale factor or locale reaches the guest. The colour mode does, as a

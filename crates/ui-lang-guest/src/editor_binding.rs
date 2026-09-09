@@ -108,6 +108,7 @@ impl<P: 'static> EditorBinding<P> {
             }))
         }));
         wire::EditorBinding {
+            authored: true,
             claims: self.claims,
             on_request,
             on_event,
@@ -118,12 +119,14 @@ impl EditorBinding<()> {
     pub fn plain<M: 'static>(
         wrap: impl Fn(EditorTransaction<M>) -> M + 'static,
     ) -> wire::EditorBinding {
-        EditorBinding::<M>::new(
+        let mut binding = EditorBinding::<M>::new(
             Vec::new(),
             |_| EditorDecision::DefaultEditorAction,
             |_| None,
         )
-        .register(std::convert::identity, wrap)
+        .register(std::convert::identity, wrap);
+        binding.authored = false;
+        binding
     }
 }
 #[derive(Clone, Debug)]

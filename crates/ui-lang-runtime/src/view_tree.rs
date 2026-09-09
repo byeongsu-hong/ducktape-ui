@@ -3454,6 +3454,7 @@ mod tests {
         wire::Node::Editor {
             options: Box::new(wire::EditorOptions {
                 binding: Some(Box::new(wire::EditorBinding {
+                    authored: true,
                     claims: Vec::new(),
                     on_request: 2,
                     on_event: 3,

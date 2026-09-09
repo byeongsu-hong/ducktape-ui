@@ -594,7 +594,9 @@ and caret/selection observations, including cursor-only movement, and can inspec
 them with editor builtins. Explicit document replacements reset once; ordinary
 echoes preserve newer host edits. Positions are UTF-8 byte offsets normalized to
 grapheme boundaries. Disabled editors produce no edits. Rebuild hosts and guests
-together for this editor wire change. Native editor callbacks remain refused.
+together for this editor wire change. Tree factories support declared key claims
+and guest-owned post-commit history through the [editor transaction contract](docs/editor-transactions.md).
+Arbitrary native action, highlighter and style callbacks remain refused.
 The [bundled fixture](examples/app-store/tests/editor-guest/src/ui/app.ice)
 exercises layout, selection colors and guest-bound edits.
 

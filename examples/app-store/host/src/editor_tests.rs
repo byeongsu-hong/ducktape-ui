@@ -45,21 +45,34 @@ fn redraw(
     renderer: &mut iced::Renderer,
     now: &mut std::time::Instant,
 ) -> Ui {
-    *now += std::time::Duration::from_secs(1);
-    let mut messages = vec![];
-    ui.update(
-        &[Event::Window(window::Event::RedrawRequested(*now))],
-        mouse::Cursor::Unavailable,
-        renderer,
-        &mut iced::advanced::clipboard::Null,
-        &mut messages,
-    );
-    assert!(guest.lock().unwrap().fault.is_none());
-    if messages.iter().any(|m| m == "wake") {
-        build(guest, renderer, ui.into_cache())
-    } else {
-        ui
+    // Plain editors use the same ordered commit/reducer/ack lane as authored
+    // bindings. Assert the final UI only once that protocol has settled.
+    for _ in 0..128 {
+        *now = (*now + std::time::Duration::from_millis(16)).max(std::time::Instant::now());
+        let mut messages = vec![];
+        ui.update(
+            &[Event::Window(window::Event::RedrawRequested(*now))],
+            mouse::Cursor::Unavailable,
+            renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert!(guest.lock().unwrap().fault.is_none());
+        if messages.iter().any(|m| m == "wake") {
+            ui = build(guest, renderer, ui.into_cache());
+        }
+        let state = guest.lock().unwrap();
+        if state.frame.root.is_some()
+            && state.inputs.editor_documents_status().unwrap()
+            && !state.inputs.editor_transactions_pending()
+            && state.pending.is_empty()
+            && !state.staged_frame
+            && !state.frame.busy
+        {
+            return ui;
+        }
     }
+    panic!("editor input did not settle");
 }
 fn key_event(value: &str, modifiers: keyboard::Modifiers) -> Event {
     Event::Keyboard(keyboard::Event::KeyPressed {

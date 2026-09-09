@@ -404,7 +404,14 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                         document: self.document.clone(),
                     });
                 }
-                shell.capture_event();
+                // Outside clicks still order the editor's blur, but belong to
+                // the clicked sibling (for example a Replace document button).
+                if !matches!(event, Event::Mouse(_))
+                    || cursor.is_over(layout.bounds())
+                    || control.dragging
+                {
+                    shell.capture_event();
+                }
             }
             if control.lane.phase() == super::editor_transactions::Phase::Ready
                 && let Some(front) = control.lane.front()
@@ -446,7 +453,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
             let mut control = super::lock(shared);
             match effective_event {
                 Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
-                    control.dragging = true
+                    control.dragging = effective_cursor.is_over(layout.bounds())
                 }
                 Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                     control.dragging = false
@@ -520,9 +527,8 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                 local.invalidate_layout();
             }
             if let Some((sequence, input)) = &replay {
-                if local.is_event_captured() {
-                    shell.capture_event();
-                }
+                // Capture was decided when this input was admitted. Replaying
+                // it must not consume the unrelated event driving this update.
                 if local.is_layout_invalid() {
                     shell.invalidate_layout();
                 }

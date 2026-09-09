@@ -217,6 +217,8 @@ impl EditorKeyClaim {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorBinding {
+    /// An authored factory owns its routes; plain renderings inherit a document factory.
+    pub authored: bool,
     #[serde(deserialize_with = "decode_claims")]
     pub claims: Vec<EditorKeyClaim>,
     pub on_request: u32,
@@ -493,6 +495,7 @@ mod protocol_tests {
     #[test]
     fn decoder_rejects_excess_claims_and_responses() {
         let binding = EditorBinding {
+            authored: true,
             claims: vec![
                 EditorKeyClaim {
                     key: crate::keyboard::Key::Named(crate::keyboard::Named::Tab),

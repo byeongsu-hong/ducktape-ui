@@ -460,11 +460,15 @@ pub(super) fn adopt(inputs: &mut super::Inputs, root: &wire::Node) {
             document,
             ..
         } = node
-            && options.binding.is_none()
+            && options
+                .binding
+                .as_ref()
+                .is_none_or(|binding| !binding.authored)
             && let Some((binding_document, binding)) = bindings
-                .values()
-                .find(|(doc, _)| doc == &document.document)
-                .cloned()
+                .iter()
+                .filter(|(_, (doc, binding))| doc == &document.document && binding.authored)
+                .min_by_key(|(key, _)| *key)
+                .map(|(_, binding)| binding.clone())
         {
             bindings.insert(key.clone(), (binding_document, binding));
             reported.insert(key.clone(), (document.reset, document.revision));
@@ -1150,6 +1154,7 @@ mod native_tests {
             },
             options: Box::new(wire::EditorOptions {
                 binding: Some(Box::new(wire::EditorBinding {
+                    authored: true,
                     claims: vec![],
                     on_request: 1,
                     on_event: if key == "owner" { 22 } else { 11 },
@@ -1375,6 +1380,7 @@ mod document_budget_tests {
                     },
                     options: Box::new(wire::EditorOptions {
                         binding: Some(Box::new(wire::EditorBinding {
+                            authored: true,
                             claims: vec![],
                             on_request: 2,
                             on_event: 3,
