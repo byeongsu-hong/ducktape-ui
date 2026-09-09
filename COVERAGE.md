@@ -2304,6 +2304,15 @@ same tests. PNG/JSON captures use scale 1 and the app's light palette; the wide,
 narrow and error tests pin en-US, Linux and reduced motion. Screenshots are in
 `examples/settings/screenshots`; tests render real generated native widgets.
 
+The workspace-preferences composition now keeps heading and Save outside the
+Form at 960×820 and 360×320. Native wheel/keyboard tests reach the final control,
+retain custom input geometry and edits through validation recovery, and omit
+an empty optional heading explanation. The former scrolling Save fails its
+initial visible assertion at 360×320; additional mutations fail success, edit
+retention, radius and empty-description assertions. Scrolled text uses native
+bounds/full visible height plus inspected captures because its paint lookup
+cannot reliably match translated content coordinates.
+
 ## Default header description layout
 
 `PageHeader` and `Panel` accept omitted descriptions and omit empty description
