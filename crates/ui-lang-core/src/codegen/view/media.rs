@@ -528,11 +528,15 @@ fn render_resolved_media(
     };
     let mut code = match media.kind {
         ResolvedMediaKind::Image if is_embedded => {
-            format!("::iced::widget::image(::iced::widget::image::Handle::from_bytes({source}))")
+            format!(
+                "::iced::widget::image({})",
+                embedded_image_handle_code(&source)
+            )
         }
         ResolvedMediaKind::Image => format!("::iced::widget::image({source})"),
         ResolvedMediaKind::Viewer if is_embedded => format!(
-            "::iced::widget::image::viewer(::iced::widget::image::Handle::from_bytes({source}))"
+            "::iced::widget::image::viewer({})",
+            embedded_image_handle_code(&source)
         ),
         ResolvedMediaKind::Viewer if media.source_type == Type::Str => format!(
             "::iced::widget::image::viewer(::iced::widget::image::Handle::from_path({source}))"
