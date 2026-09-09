@@ -3227,7 +3227,8 @@ an exact comparison signature adds cold/change-boundary storage to avoid repeate
 per-frame key ownership. The release allocation and latency limits are unchanged.
 Bypassing exact comparison and omitting render cache lookup independently reach
 intended owner assertion Reds; restored tests retain the focus and scroll
-replacement checks. Final release performance validation remains in CI.
+replacement checks. Release allocation and latency limits also passed CI after
+the cache change.
 
 ### Concurrent native package launch
 
