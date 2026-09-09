@@ -741,6 +741,20 @@ mod tests {
     }
 
     #[test]
+    fn tree_target_keys_stay_in_guest_state_and_aliases_resolve_per_step() {
+        let fixture = Fixture::new();
+        fixture.write("app.ice", "app Counter\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #ffffff\n  fg #111111\n  primary #333333\n  danger #ff0000\nstate\n  selected = 1\n  rows = [1, 2]\non pick(value)\n  selected = value\nview\n  keyed row in rows by=row #rows\n    button \"Pick\" #pick -> pick(row)\ntest live_target\n  target chosen = #rows/key(selected)/pick\n  click chosen\n  dispatch pick(2)\n  expect exists chosen\n");
+        let host = super::compile_tree_tests_file(fixture.path("app.ice")).unwrap();
+        let guest = super::compile_tree_guest_tests_file(fixture.path("app.ice")).unwrap();
+        assert_eq!(host.rust.matches("__ice_tree_test_target(").count(), 2);
+        assert!(!host.rust.contains(".selected"));
+        assert!(guest.rust.contains("fn __ice_test_target"));
+        assert!(guest.rust.contains("self.selected"));
+        assert!(guest.rust.contains("(0, 0) =>"));
+        assert!(guest.rust.contains("(0, 2) =>"));
+    }
+
+    #[test]
     fn tree_authored_typed_steps_stay_in_the_guest_and_presets_use_native_boot() {
         let fixture = Fixture::new();
         fixture.write("app.ice", "app Counter\ntheme contract AppTheme\n  bg\n  fg\n  primary\n  danger\npalette app for AppTheme\n  bg #ffffff\n  fg #111111\n  primary #333333\n  danger #ff0000\nstate\n  count = 0\npreset seeded\n  state\n    count = 7\non set_count(value)\n  count = value\nview\n  button \"Set\" -> set_count(3)\ntest typed_count\n  preset seeded\n  expect count == 7\n  dispatch set_count(count + 2)\n  expect count > 8\n");

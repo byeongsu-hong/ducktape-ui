@@ -146,3 +146,28 @@ fn __ice_tree_test_step<P>(
     }
     driver.redraw(location);
 }
+
+fn __ice_tree_test_target<P>(
+    driver: &mut Driver<P>,
+    test: u32,
+    step: u32,
+    location: ui_lang_runtime::testing::Location,
+) -> String
+where
+    P: iced::Program<State = Surface, Message = String, Theme = iced::Theme> + 'static,
+    P::Renderer: 'static,
+{
+    driver.redraw(location);
+    let mut guest = driver.state().0.lock().unwrap();
+    let Backend::Authored(backend) = &mut guest.backend else {
+        panic!("explicit test artifact required");
+    };
+    let bytes = backend
+        .call(wire::authored::Request::ResolveTarget { test, step })
+        .unwrap_or_else(|error| panic!("{location}: {error}"));
+    assert!(
+        bytes.len() <= wire::MAX_STRING_BYTES,
+        "{location}: authored target exceeds string budget"
+    );
+    String::from_utf8(bytes).expect("authored target is UTF-8")
+}

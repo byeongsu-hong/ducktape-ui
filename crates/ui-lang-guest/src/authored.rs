@@ -6,6 +6,7 @@ use iced::Task;
 pub trait TestApp: App {
     const FINGERPRINT: u64;
     fn test_boot(test: u32) -> Result<(Self, Task<Self::Message>), String>;
+    fn test_target(&self, test: u32, step: u32) -> Result<String, String>;
     fn test_step(&self, test: u32, step: u32) -> Result<Option<Self::Message>, String>;
 }
 
@@ -52,6 +53,20 @@ pub fn respond<A: TestApp + crate::SnapshotApp>(
             }
             *driver = Some(Driver::for_test(test, macos)?);
             Ok(Vec::new())
+        }
+        Request::ResolveTarget { test, step } => {
+            let driver = driver.as_mut().ok_or("begin authored test first")?;
+            let _context = driver.slots.enter();
+            for message in crate::slots::take_deferred::<A::Message>() {
+                crate::spawn(&mut driver.tasks, driver.app.update(message));
+                driver.settle();
+            }
+            driver.settle();
+            let path = driver.app.test_target(test, step)?;
+            if path.len() > crate::wire::MAX_STRING_BYTES {
+                return Err("authored target exceeds string budget".into());
+            }
+            Ok(path.into_bytes())
         }
         Request::Step { test, step } => {
             driver
@@ -148,6 +163,12 @@ mod tests {
                 Task::done(7).chain(Task::future(std::future::pending())),
             ))
         }
+        fn test_target(&self, test: u32, step: u32) -> Result<String, String> {
+            if test != 0 || step != 0 {
+                return Err("unknown target".into());
+            }
+            Ok(format!("Counter/rows/key({})", self.count))
+        }
         fn test_step(&self, test: u32, step: u32) -> Result<Option<i64>, String> {
             assert_eq!(test, 0);
             assert_eq!(std::rc::Rc::strong_count(&self.opaque), 1);
@@ -178,6 +199,32 @@ mod tests {
         assert_eq!(
             driver.test_step(0, 0).unwrap_err(),
             "typed expectation failed"
+        );
+    }
+    #[test]
+    fn targets_read_the_current_settled_guest_without_exporting_state() {
+        let mut driver = Some(Driver::<Counter>::for_test(0, false).unwrap());
+        let target = || crate::wire::authored::Request::ResolveTarget { test: 0, step: 0 };
+        assert_eq!(
+            respond(&mut driver, target()).unwrap(),
+            b"Counter/rows/key(7)"
+        );
+        driver.as_mut().unwrap().test_step(0, 1).unwrap();
+        assert_eq!(
+            respond(&mut driver, target()).unwrap(),
+            b"Counter/rows/key(9)"
+        );
+        assert!(
+            respond(
+                &mut driver,
+                crate::wire::authored::Request::ResolveTarget { test: 0, step: 99 }
+            )
+            .is_err()
+        );
+        assert!(
+            respond::<Counter>(&mut None, target())
+                .unwrap_err()
+                .contains("begin")
         );
     }
 }
