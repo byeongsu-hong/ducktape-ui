@@ -3247,8 +3247,9 @@ chunks with their original color and count assertions unchanged.
 
 ### Content workspaces: readable media and retained active work
 
-The [content workspace guide](crates/ui-lang-components/docs/content-workspaces.md)
-connects native AI chat, bounded media/editor, and default DataGrid/TreeView/
+[PR #1064](https://github.com/byeongsu-hong/ducktape-ui/pull/1064) and the
+[content workspace guide](crates/ui-lang-components/docs/content-workspaces.md)
+connect native AI chat, bounded media/editor, and default DataGrid/TreeView/
 LogTimeline compositions. The data fixture reuses the Showcase's actual typed
 renderers, reducers and focus tasks with small deterministic payloads. It does
 not introduce replacement widgets or a new language API.
