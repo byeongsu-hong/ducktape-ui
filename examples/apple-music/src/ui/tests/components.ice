@@ -1,6 +1,6 @@
 preset component_error
   state
-    loading = true
+    home_loading = true
     error = "Network disconnected"
 
 test component_sidebar_contract
@@ -12,7 +12,7 @@ test component_sidebar_contract
         section=section
         signed_in=signed_in
         profile_name=profile_name
-        loading=loading
+        signing_in=signing_in
         current_title=current_title
         current_artist=current_artist
         current_cover=current_cover
@@ -606,7 +606,7 @@ test component_library_status_contract
   expect text "Music is unavailable"
   expect text "Network disconnected"
   dispatch sign_in
-  expect !signed_in
+  expect signed_in
 
 test minimum_window_layout_contract
   preset test
@@ -643,3 +643,35 @@ test minimum_window_layout_contract
   expect volume_control.visible
   expect queue_control.visible
   expect utilities.right ~= player_surface.right - 10.0
+
+test search_remains_editable_while_sign_in_is_busy
+  viewport 420 760
+  mount
+    Sidebar #sidebar query<->query
+      with
+        section=section
+        signed_in=signed_in
+        profile_name=profile_name
+        signing_in=true
+        current_title=current_title
+        current_artist=current_artist
+        current_cover=current_cover
+      events
+        close_window -> close_window
+        minimize_window -> minimize_window
+        toggle_maximize_window -> toggle_maximize_window
+        drag_window -> drag_window
+        search -> search
+        navigate -> navigate _
+        restart_current -> restart_current
+        sign_in -> sign_in
+        sign_out -> sign_out
+  target search_input = #sidebar/root/surface/content/music-search
+  target sign_in_button = #sidebar/root/surface/content/sign-in
+  expect a11y sign_in_button disabled true
+  click search_input
+  type "nova"
+  expect search_input.value == "nova"
+  key enter
+  expect section == MusicSection.search
+  expect !empty(search_results)

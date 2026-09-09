@@ -305,6 +305,10 @@ The [default Ice components](crates/ui-lang-components/README.md) include
 `PageHeader` and `Panel` with optional descriptions: omitted help adds no blank
 row, while long titles and descriptions wrap within the available content width.
 
+`Alert` variants and `EmptyState` also omit empty description rows. See
+[state feedback](crates/ui-lang-components/docs/state-feedback.md) for bounded
+empty states, independent requests and preserving edits during a save.
+
 The shared component theme includes light and dark palettes. Applications can
 switch palettes or supply a complete custom palette while retaining the same
 components; see [theme customization](crates/ui-lang-components/README.md).

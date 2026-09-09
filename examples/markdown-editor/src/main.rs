@@ -95,6 +95,97 @@ mod tests {
         );
     }
 
+    fn request_output(
+        task: iced::Task<__MarkdownEditorMessage>,
+    ) -> Option<__MarkdownEditorMessage> {
+        use iced::futures::StreamExt;
+        let mut stream = iced_runtime::task::into_stream(task)?;
+        iced::futures::executor::block_on(async move {
+            while let Some(action) = stream.next().await {
+                if let iced_runtime::Action::Output(message) = action {
+                    return Some(message);
+                }
+            }
+            None
+        })
+    }
+
+    fn open_scratch_note() -> MarkdownEditor {
+        let (mut app, _) = MarkdownEditor::__boot();
+        let library =
+            iced::futures::executor::block_on(crate::library::open_library(String::new()))
+                .expect("scratch library opens");
+        let _ = app.__update(__MarkdownEditorMessage::LibraryOpened(library));
+        app
+    }
+
+    fn insert(app: &mut MarkdownEditor, character: char) {
+        let _ = app.__update(__MarkdownEditorMessage::EditDocument(
+            RichEditorAction::Edit(Action::Edit(Edit::Insert(character))),
+        ));
+    }
+
+    #[test]
+    fn pending_save_preserves_new_edits_and_rejects_repeat_submit() {
+        let mut app = open_scratch_note();
+        insert(&mut app, 'A');
+        let submitted = app.document.text();
+        let completion = request_output(app.__update(__MarkdownEditorMessage::SaveNow))
+            .expect("save returns its actual completion");
+        assert!(app.saving);
+        assert!(
+            request_output(app.__update(__MarkdownEditorMessage::SaveNow)).is_none(),
+            "a second submit must not launch another write while saving"
+        );
+        insert(&mut app, 'B');
+        let edited = app.document.text();
+        assert_ne!(edited, submitted);
+        let _ = app.__update(completion);
+        assert!(!app.saving);
+        assert_eq!(app.document.text(), edited);
+        assert!(
+            app.history.dirty,
+            "pending edits were incorrectly marked saved"
+        );
+        assert_eq!(std::fs::read_to_string(&app.path).unwrap(), submitted);
+        let next = request_output(app.__update(__MarkdownEditorMessage::SaveNow)).unwrap();
+        let _ = app.__update(next);
+        assert!(!app.history.dirty);
+        assert_eq!(std::fs::read_to_string(&app.path).unwrap(), edited);
+        std::fs::remove_dir_all(&app.home).unwrap();
+    }
+
+    #[test]
+    fn failed_save_retains_the_draft_and_successful_retry_clears_error() {
+        let mut app = open_scratch_note();
+        let original = app.document.text();
+        let original_path = app.path.clone();
+        insert(&mut app, 'A');
+        let edited = app.document.text();
+        // A removed parent directory produces a real filesystem error, even
+        // when the tests run as root; no permission-bit or mocked failure.
+        std::fs::remove_dir_all(&app.home).unwrap();
+        let failure = request_output(app.__update(__MarkdownEditorMessage::SaveNow)).unwrap();
+        let _ = app.__update(failure);
+        assert!(!app.saving);
+        assert!(app.history.dirty);
+        assert_eq!(app.document.text(), edited);
+        assert!(
+            !app.error.is_empty(),
+            "failed save must explain why it did not persist"
+        );
+        std::fs::create_dir_all(&app.home).unwrap();
+        std::fs::write(original_path, original).unwrap();
+        let retry = request_output(app.__update(__MarkdownEditorMessage::SaveNow)).unwrap();
+        assert!(app.error.is_empty(), "retry must clear the previous error");
+        let _ = app.__update(retry);
+        assert!(!app.saving);
+        assert!(!app.history.dirty);
+        assert!(app.error.is_empty());
+        assert_eq!(std::fs::read_to_string(&app.path).unwrap(), edited);
+        std::fs::remove_dir_all(&app.home).unwrap();
+    }
+
     #[test]
     fn clicking_a_shell_action_clears_editor_selection() {
         let (mut app, _) = MarkdownEditor::__boot();

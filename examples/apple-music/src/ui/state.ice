@@ -11,7 +11,10 @@ enum MusicSection
 state
   section:MusicSection = MusicSection.home
   query = ""
-  loading = false
+  home_loading = false
+  search_loading = false
+  signing_in = false
+  submitted_query = ""
   signed_in = false
   profile_name = "Sign In"
   top_picks:[Album] = []
@@ -29,9 +32,10 @@ state
   error = ""
 
 derived
+  loading = (section == MusicSection.search && search_loading) || (section != MusicSection.search && home_loading)
   normalized_query = trim(query)
   has_query = !empty(normalized_query)
 
 preset test
   boot
-    run every load_home() -> home_loaded _ | failed _
+    run every load_home() -> home_loaded _ | home_failed _

@@ -83,7 +83,7 @@ component NavItem(icon:str, label:str, target:MusicSection, selected:bool=false)
         hovered bg=surface/58 text=fg
         pressed bg=accent text=primary
 
-component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_name:str, loading:bool, current_title:str, current_artist:str, current_cover:str)
+component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_name:str, signing_in:bool, current_title:str, current_artist:str, current_cover:str)
   emits
     close_window
     minimize_window
@@ -145,7 +145,6 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             label="Search music"
             hint="Artists, albums, and songs"
             submit=emit(search)
-            disabled=loading
             w=fill
             p=10.0
             text-size=13.0
@@ -260,7 +259,7 @@ component Sidebar(bind query:str, section:MusicSection, signed_in:bool, profile_
             with
               w=fill
               p=9.0
-              disabled=loading
+              disabled=signing_in
               @outline_action
         if signed_in
           button #profile -> emit(sign_out)
