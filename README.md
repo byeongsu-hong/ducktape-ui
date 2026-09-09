@@ -305,6 +305,9 @@ Default list rows use content-based sizing so long trailing metadata shares
 narrow space with the main text. See [Item sizing](crates/ui-lang-components/README.md#list-item-sizing)
 for the leading-content customization boundary.
 
+For an input with a trailing action, use [Field and InputGroup](crates/ui-lang-components/README.md#input-with-a-trailing-action):
+keep the label above the control so the editable value retains room at narrow widths.
+
 ## First-class tests
 
 Tree guests can run authored presets, typed state expectations and dispatch,

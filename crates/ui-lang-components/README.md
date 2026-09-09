@@ -100,6 +100,30 @@ Page does not scroll or choose a readable maximum width. A long ordinary page
 can put one scroll viewport inside Page; Form provides the bounded scrolling
 composition for forms. An intentionally full-bleed region may live outside Page.
 
+## Input with a trailing action
+
+Let `Field` own the label above the control, and let `InputGroup` own the input
+and trailing action on the same line:
+
+```ice
+Field label="Project slug"
+  InputGroup
+    row w=fill gap=6.0 align=center
+      input "" <-> slug label="Project slug" w=fill p=6.0
+      button "Apply" @secondary_action -> apply slug
+```
+
+`fill` receives the space left by its siblings. Putting another long label or
+origin string on that line can leave an editable but unreadable input. Keep
+that context in the field label or description when narrow widths are supported.
+Page supplies the outer inset; this pattern needs no extra page padding around
+the input group.
+
+The [complete compiling example](../../examples/showcase/tests/cases/ui/compact_input.ice)
+includes application state, a bound reusable field, the action route and Geist
+font loading. Its tests check the whole painted input value and actual Apply
+click at 280px and 640px, including custom Page padding.
+
 ## List item sizing
 
 `Item(title, description, meta)` keeps its leading content at its chosen size.

@@ -2584,3 +2584,17 @@ vertical layout allocated 164/164 instead of 246/82. The grid height assertion
 also exercises the separate grid length representation. This evidence applies
 to native generated layout wrappers; Tree host surfaces and identified-control
 wrappers remain separate verification work.
+
+### Compact input and trailing action
+
+`examples/showcase/tests/cases/ui/compact_input.ice` is a complete native Ice
+example using the existing Field and InputGroup components. Two authored tests
+at 280px and 640px compare the edited input's visible text width to an intrinsic
+reference with the same font, size and advanced shaping. They also check label
+separation, action containment, custom Page insets and the real Apply click.
+
+Adding a label inside the control row reduces visible input text to 16.42px
+against the required 44.80px and fails the intended assertion. Restoring the
+example passes all five tests, including generated checks. Captures were
+inspected at both widths. This supplies a canonical narrow composition; it
+does not change primitive row sizing or introduce a new library component.

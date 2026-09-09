@@ -39,7 +39,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
-| L01 | P0 · Audit | [view layout rules](../skills/design-ice-ui/references/views-and-style.md), [Item/InputGroup](../crates/ui-lang-components/src/ice/components.ice) | A label + flexible input + trailing action share a narrow parent without overlap; the action stays usable, fill/shrink ownership is explicit, and custom padding remains inside the parent. |
+| L01 | P0 · Done | [view layout rules](../skills/design-ice-ui/references/views-and-style.md), [Item/InputGroup](../crates/ui-lang-components/src/ice/components.ice) | A label + flexible input + trailing action share a narrow parent without overlap; the action stays usable, fill/shrink ownership is explicit, and custom padding remains inside the parent. |
 | L02 | P0 · Done | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merged as b709ea51. |
 | L03 | P0 · Audit | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
 | L04 | P0 · Done | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
@@ -222,5 +222,20 @@ leading button's actual click route inside custom page insets. Three temporary
 behavior mutations produced assertion-level failures and restoration passed
 all seven tests. Delivery is recorded in the pull request carrying this change.
 
-L01 remains open for the caller-authored narrow input/action composition. The
-separate layout fill-portion lowering defect is being handled in its own PR.
+The remaining caller-authored input/action composition is covered below.
+Native layout fill portions were corrected in [PR #1033](https://github.com/byeongsu-hong/ducktape-ui/pull/1033).
+
+### L01: canonical narrow input/action composition
+
+[The compiling example](../examples/showcase/tests/cases/ui/compact_input.ice)
+uses Field for the label and InputGroup for a flexible input plus Apply button.
+At 280px, the whole edited value is visible; at 640px, custom Page insets remain
+inside the parent. Both tests click the actual button and observe its state
+transition. An extra inline label makes the visible value shrink from 44.80px
+to 16.42px and fails the paint-width assertion; restoration passes five tests.
+The same application component is used in the example view and test mounts.
+
+Together with Item allocation (PR #1032), page insets (PR #1024) and native
+layout portions (PR #1033), this closes L01's native acceptance scenario. It
+does not promise an arbitrary number of fixed siblings will fit every width;
+Tree surfaces and identified-control portions remain separate follow-up work.
