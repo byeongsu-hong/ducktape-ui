@@ -2,6 +2,7 @@
 use super::{IceElement, Output};
 #[path = "focus.rs"]
 mod focus;
+pub(super) use focus::Cache as FocusCache;
 #[path = "scroll.rs"]
 mod scroll;
 use crate::{MemoParking, MemoParkingHandle};
@@ -14,12 +15,13 @@ pub(super) fn scope(
     instance: u64,
     handle: MemoParkingHandle,
     root: &ui_lang_wire::Node,
+    focus: &FocusCache,
 ) -> IceElement<'static, Output> {
     iced::Element::new(Scope {
         content,
         instance,
         handle,
-        focus: focus::Targets::new(root),
+        focus: focus.get(root),
         scroll: scroll::Targets::new(root),
     })
 }
@@ -33,6 +35,7 @@ pub(super) fn render(
     use std::{collections::HashMap, rc::Rc};
     let mut inputs = super::Inputs {
         instance: kept.inputs.instance,
+        focus_cache: kept.inputs.focus_cache.clone(),
         fields: HashMap::new(),
         editors: HashMap::new(),
         editor_references: kept.inputs.editor_references.clone(),
@@ -173,7 +176,7 @@ struct Scope {
     content: IceElement<'static, Output>,
     instance: u64,
     handle: MemoParkingHandle,
-    focus: focus::Targets,
+    focus: std::sync::Arc<focus::Targets>,
     scroll: scroll::Targets,
 }
 
@@ -436,7 +439,13 @@ mod tests {
         } else {
             iced::widget::text("hidden").into()
         };
-        scope(content, instance, handle, &ui_lang_wire::Node::empty())
+        scope(
+            content,
+            instance,
+            handle,
+            &ui_lang_wire::Node::empty(),
+            &FocusCache::default(),
+        )
     }
 
     fn headless() -> iced::Renderer {
@@ -835,6 +844,28 @@ mod tests {
         let offsets = replaced_scroll_with_surfaces(&after, Start, &surfaces);
         assert_eq!(offsets.len(), 1);
         assert_eq!(offsets[0].1, 0.0);
+    }
+
+    #[test]
+    fn rendering_changed_roots_without_adopt_refreshes_focus_metadata() {
+        let inputs = super::super::Inputs::default();
+        let before = input("before", false);
+        let after = input("after", false);
+        let pictures = super::super::Pictures::default();
+        let surfaces = super::super::Surfaces::new();
+        drop(super::super::render(&before, &inputs, &pictures, &surfaces));
+        let first = inputs
+            .focus_cache
+            .snapshot()
+            .expect("render initialized metadata");
+        drop(super::super::render(&after, &inputs, &pictures, &surfaces));
+        let second = inputs.focus_cache.snapshot().unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&first, &second));
+        drop(super::super::render(&after, &inputs, &pictures, &surfaces));
+        assert!(std::sync::Arc::ptr_eq(
+            &second,
+            &inputs.focus_cache.snapshot().unwrap()
+        ));
     }
 
     #[test]

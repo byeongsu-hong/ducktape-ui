@@ -3197,3 +3197,23 @@ finding with an unrelated longest action. Removing that update's clock advance
 reaches the existing missing-finding assertion. These tests establish campaign
 logic, not a measured wall-clock budget; production recording and the explicit
 trace-overhead performance probe continue to use wall time.
+
+### Repeated native focus metadata inspection
+
+An input-only tree at the wire cap exposed 8,204 allocations per redraw from
+rebuilding the focus eligibility map. Instance-owned metadata now reuses an
+immutable target map only after an exact ordered comparison of eligible keys,
+control kinds, duplicate entries and host surfaces. Rendering changed roots
+without `Inputs::adopt` refreshes metadata; already mounted scopes retain their
+own immutable authority. Owner assertions cover value-only reuse, eligibility
+changes, duplicates, surfaces and the actual render-to-cache boundary.
+
+The existing allocation oracle measured 73,741 input allocations before the fix
+and its original 65,537 after; text remains 40,964. Temporary debug execution of
+the release-only oracle establishes those allocation counts, not release timing.
+Cold input rendering with fresh Inputs measures 81,936 allocations: retaining
+an exact comparison signature adds cold/change-boundary storage to avoid repeated
+per-frame key ownership. The release allocation and latency limits are unchanged.
+Bypassing exact comparison and omitting render cache lookup independently reach
+intended owner assertion Reds; restored tests retain the focus and scroll
+replacement checks. Final release performance validation remains in CI.
