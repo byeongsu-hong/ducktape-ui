@@ -37,6 +37,19 @@ fn collect_widget_ids(
     document: &Document,
     inspect_all: bool,
 ) -> Result<TestWidgetIds, Error> {
+    // Slot expansion owns temporary AST clones. Their addresses must never enter
+    // the longer-lived handler/test expression cache (or read stale entries in
+    // it after an earlier expansion freed the same allocation).
+    fn expr_type(
+        expr: &Expr,
+        env: &dyn ExprTypeEnv,
+        document: &Document,
+        span: &Span,
+    ) -> Result<Type, Error> {
+        let analysis = super::expr::analyze_expr_types(expr, env, document, span)?;
+        Ok(analysis.type_of(expr).expect("analyzed root type").clone())
+    }
+
     fn segment(
         id: &Id,
         env: &dyn ExprTypeEnv,
@@ -1206,4 +1219,44 @@ pub(in crate::check) fn static_pane_grids(
     let mut output = HashMap::new();
     collect(root, states, document, &mut output)?;
     Ok(output)
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+    use crate::check::expr::HandlerAnalysisGuard;
+
+    #[test]
+    fn widget_discovery_does_not_retain_temporary_slot_expression_addresses() {
+        let document = crate::parse(
+            r#"app Demo
+extern crate::backend
+  Project(id:i64)
+component Wrapper()
+  slot body
+view
+  Wrapper #wrapper
+    body:
+      lazy project, selected_id as entry
+        col #project(entry.id)
+          text "Project"
+"#,
+        )
+        .unwrap();
+        let env = HashMap::from([
+            ("project".into(), Type::Named("Project".into())),
+            ("selected_id".into(), Type::I64),
+        ]);
+        let capture = HandlerAnalysisGuard::start();
+        let ids = test_widget_ids(&document.view, &env, &document).unwrap();
+        assert!(ids.targets.contains(&vec![
+            ("wrapper".into(), None),
+            ("project".into(), Some(Type::I64)),
+        ]));
+        let captured = capture.finish();
+        assert!(
+            captured.expressions.is_empty(),
+            "widget discovery retained temporary slot expressions after their AST was dropped"
+        );
+    }
 }

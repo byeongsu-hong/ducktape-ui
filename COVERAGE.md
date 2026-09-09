@@ -3177,3 +3177,13 @@ once, and rejects the deliberately removed capture in its full baseline.
 The component API baseline records eight already-merged optional-property
 additions and five reviewed action-recipe focus styles. Regeneration reports
 zero breaking changes; this maintenance does not alter public component code.
+
+Widget-target discovery analyzes component-slot expressions independently from
+retained handler/test expression facts. Slot expansion creates temporary AST
+clones, so retaining their address keys could reuse a previous expression's type
+on a later expansion (Windows exposed a `Project` lazy alias inferred as `i64`).
+The deterministic Core regression checks the first dependency's keyed target and
+asserts discovery leaves no temporary expression addresses in handler capture;
+it fails on that cache-lifetime assertion before the fix. Existing native
+list/detail tests still cover keyboard focus and selection through filtering and
+reordering, without changing the lazy dependency contract.
