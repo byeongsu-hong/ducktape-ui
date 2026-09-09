@@ -2754,3 +2754,31 @@ and maximum-cell Iced grids keep their existing behavior.
 record the input tuples and assertion-level Red/Green evidence. Tree's current
 minimum-cell wire representation remains ordinary flex items and does not yet
 carry this native sizing mode; no Tree parity is claimed by these tests.
+
+### Default typography roles and compact design metrics
+
+The native `design_metrics` fixture compares all 13 Rust `TextRole` values
+against the matching imported Ice recipe. Two-line samples assert actual font,
+size, line height, measured height, baseline offset and semantic text color.
+The pre-fix run reaches 11 line-height failures (including body 20.925 vs
+20.25px, caption 17.5 vs 18.75px and section title 19.2 vs 21.6px). Four
+additional color assertions reject heading/field-label role drift. The Rust
+role owner now uses the established Ice metrics and semantic tokens.
+
+The same workspace component renders at 640px with default density and at
+360/640px with compact page/gap/control overrides. It checks the page inset,
+section/field gaps, exact control heights, a 32px desktop hit-area minimum,
+centered labels, wrapped longer copy, explicitly loaded Korean glyph metrics,
+editing and pointer activation below the button label, then Tab/Enter saving.
+A padding mutation produces a 24.25px action instead of 32.25px; omitting the
+Korean font assets produces a 72.32px heading instead of 121.728px and visible
+missing glyphs. Removing the page inset produces 0 instead of 24px. Restored
+source passes the same assertions.
+
+[Inspected captures and reproduction](examples/showcase/screenshots/design-metrics/README.md)
+record the complete assertion and mutation evidence.
+[The guide](crates/ui-lang-components/docs/design-metrics.md) records metric
+ownership and explicit font loading. This evidence covers native tiny-skia at
+scale 1, ko-KR, Linux metadata and reduced motion. Generic font declarations
+alone are not evidence of loaded glyph coverage. Tree hosts and platform font
+fallback behavior are outside this contract.

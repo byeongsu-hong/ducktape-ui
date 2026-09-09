@@ -186,6 +186,12 @@ Ice has no arbitrary indexing expression.
 
 ### Text
 
+Reuse the default semantic typography roles before choosing local sizes. The
+[spacing and typography guide](../../../crates/ui-lang-components/docs/design-metrics.md)
+shows compact recipe inheritance, exact line-height roles and explicit Korean
+font loading. A font family declaration selects a face; app `font` settings
+load its bytes. Check the actual glyph metrics as well as the declared family.
+
 ```ice
 text title w=fill size=24.0 line-h=1.2 font=default @text-fg font-bold
 ```

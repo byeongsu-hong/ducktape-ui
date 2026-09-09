@@ -51,8 +51,8 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
-| D01 | P0 · Audit | [Ice recipes](../crates/ui-lang-components/src/ice/recipes.ice), [Rust theme](../crates/ui-lang-components/src/ui/theme.rs) | A screen has a coherent spacing/control-size hierarchy; a compact variant changes the intended metrics without losing minimum hit areas or text alignment. Establish whether a shared mechanism is needed from real repeated overrides. |
-| D02 | P0 · Audit | [Typography components](../crates/ui-lang-components/src/ice/components.ice), [font ownership](../crates/ui-lang-components/README.md) | Heading, body, caption and monospace roles have consistent baselines and line heights; longer and non-Latin text stays readable with the documented font loading path. |
+| D01 | P0 · Done | [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047), [metric guide](../crates/ui-lang-components/docs/design-metrics.md), [native fixture](../examples/showcase/tests/cases/ui/design_metrics.ice) | Default 640px and compact 360/640px compositions verify page/section/field spacing, exact input/action heights, at least 32px desktop hit areas, centered labels and pointer/keyboard Save. Existing recipe inheritance and typed inputs cover the overrides; no new global density mechanism is needed. |
+| D02 | P0 · Done | [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047), [typography owner](../crates/ui-lang-components/src/ui/typography.rs), [font guide](../crates/ui-lang-components/docs/design-metrics.md) | All 13 native Rust/Ice text roles agree on size, font, line height, measured height, baseline offset and semantic color. Longer wrapped copy and Korean editing use explicitly loaded IBM Plex Sans KR faces; omission of those assets fails actual glyph-width assertions. |
 | D03 | P0 · Audit | [default palette](../crates/ui-lang-components/src/ice/default.ice), [theme contract](../SPEC.md) | Changing an application's semantic palette keeps fields, surfaces and control states coherent; light/dark and custom accent examples do not require copying component source. Distinguish existing complete palettes from proposed partial overrides. |
 | D04 | P0 · Audit | [control/action recipes](../crates/ui-lang-components/src/ice/recipes.ice), [button-status tests](../examples/showcase/tests/cases/ui/button_status_children.ice) | Default, hover, focus, pressed, disabled and invalid states remain legible; overriding one geometric or color property does not reset unrelated states. |
 | D05 | P1 · Audit | [component slots and custom content](../crates/ui-lang-components/README.md) | Replace a row/trigger/body visual through the public interface while retaining its selection, dismissal, keyboard and accessibility contract. Identify actual source-copy requirements before adding new extension points. |
@@ -382,3 +382,23 @@ production-view measurement are recorded in the
 [evidence directory](../examples/showcase/screenshots/grid-collection/README.md).
 Tree still sends ordinary growing, non-shrinking Flex items; these tests and
 the completed L06 status claim native behavior only.
+
+### D01/D02: compact metrics and complete native text-role parity
+
+2026-09-09: [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047).
+
+The shared Rust typography owner now matches established Ice recipe metrics
+for all 13 text roles. Eleven line-height assertions and four semantic-color
+assertions failed on the previous role table. Two-line native comparisons
+verify the corrected size, line box, first baseline, font and color directly.
+The default Ice screen metrics remain established; separate inline-code
+container presentations are not forced into one wrapper contract.
+
+A reusable workspace form demonstrates 24/16px standard page/section metrics
+and 12/12px compact metrics at 640px and 360/640px. It retains 12/8px inner
+section/field gaps and 32.25px compact controls. Tests edit Korean content,
+activate the button below its label, then save through Tab/Enter. Padding,
+font-asset and page-inset mutations fail the intended geometry assertions.
+The font guide distinguishes loading bytes from selecting families and records
+the actual IBM Plex Sans KR/Geist Mono setup. This completes native D01/D02;
+Tree and platform font-fallback evidence are outside the scope.
