@@ -3109,3 +3109,33 @@ Evidence: disabling horizontal drag delivery in the native adapter made the
 mounted test fail its intended width assertion (`160` instead of `230`). Exact
 source restoration passes the complete native/Wasm test with no skips, including
 unreleased-grab removal and reload. Final native and Wasm RGBA pixels match.
+
+### Native scroll handoff during guest replacement
+
+The default Tree scope releases a retired instance's parked and mounted native
+widgets, then restores eligible focus and numeric scroll offsets into the fresh
+tree. `view_tree::memo::tests::replaced_instance_retains_immediate_wheel_scroll`
+sends a real wheel event and replaces the instance immediately, without an
+intermediate inspection or layout. The original owner fails with offset 0
+instead of 60; the restored owner retains 60. A handoff-omission mutation fails
+the two-axis assertion with (0,0) instead of (45,60). Bypassing identity eligibility
+fails both a different-ID assertion and the host-surface collision assertion.
+Additional owner checks cover shorter content, end-relative offsets, removed
+and duplicate IDs, changed direction/anchors, and a hidden guest ID colliding
+with a host surface. Existing focus, memo reuse and retired-resource release
+assertions remain in the same focused suite.
+
+The actual mounted native reload test first fails its existing scroll equality
+with 0 instead of 60 while draft, focus, version and boot count remain correct.
+Temporary diagnostics confirm both old and replacement content heights are
+831.9997 and viewports are 120: the reset occurs at replacement build, not stale
+input or geometry clamping. No diagnostic code remains in the delivered change.
+The fix adds no wire format, syntax, platform API or generic state migration.
+
+Final local checks pass 403 runtime library tests (eight existing ignored),
+strict runtime Clippy, Rust formatting, and the exact existing mounted native
+reload test with current native guest packages. The exact bundled/Wasm reload
+counterpart also passes with freshly bundled current guest artifacts. The handoff
+capture traverses
+the mounted native tree for scopes with scroll targets; scopes without them
+skip capture. No claim of unchanged per-frame cost is made.

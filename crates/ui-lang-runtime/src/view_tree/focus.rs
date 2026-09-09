@@ -1,4 +1,4 @@
-//! The only native interaction state carried to a replacement is eligible focus.
+//! Eligible focus transferred into a replacement native tree.
 use iced::advanced::widget::{Operation, operation::Focusable};
 use iced::{Rectangle, widget::Id};
 use std::collections::{HashMap, HashSet};
@@ -181,13 +181,16 @@ pub(super) fn restore(
 // Accessible already marks semantic subtree boundaries. Only these private
 // handoff operations omit host surfaces; normal focus and accessibility still
 // traverse them. A hidden wire control never authorizes a foreign descendant.
-struct WithoutSurfaces<'a> {
+pub(super) struct WithoutSurfaces<'a> {
     surfaces: &'a HashSet<crate::StableId>,
     inner: &'a mut dyn Operation,
     excluded: bool,
 }
 impl<'a> WithoutSurfaces<'a> {
-    fn new(surfaces: &'a HashSet<crate::StableId>, inner: &'a mut dyn Operation) -> Self {
+    pub(super) fn new(
+        surfaces: &'a HashSet<crate::StableId>,
+        inner: &'a mut dyn Operation,
+    ) -> Self {
         Self {
             surfaces,
             inner,
@@ -206,6 +209,19 @@ impl Operation for WithoutSurfaces<'_> {
             self.excluded = self.surfaces.contains(&semantics.id);
         } else if state.is::<crate::SemanticEnd>() {
             self.excluded = false;
+        }
+    }
+    fn scrollable(
+        &mut self,
+        id: Option<&Id>,
+        bounds: Rectangle,
+        content: Rectangle,
+        translation: iced::Vector,
+        state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if !self.excluded {
+            self.inner
+                .scrollable(id, bounds, content, translation, state);
         }
     }
     fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, state: &mut dyn Focusable) {
