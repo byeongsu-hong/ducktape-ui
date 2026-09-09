@@ -145,6 +145,9 @@ pub fn commit_window_effect(
     request.phase = Phase::Submitted;
     let task = match request.command {
         wire::WindowCommand::Focus => iced::window::gain_focus(app.window),
+        wire::WindowCommand::Maximize(value) => iced::window::maximize(app.window, value),
+        wire::WindowCommand::Minimize(value) => iced::window::minimize(app.window, value),
+        wire::WindowCommand::Resizable(value) => iced::window::set_resizable(app.window, value),
         wire::WindowCommand::Resize { width, height } => {
             iced::window::resize(app.window, iced::Size::new(width, height))
         }

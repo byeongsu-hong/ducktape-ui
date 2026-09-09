@@ -49,6 +49,7 @@ mod memo;
 pub mod mouse;
 #[cfg(test)]
 mod mouse_tests;
+pub mod system;
 pub use markdown::Markdown;
 pub use memo::memo_lazy;
 pub mod host;

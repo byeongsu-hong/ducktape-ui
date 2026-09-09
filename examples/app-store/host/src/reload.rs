@@ -225,6 +225,7 @@ fn finish(running: &[Running], serial: i64, reload: Reload) -> Result<Loaded, St
     fresh.frame_reports = candidate.frame_reports;
     fresh.frame_rev = guest.frame_rev + 1;
     fresh.dark = guest.dark;
+    fresh.environment.theme = guest.environment.theme;
     fresh.inputs = candidate.inputs;
     if let Some(root) = &mut fresh.frame.root {
         fresh

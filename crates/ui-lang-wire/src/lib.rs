@@ -25,7 +25,7 @@
 pub mod authored;
 /// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
 /// This is independent of WIT signatures and the manifest text format.
-pub const WIRE_EPOCH: u32 = 5;
+pub const WIRE_EPOCH: u32 = 6;
 
 pub mod manifest;
 pub mod native;
@@ -116,6 +116,7 @@ pub enum ClipboardTarget {
 pub mod events;
 pub mod keyboard;
 pub mod mouse;
+pub mod system;
 
 /// Something the host tells the guest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -77,7 +77,7 @@ pub use crate::library::{
     library_hint, meter, moved, open_guest, opening_label, pinned, prepare_window,
     remembered_library, remembered_placements, remove_from_library, renamed_running, resized,
     restore_running, running_count, running_label, save_placements, search_hint, search_press,
-    surface_at, window_of, window_title,
+    set_os_theme, surface_at, window_of, window_title,
 };
 
 use crate::capabilities::{Inbox, bus, clipboard, clock, host, storage};
@@ -132,6 +132,7 @@ pub async fn restart_guest(surface: Surface) -> Result<Surface, StoreError> {
     match fresh {
         Ok(mut fresh) => {
             fresh.dark = guest.dark;
+            fresh.environment.theme = guest.environment.theme;
             *guest = fresh;
             drop(guest);
             Ok(surface)
@@ -256,6 +257,7 @@ pub struct Guest {
     /// guest asked to hear about it.
     pub(crate) dark: Option<bool>,
     theme_subscriptions: Vec<u64>,
+    pub(crate) environment: crate::system_environment::Environment,
     terminal: Option<Arc<std::sync::Mutex<crate::terminal::Terminal>>>,
     terminal_subscriptions: Vec<u64>,
     terminal_notice: Option<wire::SurfaceValue>,
@@ -587,6 +589,7 @@ impl Guest {
             last_wake: None,
             dark: None,
             theme_subscriptions: Vec::new(),
+            environment: Default::default(),
             fault: None,
             announced_fault: false,
             reply_bytes: 0,
@@ -616,6 +619,15 @@ impl Guest {
         for id in self.theme_subscriptions.clone() {
             self.due.push((now, theme_item(id, dark)));
         }
+    }
+
+    pub(crate) fn set_system_theme(&mut self, now: Instant, theme: wire::system::Theme) {
+        self.due.extend(
+            self.environment
+                .update(theme)
+                .into_iter()
+                .map(|event| (now, event)),
+        );
     }
 
     /// What the user did to the tree, as the widgets report it: recorded
@@ -832,6 +844,7 @@ impl Guest {
     /// The guest stopped waiting for `id`: drop whatever the host kept for it.
     fn cancel(&mut self, id: u64) {
         self.window_effects.cancel(id);
+        self.environment.cancel(id);
         self.clipboard.retain(|(pending, _)| *pending != id);
         self.widgets.retain(|(pending, _, _)| *pending != id);
         self.due.retain(
@@ -1033,6 +1046,16 @@ impl Guest {
             ("host", "random") => {
                 let result = host::random(&payload);
                 self.reply(now, id, result);
+            }
+            ("host", "system-theme" | "system-theme-changes") => {
+                match self
+                    .environment
+                    .request(id, kind == "host.system-theme-changes", &payload)
+                {
+                    Ok(Some(event)) => self.due.push((now, event)),
+                    Ok(None) => {}
+                    Err(error) => self.reply(now, id, Err(error)),
+                }
             }
             ("host", "theme") if self.theme_subscriptions.len() >= MAX_THEME_SUBSCRIPTIONS => {
                 let message = format!("more than {MAX_THEME_SUBSCRIPTIONS} theme subscriptions");

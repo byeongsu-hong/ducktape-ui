@@ -14,6 +14,19 @@ fn resolved_effect_call(
         .join(", ");
     match target {
         ResolvedEffectTarget::Builtin(function) if kind == EffectKind::Task => {
+            if program.target() == Target::Tree {
+                match function.as_str() {
+                    "__ice_system_theme" => return Ok("::ui_lang_guest::system::theme()".into()),
+                    "__ice_system_info" | "__ice_font_load" | "__ice_image_allocate" => {
+                        return Err(Error::new(
+                            "E190",
+                            &Span::line(1),
+                            "the tree host does not execute system information, font-load or image-allocation tasks",
+                        ));
+                    }
+                    _ => {}
+                }
+            }
             Ok(match function.as_str() {
                 "__ice_system_info" => {
                     "::iced::system::information().map(__ice_system_info)".into()

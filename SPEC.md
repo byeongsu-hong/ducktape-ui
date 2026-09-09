@@ -1778,3 +1778,14 @@ never replay input into host widgets. Preedit ranges use UTF-8 byte offsets.
 Window geometry, scale and frame clocks are not Tree events and produce E190.
 A host may deliver `closed` in one bounded final tick after removing a window;
 that tick must not execute guest effects or delay the native close decision.
+
+### Hosted OS theme and own-window controls
+
+Tree `task system theme` returns the host OS mode and `subscribe system theme`
+observes its current known value and changes, independently of application palette
+selection. The values remain `none`, `light`, and `dark`. Queries wait for a real
+host answer; malformed responses do not become successful default values.
+Tree supports own-window maximize, minimize and resizable boolean controls via
+the existing host effect lane. Other unsupported window and system-information,
+font-load and image-allocation tasks fail with E190. Raw native toolkit actions
+are not a portable effect API.

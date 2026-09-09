@@ -53,6 +53,7 @@ extern crate::store
   pure enqueue(opening:[Loaded], app:Loaded) -> [Loaded]
   pure attach_window(running:[Running], opening:&[Loaded], window:window-id) -> [Running]
   pure drop_first(opening:[Loaded]) -> [Loaded]
+  pure set_os_theme(running:[Running], mode:str?) -> [Running]
   pure drop_window(running:[Running], window:window-id) -> [Running]
   pure window_of(running:&[Running], id:str) -> window-id
   pure is_guest(running:&[Running], window:window-id) -> bool
