@@ -1315,23 +1315,25 @@ fn intersects(a: Rectangle, b: Rectangle) -> bool {
     a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y
 }
 
-fn first_visible_row(measurement: &MessageScrollerMeasurement) -> Option<(&str, f32)> {
-    measurement.rows.iter().find_map(|row| {
-        let bounds = screen_bounds(row.bounds, measurement.translation);
-        intersects(bounds, measurement.viewport).then_some((row.meta.id.as_str(), bounds.y))
-    })
-}
-
 fn preservation_delta(
     previous: &MessageScrollerMeasurement,
     next: &MessageScrollerMeasurement,
 ) -> Option<f32> {
-    let (id, previous_y) = first_visible_row(previous)?;
-    let next_y = next
+    // A removed first row cannot anchor the viewport. Choose the earliest
+    // previously visible survivor, indexing once even when many rows disappear.
+    let next_bounds = next
         .rows
         .iter()
-        .find(|row| row.meta.id == id)
-        .map(|row| screen_bounds(row.bounds, next.translation).y)?;
+        .map(|row| (row.meta.id.as_str(), row.bounds))
+        .collect::<HashMap<_, _>>();
+    let (previous_y, next_y) = previous.rows.iter().find_map(|row| {
+        let bounds = screen_bounds(row.bounds, previous.translation);
+        if !intersects(bounds, previous.viewport) {
+            return None;
+        }
+        let next = screen_bounds(*next_bounds.get(row.meta.id.as_str())?, next.translation);
+        Some((bounds.y, next.y))
+    })?;
     let delta = previous_y - next_y;
     (delta.abs() > 0.5).then_some(delta)
 }
@@ -1881,6 +1883,40 @@ mod tests {
 
         assert_eq!(preservation_delta(&before, &appended), Some(100.0));
         assert_eq!(preservation_delta(&before, &prepended), None);
+    }
+
+    #[test]
+    fn preservation_uses_the_first_surviving_visible_row() {
+        let before = measurement(
+            200.0,
+            600.0,
+            vec![
+                row("deleted", 220.0, 40.0, false),
+                row("survivor", 280.0, 40.0, false),
+                row("later", 360.0, 40.0, false),
+                row("offscreen", 500.0, 40.0, false),
+            ],
+        );
+        let deleted = measurement(
+            200.0,
+            600.0,
+            vec![
+                row("survivor", 240.0, 40.0, false),
+                row("later", 320.0, 40.0, false),
+            ],
+        );
+        assert_eq!(preservation_delta(&before, &deleted), Some(40.0));
+        let stable = measurement(
+            200.0,
+            600.0,
+            vec![
+                row("survivor", 280.0, 40.0, false),
+                row("later", 340.0, 40.0, false),
+            ],
+        );
+        assert_eq!(preservation_delta(&before, &stable), None);
+        let replaced = measurement(200.0, 600.0, vec![row("offscreen", 240.0, 40.0, false)]);
+        assert_eq!(preservation_delta(&before, &replaced), None);
     }
 
     #[test]

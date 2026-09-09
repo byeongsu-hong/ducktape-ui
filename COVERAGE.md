@@ -2651,3 +2651,24 @@ Before/after captures were inspected at 400×320, app palette, Geist, scale 1,
 en-US, Linux and reduced motion. Deleting the anchoring row itself, touch and
 Tree hosts are separate evidence; the component's native anchoring algorithm
 is unchanged. The fix is in the showcase's typed Rust/Ice integration.
+
+### Deleting a transcript's visible anchor
+
+MessageScroller now chooses the earliest previously visible row whose stable
+ID still exists. Deleting its original anchor no longer abandons preservation;
+if no previously visible row survives, native offset/clamping remains in charge.
+The lookup is linear in the old/new row counts and does not repeatedly scan the
+new transcript for each deleted row.
+
+The owner regression fails before the fix with None instead of a 40px
+correction. It also checks a stationary survivor and an offscreen-only survivor.
+All 48 MessageScroller unit tests pass after the fix. The native Ice transcript
+regression deletes the first visible row while appending at the tail: before
+the fix the next row is clipped; afterward its full 24px height stays at
+y=107.25px. All five transcript tests pass, including the earlier capped-update
+scenario and generated checks. The fixture sets previous-item peek to zero so
+its visible-ID control and the viewport edge select the same row.
+
+Before/after captures were inspected at 400×320, app palette, Geist, scale 1,
+en-US, Linux and reduced motion. This proves native row preservation through
+the actual Ice/Rust event path; touch and Tree hosts are not covered here.

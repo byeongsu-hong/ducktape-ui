@@ -213,8 +213,9 @@ showcase [transition adapter](../../examples/showcase/src/message_scroller_adapt
 returns the updated state immediately and a separately consumed follow-up task.
 Assign the state first, then route task events back through that same reducer.
 Returning state snapshots from asynchronous tasks can lose one of the multiple
-events a single wheel produces. The example protects this integration boundary;
-it does not cover deletion of the currently anchoring row.
+events a single wheel produces. The example protects this integration boundary.
+When the anchoring row is deleted, it preserves the first surviving row that was
+visible before the change. If none survives, native offset/clamping applies.
 
 ## A bounded scroll area inside a document
 
