@@ -7106,12 +7106,10 @@ mod tests {
     }
 
     static CLIFF_BOOTS: AtomicUsize = AtomicUsize::new(0);
-    /// A cliff step sleeps this long; the campaign deadline sits at half of it.
-    /// The gap is the margin a loaded box gets: an innocent headless step
-    /// (a click, a redraw) costs a few milliseconds idle but tens under a
-    /// full build, and a 60 ms / 30 ms pair let one cross the deadline and
-    /// steal the finding from the real cliff.
-    const CLIFF_SLEEP: Duration = Duration::from_millis(200);
+    // These tests exercise campaign confirmation/replay/reduction, not a wall-clock
+    // budget. Only an armed Hit advances the scoped action clock, so scheduler
+    // delays cannot replace the intended finding with an unrelated action.
+    const CLIFF_DURATION: Duration = Duration::from_millis(200);
     const CLIFF_DEADLINE_MS: f64 = 100.0;
 
     fn cliff_boot() -> CliffState {
@@ -7124,7 +7122,7 @@ mod tests {
             CliffMessage::Arm => state.armed = true,
             CliffMessage::Hit => {
                 if state.armed {
-                    std::thread::sleep(CLIFF_SLEEP);
+                    trace::action_clock::advance(CLIFF_DURATION);
                 }
                 state.hits += 1;
             }
@@ -7158,6 +7156,7 @@ mod tests {
 
     #[test]
     fn seeded_campaign_confirms_replays_and_reduces_a_stateful_latency_cliff() {
+        let _clock = trace::action_clock::scoped();
         const SEED: u64 = 2;
         const STEPS: usize = 21;
         let program = || {
@@ -7248,7 +7247,7 @@ mod tests {
         match message {
             CliffMessage::Arm => state.armed = true,
             CliffMessage::Hit if state.armed && state.slow => {
-                std::thread::sleep(CLIFF_SLEEP);
+                trace::action_clock::advance(CLIFF_DURATION);
             }
             CliffMessage::Hit => {}
         }
@@ -7261,6 +7260,7 @@ mod tests {
 
     #[test]
     fn confirmation_discards_a_one_off_latency_candidate() {
+        let _clock = trace::action_clock::scoped();
         let boots = Arc::new(AtomicUsize::new(0));
         let program = || {
             let boots = Arc::clone(&boots);

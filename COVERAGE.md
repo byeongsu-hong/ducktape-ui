@@ -3139,6 +3139,7 @@ counterpart also passes with freshly bundled current guest artifacts. The handof
 capture traverses
 the mounted native tree for scopes with scroll targets; scopes without them
 skip capture. No claim of unchanged per-frame cost is made.
+
 ### Scrolled native paint inspection
 
 Runtime `testing::tests::scrolled_paint_*` covers the same visible screen region
@@ -3187,3 +3188,12 @@ asserts discovery leaves no temporary expression addresses in handler capture;
 it fails on that cache-lifetime assertion before the fix. Existing native
 list/detail tests still cover keyboard focus and selection through filtering and
 reordering, without changing the lazy dependency contract.
+
+The seeded latency-campaign and one-off confirmation tests exercise campaign
+logic with a scoped, thread-local test action clock. Their real armed `Hit`
+update advances action time; generation, confirmation, replay, reduction and
+native captures remain exercised. Scheduler stalls cannot replace the intended
+finding with an unrelated longest action. Removing that update's clock advance
+reaches the existing missing-finding assertion. These tests establish campaign
+logic, not a measured wall-clock budget; production recording and the explicit
+trace-overhead performance probe continue to use wall time.
