@@ -239,3 +239,16 @@ Together with Item allocation (PR #1032), page insets (PR #1024) and native
 layout portions (PR #1033), this closes L01's native acceptance scenario. It
 does not promise an arbitrary number of fixed siblings will fit every width;
 Tree surfaces and identified-control portions remain separate follow-up work.
+
+### L03: fixed actions and ordinary update preservation
+
+[The bounded Form example](../examples/showcase/tests/cases/ui/scroll_ownership.ice)
+keeps heading and Save as siblings of the scroll body. At 320×300, wheel input
+reveals the last control and its actual click works; heading and Save keep
+their insets. Saving after scrolling 100px preserves that offset. Fixed body
+height and an explicit reset each produce the intended assertion-level Red;
+restoration passes five native tests. The component guide includes this pattern.
+
+L03 remains open for nested scroll ownership and reading-position preservation
+when content is inserted or removed. This evidence covers ordinary state
+updates, not those content mutations.
