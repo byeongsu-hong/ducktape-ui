@@ -733,6 +733,26 @@ pub fn running_label(_running: &[Running], _generation: i64) -> String {
     }
 }
 
+/// OS mode is separate from the user-selected application palette.
+pub fn set_os_theme(running: Vec<Running>, mode: Option<String>) -> Vec<Running> {
+    if let Some(mode) = mode {
+        match ui_lang_wire::system::Theme::from_name(&mode) {
+            Ok(theme) => {
+                let now = iced::time::Instant::now();
+                for app in &running {
+                    app.surface
+                        .0
+                        .lock()
+                        .expect("guest lock")
+                        .set_system_theme(now, theme);
+                }
+            }
+            Err(error) => eprintln!("host OS theme: {error}"),
+        }
+    }
+    running
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -831,24 +851,4 @@ mod tests {
             })
         );
     }
-}
-
-/// OS mode is separate from the user-selected application palette.
-pub fn set_os_theme(running: Vec<Running>, mode: Option<String>) -> Vec<Running> {
-    if let Some(mode) = mode {
-        match ui_lang_wire::system::Theme::from_name(&mode) {
-            Ok(theme) => {
-                let now = iced::time::Instant::now();
-                for app in &running {
-                    app.surface
-                        .0
-                        .lock()
-                        .expect("guest lock")
-                        .set_system_theme(now, theme);
-                }
-            }
-            Err(error) => eprintln!("host OS theme: {error}"),
-        }
-    }
-    running
 }

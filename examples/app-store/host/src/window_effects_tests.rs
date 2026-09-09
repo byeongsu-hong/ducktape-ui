@@ -545,7 +545,7 @@ fn bundled_environment_window_commands_dispatch_only_to_their_guest() {
                 ("Maximize guest", W::Maximize(id, true))
                 | ("Unminimize guest", W::Minimize(id, false))
                 | ("Fix guest size", W::SetResizable(id, false)) => assert_eq!(id, app.window),
-                (_, action) => panic!("wrong native command: {action:?}"),
+                _ => panic!("wrong native command for {label}"),
             }
             let Action::Output(effect) = actions.remove(0) else {
                 panic!("missing acknowledgement")

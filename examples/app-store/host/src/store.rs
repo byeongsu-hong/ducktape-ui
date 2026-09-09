@@ -77,7 +77,7 @@ pub use crate::library::{
     library_hint, meter, moved, open_guest, opening_label, pinned, prepare_window,
     remembered_library, remembered_placements, remove_from_library, renamed_running, resized,
     restore_running, running_count, running_label, save_placements, search_hint, search_press,
-    surface_at, window_of, window_title,
+    set_os_theme, surface_at, window_of, window_title,
 };
 
 use crate::capabilities::{Inbox, bus, clipboard, clock, host, storage};

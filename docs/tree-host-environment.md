@@ -26,3 +26,18 @@ Mounted buttons must produce exactly scoped native window Action variants and
 stale requests must not dispatch. Platform application of these actions is not
 claimed by an in-process host test. Only these affected checks and meaningful
 regression mutations run; no broad CI waiting.
+
+## Verification
+
+`cargo test --manifest-path examples/app-store/Cargo.toml -p app-store-host
+--bin app-store-host bundled_environment_ -- --ignored --nocapture` runs two
+mounted tests, each against the actual native executable and Wasm component.
+They pass OS query, mode changes, unsubscribe, no-init replacement and scoped
+maximize/minimize/resizable dispatch. Replacing the None reply with Light fails
+the mode assertion; replacing maximize dispatch with minimize fails the native
+action assertion. Exact restoration passes both tests again.
+
+The 32-listener boundary has a separate off-by-one mutation regression.
+Core lowering refuses an unhosted window move; removing that refusal fails its
+E190 assertion. Wire mode decoding retains None and rejects malformed replies.
+These checks exercise host routing, not a window manager applying an operation.
