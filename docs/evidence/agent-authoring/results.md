@@ -169,8 +169,8 @@ mutation was restored before the next; the exact source was restored and all
 nine tests passed again. These additional checks strengthen delivery evidence;
 they do not change either original run's reported time or intervention count.
 
-The final local integration with the scrolled-paint correction at `b288dcbc`
-passes all nine Settings tests. All eight resulting PNGs are byte-identical to
-the reviewed gallery; the inspection correction changes structured association,
-not the rendered screen. Rust formatting and 240 relative document targets also
-pass their checks.
+The final local integration at `ef13ddcb` includes the latest main, scrolled-paint
+correction and widget-discovery cache correction. All nine Settings tests pass,
+and all eight PNGs are byte-identical to the reviewed gallery. The inspection
+correction changes structured association, not the rendered screen. Rust
+formatting and relative document-link checks also pass.
