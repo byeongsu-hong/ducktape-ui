@@ -297,9 +297,17 @@ with the tray as a no-op.
 boundaries — no Core syntax involved: [`VirtualList`](crates/ui-lang-components/docs/virtual-list.md),
 [`TreeView`](crates/ui-lang-components/docs/tree-view.md), [`DataGrid`](crates/ui-lang-components/docs/data-grid.md).
 
+For native card collections, the [minimum-cell grid example](examples/showcase/tests/cases/ui/grid_collection.ice)
+combines equal responsive columns with aspect-ratio cards, page insets and usable
+card actions at narrow widths.
+
 The [default Ice components](crates/ui-lang-components/README.md) include
 `PageHeader` and `Panel` with optional descriptions: omitted help adds no blank
 row, while long titles and descriptions wrap within the available content width.
+
+The shared component theme includes light and dark palettes. Applications can
+switch palettes or supply a complete custom palette while retaining the same
+components; see [theme customization](crates/ui-lang-components/README.md).
 
 Default list rows use content-based sizing so long trailing metadata shares
 narrow space with the main text. See [Item sizing](crates/ui-lang-components/README.md#list-item-sizing)
@@ -307,6 +315,15 @@ for the leading-content customization boundary.
 
 For an input with a trailing action, use [Field and InputGroup](crates/ui-lang-components/README.md#input-with-a-trailing-action):
 keep the label above the control so the editable value retains room at narrow widths.
+
+Text supports independent horizontal and vertical alignment inside its own
+bounds. With word wrapping, `align-x=justified` expands non-final lines across
+the available width; short final lines retain their natural width. See the
+[text layout guide](skills/design-ice-ui/references/views-and-style.md#text).
+
+The [list/detail navigation guide](crates/ui-lang-components/docs/list-detail-navigation.md)
+shows default components with stable filtered selection, independent drafts and
+native keyboard focus restoration when returning from detail.
 
 ## First-class tests
 

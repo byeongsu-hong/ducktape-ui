@@ -50,12 +50,46 @@ frames in [`src/ice/virtual-list.ice`](src/ice/virtual-list.ice) and
 variants use checked compound names such as `Alert.Success`, `Badge.Warning`,
 and `Typography.Caption`; there are no free-form variant strings that can silently
 render an empty component. Its Ice tokens are checked against the retained Rust
-`LIGHT` palette, so the default path needs no repeated accent argument or
+`LIGHT` and `DARK` palettes, so the default path needs no repeated accent argument or
 parallel control-style callbacks. Custom retained themes use the Rust component
 API, where callers pass a complete `Theme`; the Ice interface intentionally
 does not expose partial accent-only theming. Applications that need retained
 widgets define a small typed `extern` boundary for their own data and events;
 the showcase adapter interface is not part of the default application surface.
+
+The default source supplies `AppTheme.app` (light) and `AppTheme.dark`.
+Select them through ordinary application state:
+
+```ice
+app Settings
+  palette active_palette
+
+state
+  active_palette:palette[AppTheme] = AppTheme.app
+
+on choose_palette(next)
+  active_palette = next
+```
+
+Import `default.ice` as above, then route a control to
+`choose_palette AppTheme.dark`. For a product palette, declare every token in
+`palette ocean for AppTheme` and select `AppTheme.ocean`; the same components
+and recipes follow it. The [theme/state fixture](../../examples/showcase/tests/cases/ui/theme_state_defaults.ice)
+shows all three choices with an editable field and customized controls.
+Palette selection does not automatically change a typed Rust extern's theme;
+pass its complete retained `Theme` through that application's boundary.
+
+Default action recipes own their keyboard focus color: filled primary/danger
+buttons use their contrasting foreground ink, while secondary/outline/ghost
+buttons use `ring`. A geometry override retains hover, pressed, disabled and
+keyboard-focus behavior. The [native state fixture](../../examples/showcase/tests/cases/ui/theme_state_defaults.ice)
+checks a 160px-wide action with 8px padding and a 14px radius, plus a customized
+`TextField` with focused, error-label and disabled states. A field error adds a
+semantic error label; it does not imply an automatic red input border.
+
+![Default light palette](docs/images/theme-defaults-light.png)
+![Dark palette with keyboard focus on a customized action](docs/images/theme-defaults-dark-focus.png)
+![Complete application palette with shared components](docs/images/theme-defaults-custom.png)
 
 Large fixed-row collections use the feature-gated
 [`VirtualList`](docs/virtual-list.md). Its state/event API lives in
@@ -126,13 +160,19 @@ click at 280px and 640px, including custom Page padding.
 
 ## List item sizing
 
-`Item(title, description, meta)` keeps its leading content at its chosen size.
+`Item(title, description="", meta="")` keeps its leading content at its chosen size.
+Empty descriptions and metadata omit their line or column gap.
+`Attachment(name, meta="")` also omits an empty metadata line.
 The title/description and trailing metadata share constrained space using their
 content sizes; metadata keeps its natural width when the row has enough room.
 Long text wraps rather than giving all remaining width to the trailing value.
 The leading slot accepts caller-owned content, including interactive controls,
 without replacing their routes. Use the existing `flex` and `box` primitives
 for a different content allocation policy.
+
+See the [list/detail navigation guide](docs/list-detail-navigation.md) for stable
+selection through filtering/reordering, per-project drafts, native keyboard
+Back focus and compact/customized layouts.
 
 ## Form defaults and customization
 
@@ -196,6 +236,30 @@ and custom geometry, a checkbox slot, narrow layouts and validation feedback.
 These are reusable Ice components, not new language keywords or automatic
 platform-native controls.
 
+## Controlled state and focus
+
+Apply controlled-widget events to the current app state in the same handler
+that receives them. `Task::done(next_state)` still delivers its value later:
+several input messages can read the same old state before any completion runs.
+This can erase a selection, reopen a dismissed overlay, or discard an unrelated
+edit. Changing task ordering does not make those snapshots current.
+
+For a reducer with no effects, return its state directly through a `pure`
+extern. The showcase's toast timer and reduced-motion handler use this pattern.
+When an update also returns native focus operations, assign its state first,
+then run those operations without sending state back. The showcase
+[focus adapters](../../examples/showcase/src/adapters.rs) return an immediate
+`FocusTransition<State>` containing the state and a cloneable, once-consumed
+focus task. The [Ice handlers](../../examples/showcase/src/ui/handlers/app.ice)
+assign `transition.state` before launching `apply_focus(transition.focus)`.
+Keep decisions that depend on previous visibility in that single update;
+re-running the reducer to reconstruct focus can lose an opening/closing edge.
+
+If follow-up work produces new widget events, route those events through the
+current reducer, as in the transcript example below. A native event that itself
+contains a complete replacement state retains that component's replacement
+semantics; this adapter pattern does not turn it into a field-level patch.
+
 ## Reading position in a changing transcript
 
 Use `MessageScroller` with stable item IDs when a capped list inserts and
@@ -249,6 +313,16 @@ Panel title="Profile"
 
 Both expose `root/title` and, when present, `root/description` for semantic
 inspection. Panel retains its existing content slot and padding/section spacing.
+
+## Responsive sidebar and detail layouts
+
+Use the [responsive workspace guide](docs/responsive-workspace.md) and its
+[executable Ice example](../../examples/showcase/tests/cases/ui/responsive_workspace.ice)
+for compact navigation, independent project drafts, and actions that remain
+reachable in a short window. The tests resize the same application across the
+breakpoint and continue typing, covering native editing state as well as bound
+values. The example also demonstrates customized page insets, sidebar width,
+and a breakpoint measured from the available content space.
 
 ## Rust library quick start
 
@@ -314,12 +388,18 @@ neutral foreground and keep success as a redundant dot/icon. Avatar initials
 remain text: the default `#4f4d47` foreground clears 4.5:1 against the avatar
 fill.
 
-Native typography roles name the canonical Geist and Geist Mono families and
-encode their exact sizes and weights. This crate does not bundle font assets:
-the consuming application must preload both families through iced's application
-`font` settings before rendering these roles. Ice applications likewise load
-the font bytes at the app boundary; their default font supplies Geist while the
-shared `font-mono` recipes select the loaded monospace face.
+Default Ducktape text roles share their sizes, weights, line heights and
+semantic colors between the Rust and Ice APIs. Rust themes start with generic
+`Font::DEFAULT` and `Font::MONOSPACE`; use `Theme::with_fonts` to bind named application-loaded
+families. This crate does not bundle font assets. Ice apps likewise load bytes
+through app `font` settings and select their default family with a font
+declaration; `font-mono` recipes select the loaded monospace family.
+
+The [spacing and typography guide](docs/design-metrics.md) shows compact recipe
+inheritance, explicit Korean font loading, and the native role comparisons.
+Its [workspace example](../../examples/showcase/tests/cases/ui/design_metrics.ice)
+checks longer copy, Korean glyph metrics, control hit areas, centered labels,
+and pointer/keyboard editing at standard and compact densities.
 
 ## Custom content
 

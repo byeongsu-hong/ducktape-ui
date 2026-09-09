@@ -5,7 +5,7 @@ use iced::font::{Style as FontStyle, Weight};
 use iced::widget::{column, container, row, text};
 use iced::{Background, Border, Element, Font, Length};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use ui_lang_components::ui::{
     alert_dialog::{
         AlertDialogActionVariant, AlertDialogEvent as UiAlertDialogEvent, AlertDialogFocus,
@@ -262,6 +262,49 @@ fn semantic<'a, Message: Clone + 'static>(
         .into()
 }
 
+/// State changes are immediate; native focus operations run afterward without
+/// returning snapshots that could overwrite a later widget event.
+#[derive(Clone)]
+pub struct FocusTransition<State> {
+    pub state: State,
+    pub focus: FocusEffects,
+}
+
+#[derive(Clone)]
+pub struct FocusEffects(Arc<Mutex<Option<iced::Task<()>>>>);
+
+impl<State> FocusTransition<State> {
+    fn new(state: State, focus: iced::Task<()>) -> Self {
+        Self {
+            state,
+            focus: FocusEffects(Arc::new(Mutex::new(Some(focus)))),
+        }
+    }
+}
+
+pub fn apply_focus(effects: FocusEffects) -> iced::Task<()> {
+    // Ice clones extern values. Every clone shares one consumption of the task.
+    effects
+        .0
+        .lock()
+        .expect("adapter focus lock")
+        .take()
+        .unwrap_or_else(iced::Task::none)
+}
+
+pub type CalendarTransition = FocusTransition<CalendarState>;
+pub type DatePickerTransition = FocusTransition<DatePickerState>;
+pub type CommandTransition = FocusTransition<CommandState>;
+pub type SelectTransition = FocusTransition<SelectState>;
+pub type DropdownMenuTransition = FocusTransition<DropdownMenuState>;
+pub type ContextMenuTransition = FocusTransition<ContextMenuState>;
+pub type AlertDialogTransition = FocusTransition<AlertDialogState>;
+pub type DrawerTransition = FocusTransition<DrawerState>;
+pub type NavigationMenuTransition = FocusTransition<NavigationMenuState>;
+pub type MenubarTransition = FocusTransition<MenubarState>;
+pub type RadioTransition = FocusTransition<String>;
+pub type PopoverTransition = FocusTransition<bool>;
+
 #[derive(Debug, Clone)]
 pub enum AlertDialogEvent {
     Open,
@@ -478,9 +521,9 @@ pub fn calendar_state() -> CalendarState {
     .focused(today)
 }
 
-pub fn calendar_apply(mut state: CalendarState, event: CalendarEvent) -> iced::Task<CalendarState> {
+pub fn calendar_apply(mut state: CalendarState, event: CalendarEvent) -> CalendarTransition {
     state.apply(&event);
-    iced::Task::done(state).chain(event.focus_task("ice-default-calendar"))
+    FocusTransition::new(state, event.focus_task("ice-default-calendar"))
 }
 
 pub fn calendar(state: &CalendarState) -> Element<'static, CalendarEvent> {
@@ -512,7 +555,7 @@ pub fn date_picker_state() -> DatePickerState {
 pub fn date_picker_apply(
     mut state: DatePickerState,
     event: DatePickerEvent,
-) -> iced::Task<DatePickerState> {
+) -> DatePickerTransition {
     state.open = event.next_open(state.open);
     if let Some(value) = event.value() {
         state.value = value;
@@ -524,7 +567,7 @@ pub fn date_picker_apply(
         state.focused = Some(focused);
     }
     let focus = event.focus_task(&state.ids);
-    iced::Task::done(state).chain(focus)
+    FocusTransition::new(state, focus)
 }
 
 pub fn date_picker(state: &DatePickerState) -> Element<'static, DatePickerEvent> {
@@ -659,9 +702,9 @@ pub fn command_state() -> CommandState {
     CommandState::default()
 }
 
-pub fn command_apply(mut state: CommandState, event: CommandEvent) -> iced::Task<CommandState> {
+pub fn command_apply(mut state: CommandState, event: CommandEvent) -> CommandTransition {
     state.apply(&event);
-    iced::Task::done(state).chain(event.focus_task("ice-default-command"))
+    FocusTransition::new(state, event.focus_task("ice-default-command"))
 }
 
 pub fn command(state: &CommandState) -> Element<'static, CommandEvent> {
@@ -715,7 +758,7 @@ pub fn select_state() -> SelectState {
     }
 }
 
-pub fn select_apply(mut state: SelectState, event: SelectEvent) -> iced::Task<SelectState> {
+pub fn select_apply(mut state: SelectState, event: SelectEvent) -> SelectTransition {
     state.open = event.open(state.open);
     if let SelectEvent::Selected(value) = &event {
         state.selected = Some(value.clone());
@@ -724,7 +767,7 @@ pub fn select_apply(mut state: SelectState, event: SelectEvent) -> iced::Task<Se
         state.menu.clone_from(menu);
     }
     let focus = event.focus_task(&state.ids, &select_groups(), &state.menu);
-    iced::Task::done(state).chain(focus)
+    FocusTransition::new(state, focus)
 }
 
 pub fn select<'a>(state: &'a SelectState) -> Element<'a, SelectEvent> {
@@ -773,7 +816,7 @@ pub fn dropdown_menu_is_open(state: &DropdownMenuState) -> bool {
 pub fn dropdown_menu_apply(
     mut state: DropdownMenuState,
     event: DropdownMenuEvent,
-) -> iced::Task<DropdownMenuState> {
+) -> DropdownMenuTransition {
     state.open = event.open(state.open);
     if let DropdownMenuEvent::Menu(MenuEvent::StateChanged(menu)) = &event {
         state.menu.clone_from(menu);
@@ -782,7 +825,7 @@ pub fn dropdown_menu_apply(
         state.last_action.clone_from(&action.id);
     }
     let focus = event.focus_task(&state.ids, &state.entries, &state.menu);
-    iced::Task::done(state).chain(focus)
+    FocusTransition::new(state, focus)
 }
 
 pub fn dropdown_menu(state: &DropdownMenuState) -> Element<'_, DropdownMenuEvent> {
@@ -827,7 +870,7 @@ pub fn context_menu_state() -> ContextMenuState {
 pub fn context_menu_apply(
     mut state: ContextMenuState,
     event: ContextMenuEvent,
-) -> iced::Task<ContextMenuState> {
+) -> ContextMenuTransition {
     state.open = event.open(state.open);
     state.anchor = event.anchor(state.anchor);
     if let ContextMenuEvent::Menu(MenuEvent::StateChanged(menu)) = &event {
@@ -837,7 +880,7 @@ pub fn context_menu_apply(
         state.last_action.clone_from(&action.id);
     }
     let focus = event.focus_task(&state.ids, &state.entries, &state.menu);
-    iced::Task::done(state).chain(focus)
+    FocusTransition::new(state, focus)
 }
 
 pub fn context_menu(state: &ContextMenuState) -> Element<'_, ContextMenuEvent> {
@@ -886,7 +929,7 @@ pub fn alert_dialog_state() -> AlertDialogState {
 pub fn alert_dialog_apply(
     mut state: AlertDialogState,
     event: AlertDialogEvent,
-) -> iced::Task<AlertDialogState> {
+) -> AlertDialogTransition {
     let was_open = state.open;
     let focus = match &event {
         AlertDialogEvent::Open => iced::Task::none(),
@@ -897,7 +940,7 @@ pub fn alert_dialog_apply(
         AlertDialogEvent::Dialog(event) => next_alert_dialog_open(state.open, event),
     };
     let transition = state.focus.scope().transition_task(was_open, state.open);
-    iced::Task::done(state).chain(focus).chain(transition)
+    FocusTransition::new(state, focus.chain(transition))
 }
 
 pub fn alert_dialog_is_open(state: &AlertDialogState) -> bool {
@@ -1386,20 +1429,17 @@ pub fn sonner(state: &SonnerState) -> Element<'_, SonnerEvent> {
     semantic(view, "ice-default-sonner", Role::Log)
 }
 
-pub fn sonner_set_reduced_motion(
-    mut state: SonnerState,
-    reduced_motion: bool,
-) -> iced::Task<SonnerState> {
+pub fn sonner_set_reduced_motion(mut state: SonnerState, reduced_motion: bool) -> SonnerState {
     state.queue.set_reduced_motion(reduced_motion);
-    iced::Task::done(state)
+    state
 }
 
-pub fn sonner_tick(mut state: SonnerState) -> iced::Task<SonnerState> {
+pub fn sonner_tick(mut state: SonnerState) -> SonnerState {
     state.elapsed = state
         .elapsed
         .saturating_add(std::time::Duration::from_secs(1));
     state.queue.tick(state.elapsed);
-    iced::Task::done(state)
+    state
 }
 
 pub fn drawer_state() -> DrawerState {
@@ -1412,7 +1452,7 @@ pub fn drawer_state() -> DrawerState {
     }
 }
 
-pub fn drawer_apply(mut state: DrawerState, event: DrawerEvent) -> iced::Task<DrawerState> {
+pub fn drawer_apply(mut state: DrawerState, event: DrawerEvent) -> DrawerTransition {
     let focus = match &event {
         DrawerEvent::Open => state.drawer.set_open(true, &state.focus),
         DrawerEvent::Close => state.drawer.set_open(false, &state.focus),
@@ -1421,7 +1461,7 @@ pub fn drawer_apply(mut state: DrawerState, event: DrawerEvent) -> iced::Task<Dr
             event.focus_task(&state.focus)
         }
     };
-    iced::Task::done(state).chain(focus)
+    FocusTransition::new(state, focus)
 }
 
 pub fn drawer(state: &DrawerState, reduced_motion: bool) -> Element<'static, DrawerEvent> {
@@ -1504,9 +1544,9 @@ pub fn navigation_menu_route(state: NavigationMenuState) -> String {
     }
 }
 
-pub fn navigation_menu_apply(event: NavigationMenuEvent) -> iced::Task<NavigationMenuState> {
+pub fn navigation_menu_apply(event: NavigationMenuEvent) -> NavigationMenuTransition {
     let state = event.state().clone();
-    iced::Task::done(state).chain(event.focus_task("ice-default-navigation"))
+    FocusTransition::new(state, event.focus_task("ice-default-navigation"))
 }
 
 pub fn navigation_menu(state: &NavigationMenuState) -> Element<'static, NavigationMenuEvent> {
@@ -1600,7 +1640,7 @@ pub fn menubar_state() -> MenubarState {
     }
 }
 
-pub fn menubar_apply(mut state: MenubarState, event: MenubarEvent) -> iced::Task<MenubarState> {
+pub fn menubar_apply(mut state: MenubarState, event: MenubarEvent) -> MenubarTransition {
     state.bar = event.state(&state.bar);
     if let MenubarEvent::Menu {
         event: MenuEvent::StateChanged(menu),
@@ -1617,7 +1657,7 @@ pub fn menubar_apply(mut state: MenubarState, event: MenubarEvent) -> iced::Task
         state.last_action.clone_from(&action.id);
     }
     let focus = event.focus_task("ice-default-menubar", &state.menus, &state.menu);
-    iced::Task::done(state).chain(focus)
+    FocusTransition::new(state, focus)
 }
 
 pub fn menubar(state: &MenubarState) -> Element<'static, MenubarEvent> {
@@ -1701,13 +1741,13 @@ pub fn radio_group(selected: &str) -> Element<'static, String> {
     .into()
 }
 
-pub fn radio_apply(next: String) -> iced::Task<String> {
+pub fn radio_apply(next: String) -> RadioTransition {
     let index = match next.as_str() {
         "comfortable" => 1,
         "compact" => 2,
         _ => 0,
     };
-    iced::Task::done(next).chain(focus_radio("ice-default-radio", index))
+    FocusTransition::new(next, focus_radio("ice-default-radio", index))
 }
 
 pub fn message_scroller_state() -> MessageScrollerState {
@@ -2465,9 +2505,11 @@ pub fn resizable_demo(sizes: &[f64]) -> Element<'static, Vec<f64>> {
     semantic(view, "ice-native-resizable", Role::Splitter)
 }
 
-pub fn popover_apply(event: PopoverEvent) -> iced::Task<bool> {
-    iced::Task::done(next_open(event))
-        .chain(event.focus_task(&PopoverIds::new("ice-native-popover")))
+pub fn popover_apply(event: PopoverEvent) -> PopoverTransition {
+    FocusTransition::new(
+        next_open(event),
+        event.focus_task(&PopoverIds::new("ice-native-popover")),
+    )
 }
 
 pub fn popover_demo(open: bool) -> Element<'static, PopoverEvent> {
@@ -2673,6 +2715,279 @@ fn italic_font() -> Font {
 mod tests {
     use super::*;
 
+    // A native input batch can publish several messages before task outputs run.
+    // Deliver deferred outputs afterward to exercise the production Ice handlers.
+    fn drain_outputs(app: &mut crate::Showcase, task: iced::Task<crate::__ShowcaseMessage>) {
+        use iced::futures::StreamExt;
+        if let Some(mut stream) = iced_runtime::task::into_stream(task) {
+            iced::futures::executor::block_on(async {
+                while let Some(action) = stream.next().await {
+                    if let iced_runtime::Action::Output(message) = action {
+                        let _ = app.__update(message);
+                    }
+                }
+            });
+        }
+    }
+
+    #[test]
+    fn queued_native_command_navigation_preserves_the_query() {
+        use crate::__ShowcaseMessage as Message;
+        use iced::advanced::renderer::Headless as _;
+        use iced::keyboard::{self, Key, key};
+        let (mut app, _) = crate::Showcase::__boot();
+        let mut renderer = iced::futures::executor::block_on(iced::Renderer::new(
+            Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut ui = iced_runtime::UserInterface::build(
+            command(&app.command),
+            iced::Size::new(400.0, 320.0),
+            iced_runtime::user_interface::Cache::default(),
+            &mut renderer,
+        );
+        let mut focus = iced::advanced::widget::operation::focusable::focus::<()>(
+            ui_lang_components::ui::command::command_input_id("ice-default-command"),
+        );
+        ui.operate(&renderer, &mut focus);
+        let press = |key: Key, text| {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                modified_key: key.clone(),
+                key,
+                physical_key: key::Physical::Unidentified(key::NativeCode::Unidentified),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text,
+                repeat: false,
+            })
+        };
+        let mut messages = Vec::new();
+        let _ = ui.update(
+            &[
+                press(Key::Character("c".into()), Some("c".into())),
+                press(Key::Named(key::Named::ArrowDown), None),
+            ],
+            iced::mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut messages,
+        );
+        assert_eq!(
+            messages.len(),
+            2,
+            "native typing and navigation must both route"
+        );
+        let pending: Vec<_> = messages
+            .into_iter()
+            .map(|event| app.__update(Message::CommandChanged(event)))
+            .collect();
+        for task in pending {
+            drain_outputs(&mut app, task);
+        }
+        assert_eq!(
+            app.command.query(),
+            "c",
+            "navigation must retain the native query"
+        );
+        // The unfiltered widget initially highlights Calendar; Down selects Chart.
+        assert_eq!(app.command.active(), Some("chart"));
+    }
+
+    #[test]
+    fn native_alert_adapter_focuses_the_safe_action_and_restores_the_trigger() {
+        use crate::__ShowcaseMessage as Message;
+        use ui_lang_runtime::testing::{Config, Driver, Key, Location, MouseButton};
+        const HERE: Location = Location::new("adapters.rs", 1, 1, "alert focus ownership");
+        fn view(app: &crate::Showcase) -> Element<'_, Message> {
+            alert_dialog(&app.alert_dialog).map(Message::AlertDialogChanged)
+        }
+        let program = iced::application(crate::Showcase::__boot, crate::Showcase::__update, view);
+        let mut driver = Driver::new(
+            program,
+            Config::new("native_alert_adapter_focus").viewport(560.0, 240.0),
+        );
+        driver.click_with("ice-alert-trigger", MouseButton::Left, 1, HERE);
+        assert!(driver.state().alert_dialog.open);
+        assert!(
+            driver.target("ice-alert-cancel", HERE).focused(),
+            "opening must focus the safe cancel action"
+        );
+        assert!(!driver.target("ice-alert-confirm", HERE).focused());
+        driver.key(Key::named(iced::keyboard::key::Named::Enter), HERE);
+        assert!(!driver.state().alert_dialog.open);
+        assert!(
+            driver.target("ice-alert-trigger", HERE).focused(),
+            "closing must restore trigger focus"
+        );
+    }
+
+    fn toast_maintenance_preserves_new_notifications(maintenance: crate::__ShowcaseMessage) {
+        use crate::__ShowcaseMessage as Message;
+        let (mut app, _) = crate::Showcase::__boot();
+        let pending = app.__update(maintenance);
+        let _ = app.__update(Message::SonnerChanged(SonnerEvent::Show));
+        assert_eq!(app.sonner.queue.len(), 2);
+        drain_outputs(&mut app, pending);
+        assert_eq!(
+            app.sonner.queue.len(),
+            2,
+            "maintenance must not erase a new toast"
+        );
+        assert_eq!(app.sonner.shown, 2);
+        assert_eq!(app.sonner.queue.reduced_motion(), app.reduced_motion);
+    }
+
+    #[test]
+    fn queued_toast_tick_preserves_new_notifications() {
+        toast_maintenance_preserves_new_notifications(crate::__ShowcaseMessage::SonnerTick);
+    }
+
+    #[test]
+    fn queued_toast_motion_change_preserves_new_notifications() {
+        toast_maintenance_preserves_new_notifications(
+            crate::__ShowcaseMessage::ReducedMotionChanged(true),
+        );
+    }
+
+    #[test]
+    fn queued_select_close_preserves_the_selection() {
+        use crate::__ShowcaseMessage as Message;
+        let (mut app, _) = crate::Showcase::__boot();
+        let select = app.__update(Message::SelectChanged(SelectEvent::Selected(
+            "calendar".into(),
+        )));
+        let close = app.__update(Message::SelectChanged(SelectEvent::OpenChanged {
+            open: false,
+            reason: None,
+        }));
+        drain_outputs(&mut app, select);
+        drain_outputs(&mut app, close);
+        assert_eq!(app.select.selected.as_deref(), Some("calendar"));
+        assert!(!app.select.open);
+    }
+
+    fn queued(messages: impl IntoIterator<Item = crate::__ShowcaseMessage>) -> crate::Showcase {
+        let (mut app, _) = crate::Showcase::__boot();
+        let pending: Vec<_> = messages
+            .into_iter()
+            .map(|message| app.__update(message))
+            .collect();
+        for task in pending {
+            drain_outputs(&mut app, task);
+        }
+        app
+    }
+
+    #[test]
+    fn queued_calendar_navigation_preserves_selection() {
+        use crate::__ShowcaseMessage as Message;
+        let date = Date::new(2026, 7, 15).unwrap();
+        let selection = CalendarSelection::Single(Some(date));
+        let next = Month::new(2026, 8).unwrap();
+        let app = queued([
+            Message::CalendarChanged(CalendarEvent::SelectionChanged {
+                selection: selection.clone(),
+                focused: date,
+            }),
+            Message::CalendarChanged(CalendarEvent::MonthChanged(next)),
+        ]);
+        assert_eq!(app.calendar.selection(), &selection);
+        assert_eq!(app.calendar.month(), next);
+    }
+
+    #[test]
+    fn queued_date_picker_navigation_preserves_open_state() {
+        use crate::__ShowcaseMessage as Message;
+        let next = Month::new(2026, 8).unwrap();
+        let app = queued([
+            Message::DatePickerChanged(DatePickerEvent::OpenChanged {
+                open: true,
+                reason: None,
+                focus: None,
+            }),
+            Message::DatePickerChanged(DatePickerEvent::Calendar(CalendarEvent::MonthChanged(
+                next,
+            ))),
+        ]);
+        assert!(app.date_picker.open);
+        assert_eq!(app.date_picker.month, next);
+    }
+
+    #[test]
+    fn queued_menu_dismissals_preserve_action_and_anchor() {
+        use crate::__ShowcaseMessage as Message;
+        use ui_lang_components::ui::menu::{MenuActivation, MenuActivationKind};
+        let action = MenuEvent::Activated(MenuActivation {
+            id: "new-file".into(),
+            path: vec![0, 0],
+            kind: MenuActivationKind::Action,
+        });
+        let anchor = iced::Point::new(84.0, 96.0);
+        let app = queued([
+            Message::DropdownChanged(DropdownMenuEvent::Menu(action.clone())),
+            Message::DropdownChanged(DropdownMenuEvent::Menu(MenuEvent::Dismiss)),
+            Message::ContextMenuChanged(ContextMenuEvent::OpenAt(anchor)),
+            Message::ContextMenuChanged(ContextMenuEvent::Menu(action.clone())),
+            Message::ContextMenuChanged(ContextMenuEvent::Menu(MenuEvent::Dismiss)),
+            Message::MenubarChanged(MenubarEvent::Menu {
+                menu_id: "file".into(),
+                event: action,
+            }),
+            Message::MenubarChanged(MenubarEvent::Menu {
+                menu_id: "file".into(),
+                event: MenuEvent::Dismiss,
+            }),
+        ]);
+        assert_eq!(app.dropdown.last_action, "new-file");
+        assert!(!app.dropdown.open);
+        assert_eq!(app.context_menu.last_action, "new-file");
+        assert_eq!(app.context_menu.anchor, Some(anchor));
+        assert!(!app.context_menu.open);
+        assert_eq!(app.menubar.last_action, "new-file");
+        assert_eq!(app.menubar.bar.open, None);
+    }
+
+    #[test]
+    fn queued_modal_focus_and_drag_preserve_visibility() {
+        use crate::__ShowcaseMessage as Message;
+        let app = queued([
+            Message::AlertDialogChanged(AlertDialogEvent::Open),
+            Message::AlertDialogChanged(AlertDialogEvent::Dialog(UiAlertDialogEvent::Focus(
+                "ice-alert-confirm".into(),
+            ))),
+            Message::DrawerChanged(DrawerEvent::Open),
+            Message::DrawerChanged(DrawerEvent::Drawer(UiDrawerEvent::Dragged(36.0))),
+        ]);
+        assert!(app.alert_dialog.open);
+        assert!(app.drawer.drawer.is_open());
+        assert_eq!(app.drawer.drawer.offset(), 36.0);
+    }
+
+    #[test]
+    fn queued_navigation_completion_does_not_override_a_new_route() {
+        use crate::__ShowcaseMessage as Message;
+        let (mut app, _) = crate::Showcase::__boot();
+        let state = NavigationMenuState {
+            active: Some("docs".into()),
+            ..app.navigation_menu.clone()
+        };
+        let pending = app.__update(Message::NavigationMenuChanged(
+            NavigationMenuEvent::LinkActivated {
+                id: "docs".into(),
+                state,
+            },
+        ));
+        let _ = app.__update(Message::NavigateHome);
+        assert_eq!(app.navigation_route, "Home");
+        drain_outputs(&mut app, pending);
+        assert_eq!(
+            app.navigation_route, "Home",
+            "a newer navigation action owns the route"
+        );
+    }
+
     #[test]
     fn repeated_draft_lengths_expose_distinct_native_semantic_ids() {
         use iced::advanced::renderer::Headless as _;
@@ -2748,7 +3063,7 @@ mod tests {
         let _ = progress_destructive_style(&iced::Theme::Light);
         let calendar = calendar_state();
         let _: Element<'_, CalendarEvent> = super::calendar(&calendar);
-        let _: iced::Task<CalendarState> = calendar_apply(
+        let _: CalendarTransition = calendar_apply(
             calendar.clone(),
             CalendarEvent::MonthChanged(calendar.month()),
         );
@@ -2784,7 +3099,7 @@ mod tests {
         let _: Element<'_, LogTimelineEvent> = log_timeline(&timeline);
         let _: Element<'_, Vec<f64>> = resizable_demo(&[0.25, 0.5, 0.25]);
         let _: Element<'_, PopoverEvent> = popover_demo(false);
-        let _: iced::Task<bool> = popover_apply(PopoverEvent::Open);
+        let _: PopoverTransition = popover_apply(PopoverEvent::Open);
     }
 
     #[test]

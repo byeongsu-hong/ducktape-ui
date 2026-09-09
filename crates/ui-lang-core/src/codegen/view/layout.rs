@@ -463,6 +463,9 @@ fn render_resolved_flexbox(
         resolved_flex_direction_name(flex.direction)
     )
     .unwrap();
+    if flex.min_cell.is_some() {
+        body.push_str(".grid_min_cell(__ice_min_cell)");
+    }
     if flex.wrap != ResolvedFlexWrap::NoWrap {
         write!(
             body,
@@ -1022,11 +1025,8 @@ pub(super) fn render_flex_children(
                         _ => None,
                     };
                     super::tree::flex_item_code("__flex_child", options, min_cell, document, env)?
-                } else if let Some(min_cell) = min_cell {
-                    format!(
-                        "::ui_lang_runtime::flex_item(__flex_child).grow(1.0).shrink(0.0).basis(::ui_lang_runtime::FlexBasis::Fixed({}))",
-                        min_cell
-                    )
+                } else if min_cell.is_some() {
+                    "::ui_lang_runtime::flex_item(__flex_child)".to_owned()
                 } else {
                     let options = match view.kind {
                         ResolvedViewKind::Container { .. } => {

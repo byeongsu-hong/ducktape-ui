@@ -33,7 +33,7 @@ lowering diagnostics; those refusals apply to both Tree execution paths.
 | Window/system/image/font/reload/exit task effects | Native Iced actions | Window focus/resize/close and guest exit execute on the host; system/image/font/reload actions remain unsupported | Host-owned action contracts; observable result or explicit diagnostic, never silent success |
 | Widget commands and selectors | Full native operation boundary | Only documented Tree subset | Same selector scope and completion replies on mounted widgets |
 | Clock, randomness and platform environment | OS APIs | Host clock/random; wasm direct platform calls can trap | Equivalent authored functionality via host contracts; native-only OS access is not portable |
-| First-class authored Ice tests | Native harness | Counter's same authored preset/state/dispatch/click/text scenarios run on native and Wasm test artifacts | Explicit test artifacts support presets, typed state/dispatch, static targets, click and literal rendered text; mounts and other actions remain follow-up |
+| First-class authored Ice tests | Native harness | Counter's same authored preset/state/dispatch/click/text and keyed-row scenarios run on native and Wasm test artifacts | Explicit test artifacts support presets, typed state/dispatch, literal-key targets, click, exists/missing and literal rendered text; state-reading keys, mounts and other actions remain follow-up |
 | Restart persistence and multi-instance store | App-specific | Reload snapshot only; one instance per module | Explicit persistence and identity semantics, not merely a backend switch |
 
 Raw Rust closures, native GPU programs and opaque handles are

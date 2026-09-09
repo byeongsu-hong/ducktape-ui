@@ -610,10 +610,15 @@ pub fn menu_style(theme: &Theme) -> menu::Style {
 mod tests {
     use super::*;
 
-    fn default_ice_color(name: &str) -> Color {
+    fn ice_color(palette: &str, name: &str) -> Color {
         let source = include_str!("../ice/default.ice");
+        let source = source
+            .split_once(&format!("palette {palette} for AppTheme\n"))
+            .expect("default Ice palette exists")
+            .1;
         let value = source
             .lines()
+            .take_while(|line| line.starts_with(' ') || line.is_empty())
             .find_map(|line| {
                 let mut parts = line.split_ascii_whitespace();
                 (parts.next() == Some(name)).then(|| parts.next()).flatten()
@@ -746,50 +751,56 @@ mod tests {
     }
 
     #[test]
-    fn default_ice_palette_matches_the_retained_light_theme() {
-        let palette = LIGHT.palette;
-        for (name, color) in [
-            ("bg", palette.background),
-            ("surface", palette.card),
-            ("fg", palette.foreground),
-            ("muted", palette.muted_foreground),
-            ("muted_bg", palette.muted),
-            ("primary", palette.primary),
-            ("primary_hover", palette.primary_hover),
-            ("primary_fg", palette.primary_foreground),
-            ("secondary", palette.secondary),
-            ("secondary_fg", palette.secondary_foreground),
-            ("accent", palette.accent),
-            ("accent_fg", palette.accent_foreground),
-            ("brand", palette.brand),
-            ("brand_fg", palette.brand_foreground),
-            ("brand_bg", palette.brand_background),
-            ("brand_line", palette.brand_line),
-            ("danger", palette.destructive),
-            ("danger_fg", palette.destructive_foreground),
-            ("danger_bg", palette.destructive_background),
-            ("danger_line", palette.destructive_line),
-            ("danger_dot", palette.destructive_dot),
-            ("success", palette.success),
-            ("success_fg", palette.success_foreground),
-            ("success_bg", palette.success_background),
-            ("success_line", palette.success_line),
-            ("success_dot", palette.success_dot),
-            ("warning", palette.warning),
-            ("warning_fg", palette.warning_foreground),
-            ("warning_bg", palette.warning_background),
-            ("warning_line", palette.warning_line),
-            ("warning_dot", palette.warning_dot),
-            ("avatar_bg", palette.avatar),
-            ("avatar_fg", palette.avatar_foreground),
-            ("border", palette.border),
-            ("control_line", palette.control_line),
-            ("input", palette.input),
-            ("ring", palette.ring),
-            ("disabled", palette.disabled),
-            ("disabled_fg", palette.disabled_foreground),
-        ] {
-            assert_eq!(default_ice_color(name), color, "{name}");
+    fn ice_palettes_match_the_retained_themes() {
+        for (palette_name, theme) in [("app", LIGHT), ("dark", DARK)] {
+            let palette = theme.palette;
+            for (name, color) in [
+                ("bg", palette.background),
+                ("surface", palette.card),
+                ("fg", palette.foreground),
+                ("muted", palette.muted_foreground),
+                ("muted_bg", palette.muted),
+                ("primary", palette.primary),
+                ("primary_hover", palette.primary_hover),
+                ("primary_fg", palette.primary_foreground),
+                ("secondary", palette.secondary),
+                ("secondary_fg", palette.secondary_foreground),
+                ("accent", palette.accent),
+                ("accent_fg", palette.accent_foreground),
+                ("brand", palette.brand),
+                ("brand_fg", palette.brand_foreground),
+                ("brand_bg", palette.brand_background),
+                ("brand_line", palette.brand_line),
+                ("danger", palette.destructive),
+                ("danger_fg", palette.destructive_foreground),
+                ("danger_bg", palette.destructive_background),
+                ("danger_line", palette.destructive_line),
+                ("danger_dot", palette.destructive_dot),
+                ("success", palette.success),
+                ("success_fg", palette.success_foreground),
+                ("success_bg", palette.success_background),
+                ("success_line", palette.success_line),
+                ("success_dot", palette.success_dot),
+                ("warning", palette.warning),
+                ("warning_fg", palette.warning_foreground),
+                ("warning_bg", palette.warning_background),
+                ("warning_line", palette.warning_line),
+                ("warning_dot", palette.warning_dot),
+                ("avatar_bg", palette.avatar),
+                ("avatar_fg", palette.avatar_foreground),
+                ("border", palette.border),
+                ("control_line", palette.control_line),
+                ("input", palette.input),
+                ("ring", palette.ring),
+                ("disabled", palette.disabled),
+                ("disabled_fg", palette.disabled_foreground),
+            ] {
+                assert_eq!(
+                    ice_color(palette_name, name),
+                    color,
+                    "{palette_name}.{name}"
+                );
+            }
         }
     }
 
@@ -815,7 +826,7 @@ mod tests {
             ("glass_regular", LIGHT.glass.regular),
             ("glass_sheet", LIGHT.glass.sheet),
         ] {
-            let ice = default_ice_color(name);
+            let ice = ice_color("app", name);
             assert_eq!(ice.r, color.r, "{name} red");
             assert_eq!(ice.g, color.g, "{name} green");
             assert_eq!(ice.b, color.b, "{name} blue");
@@ -838,7 +849,7 @@ mod tests {
             ("shadow_window", elevation.app_window[0]),
             ("shadow_window_secondary", elevation.app_window[1]),
         ] {
-            let ice = default_ice_color(name);
+            let ice = ice_color("app", name);
             assert_eq!(ice.r, shadow.color.r, "{name} red");
             assert_eq!(ice.g, shadow.color.g, "{name} green");
             assert_eq!(ice.b, shadow.color.b, "{name} blue");

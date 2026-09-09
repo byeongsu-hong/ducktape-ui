@@ -116,6 +116,31 @@ fn rust_identifier_hex_encoding_uses_one_allocation_per_name() {
 }
 
 #[test]
+fn length_cast_is_parenthesized_before_comparison() {
+    let source = r#"app Demo
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  matched:bool = len("value") < 64000
+view
+  text "ok"
+"#;
+    let generated = compile(source, "app.ice").unwrap();
+    assert!(
+        generated.contains(".len() as i64)"),
+        "length casts must close before comparison operators"
+    );
+}
+
+#[test]
 fn declared_sync_calls_shadow_simple_builtins() {
     let source = r#"app Demo
 extern crate::backend

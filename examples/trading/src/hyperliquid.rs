@@ -2680,6 +2680,11 @@ pub(crate) fn book_tick(book: Option<&Book>, price: f64) -> f64 {
         .unwrap_or_else(|| 10_f64.powi(-(price_decimals(price) as i32)))
 }
 
+// Row identity preserves prices that share the same rounded display label.
+pub fn level_key(price: f64) -> i64 {
+    price.to_bits() as i64
+}
+
 pub fn fmt_px(value: f64) -> String {
     format_price(value, price_decimals(value))
 }

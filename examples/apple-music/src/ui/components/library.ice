@@ -461,11 +461,11 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
               restart_current
               queue
           SectionTitle title="Top picks" detail="CURATED FOR YOU"
-          AlbumStrip albums=top_picks featured=true
+          AlbumStrip albums=top_picks featured=true #home-picks
             forward
               play
           SectionTitle title="Recently played" detail="BACK IN ROTATION"
-          AlbumStrip albums=recently_played featured=false
+          AlbumStrip albums=recently_played featured=false #home-recent
             forward
               play
         MusicSection.new
@@ -485,11 +485,11 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
               restart_current
               queue
           SectionTitle title="Featured releases" detail="JUST IN"
-          AlbumStrip albums=recently_played featured=true
+          AlbumStrip albums=recently_played featured=true #new-featured
             forward
               play
           SectionTitle title="More to explore" detail="NEW MUSIC"
-          AlbumGrid albums=recently_played
+          AlbumGrid albums=recently_played #new-albums
             forward
               play
         MusicSection.radio
@@ -513,7 +513,7 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
             forward
               play
           SectionTitle title="Recently aired" detail="REPLAY"
-          AlbumStrip albums=recently_played featured=false
+          AlbumStrip albums=recently_played featured=false #radio-recent
             forward
               play
         MusicSection.recently_added
@@ -523,7 +523,7 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
               title="Recently added"
               description="The newest albums saved to your personal collection."
           SectionTitle title="Latest additions" detail="9 ALBUMS"
-          AlbumGrid albums=recently_played
+          AlbumGrid albums=recently_played #recent-albums
             forward
               play
           SectionTitle title="Play something next" detail="QUICK PICKS"
@@ -548,7 +548,7 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
               title="Artists"
               description="The voices, producers, and bands shaping your collection."
           SectionTitle title="Recently played artists" detail="A–Z"
-          ArtistGrid albums=recently_played
+          ArtistGrid albums=recently_played #library-artists
             forward
               play
         MusicSection.albums
@@ -558,7 +558,7 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
               title="Albums"
               description="Your complete album collection, arranged as a fluid cover wall."
           SectionTitle title="All albums" detail="9 RELEASES"
-          AlbumGrid albums=recently_played
+          AlbumGrid albums=recently_played #library-albums
             forward
               play
         MusicSection.songs
@@ -615,6 +615,6 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
                 description="Search for an artist or album from the sidebar."
           if !empty(search_results)
             SectionTitle title="Top results" detail="BEST MATCHES"
-            AlbumGrid albums=search_results
+            AlbumGrid albums=search_results #search-albums
               forward
                 play

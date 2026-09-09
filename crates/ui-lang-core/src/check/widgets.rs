@@ -200,9 +200,9 @@ fn collect_widget_ids(
             ViewNode::Button {
                 id, content, span, ..
             } => {
-                if inspect_all {
-                    record(scope, id, env, document, span, output)?;
-                }
+                // Generated accessible buttons expose the same native focus ID
+                // as the other widget-operation targets.
+                record(scope, id, env, document, span, output)?;
                 if let Some(content) = content {
                     let child_scope = scoped(scope, id, env, document, span)?;
                     collect(

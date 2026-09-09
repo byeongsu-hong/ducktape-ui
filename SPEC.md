@@ -407,6 +407,11 @@ Default and monospace fonts are supported; named fonts and inline gradients
 are rejected with E190 on this target. The default runtime provider requires
 the `markdown` feature (included in `full-runtime`).
 
+Native `task widget focus` and `task widget focused` accept identified buttons,
+including buttons inside component and keyed-row scopes. They use the generated
+accessible button's native focus ID; assign navigation state before requesting
+focus on a newly rendered destination.
+
 On the tree target, checked `task widget` focus, focused-query, input cursor/
 selection and scroll/snap statements emit `host.widget` requests containing
 `ui_lang_wire::WidgetCommand`. Qualified widget paths are copied exactly;
@@ -583,6 +588,33 @@ still cannot do is expose a row without laying it out, so it publishes no active
 descendant and nothing offscreen is reachable without scrolling to it; a
 collection that must be enumerated without scrolling needs a real list widget.
 
+### Text alignment
+
+Text's `align-x` positions each line inside the paragraph; `align-y` positions
+that paragraph inside its assigned height. Parent alignment positions the whole
+widget independently. Plain and rich text share these rules.
+
+For `align-x=justified`, soft-wrapped non-final lines distribute their spaces
+across the finite available line width. A paragraph's final line retains its
+natural width; explicit newline-only text and single-line text do not expand.
+Unbounded paragraphs use natural measured widths. A shrink text with justified
+soft wraps measures the expanded lines, so it can occupy the available width.
+
+### Native minimum-cell grids
+
+`grid min-cell=M gap=G` chooses as many equal columns as fit its available
+content width `W`: `max(1, floor((W + G) / (M + G)))`, capped by the nonempty
+item count. Each cell receives `(W - (columns - 1) * G) / columns`; an odd
+final row uses those same column tracks. If `W < M`, the one cell receives `W`
+so the requested minimum never forces horizontal overflow. Empty grids have no
+rows or gaps. Parent and grid padding remain outside the cell calculation.
+
+Rows retain natural height. `min-cell` cannot combine with grid `h=`; an inner
+`grid cols=1 h=aspect(width,height)` supplies aspect-ratio cards through existing
+composition. Fixed-column and `max-cell` grids retain native Iced sizing.
+The Tree target still represents minimum-cell grids as ordinary flex items;
+its equal-column and narrower-than-minimum behavior remains separate work.
+
 ### Accessibility
 
 Ice owns a checked accessibility layer above stock iced. Generated Core nodes
@@ -660,6 +692,10 @@ ordered and the first is the initial default. They generate the nominal
 `palette[Name]` type, and `palette active` selection is an exhaustive generated
 match, not a string lookup or a reactive theme graph. `white`, `black`, and
 `transparent` are built in and cannot be redeclared.
+
+The default component source supplies complete `AppTheme.app` (light) and
+`AppTheme.dark` palettes; applications can select either through the existing
+`palette[AppTheme]` state or supply another complete palette for that contract.
 
 Utilities and recipes are resolved at compile time. There is no CSS engine,
 selector matching, runtime cascade, or runtime string parser. Recipes expand in
@@ -1254,7 +1290,9 @@ the host's existing native flex engine. It preserves direction/reversal,
 nowrap/wrap/wrap-reverse, justify/items/content alignment, independent gaps,
 padding, dimensions/maxima and clipping. Item order, grow/shrink, fixed/content/
 percentage basis, self alignment and fixed/percentage/auto margins use the same
-checked lowering, including min-cell and if/for/match expansion. Utility sizing
+checked lowering and if/for/match expansion. Minimum-cell grids currently use
+ordinary growing, non-shrinking flex items on Tree; they do not yet carry the
+native equal-column sizing described above. Utility sizing
 on the painted outer container remains separate from explicit inner dimensions.
 
 Metadata is decode-bounded and normalized to surviving child count after the
@@ -1513,9 +1551,12 @@ guest packages; host CI must explicitly execute them. No test command or export
 is added to production guest artifacts.
 
 The Tree host-test subset accepts named presets, typed state expressions and
-direct dispatch, static target paths, click steps and
-literal text expectations, including `within` and negation, with viewport and
-timeout configuration. Other steps, keyed targets,
+direct dispatch, target paths whose keys are literals, click steps,
+`exists`/`missing` and literal text expectations, including `within` and
+negation, with viewport and timeout configuration. A target path is lowered
+into the host, whose state is its own mounted surface rather than the guest's,
+so a key that reads state has nothing to read there. Other steps, keys that are
+not literals,
 mounts, environment overrides and daemon windows produce E190 at their authored source origin;
 the generator never silently drops an unsupported test. Direct `cfg(test)` builds
 of a Tree guest containing authored tests explain the host harness requirement

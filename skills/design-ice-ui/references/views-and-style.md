@@ -124,6 +124,13 @@ Direct `box` children may set flex-item behavior:
 
 Do not emulate flex with nested rows and state logic.
 
+### Grid
+
+Use `grid min-cell=` for native repeated cards that reflow into equal columns;
+`cols=` fixes the column count, while `max-cell=` caps each cell's width.
+[Repeated card grids](extended-surface.md#repeated-card-grids) covers natural
+row height, aspect-ratio composition, padding and the compiling example.
+
 ### Box
 
 Use `box` as a single-child container for padding, alignment, surface styling,
@@ -179,6 +186,12 @@ Ice has no arbitrary indexing expression.
 
 ### Text
 
+Reuse the default semantic typography roles before choosing local sizes. The
+[spacing and typography guide](../../../crates/ui-lang-components/docs/design-metrics.md)
+shows compact recipe inheritance, exact line-height roles and explicit Korean
+font loading. A font family declaration selects a face; app `font` settings
+load its bytes. Check the actual glyph metrics as well as the declared family.
+
 ```ice
 text title w=fill size=24.0 line-h=1.2 font=default @text-fg font-bold
 ```
@@ -200,6 +213,11 @@ Alignment on a text is its own vocabulary and its own box:
   as its glyphs, so `align-x`/`align-y` move nothing — give it `w=`/`h=` first.
   The one exception is a multi-line `shrink` text, where `align-x` ranks the
   lines against the widest one without moving the box.
+- With `wrap=word`, `align-x=justified` distributes spaces across the available
+  line width for each non-final soft-wrapped line. Final lines and explicit
+  newline-only paragraphs retain natural width. A shrink paragraph with actual
+  justification measures the expanded lines; use a bounded readable width when
+  you want a narrower text column. An unbounded paragraph stays natural.
 - Canvas `text` takes the same two properties but anchors around the `x=`/`y=`
   point it is given rather than inside a widget box.
 

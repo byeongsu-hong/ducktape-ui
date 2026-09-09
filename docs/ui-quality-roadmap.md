@@ -43,18 +43,18 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | L02 | P0 · Done | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merged as b709ea51. |
 | L03 | P0 · Done | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
 | L04 | P0 · Done | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
-| L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
-| L06 | P1 · Audit | [grid/flex surface](../skills/design-ice-ui/references/extended-surface.md), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Repeated cards use a consistent minimum useful width and aspect ratio; odd item counts and narrow windows leave no clipped or zero-width cells. |
-| L07 | P0 · Audit | [text/layout emission](../crates/ui-lang-core/src/codegen/view), [text runtime](../crates/ui-lang-runtime/src) | Horizontal and vertical text alignment inside assigned bounds work independently of parent placement, including fixed/fill/shrink sizes, multiline wrapping and padding. Verify painted text geometry, not only the enclosing widget's rectangle. Added from the user's explicit two-axis text-alignment request. |
+| L05 | P1 · Done | [PR #1043](https://github.com/byeongsu-hong/ducktape-ui/pull/1043), [responsive workspace guide](../crates/ui-lang-components/docs/responsive-workspace.md), [native Ice contract](../examples/showcase/tests/cases/ui/responsive_workspace.ice) | Wide/compact navigation preserves project selection, independent drafts, native focus, selection and caret across 960→360→960 resizing. Exact/custom content breakpoints, readable-width action alignment and reachable Save at 320×240 are verified; 4 authored tests plus 3 generated harness checks pass. |
+| L06 | P1 · Done | [PR #1045](https://github.com/byeongsu-hong/ducktape-ui/pull/1045), [native collection contract](../examples/showcase/tests/cases/ui/grid_collection.ice), [rendered evidence](../examples/showcase/screenshots/grid-collection/README.md) | Native minimum-cell grids retain equal columns across odd rows and clamp below the minimum without clipped or zero-width cells. Eight scenarios verify aspect-ratio composition, exact/fractional reflow, custom spacing/insets, natural rows, empty/single updates and real card clicks. Tree equal-column parity remains outside this native acceptance. |
+| L07 | P0 · Done | [text/layout emission](../crates/ui-lang-core/src/codegen/view), [text runtime](../crates/ui-lang-runtime/src) | Horizontal and vertical text alignment inside assigned bounds work independently of parent placement, including fixed/fill/shrink sizes, multiline wrapping and padding. Verify painted text geometry, not only the enclosing widget's rectangle. Added from the user's explicit two-axis text-alignment request. |
 
 ## Design defaults and customization
 
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
-| D01 | P0 · Audit | [Ice recipes](../crates/ui-lang-components/src/ice/recipes.ice), [Rust theme](../crates/ui-lang-components/src/ui/theme.rs) | A screen has a coherent spacing/control-size hierarchy; a compact variant changes the intended metrics without losing minimum hit areas or text alignment. Establish whether a shared mechanism is needed from real repeated overrides. |
-| D02 | P0 · Audit | [Typography components](../crates/ui-lang-components/src/ice/components.ice), [font ownership](../crates/ui-lang-components/README.md) | Heading, body, caption and monospace roles have consistent baselines and line heights; longer and non-Latin text stays readable with the documented font loading path. |
-| D03 | P0 · Audit | [default palette](../crates/ui-lang-components/src/ice/default.ice), [theme contract](../SPEC.md) | Changing an application's semantic palette keeps fields, surfaces and control states coherent; light/dark and custom accent examples do not require copying component source. Distinguish existing complete palettes from proposed partial overrides. |
-| D04 | P0 · Audit | [control/action recipes](../crates/ui-lang-components/src/ice/recipes.ice), [button-status tests](../examples/showcase/tests/cases/ui/button_status_children.ice) | Default, hover, focus, pressed, disabled and invalid states remain legible; overriding one geometric or color property does not reset unrelated states. |
+| D01 | P0 · Done | [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047), [metric guide](../crates/ui-lang-components/docs/design-metrics.md), [native fixture](../examples/showcase/tests/cases/ui/design_metrics.ice) | Default 640px and compact 360/640px compositions verify page/section/field spacing, exact input/action heights, at least 32px desktop hit areas, centered labels and pointer/keyboard Save. Existing recipe inheritance and typed inputs cover the overrides; no new global density mechanism is needed. |
+| D02 | P0 · Done | [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047), [typography owner](../crates/ui-lang-components/src/ui/typography.rs), [font guide](../crates/ui-lang-components/docs/design-metrics.md) | All 13 native Rust/Ice text roles agree on size, font, line height, measured height, baseline offset and semantic color. Longer wrapped copy and Korean editing use explicitly loaded IBM Plex Sans KR faces; omission of those assets fails actual glyph-width assertions. |
+| D03 | P0 · Done | [PR #1048](https://github.com/byeongsu-hong/ducktape-ui/pull/1048), [default palette](../crates/ui-lang-components/src/ice/default.ice), [theme contract](../SPEC.md) | Changing an application's semantic palette keeps fields, surfaces and control states coherent; light/dark and custom accent examples do not require copying component source. Distinguish existing complete palettes from proposed partial overrides. |
+| D04 | P0 · Done | [PR #1048](https://github.com/byeongsu-hong/ducktape-ui/pull/1048), [native state fixture](../examples/showcase/tests/cases/ui/theme_state_defaults.ice), [control/action recipes](../crates/ui-lang-components/src/ice/recipes.ice), [button-status tests](../examples/showcase/tests/cases/ui/button_status_children.ice) | Default, hover, focus, pressed, disabled and invalid states remain legible; overriding one geometric or color property does not reset unrelated states. |
 | D05 | P1 · Audit | [component slots and custom content](../crates/ui-lang-components/README.md) | Replace a row/trigger/body visual through the public interface while retaining its selection, dismissal, keyboard and accessibility contract. Identify actual source-copy requirements before adding new extension points. |
 
 ## Common compositions
@@ -62,8 +62,8 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
 | C01 | P0 · Done | [PR #1015](https://github.com/byeongsu-hong/ducktape-ui/pull/1015) | Default and customized fields at 360/960px; wrapping errors; no empty-help gap; short-window scroll; binding, Tab/Space/Enter and focus preserved. Local: 8 settings tests, 330 showcase tests pass; five mutation Reds; merged as 607f7ce3. |
-| C02 | P1 · Audit | [Item/Attachment/Breadcrumb](../crates/ui-lang-components/src/ice/components.ice), [VirtualList](../crates/ui-lang-components/docs/virtual-list.md) | Leading visual, long content and trailing metadata/actions remain aligned; stable-key selection survives reorder/filter; optional content does not leave blank columns. |
-| C03 | P1 · Audit | [navigation examples](../examples/showcase/src/ui/components/navigation.ice), [parity navigation contracts](../crates/ui-lang-components/docs/parity.md) | A list/detail or settings screen has one obvious selected location, coherent title/actions and predictable back behavior, with a reusable default composition. |
+| C02 | P1 · Done | [Item/Attachment/Breadcrumb](../crates/ui-lang-components/src/ice/components.ice), [VirtualList](../crates/ui-lang-components/docs/virtual-list.md) | Leading visual, long content and trailing metadata/actions remain aligned; stable-key selection survives reorder/filter; optional content does not leave blank columns. |
+| C03 | P1 · Done | [navigation examples](../examples/showcase/src/ui/components/navigation.ice), [parity navigation contracts](../crates/ui-lang-components/docs/parity.md) | A list/detail or settings screen has one obvious selected location, coherent title/actions and predictable back behavior, with a reusable default composition. |
 | C04 | P1 · Audit | [Dialog composition](../crates/ui-lang-components/src/ice/components.ice), [modal runtime contract](../crates/ui-lang-components/docs/parity.md) | A long dialog fits a small window, body scrolls as needed, actions stay reachable, focus is contained/restored and custom content preserves dismissal policy. |
 | C05 | P1 · Audit | [Select/Combobox/menus/popovers](../crates/ui-lang-components/docs/parity.md) | A searchable anchored selector near a window edge keeps the active result visible, handles empty results, and restores focus after selection/Escape, including a custom trigger. |
 | C06 | P2 · Audit | [Markdown/editor examples](../examples/markdown-editor), [AI chat](../examples/ai-chat) | Rich text, images and editor content respect readable width; long links/code and streaming additions have an explicit overflow policy and preserve reading position. |
@@ -296,3 +296,143 @@ wheel ownership ([#1037](https://github.com/byeongsu-hong/ducktape-ui/pull/1037)
 current-state transcript updates ([#1039](https://github.com/byeongsu-hong/ducktape-ui/pull/1039))
 and deleted-anchor restoration here. Touch and Tree-specific integration remain
 outside this native evidence.
+
+### L07: soft wrapping and justification complete the native audit
+
+The wrapped paragraph fixture adds per-line painted ink evidence for plain and
+rich text: center/right/justified horizontal alignment and independent
+center/bottom vertical alignment inside padded bounds. The renderer now
+justifies to the finite available line width instead of first reducing it to
+the longest natural line. Single-line, hard-newline-only and unbounded controls
+retain natural width; actual justified soft wraps measure their expanded width.
+
+The owner test and both native paragraph tests reject the original width loss
+and an overwide hard-newline mutation. Center/right/vertical mutations fail both
+native ink tests. After restoration, one owner and eight focused fixture tests
+pass. The 576×480 monochrome/Geist capture is inspected.
+
+Together with [#1028](https://github.com/byeongsu-hong/ducktape-ui/pull/1028),
+[#1030](https://github.com/byeongsu-hong/ducktape-ui/pull/1030) and
+[#1031](https://github.com/byeongsu-hong/ducktape-ui/pull/1031), this completes
+L07's native fixed/fill/shrink, multiline, padding, selection, rich decoration
+and compact-label acceptance. Tree-host and platform-specific font evidence
+are outside this audit.
+
+### S02: controlled catalog adapters commit current state
+
+The [catalog adapters](../examples/showcase/src/adapters.rs) used the same
+`Task<State>` snapshot pattern as the transcript. A native typing/navigation
+batch lost the typed query; queued menu, calendar, modal and selection events
+lost independent state fields. Toast ticks and reduced-motion changes could
+remove a notification added before their completion. A navigation completion
+could also overwrite a newer route chosen by a different control.
+
+All twelve focus-bearing catalog adapters now return an immediate state and a
+once-consumed focus task. The [production handlers](../examples/showcase/src/ui/handlers/app.ice)
+assign state before launching that task. Previous-visibility decisions remain
+inside the single reducer call. Both toast maintenance reducers return state
+directly, without asynchronous completion handlers.
+
+Nine regression tests reach their intended assertions on the prior behavior,
+including native Character/ArrowDown events routed through the actual Command
+widget and generated app handlers. The [first-class focus tests](../examples/showcase/src/ui/tests/app.ice)
+exercise Select keyboard selection and trigger restoration, plus AlertDialog's
+safe cancellation and trigger restoration. Discarding the shared focus task
+fails both native assertions. A native Driver check additionally distinguishes
+the Cancel and Confirm focus IDs and verifies restored trigger focus; its safe
+Cancel assertion rejects the same mutation. Restoration passes all 336 tests.
+The [component guide](../crates/ui-lang-components/README.md#controlled-state-and-focus)
+explains the boundary and the distinction between native replacement events
+and field-level updates. S02 remains open for product I/O ownership, failed
+saves and stale network completions; those paths are outside this catalog audit.
+
+### L05: retained editing across responsive layouts
+
+2026-09-09: [PR #1043](https://github.com/byeongsu-hong/ducktape-ui/pull/1043)
+closes L05 with a verified default-component responsive workspace
+composition and agent guidance. An actual selected-word replacement assertion
+failed after resizing when optional navigation shifted the native editor's
+child position; always-present navigation ancestors restore editing continuity.
+Sidebar-width mutation Reds report 208 vs 200 and 168 vs 160; changing Form
+from fill to shrink fails the explicit minimum Save-height assertion (the
+action collapses to zero height). All mutations are restored. Seven focused
+tests pass; captures cover 960×640, 360×640, 320×240 and customized 527×480,
+using scale 1, en-US, Linux metadata, reduced motion, native light theme and
+the default app palette. Native window-manager and touch behavior are outside
+this evidence. Source/API support is unchanged; the delivered scope is a
+reusable composition, executable examples, screenshots and guidance.
+
+### L06: equal native collection columns at every tested width
+
+2026-09-09: [PR #1045](https://github.com/byeongsu-hong/ducktape-ui/pull/1045)
+closes the native grid acceptance. Before the fix, a 320px minimum overflowed
+232px of available width, and incomplete rows stretched to 432/330.5/298px
+instead of the preceding 210/216.3333/192px tracks. One column calculation now
+keeps track widths consistent and fits a narrow parent. Existing Flex layout
+retains padding and natural row heights; inner one-cell grids provide 4:3 cards.
+
+Eight authored scenarios plus three generated harness checks verify 280/419/420/480/721px
+widths, custom 640px minimum/gap/insets, empty/single-item updates, natural rows,
+painted content containment and the last card's actual pointer route. Five
+pre-fix geometry assertions and three production mutations prove the oracles;
+restoration passes. All 19 grid/fill-portion checks passed after renderer
+integration. The broader earlier core/runtime and showcase runs passed 1,508
+and 421 tests respectively. Inspected before/after captures and a 60-frame
+production-view measurement are recorded in the
+[evidence directory](../examples/showcase/screenshots/grid-collection/README.md).
+Tree still sends ordinary growing, non-shrinking Flex items; these tests and
+the completed L06 status claim native behavior only.
+
+### D01/D02: compact metrics and complete native text-role parity
+
+2026-09-09: [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047).
+
+The shared Rust typography owner now matches established Ice recipe metrics
+for all 13 text roles. Eleven line-height assertions and four semantic-color
+assertions failed on the previous role table. Two-line native comparisons
+verify the corrected size, line box, first baseline, font and color directly.
+The default Ice screen metrics remain established; separate inline-code
+container presentations are not forced into one wrapper contract.
+
+A reusable workspace form demonstrates 24/16px standard page/section metrics
+and 12/12px compact metrics at 640px and 360/640px. It retains 12/8px inner
+section/field gaps and 32.25px compact controls. Tests edit Korean content,
+activate the button below its label, then save through Tab/Enter. Padding,
+font-asset and page-inset mutations fail the intended geometry assertions.
+The font guide distinguishes loading bytes from selecting families and records
+the actual IBM Plex Sans KR/Geist Mono setup. This completes native D01/D02;
+Tree and platform font-fallback evidence are outside the scope.
+
+D03/D04: the default Ice source now supplies the retained Rust light/dark
+semantic palettes. The native `theme_state_defaults` fixture selects light,
+dark and a complete application palette without copying shared components,
+retains edited values, and checks customized geometry across hover, pressed,
+disabled and input error/focus states. Pixel assertions cover contrasting
+keyboard rings on filled primary/danger/custom actions in all three palettes.
+The original low-contrast ring and three independent palette/state mutations
+produce intended assertion Reds; seven native fixture checks and the existing
+324-test Showcase binary pass after restoration. Typed externs continue to
+receive their complete Rust Theme explicitly; no partial palette syntax or
+Tree/platform appearance parity is claimed.
+
+### C02/C03: a native list/detail composition
+
+2026-09-09: [PR #1049](https://github.com/byeongsu-hong/ducktape-ui/pull/1049)
+completes the native list/detail acceptance.
+
+The [project browser](../examples/showcase/tests/cases/ui/list_detail_navigation.ice)
+uses default components with stable-key selection, independent project drafts,
+filter/reorder controls, clear selected location, coherent detail title/actions
+and Back that restores the selected row's native keyboard focus. The checker
+now admits identified buttons as native widget-operation targets, matching the
+focus IDs already generated for them. Item and Attachment omit empty text and
+its layout gaps; existing leading and long-text sizing remains intact.
+
+Actual mutation Reds cover lost Back focus, discarded drafts, reset selection,
+incorrect custom cap, an empty metadata column and overflowing long text. Native
+owner and composition tests pass with all mutations restored. Compact captures
+cover 320×560 and minimum 320×360; the default/custom readable cap is also checked.
+The [guide](../crates/ui-lang-components/docs/list-detail-navigation.md) documents
+public customization, button keyboard/accessibility semantics and state ownership.
+This completes C02/C03's native composition acceptance. Durable saves, large
+virtualized collections and platform-specific accessibility remain outside it.

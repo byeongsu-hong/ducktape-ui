@@ -221,7 +221,7 @@ view
         "fn __ice_derived_visible(&self) -> &::std::vec::Vec<crate::backend::Row> { self.__ice_derived.visible.get_or_init(|| crate::backend::filter(self.rows.clone())) }"
     ));
     assert!(generated.contains(
-        "fn __ice_derived_shown(&self) -> &i64 { self.__ice_derived.shown.get_or_init(|| ((*self.__ice_derived_visible())).len() as i64) }"
+        "fn __ice_derived_shown(&self) -> &i64 { self.__ice_derived.shown.get_or_init(|| (((*self.__ice_derived_visible())).len() as i64)) }"
     ));
     // Reads borrow the cached reference and clone only where the use site
     // needs ownership.

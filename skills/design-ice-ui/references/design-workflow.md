@@ -236,6 +236,20 @@ Treat Ice as a native Iced application:
 Do not assume browser viewport units, DOM measurement, media-query CSS, or
 mobile touch conventions.
 
+For a sidebar/detail screen, declare where every essential navigation and edit
+action goes at compact widths. Keep selection and unsaved values above the
+presentation branches. Test the same running instance across the breakpoint,
+then continue typing without refocusing: retained values alone do not prove
+native editor state survived. The [responsive workspace guide](../../../crates/ui-lang-components/docs/responsive-workspace.md)
+includes a compiling example, exact-boundary tests, and layout customization.
+
+For list/detail navigation, keep the selected domain ID and per-record drafts
+above the filtered list. Key rows by that ID and include selection in each
+row's lazy dependencies. Define where Back returns keyboard focus, assign the
+new location before issuing the focus task, and test actual Tab/Enter navigation
+plus filtering/reordering. The [list/detail guide](../../../crates/ui-lang-components/docs/list-detail-navigation.md)
+shows the default composition, optional row content and scoped button focus.
+
 ## Preserve accessibility
 
 Before polishing visuals:

@@ -724,17 +724,15 @@ fn responsive_resize_cost() {
 
 /// Either page -> do nothing.
 ///
-/// `handlers/app.ice:233` subscribes `every 1s -> sonner_tick` unconditionally.
-/// Each tick clones `SonnerState` into a task, the task's reply writes it back,
-/// and the whole 25-panel app rebuilds — with an empty toast queue, and on the
-/// retained page, where the Sonner widget (`catalog.ice:685`) is not in the tree
-/// at all.
+/// `handlers/app.ice` subscribes `every 1s -> sonner_tick` unconditionally.
+/// Each tick updates `SonnerState` immediately and the whole 25-panel app
+/// rebuilds, even with an empty toast queue or on the retained page, where
+/// the Sonner widget is not in the tree at all.
 ///
 /// Probing the mechanism, not the clock: sleeping ten seconds would measure the
 /// timer, so this dispatches the message that subscription produces.
-/// `dispatch` drains `task sonner_tick(sonner)` and the `sonner_ticked` write
-/// that follows it, so the tick phase is the whole update half of a tick and the
-/// redraw phase is the frame it forces.
+/// `dispatch` applies the synchronous tick reducer, so the tick phase is the
+/// whole update half of a tick and the redraw phase is the frame it forces.
 #[test]
 #[ignore = "frame-cost probe, run explicitly: prints idle sonner tick costs, asserts nothing"]
 fn sonner_idle_tick_cost() {

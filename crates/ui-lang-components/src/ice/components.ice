@@ -287,7 +287,7 @@ component Avatar.Agent(initials:str)
         @font-semibold
         @text-primary_fg
 
-component Item(title:str, description:str, meta:str)
+component Item(title:str, description:str="", meta:str="")
   flex #root
     with
       w=fill
@@ -305,15 +305,17 @@ component Item(title:str, description:str, meta:str)
             wrap=word
             @list
             @text-fg
-        text description #description
-          with
-            w=shrink
-            wrap=word
-            @caption
-    box basis=content
-      text meta #meta @meta_compact
+        if !empty(description)
+          text description #description
+            with
+              w=shrink
+              wrap=word
+              @caption
+    if !empty(meta)
+      box basis=content
+        text meta #meta @meta_compact
 
-component Attachment(name:str, meta:str)
+component Attachment(name:str, meta:str="")
   row #root
     with
       w=fill
@@ -334,8 +336,9 @@ component Attachment(name:str, meta:str)
         r=7.0
       text "↗" size=14.0 @text-primary
     col w=fill gap=2.0
-      text name @list text-fg
-      text meta @meta
+      text name #name @list text-fg
+      if !empty(meta)
+        text meta #meta @meta
     text "•••" #menu
       with
         size=12.0

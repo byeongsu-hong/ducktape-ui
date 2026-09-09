@@ -987,7 +987,7 @@ cancellation.
 | `progress_bar` | native | native range/value, all length/girth variants, horizontal/vertical, five presets, checked solid/linear track and bar backgrounds, border and per-corner radius, plus typed theme-aware runtime style callbacks covering the default Theme's advanced classes |
 | `qr_code` | native | literal or runtime UTF-8/byte payload expressions, all correction levels and normal/micro versions, cell/total size, and checked cell/background colors; the matrix is owned by the widget, so a payload minted during a view renders, and a literal one is still encoded at check time |
 | `radio` | native | direct checked ID; native bool/i64/f64/str/extern payload values, explicit bool selection, checked/selected `RadioButton` accessibility state, complete sizing/typography/font setters, every concrete Style field across active/hovered selected/unselected statuses, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes |
-| `responsive` | native | arbitrary size-dependent child tree with scoped width/height bindings and all `Length` bounds, built in layout once per size per element instance so an in-frame relayout (a scroll, a keystroke) reuses it (`a_second_layout_at_the_same_size_reuses_the_subtree_it_built`; the showcase probe prints the builds per idle and per scroll frame) |
+| `responsive` | native | arbitrary size-dependent child tree with scoped width/height bindings and all `Length` bounds, built in layout once per size per element instance so an in-frame relayout (a scroll, a keystroke) reuses it (`a_second_layout_at_the_same_size_reuses_the_subtree_it_built`; the showcase probe prints the builds per idle and per scroll frame); [sidebar/detail composition](crates/ui-lang-components/docs/responsive-workspace.md) and [first-class tests](examples/showcase/tests/cases/ui/responsive_workspace.ice) cover exact/custom breakpoints, retained selection/drafts and continued typing across resize, compact navigation, and short-window scrolling with reachable save actions |
 | `row` | native | children, typed spacing/per-side padding, all `Length` bounds, cross-axis alignment, clipping and wrapping row spacing/alignment |
 | `rule` | native | axis/thickness, every fill mode, default/weak presets, checked color/opacity, per-corner radius and snap cover all concrete style fields; advanced classes are an alternate extension mechanism |
 | `scrollable` | native | native content/ID, every concrete builder setter, all Viewport getters, every Status field through ordered selectors, every concrete Style field for container, rails, scrollers, gap and auto-scroll overlay, and typed theme/status-aware runtime callbacks covering the default Theme's advanced classes; `anchor-y=keep` adds what iced has no setter for — a start-anchored offset that follows content inserted above the viewport, so a list whose newest row is on top stops moving under a reader who has scrolled into it |
@@ -2070,6 +2070,21 @@ Native generation intact and verify that an unsupported test imported from a
 fragment reports E190 at that fragment's line. Mounts and other unsupported
 authored actions remain follow-up work.
 
+A third scenario in the same source addresses rows by key rather than by place.
+Counter draws two `keyed … by=number` rows, so each scopes as
+`…/rows/key(<number>)`; `keyed_rows_answer_to_their_key_through_reorder_and_removal`
+targets both, clicks the second row's own button, and asserts the mark appears
+`within` that row and not the other. It then dispatches a reorder that swaps the
+two rows and repeats both assertions under the same keys, and a removal after
+which the vanished key must report `missing` while the surviving key still
+reports `exists`. Positional resolution passes the first half and fails from the
+reorder on. The owning behavioral mutation changes `pick` from `picked = number`
+to `picked = 1`, so the mark is drawn in the wrong keyed row: both backends fail
+at the `within` assertion, and pass after exact restoration and rebuilding. A
+target path is lowered into the host, whose state is the mounted surface rather
+than the guest's, so keys must be literals; keys that read state keep their
+E190.
+
 The same Counter source also boots preset `seven`, asserts typed count and drawn
 `7`, clicks the mounted increment control, asserts count and drawn `8`, directly
 dispatches the typed wheel handler, and asserts count and drawn `9`. Explicit
@@ -2687,3 +2702,170 @@ The runtime interaction tests reject retired instances and stale presentation
 references, distinguish notification from Commit, preserve accepted input across
 retry, and refuse read-only Apply. Native sparse highlighter tests exercise UTF-8
 boundaries and hidden-source metrics without changing source bytes.
+### Wrapped text alignment on both axes
+
+The native `wrapped_text_alignment` fixture renders the same Geist paragraph
+as plain and rich text in padded 120×160 boxes. It checks the actual white ink
+of each soft-wrapped line: centered line centers, right edges, justified
+non-final line edges and a naturally sized final line. Relative ink y positions
+independently verify center and bottom vertical alignment. Additional native
+controls keep explicit-newline shrink text at its natural width.
+
+The local iced_graphics patch preserves the finite available shaping width for
+justification, then measures the aligned result. Previously the 120px paragraph
+was reduced to its approximately 105px natural longest line before justification.
+Owner controls cover soft wrapping, single-line text, hard newlines, unbounded
+width and a height that already matches the shaped lines. Alignment changes
+explicitly shape invalidated lines before measurement even when size is unchanged.
+
+The deterministic capture tuple is 576×480, monochrome app palette, bundled
+Geist, scale 1, en-US, Linux and reduced motion. Evidence is native tiny-skia;
+this fixture does not claim Tree-host or platform-specific font coverage.
+
+The original alignment gives intended owner and plain/rich native Reds at
+105px versus 120px. Returning the available width without remeasurement gives
+owner and native hard-newline sizing Reds. Independent left-for-center,
+left-for-right and top-for-center mutations each fail both native ink tests.
+After exact restoration, the owner test and all eight tests in the existing
+and wrapped alignment fixtures pass (four authored, four generated checks).
+The broader runtime suite passes 386 tests with eight existing ignored; the
+Showcase binary passes all 324 tests after the renderer change.
+
+### Controlled catalog adapters preserve queued updates
+
+`examples/showcase/src/adapters.rs` has nine state-race regressions through the
+production generated Showcase handlers. The Command regression creates the
+real native widget, focuses its input, and sends Character(`c`) and ArrowDown
+through one `UserInterface::update` batch before processing its two emitted
+messages. The old deferred-state adapter loses `c`; no synthetic Command event
+or fake native measurement is injected. Other queued events protect calendar
+selection, DatePicker visibility, Select values, menu actions/anchors, modal
+visibility/drag state, both toast maintenance paths and newer navigation routes.
+All nine tests reach their intended assertions on the pre-fix implementation.
+
+The twelve focus adapters now assign state synchronously and consume native
+focus tasks once; the toast reducers have no deferred state completions.
+`select_adapter_keeps_keyboard_focus_through_selection` and
+`alert_adapter_restores_trigger_after_keyboard_cancel` exercise native keyboard
+selection, safe cancellation and trigger restoration in first-class Ice tests.
+Temporarily consuming and discarding the shared focus task fails both intended
+native assertions: Select does not show `Selected: select`, and Enter does not
+close the alert through its safe cancel action. Production source was restored
+byte-for-byte; all 336 showcase binary tests then pass, including both native
+focus tests and all nine state regressions. A native Driver test additionally
+asserts the actual Cancel/Confirm focus IDs and restored trigger focus through
+the production generated update handler; dropping the effects fails its
+`opening must focus the safe cancel action` assertion.
+This evidence covers the catalog Rust/Ice adapters. Native events containing
+complete replacement states keep their existing component semantics; product
+network/save completion policies remain separate work.
+
+### Native minimum-cell card grids
+
+[`grid_collection.ice`](examples/showcase/tests/cases/ui/grid_collection.ice)
+uses one collection component in its view and tests. Eight native scenarios
+cover 280px below the requested minimum, 419/420px around the exact two-column
+threshold, 480px, a fractional three-column case at 721px, custom minimum/gap/page insets
+at 640px, empty/single-item updates, and naturally unequal row heights with grid
+padding. Assertions cover equal track widths, 4:3 cells through an inner native
+grid, final-row placement, nonzero contained cells, painted heading/button bounds and the last card's real click route.
+
+The pre-fix assertions observed a 320px cell in 232px of available width and
+last-row widths of 432/330.5/298px where earlier rows used 210/216.3333/192px.
+Native minimum-cell sizing now chooses the column count once per layout and
+reuses each track width across rows; a single narrow track fits its parent.
+The existing flex engine retains natural row heights and padding. Fixed-column
+and maximum-cell Iced grids keep their existing behavior.
+
+[Inspected captures and reproduction details](examples/showcase/screenshots/grid-collection/README.md)
+record the input tuples and assertion-level Red/Green evidence. Tree's current
+minimum-cell wire representation remains ordinary flex items and does not yet
+carry this native sizing mode; no Tree parity is claimed by these tests.
+
+### Default typography roles and compact design metrics
+
+The native `design_metrics` fixture compares all 13 Rust `TextRole` values
+against the matching imported Ice recipe. Two-line samples assert actual font,
+size, line height, measured height, baseline offset and semantic text color.
+The pre-fix run reaches 11 line-height failures (including body 20.925 vs
+20.25px, caption 17.5 vs 18.75px and section title 19.2 vs 21.6px). Four
+additional color assertions reject heading/field-label role drift. The Rust
+role owner now uses the established Ice metrics and semantic tokens.
+
+The same workspace component renders at 640px with default density and at
+360/640px with compact page/gap/control overrides. It checks the page inset,
+section/field gaps, exact control heights, a 32px desktop hit-area minimum,
+centered labels, wrapped longer copy, explicitly loaded Korean glyph metrics,
+editing and pointer activation below the button label, then Tab/Enter saving.
+A padding mutation produces a 24.25px action instead of 32.25px; omitting the
+Korean font assets produces a 72.32px heading instead of 121.728px and visible
+missing glyphs. Removing the page inset produces 0 instead of 24px. Restored
+source passes the same assertions.
+
+[Inspected captures and reproduction](examples/showcase/screenshots/design-metrics/README.md)
+record the complete assertion and mutation evidence.
+[The guide](crates/ui-lang-components/docs/design-metrics.md) records metric
+ownership and explicit font loading. This evidence covers native tiny-skia at
+scale 1, ko-KR, Linux metadata and reduced motion. Generic font declarations
+alone are not evidence of loaded glyph coverage. Tree hosts and platform font
+fallback behavior are outside this contract.
+
+### Default semantic palettes and action-state customization
+
+`theme_state_defaults.ice` exercises native shared `Page`, `PageHeader`,
+`TextField` and action recipes through actual widget routes. Selecting the
+complete light, dark and application-owned ocean palettes changes semantic
+surface/control paint while retaining the edited value. A geometric override
+keeps hover, pressed and disabled action paint, radius and click behavior;
+the customized input retains its focus border, error label and disabled value.
+`theme_state_defaults.rs` samples the actual two-pixel keyboard ring on primary,
+danger and customized filled actions in all three palettes after Tab traversal.
+The default dark token values are also checked against the retained Rust theme.
+
+The pre-fix keyboard ring paints `[44, 43, 39]` against the dark primary surface
+instead of contrasting foreground ink. Three independent temporary mutations
+(dark background changed to light, primary hover changed to base, input focus
+border reduced from 2px to 1px) fail their corresponding authored assertions.
+After exact restoration the seven native fixture tests pass. Captures use
+560×520, scale 1, en-US, Linux metadata, reduced motion and bundled Geist;
+the palette selector is application state, not a headless theme override.
+This evidence establishes native generated controls, not automatic theme
+propagation through typed Rust externs or Tree/platform appearance parity.
+
+### Default list/detail navigation and optional row text
+
+`examples/showcase/tests/cases/ui/list_detail_navigation.ice` composes the default
+Page, Item, Avatar, Breadcrumb, TextField and Attachment with a small typed Rust
+record boundary. Native pointer and Tab/Enter paths open a project, edit its own
+draft, return to the selected row's focus, filter to one or zero results and
+reorder by stable domain IDs. Both selected/unselected checked states and row
+accessible names are asserted. App-owned records preserve independent drafts
+while filtered rows unmount. A centered readable cap and custom Page inset hold
+at 720×640; wrapped list/detail content and persistent Save actions hold at
+320×560 and the declared minimum 320×360.
+
+Identified buttons now participate in checked native widget-operation targets,
+using their existing generated native focus IDs. The compiler fixture
+`compile/button-focus-target` covers focus and focused-query paths through a
+component inside a keyed row; native Back tests exercise the actual operation.
+Removing Back's focus task fails the selected-row focused assertion. Discarding
+the editor draft on Back fails the reopened input-value assertion; resetting
+selection on reorder yields ID 10 instead of 20, and a widened custom cap yields
+460px instead of 420px.
+
+`item_layout.ice` additionally checks empty Item description/metadata and empty
+Attachment metadata without blank lines/columns. Original empty-description
+height was 56.85px instead of 35.10px; empty Attachment metadata made its row 62.05px
+instead of 56px. Restoring the empty Item metadata column fails the final painted
+content-allocation assertion. Long Attachment and Breadcrumb content already
+fits; fixed-width, nonwrapping mutations fail their painted-right-edge assertions.
+All mutations are restored. The existing leading-control and intrinsic-metadata
+contracts remain covered.
+
+Captures use native light theme, the default app palette, loaded Geist fonts,
+scale 1, en-US, Linux metadata and reduced motion. This is native composition
+evidence, not Tree, platform screen-reader, touch or durable-persistence evidence.
+Seventeen focused native tests pass. A 60-frame debug inspection of the three-row
+list records 180 lazy hits and zero misses, plus 120 revision-memo hits and zero
+misses; this is an idle-boundary check, not a large-list performance budget.
+See the [reusable guide](crates/ui-lang-components/docs/list-detail-navigation.md).
