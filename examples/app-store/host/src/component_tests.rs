@@ -23,6 +23,40 @@ fn guest() -> Guest {
     })
     .unwrap()
 }
+fn backend_guest(native: bool) -> Guest {
+    if !native {
+        return guest();
+    }
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/component-native");
+    let entry = crate::catalog::scan_dir(&directory)
+        .into_iter()
+        .find(|entry| entry.name == "Component fixture")
+        .expect("bundle native component fixture first");
+    Guest::load(&entry).unwrap()
+}
+fn lazy_generation(node: &wire::Node) -> Option<u64> {
+    if let wire::Node::Lazy {
+        key, generation, ..
+    } = node
+        && key.ends_with("/mounted-cache")
+    {
+        return Some(*generation);
+    }
+    node.children().iter().find_map(lazy_generation)
+}
+fn mounted_route(node: &wire::Node) -> Option<u32> {
+    if let wire::Node::Button {
+        content: wire::ButtonContent::Label(label),
+        on_press,
+        ..
+    } = node
+        && label == "Mounted increment"
+    {
+        return *on_press;
+    }
+    node.children().iter().find_map(mounted_route)
+}
 fn value(node: &wire::Node, suffix: &str) -> Option<String> {
     if let wire::Node::Text { key, content, .. } = node
         && key.ends_with(suffix)
@@ -54,116 +88,166 @@ fn press(guest: &mut Guest, label: &str) {
 }
 
 #[test]
-#[ignore = "requires bundled component-fixture wasm"]
+#[ignore = "requires current bundled component-fixture Wasm and native artifacts"]
 fn bundled_component_mount_reboots_while_retained_state_survives() {
-    let guest = Arc::new(Mutex::new(guest()));
-    let mut renderer = renderer();
-    let mut ui = build(
-        &guest,
-        user_interface::Cache::default(),
-        &mut renderer,
-        600.0,
-    );
-    let mut now = Instant::now();
-    for _ in 0..4 {
-        ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
-    }
-    assert_eq!(
-        read(&guest.lock().unwrap(), "/mounted-value").as_deref(),
-        Some("7")
-    );
-    for label in ["Mounted increment", "Retained increment"] {
-        click(&mut ui, &mut renderer, label);
+    for native in [false, true] {
+        let guest = Arc::new(Mutex::new(backend_guest(native)));
+        let mut renderer = renderer();
+        let mut ui = build(
+            &guest,
+            user_interface::Cache::default(),
+            &mut renderer,
+            600.0,
+        );
+        let mut now = Instant::now();
+        for _ in 0..4 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
+        }
+        assert_eq!(
+            read(&guest.lock().unwrap(), "/mounted-value").as_deref(),
+            Some("7")
+        );
+        let cached_generation =
+            lazy_generation(guest.lock().unwrap().frame.root.as_ref().unwrap()).unwrap();
+        for _ in 0..3 {
+            // A quiet host redraw may skip guest view evaluation entirely.
+            guest.lock().unwrap().tick();
+            ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
+        }
+        assert_eq!(
+            lazy_generation(guest.lock().unwrap().frame.root.as_ref().unwrap()),
+            Some(cached_generation),
+            "idle views must really reuse the mounted subtree cache"
+        );
+        for label in ["Mounted increment", "Retained increment"] {
+            click(&mut ui, &mut renderer, label);
+            for _ in 0..3 {
+                ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
+            }
+        }
+        assert_eq!(
+            read(&guest.lock().unwrap(), "/mounted-value").as_deref(),
+            Some("8")
+        );
+        assert_eq!(
+            read(&guest.lock().unwrap(), "/retained-value").as_deref(),
+            Some("1")
+        );
+        let old_route = mounted_route(guest.lock().unwrap().frame.root.as_ref().unwrap()).unwrap();
+        assert_ne!(
+            lazy_generation(guest.lock().unwrap().frame.root.as_ref().unwrap()),
+            Some(cached_generation),
+            "local mounted state changed without changing the explicit lazy dependency"
+        );
+        click(&mut ui, &mut renderer, "Toggle same seed");
         for _ in 0..3 {
             ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
         }
+        assert_eq!(read(&guest.lock().unwrap(), "/mounted-value"), None);
+        click(&mut ui, &mut renderer, "Toggle same seed");
+        for _ in 0..4 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
+        }
+        assert_eq!(
+            read(&guest.lock().unwrap(), "/mounted-value").as_deref(),
+            Some("7"),
+            "unchanged lazy dependency must not revive unmounted component state"
+        );
+        {
+            let mut current = guest.lock().unwrap();
+            assert_ne!(
+                mounted_route(current.frame.root.as_ref().unwrap()),
+                Some(old_route)
+            );
+            current.pending.push(wire::Event::Message(old_route));
+            current.tick();
+            assert_eq!(
+                read(&current, "/mounted-value").as_deref(),
+                Some("7"),
+                "stale cached route reached the replacement component"
+            );
+        }
+        click(&mut ui, &mut renderer, "Toggle counters");
+        for _ in 0..3 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
+        }
+        assert_eq!(read(&guest.lock().unwrap(), "/mounted-value"), None);
+        click(&mut ui, &mut renderer, "Toggle counters");
+        for _ in 0..4 {
+            ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
+        }
+        assert_eq!(
+            read(&guest.lock().unwrap(), "/mounted-value").as_deref(),
+            Some("27")
+        );
+        assert_eq!(
+            read(&guest.lock().unwrap(), "/retained-value").as_deref(),
+            Some("1")
+        );
+        drop(ui);
+        let mut other = backend_guest(native);
+        for _ in 0..3 {
+            other.tick();
+        }
+        assert_eq!(read(&other, "/mounted-value").as_deref(), Some("7"));
+        assert_eq!(read(&other, "/retained-value").as_deref(), Some("0"));
     }
-    assert_eq!(
-        read(&guest.lock().unwrap(), "/mounted-value").as_deref(),
-        Some("8")
-    );
-    assert_eq!(
-        read(&guest.lock().unwrap(), "/retained-value").as_deref(),
-        Some("1")
-    );
-    click(&mut ui, &mut renderer, "Toggle counters");
-    for _ in 0..3 {
-        ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
-    }
-    assert_eq!(read(&guest.lock().unwrap(), "/mounted-value"), None);
-    click(&mut ui, &mut renderer, "Toggle counters");
-    for _ in 0..4 {
-        ui = redraw(ui, &guest, &mut renderer, &mut now, 600.0);
-    }
-    assert_eq!(
-        read(&guest.lock().unwrap(), "/mounted-value").as_deref(),
-        Some("27")
-    );
-    assert_eq!(
-        read(&guest.lock().unwrap(), "/retained-value").as_deref(),
-        Some("1")
-    );
-    drop(ui);
-    let mut other = self::guest();
-    for _ in 0..3 {
-        other.tick();
-    }
-    assert_eq!(read(&other, "/mounted-value").as_deref(), Some("7"));
-    assert_eq!(read(&other, "/retained-value").as_deref(), Some("0"));
 }
 
 #[test]
-#[ignore = "requires bundled component-fixture wasm"]
+#[ignore = "requires current bundled component-fixture Wasm and native artifacts"]
 fn bundled_component_unmount_cancels_work_and_ignores_old_replies() {
-    let mut guest = guest();
-    guest.tick();
-    press(&mut guest, "Toggle fetch");
-    assert!(guest.frame.busy, "first sighting must schedule its boot");
-    guest.tick();
-    let request = guest
-        .frame
-        .requests
-        .iter()
-        .find(|r| r.kind == "lifecycle.fetch")
-        .unwrap()
-        .clone();
-    assert_eq!(request.payload, 17i64.to_le_bytes());
-    press(&mut guest, "Toggle fetch");
-    assert!(
-        guest.frame.busy,
-        "pruning wakes cancellation after rendering"
-    );
-    guest.tick();
-    assert!(
-        guest.frame.cancels.contains(&request.id),
-        "unmount cancels the pending host request"
-    );
-    assert_eq!(read(&guest, "/fetched"), None);
-    press(&mut guest, "Toggle fetch");
-    guest.tick();
-    let replacement = guest
-        .frame
-        .requests
-        .iter()
-        .find(|r| r.kind == "lifecycle.fetch")
-        .unwrap()
-        .clone();
-    assert_ne!(request.id, replacement.id);
-    guest.pending.push(wire::Event::Response {
-        id: request.id,
-        result: Ok(999i64.to_le_bytes().to_vec()),
-        done: true,
-    });
-    guest.tick();
-    assert_eq!(read(&guest, "/fetched").as_deref(), Some("0"));
-    guest.pending.push(wire::Event::Response {
-        id: replacement.id,
-        result: Ok(37i64.to_le_bytes().to_vec()),
-        done: true,
-    });
-    guest.tick();
-    assert!(guest.fault.is_none(), "{:?}", guest.fault);
-    assert_eq!(read(&guest, "/fetched").as_deref(), Some("37"));
+    for native in [false, true] {
+        let mut guest = backend_guest(native);
+        guest.tick();
+        press(&mut guest, "Toggle fetch");
+        assert!(guest.frame.busy, "first sighting must schedule its boot");
+        guest.tick();
+        let request = guest
+            .frame
+            .requests
+            .iter()
+            .find(|r| r.kind == "lifecycle.fetch")
+            .unwrap()
+            .clone();
+        assert_eq!(request.payload, 17i64.to_le_bytes());
+        press(&mut guest, "Toggle fetch");
+        assert!(
+            guest.frame.busy,
+            "pruning wakes cancellation after rendering"
+        );
+        guest.tick();
+        assert!(
+            guest.frame.cancels.contains(&request.id),
+            "unmount cancels the pending host request"
+        );
+        assert_eq!(read(&guest, "/fetched"), None);
+        press(&mut guest, "Toggle fetch");
+        guest.tick();
+        let replacement = guest
+            .frame
+            .requests
+            .iter()
+            .find(|r| r.kind == "lifecycle.fetch")
+            .unwrap()
+            .clone();
+        assert_ne!(request.id, replacement.id);
+        guest.pending.push(wire::Event::Response {
+            id: request.id,
+            result: Ok(999i64.to_le_bytes().to_vec()),
+            done: true,
+        });
+        guest.tick();
+        assert_eq!(read(&guest, "/fetched").as_deref(), Some("0"));
+        guest.pending.push(wire::Event::Response {
+            id: replacement.id,
+            result: Ok(37i64.to_le_bytes().to_vec()),
+            done: true,
+        });
+        guest.tick();
+        assert!(guest.fault.is_none(), "{:?}", guest.fault);
+        assert_eq!(read(&guest, "/fetched").as_deref(), Some("37"));
+    }
 }
 
 // Instantiate the actual component without init: restoring must be sufficient

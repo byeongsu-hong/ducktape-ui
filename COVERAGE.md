@@ -1795,9 +1795,15 @@ The guest driver test asserts deferred work requests another tick, runs before
 external events, drains once and remains isolated between drivers. Red mutations
 remove the boot wake flag, the post-render cancellation wake flag, and synchronous
 pruning (the mounted counter remains 8 instead of restarting at 27). Codegen tests
-name the component call beneath lazy/host conditions and check guard unwind;
-disabling each guard accepts the forbidden expansion and fails the diagnostic
-assertion. All mutations are restored before final verification.
+accept mounted lazy expansion while naming the refused call beneath host
+conditions and checking guard unwind. The native/Wasm component fixture checks
+unchanged lazy generations on idle, local mounted and retained edits beneath
+an unchanged lazy dependency, same-seed remount, and obsolete cached routes.
+Memo tests cover nested enclosing ownership and absence pruning; omitting cached
+sighting replay fails the expected scope assertion. Disabling component cache
+invalidation in the actual Wasm fixture leaves the mounted boot value at 0
+instead of 7. All mutations are restored
+before final verification.
 
 ### Tree QR evidence
 

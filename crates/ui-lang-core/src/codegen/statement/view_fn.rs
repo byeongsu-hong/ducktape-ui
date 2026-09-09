@@ -187,9 +187,15 @@ pub(in crate::codegen) fn generate_view(
             Target::Tree => "finish_tree_render",
             Target::Native => "finish_render",
         };
-        let finish = mounted
-            .iter()
-            .map(|field| format!("self.{field}.{finish_method}(__ice_root_scope_ref);"))
+        let finish = program.components().iter()
+            .filter(|component| component.storage == ComponentStorage::Mounted)
+            .map(|component| {
+                let field = component_state_field(&component.name);
+                let replay = if program.target() == Target::Tree {
+                    format!("for __scope in ::ui_lang_guest::slots::mounted_scopes({}) {{ self.{field}.mount(__scope); }} ", rust_string(&component.name))
+                } else { String::new() };
+                format!("{replay}self.{field}.{finish_method}(__ice_root_scope_ref);")
+            })
             .collect::<String>();
         let result = &navigation;
         let (boot_drain, boot_wrap) = boot_dispatch_code(program, message);
