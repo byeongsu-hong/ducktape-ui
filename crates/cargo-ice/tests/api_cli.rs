@@ -104,7 +104,7 @@ fn api_diff_is_machine_readable_and_breaking_changes_exit_nonzero() {
         String::from_utf8_lossy(&baseline.stderr)
     );
     let baseline_json: Value = serde_json::from_slice(&baseline.stdout).unwrap();
-    assert_eq!(baseline_json["schema_version"], 1);
+    assert_eq!(baseline_json["schema_version"], 2);
     assert_eq!(baseline_json["language_revision"], "2.0");
     assert_eq!(baseline_json["package"]["name"], "api-fixture");
     assert_eq!(baseline_json["package"]["version"], "3.2.1");

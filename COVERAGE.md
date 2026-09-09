@@ -3139,3 +3139,108 @@ counterpart also passes with freshly bundled current guest artifacts. The handof
 capture traverses
 the mounted native tree for scopes with scroll targets; scopes without them
 skip capture. No claim of unchanged per-frame cost is made.
+
+### Scrolled native paint inspection
+
+Runtime `testing::tests::scrolled_paint_*` covers the same visible screen region
+for direct Target paint inspection and capture manifests. Two nested scrolls
+partially clip a blue card while its layout coordinates remain unchanged; its
+text, size and surface remain inspectable. An initially painted red card is
+then fully hidden and must not inherit the visible card's text or surface.
+Pre-fix native assertion Reds report zero text primitives for the visible card
+and one unrelated primitive for the hidden card. Capture-only and surface-clip
+mutations independently protect both callers and partial-surface matching.
+Restored checks pass 400 runtime library tests (eight existing ignored) and
+29 selected Showcase tests covering nested scrolls, form scroll ownership,
+overlay customization and localized defaults.
+
+This supports G03 native authoring evidence; it does not mark the whole guidance
+workstream complete. Captures use native Linux/tiny-skia, 220×180, scale 1, light
+theme, default native font, en-US and reduced motion. The
+[reviewed capture](docs/evidence/scrolled-paint/nested-visible.png) shows the
+remaining 40px of the blue card and the fixed footer. The coordinate distinction
+is documented in [testing guidance](docs/testing.md); Tree-host and platform
+renderers are outside this evidence.
+
+### Review binary selection and baseline maintenance
+
+`cargo ice review ROOT --bin <name>` restricts Cargo to the selected application
+binary while `--test` continues to select declared Ice tests. CI's previous
+package-wide Showcase review reached the execution-count assertion with 17
+copies of `unmounted_component_coverage`; the explicit binary retains the
+exactly-one-execution guard. Full and selected review CI calls name the Showcase
+binary, and Windows preserves its review bundle even when the child process
+fails so captured compiler/test stderr remains inspectable. Local review option
+checks pass 17 tests (one existing allocation test ignored). The actual CI
+review script passes 24 full-review tests and one selected test, each executed
+once, and rejects the deliberately removed capture in its full baseline.
+
+The component API baseline records eight already-merged optional-property
+additions and five reviewed action-recipe focus styles. Regeneration reports
+zero breaking changes; this maintenance does not alter public component code.
+
+Widget-target discovery analyzes component-slot expressions independently from
+retained handler/test expression facts. Slot expansion creates temporary AST
+clones, so retaining their address keys could reuse a previous expression's type
+on a later expansion (Windows exposed a `Project` lazy alias inferred as `i64`).
+The deterministic Core regression checks the first dependency's keyed target and
+asserts discovery leaves no temporary expression addresses in handler capture;
+it fails on that cache-lifetime assertion before the fix. Existing native
+list/detail tests still cover keyboard focus and selection through filtering and
+reordering, without changing the lazy dependency contract.
+
+The seeded latency-campaign and one-off confirmation tests exercise campaign
+logic with a scoped, thread-local test action clock. Their real armed `Hit`
+update advances action time; generation, confirmation, replay, reduction and
+native captures remain exercised. Scheduler stalls cannot replace the intended
+finding with an unrelated longest action. Removing that update's clock advance
+reaches the existing missing-finding assertion. These tests establish campaign
+logic, not a measured wall-clock budget; production recording and the explicit
+trace-overhead performance probe continue to use wall time.
+
+### Repeated native focus metadata inspection
+
+An input-only tree at the wire cap exposed 8,204 allocations per redraw from
+rebuilding the focus eligibility map. Instance-owned metadata now reuses an
+immutable target map only after an exact ordered comparison of eligible keys,
+control kinds, duplicate entries and host surfaces. Rendering changed roots
+without `Inputs::adopt` refreshes metadata; already mounted scopes retain their
+own immutable authority. Owner assertions cover value-only reuse, eligibility
+changes, duplicates, surfaces and the actual render-to-cache boundary.
+
+The existing allocation oracle measured 73,741 input allocations before the fix
+and its original 65,537 after; text remains 40,964. Temporary debug execution of
+the release-only oracle establishes those allocation counts, not release timing.
+Cold input rendering with fresh Inputs measures 81,936 allocations: retaining
+an exact comparison signature adds cold/change-boundary storage to avoid repeated
+per-frame key ownership. The release allocation and latency limits are unchanged.
+Bypassing exact comparison and omitting render cache lookup independently reach
+intended owner assertion Reds; restored tests retain the focus and scroll
+replacement checks. Final release performance validation remains in CI.
+
+### Concurrent native package launch
+
+Parallel native authored tests twice exposed `ETXTBSY` while launching uniquely
+named verified executable copies. Closing our writer before spawn was insufficient:
+a peer fork can still hold an inherited writable descriptor until its own exec.
+The native launcher now serializes only opening/writing the private copy and
+spawning it. It releases the lock before pipe exchange or child waiting; package
+hash/protocol checks, private permissions, create-new semantics, deadlines and
+cleanup are unchanged.
+
+The actual std-only launch helper is exercised by 16 concurrent threads launching
+512 unique copies of `/bin/true`. Omitting its launch lock reaches an assertion
+with real `Text file busy` errors; restoring it passes all launches. A separate
+3,200-launch reproduction measured 1,134 errors without serialization and zero
+with it. Standalone helper tests and strict Clippy pass; this is native Unix
+process evidence, not a Windows process-race claim. Final mounted package and
+authored tests remain validated by the app-store CI job.
+
+The host-inclusive lint gate also covers generated authored target paths. Keyed
+paths now evaluate the root and each key once into scoped locals before one
+format operation, including window-qualified daemon roots. The nested-key
+code-generation assertion rejects the old nested formatting; all eight focused
+code-generation tests pass. Full app-store workspace strict Clippy (host included,
+`--release --locked --workspace --tests --no-deps -- -D warnings`) passes locally;
+CI uses the debug profile. Two host pixel oracles use complete four-byte array
+chunks with their original color and count assertions unchanged.

@@ -1531,12 +1531,12 @@ impl Target {
             [surface] => surface,
             [] => self.fail(
                 field,
-                "expected: exactly 1 quad matching the target bounds\nactual: 0 matching quads",
+                "expected: exactly 1 quad matching the visible target bounds\nactual: 0 matching quads",
             ),
             surfaces => self.fail(
                 field,
                 &format!(
-                    "expected: exactly 1 quad matching the target bounds\nactual: {} matching quads; use a narrower #id",
+                    "expected: exactly 1 quad matching the visible target bounds\nactual: {} matching quads; use a narrower #id",
                     surfaces.len()
                 ),
             ),
@@ -1600,7 +1600,7 @@ impl Target {
     #[track_caller]
     fn fail(&self, field: &str, reason: &str) -> ! {
         panic!(
-            "{}: test `{}` target `{}` cannot inspect `{field}`\n{}\nstatement: {}\nselector: {}\nbounds: {:?}",
+            "{}: test `{}` target `{}` cannot inspect `{field}`\n{}\nstatement: {}\nselector: {}\nbounds: {:?}\nvisible: {:?}",
             self.source,
             self.test_name,
             self.id,
@@ -1608,6 +1608,7 @@ impl Target {
             self.source.statement,
             self.id,
             self.bounds,
+            self.visible,
         )
     }
 }
@@ -4029,7 +4030,7 @@ where
         let resolved_theme = self.theme();
         let screenshot = self.screenshot_with_theme(&resolved_theme, Some(source));
         for target in &mut targets {
-            match inspect_paint(&mut self.renderer, target.bounds) {
+            match inspect_paint(&mut self.renderer, target.visible) {
                 Ok(paint) => {
                     target.paint_error = None;
                     target.surfaces = paint.surfaces;
@@ -4218,7 +4219,7 @@ where
             let cursor = self.cursor;
             let theme = self.theme();
             let style = self.program.style(&self.state, &theme);
-            let paint_bounds = layout.bounds;
+            let paint_bounds = layout.visible_bounds;
             let events = vec![iced::Event::Window(window::Event::RedrawRequested(
                 self.logical_time,
             ))];
@@ -5511,16 +5512,25 @@ struct PaintInspection {
 
 fn inspect_paint<Renderer: 'static>(
     renderer: &mut Renderer,
-    bounds: Rectangle,
+    visible: Option<Rectangle>,
 ) -> Result<PaintInspection, &'static str> {
     let renderer = tiny_skia_renderer(renderer)?;
+    // Renderer primitives are in screen coordinates. Layout bounds deliberately
+    // stay unscrolled, so only the translated, clipped region can own paint.
+    let Some(bounds) = visible else {
+        return Ok(PaintInspection::default());
+    };
 
     let mut surfaces = Vec::new();
     let mut texts = Vec::new();
     let mut images = Vec::new();
     for layer in renderer.layers() {
         for (quad, background) in &layer.quads {
-            if rectangle_eq(quad.bounds, bounds) {
+            if quad
+                .bounds
+                .intersection(&layer.bounds)
+                .is_some_and(|visible| rectangle_eq(visible, bounds))
+            {
                 surfaces.push(SurfacePaint {
                     background: *background,
                     border: quad.border,
@@ -6887,6 +6897,41 @@ mod tests {
         .into()
     }
 
+    fn nested_paint_view(_state: &State) -> Element<'_, Message> {
+        let hidden = container(text("hidden top"))
+            .id("Paint/hidden")
+            .width(200)
+            .height(100)
+            .style(|_| container::Style::default().background(Color::from_rgb8(180, 20, 20)));
+        let visible = container(text("visible scrolled").size(16))
+            .id("Paint/visible")
+            .width(200)
+            .height(60)
+            .padding(8)
+            .align_y(iced::alignment::Vertical::Bottom)
+            .style(|_| container::Style::default().background(Color::from_rgb8(20, 80, 180)));
+        let inner = scrollable(column![
+            container(text("inner top")).height(100),
+            visible,
+            iced::widget::Space::new().height(100),
+        ])
+        .id("Paint/inner")
+        .width(200)
+        .height(100);
+        column![
+            scrollable(column![
+                hidden,
+                inner,
+                iced::widget::Space::new().height(100)
+            ])
+            .id("Paint/outer")
+            .width(200)
+            .height(120),
+            text("fixed footer"),
+        ]
+        .into()
+    }
+
     fn duplicate_scroll_view(_state: &State) -> Element<'_, Message> {
         column![
             scrollable(container(text("First")).height(200))
@@ -7061,12 +7106,10 @@ mod tests {
     }
 
     static CLIFF_BOOTS: AtomicUsize = AtomicUsize::new(0);
-    /// A cliff step sleeps this long; the campaign deadline sits at half of it.
-    /// The gap is the margin a loaded box gets: an innocent headless step
-    /// (a click, a redraw) costs a few milliseconds idle but tens under a
-    /// full build, and a 60 ms / 30 ms pair let one cross the deadline and
-    /// steal the finding from the real cliff.
-    const CLIFF_SLEEP: Duration = Duration::from_millis(200);
+    // These tests exercise campaign confirmation/replay/reduction, not a wall-clock
+    // budget. Only an armed Hit advances the scoped action clock, so scheduler
+    // delays cannot replace the intended finding with an unrelated action.
+    const CLIFF_DURATION: Duration = Duration::from_millis(200);
     const CLIFF_DEADLINE_MS: f64 = 100.0;
 
     fn cliff_boot() -> CliffState {
@@ -7079,7 +7122,7 @@ mod tests {
             CliffMessage::Arm => state.armed = true,
             CliffMessage::Hit => {
                 if state.armed {
-                    std::thread::sleep(CLIFF_SLEEP);
+                    trace::action_clock::advance(CLIFF_DURATION);
                 }
                 state.hits += 1;
             }
@@ -7113,6 +7156,7 @@ mod tests {
 
     #[test]
     fn seeded_campaign_confirms_replays_and_reduces_a_stateful_latency_cliff() {
+        let _clock = trace::action_clock::scoped();
         const SEED: u64 = 2;
         const STEPS: usize = 21;
         let program = || {
@@ -7203,7 +7247,7 @@ mod tests {
         match message {
             CliffMessage::Arm => state.armed = true,
             CliffMessage::Hit if state.armed && state.slow => {
-                std::thread::sleep(CLIFF_SLEEP);
+                trace::action_clock::advance(CLIFF_DURATION);
             }
             CliffMessage::Hit => {}
         }
@@ -7216,6 +7260,7 @@ mod tests {
 
     #[test]
     fn confirmation_discards_a_one_off_latency_candidate() {
+        let _clock = trace::action_clock::scoped();
         let boots = Arc::new(AtomicUsize::new(0));
         let program = || {
             let boots = Arc::clone(&boots);
@@ -7426,6 +7471,102 @@ mod tests {
         let missing =
             panic_message(|| driver.check_text("deep card", Some("Scrolled/card"), true, HERE));
         assert!(missing.contains("visible: Some("), "{missing}");
+    }
+
+    // Layout geometry stays unscrolled; paint belongs to the visible region
+    // after both scroll offsets and the inner/outer viewport clips.
+    #[test]
+    fn scrolled_paint_visible_target_uses_nested_screen_bounds() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                nested_paint_view,
+            ),
+            Config::new("scrolled_paint_visible")
+                .viewport(220.0, 180.0)
+                .theme(ThemeMode::Light)
+                .locale("en-US")
+                .platform(Platform::Linux)
+                .reduced_motion(true),
+        );
+        driver.scroll_to("Paint/outer", 0.0, 110.0, HERE);
+        driver.scroll_to("Paint/inner", 0.0, 110.0, HERE);
+        let target = driver.target("Paint/visible", HERE);
+        assert_eq!(target.top(), 200.0, "layout coordinates remain unscrolled");
+        assert_eq!(target.visible_y(), 0.0);
+        assert_eq!(target.visible_height(), 40.0, "both ancestor clips apply");
+        driver.check_text("visible scrolled", Some("Paint/visible"), false, HERE);
+        assert_eq!(target.text_count(), 1, "visible target retains its text");
+        assert_eq!(target.texts[0].content.as_deref(), Some("visible scrolled"));
+        assert_eq!(target.text_size(), 16.0);
+        assert_eq!(
+            target.background(),
+            Background::Color(Color::from_rgb8(20, 80, 180))
+        );
+        let capture = driver.capture("nested_visible", HERE);
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(capture.metadata_path).unwrap()).unwrap();
+        let captured = metadata["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|target| target["id"] == "Paint/visible")
+            .unwrap();
+        assert_eq!(captured["paint"]["texts"].as_array().unwrap().len(), 1);
+        assert_eq!(captured["paint"]["texts"][0]["content"], "visible scrolled");
+        assert_eq!(captured["paint"]["surfaces"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn scrolled_paint_hidden_target_does_not_inherit_visible_neighbors() {
+        let mut driver = Driver::new(
+            iced::application::<State, Message, iced::Theme, iced::Renderer>(
+                boot,
+                update,
+                nested_paint_view,
+            ),
+            Config::new("scrolled_paint_hidden")
+                .viewport(220.0, 180.0)
+                .theme(ThemeMode::Light)
+                .locale("en-US")
+                .platform(Platform::Linux)
+                .reduced_motion(true),
+        );
+        assert_eq!(
+            driver.target("Paint/hidden", HERE).texts[0]
+                .content
+                .as_deref(),
+            Some("hidden top")
+        );
+        driver.scroll_to("Paint/outer", 0.0, 110.0, HERE);
+        driver.scroll_to("Paint/inner", 0.0, 110.0, HERE);
+        let hidden = driver.target("Paint/hidden", HERE);
+        assert!(!hidden.visible());
+        driver.check_text("visible scrolled", None, false, HERE);
+        assert_eq!(
+            hidden.text_count(),
+            0,
+            "hidden target cannot inherit visible neighbor text"
+        );
+        assert_eq!(hidden.surface_count(), 0);
+        assert_eq!(hidden.image_count(), 0);
+        let capture = driver.capture("nested_hidden", HERE);
+        let metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(capture.metadata_path).unwrap()).unwrap();
+        let captured = metadata["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|target| target["id"] == "Paint/hidden")
+            .unwrap();
+        assert_eq!(captured["visible"]["present"], false);
+        for kind in ["texts", "surfaces", "images"] {
+            assert!(
+                captured["paint"][kind].as_array().unwrap().is_empty(),
+                "hidden capture {kind}"
+            );
+        }
     }
 
     #[test]

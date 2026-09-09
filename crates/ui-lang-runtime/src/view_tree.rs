@@ -215,6 +215,7 @@ struct EditorField {
 #[derive(Clone, Debug)]
 pub struct Inputs {
     instance: u64,
+    focus_cache: memo::FocusCache,
     fields: HashMap<String, Field>,
     editors: HashMap<String, EditorField>,
     editor_revision: u64,
@@ -241,6 +242,7 @@ impl Default for Inputs {
             .expect("view instance identities exhausted");
         Self {
             instance,
+            focus_cache: memo::FocusCache::default(),
             fields: HashMap::new(),
             editors: HashMap::new(),
             editor_revision: 0,
@@ -1255,7 +1257,7 @@ pub fn render(
             memo: handle.clone(),
         },
     );
-    memo::scope(content, inputs.instance, handle, root)
+    memo::scope(content, inputs.instance, handle, root, &inputs.focus_cache)
 }
 
 /// What the host keeps across frames, as one borrow for the render walk.

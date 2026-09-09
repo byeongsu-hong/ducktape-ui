@@ -404,6 +404,7 @@ cargo ice inspect FILE --fuzz interactions --seed 42 --steps 500  # deterministi
 cargo ice diff A B        # compare two manifests + PNGs
 cargo ice api FILE        # public-surface fingerprint; `api diff` classifies changes
 cargo ice review FILE --trace  # tests, captures, and linked interaction traces
+cargo ice review FILE --package PKG --bin BIN  # select one application test target
 cargo ice schema          # machine-readable construct table (drives the LSP)
 cargo ice lsp             # stdio LSP: diagnostics, completion, rename, code actions
 ```
