@@ -2903,3 +2903,7 @@ Removing the Tree source refusal made the expected-error assertion fail.
 Broadening focus interest to file events made the category-isolation assertion
 fail; bypassing preedit boundary validation made the invalid-range assertion
 fail. Each mutation was restored byte-for-byte before rerunning its test.
+
+The Unix invalid-path regression fails against lossy conversion (an accepted
+`/tmp/bad�` instead of an error), then passes with strict UTF-8 conversion for
+both file-hovered and file-dropped observations.

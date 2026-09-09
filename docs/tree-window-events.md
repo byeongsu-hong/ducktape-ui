@@ -32,3 +32,6 @@ focus/loss, dropped path, IME preedit/commit with exactly one editor update and
 one observation, captured overlay delivery, unsubscribe, replacement rejection,
 and the host's terminal close boundary. These are host integration tests, not
 claims about Finder, Windows drag/drop or platform IME dispatch.
+
+Dropped/hovered file paths must be UTF-8. Non-UTF-8 native paths are refused
+with a host diagnostic, never rewritten with replacement characters.

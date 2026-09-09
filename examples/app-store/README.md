@@ -1536,3 +1536,6 @@ Window geometry, scale and frame-clock subscriptions are refused by Tree
 codegen with E190. Generic event subscriptions carry the supported copied
 subset, not all operating-system events. This schema requires wire epoch 5
 and rebuilding host and guests together.
+
+Dropped/hovered file paths must be UTF-8. Non-UTF-8 native paths are refused
+with a host diagnostic, never rewritten with replacement characters.

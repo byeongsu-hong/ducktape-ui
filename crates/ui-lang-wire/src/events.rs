@@ -98,8 +98,16 @@ impl Event {
                 W::Unfocused => Window::Unfocused,
                 W::CloseRequested => Window::CloseRequested,
                 W::Closed => Window::Closed,
-                W::FileHovered(path) => Window::FileHovered(path.to_string_lossy().into_owned()),
-                W::FileDropped(path) => Window::FileDropped(path.to_string_lossy().into_owned()),
+                W::FileHovered(path) => Window::FileHovered(
+                    path.to_str()
+                        .ok_or("window file path is not UTF-8")?
+                        .to_owned(),
+                ),
+                W::FileDropped(path) => Window::FileDropped(
+                    path.to_str()
+                        .ok_or("window file path is not UTF-8")?
+                        .to_owned(),
+                ),
                 W::FilesHoveredLeft => Window::FilesHoveredLeft,
                 _ => return Ok(None),
             }),
@@ -176,6 +184,22 @@ fn text<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(unix, feature = "iced"))]
+    #[test]
+    fn non_utf8_native_file_paths_are_refused_without_replacement_characters() {
+        use std::os::unix::ffi::OsStringExt;
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/bad\xff".to_vec()));
+        for event in [
+            iced_core::window::Event::FileHovered(path.clone()),
+            iced_core::window::Event::FileDropped(path),
+        ] {
+            assert_eq!(
+                Event::from_native(&iced_core::Event::Window(event)),
+                Err("window file path is not UTF-8")
+            );
+        }
+    }
 
     #[test]
     fn interests_do_not_subscribe_focus_listeners_to_dropped_paths() {
