@@ -613,7 +613,9 @@ echoes preserve newer host edits. Positions are UTF-8 byte offsets normalized to
 grapheme boundaries. Disabled editors produce no edits. Rebuild hosts and guests
 together for this editor wire change. Tree factories support declared key claims
 and guest-owned post-commit history through the [editor transaction contract](docs/editor-transactions.md).
-Arbitrary native action, highlighter and style callbacks remain refused.
+Tree `editor-highlighter` factories provide bounded span formatting, caret menus and gutter/hit metadata.
+`EditorBinding::on_interaction` shares atomic edits and history with keys; read-only links and comments remain notifications.
+Arbitrary native action and style callbacks remain refused. See [editor presentation](docs/editor-presentation.md).
 The [bundled fixture](examples/app-store/tests/editor-guest/src/ui/app.ice)
 exercises layout, selection colors and guest-bound edits.
 

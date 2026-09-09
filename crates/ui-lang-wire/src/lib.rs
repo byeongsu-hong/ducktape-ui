@@ -25,7 +25,7 @@
 pub mod authored;
 /// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
 /// This is independent of WIT signatures and the manifest text format.
-pub const WIRE_EPOCH: u32 = 3;
+pub const WIRE_EPOCH: u32 = 4;
 
 pub mod manifest;
 pub mod native;
@@ -41,11 +41,13 @@ mod background;
 pub use background::{Background, ColorStop};
 mod editor;
 pub mod editor_document;
+pub mod editor_presentation;
 pub mod editor_transaction;
 pub use editor_transaction::{
     EditorBinding, EditorDecision, EditorEditKind, EditorFault, EditorHistoryEffect,
-    EditorKeyClaim, EditorKeyRequest, EditorPatch, EditorPatchError, EditorResponse,
-    EditorTransactionEvent, EditorTransactionId, MAX_EDITOR_PATCHES, patched_editor_text,
+    EditorKeyClaim, EditorPatch, EditorPatchError, EditorRequest, EditorRequestInput,
+    EditorResponse, EditorTransactionEvent, EditorTransactionId, MAX_EDITOR_PATCHES,
+    patched_editor_text,
 };
 
 pub use editor::{EditorCursor, EditorPosition, EditorState, editor_lines};
@@ -142,9 +144,9 @@ pub enum Event {
         handler: u32,
         message: editor_document::EditorDocumentMessage,
     },
-    EditorKeyRequest {
+    EditorRequest {
         handler: u32,
-        request: EditorKeyRequest,
+        request: EditorRequest,
     },
     EditorTransaction {
         handler: u32,
@@ -462,6 +464,7 @@ pub struct InputOptions {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EditorOptions {
     pub binding: Option<Box<EditorBinding>>,
+    pub presentation: Option<Box<editor_presentation::EditorPresentation>>,
     pub size: Option<f32>,
     pub padding: Option<f32>,
     pub line_height: Option<LineHeight>,
@@ -2259,6 +2262,9 @@ fn sanitize_node(
             max_height,
             ..
         } => {
+            if let Some(presentation) = &mut options.presentation {
+                presentation.sanitize(&mut budgets.text);
+            }
             bound_optional(&mut options.size);
             if let Some(size) = &mut options.size {
                 *size = size.clamp(f32::EPSILON, MAX_TEXT_PIXELS);
@@ -3170,6 +3176,7 @@ mod tests {
             Event::EditorTransaction {
                 handler: 5,
                 event: EditorTransactionEvent::Commit {
+                    origin: None,
                     id: EditorTransactionId {
                         instance: 1,
                         document: "app:draft".into(),

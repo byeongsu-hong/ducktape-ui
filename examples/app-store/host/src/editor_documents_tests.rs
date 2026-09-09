@@ -39,7 +39,7 @@ fn settle(
                 .pending
                 .iter()
                 .map(|event| match event {
-                    wire::Event::EditorKeyRequest { .. } => "decision",
+                    wire::Event::EditorRequest { .. } => "decision",
                     wire::Event::EditorTransaction { .. } => "commit",
                     _ => "other",
                 })
@@ -137,6 +137,16 @@ fn document(guest: &Arc<Mutex<Guest>>) -> (String, wire::editor_document::Editor
 }
 struct Bounds(String, Option<Rectangle>);
 impl Operation for Bounds {
+    fn custom(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        bounds: Rectangle,
+        _: &mut dyn std::any::Any,
+    ) {
+        if id == Some(&iced::widget::Id::from(self.0.clone())) {
+            self.1 = Some(bounds);
+        }
+    }
     fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
         visit(self);
     }
@@ -365,5 +375,194 @@ fn native_and_wasm_one_mib_documents_edit_restore_and_undo_without_reinitializin
             initial,
             "Undo atomically reinserts one MiB, exceeding the display string budget"
         );
+    }
+}
+
+#[test]
+#[ignore = "requires current native and Wasm editor-presentation fixtures"]
+fn native_and_wasm_caret_menu_commits_one_edit_and_preserves_undo_across_reload() {
+    struct FocusEditor(String);
+    impl Operation for FocusEditor {
+        fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+            visit(self);
+        }
+        fn focusable(
+            &mut self,
+            id: Option<&iced::widget::Id>,
+            _: Rectangle,
+            state: &mut dyn iced::advanced::widget::operation::Focusable,
+        ) {
+            if id == Some(&iced::widget::Id::from(self.0.clone())) {
+                state.focus();
+            }
+        }
+    }
+    for native in [false, true] {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if native {
+            "../target/editor-presentation-native"
+        } else {
+            "../target/editor-presentation-fixture"
+        });
+        let entries = crate::catalog::scan_dir(&directory);
+        assert_eq!(
+            entries.len(),
+            1,
+            "build presentation fixture native={native}"
+        );
+        let entry = entries[0].clone();
+        let guest = Arc::new(Mutex::new(Guest::load(&entry).unwrap()));
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let mut ui = build(&guest, &mut renderer, user_interface::Cache::default());
+        let mut now = Instant::now();
+        ui = settle(ui, &guest, &mut renderer, &mut now, "presentation boot");
+        let initial = document(&guest);
+        assert_eq!(initial.0, "Title\n한글 link [ ]");
+        let id = editor(guest.lock().unwrap().frame.root.as_ref().unwrap())
+            .unwrap()
+            .0
+            .to_owned();
+        ui.operate(&renderer, &mut FocusEditor(id));
+        ui.draw(
+            &mut renderer,
+            &iced::Theme::Light,
+            &iced::advanced::renderer::Style {
+                text_color: iced::Color::BLACK,
+            },
+            mouse::Cursor::Unavailable,
+        );
+        let pixels = renderer.screenshot(Size::new(720, 400), 1.0, iced::Color::WHITE);
+        let green = pixels
+            .chunks_exact(4)
+            .filter(|pixel| pixel[..3] == [0, 255, 0])
+            .count();
+        assert!(
+            green > 2_000,
+            "guest line background must reach actual native paint ({green} pixels)"
+        );
+        // Real native menu handling intercepts Enter before ordinary editor input.
+        send(
+            &mut ui,
+            &mut renderer,
+            Point::ORIGIN,
+            key(
+                keyboard::Key::Named(keyboard::key::Named::Enter),
+                keyboard::Modifiers::empty(),
+            ),
+        );
+        ui = settle(ui, &guest, &mut renderer, &mut now, "menu pick commit");
+        let edited = document(&guest);
+        assert_eq!(
+            edited.0, "Chosen\n한글 link [ ]",
+            "caret menu must run the guest interaction decider, not insert a newline"
+        );
+        assert_eq!(
+            edited.1.text_revision,
+            initial.1.text_revision + 1,
+            "one atomic guest patch"
+        );
+        // A separate disabled widget shares this document. Its declared link
+        // starts after a multi-byte prefix; native byte hit geometry must reach
+        // the guest without a caret move, edit, or history replacement.
+        fn readonly(node: &wire::Node) -> Option<String> {
+            if let wire::Node::Editor {
+                key,
+                editable: false,
+                ..
+            } = node
+            {
+                Some(key.clone())
+            } else {
+                node.children().iter().find_map(readonly)
+            }
+        }
+        fn has_text(node: &wire::Node, expected: &str) -> bool {
+            matches!(node, wire::Node::Text { content, .. } if content == expected)
+                || node
+                    .children()
+                    .iter()
+                    .any(|child| has_text(child, expected))
+        }
+        let readonly_id = readonly(guest.lock().unwrap().frame.root.as_ref().unwrap()).unwrap();
+        let mut bounds = Bounds(readonly_id, None);
+        ui.operate(&renderer, &mut bounds);
+        let bounds = bounds.1.expect("read-only native editor");
+        for (point, notice) in [
+            (Point::new(bounds.x + 100.0, bounds.y + 44.0), "link"),
+            (Point::new(bounds.x + 625.0, bounds.y + 44.0), "comments"),
+        ] {
+            send(
+                &mut ui,
+                &mut renderer,
+                point,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            );
+            send(
+                &mut ui,
+                &mut renderer,
+                point,
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            );
+            ui = settle(ui, &guest, &mut renderer, &mut now, "read-only navigation");
+            assert!(
+                has_text(guest.lock().unwrap().frame.root.as_ref().unwrap(), notice),
+                "read-only {notice} click must reach its guest notification"
+            );
+            assert_eq!(
+                document(&guest),
+                edited,
+                "navigation must not change document, revision or caret"
+            );
+        }
+        // Clicking the other widget normally blurs the editable control. Seat
+        // focus before replacement; no focus operation is sent after reload.
+        let id = editor(guest.lock().unwrap().frame.root.as_ref().unwrap())
+            .unwrap()
+            .0
+            .to_owned();
+        ui.operate(&renderer, &mut FocusEditor(id));
+        let running = Running {
+            id: entry.id.clone(),
+            name: entry.name.clone(),
+            surface: Surface(guest.clone()),
+            window: iced::window::Id::unique(),
+        };
+        let prepared =
+            iced::futures::executor::block_on(prepare_reload(entry, vec![running.clone()], 1));
+        finish_reload(std::slice::from_ref(&running), 1, prepared).unwrap();
+        assert_eq!(
+            document(&guest),
+            edited,
+            "no-init restore retains interaction result before redraw"
+        );
+        ui = build(&guest, &mut renderer, ui.into_cache());
+        let command = if cfg!(target_os = "macos") {
+            keyboard::Modifiers::LOGO
+        } else {
+            keyboard::Modifiers::CTRL
+        };
+        send(
+            &mut ui,
+            &mut renderer,
+            Point::ORIGIN,
+            key(keyboard::Key::Character("z".into()), command),
+        );
+        ui = settle(
+            ui,
+            &guest,
+            &mut renderer,
+            &mut now,
+            "interaction undo after reload",
+        );
+        assert_eq!(
+            document(&guest).0,
+            initial.0,
+            "guest history must Undo the menu transaction without refocus"
+        );
+        drop(ui);
     }
 }

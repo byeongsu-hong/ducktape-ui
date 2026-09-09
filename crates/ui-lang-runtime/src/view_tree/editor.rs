@@ -9,6 +9,8 @@
 //! drag and click history carry over between calls as they would for a
 //! widget built once.
 
+#[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
+use std::sync::OnceLock;
 use std::sync::{Arc, Mutex};
 
 use iced::advanced::widget::{Operation, Tree, tree};
@@ -24,6 +26,7 @@ use super::Output;
 pub(super) type Shared = Arc<Mutex<Content>>;
 
 pub(super) struct HostEditor {
+    instance: u64,
     options: Box<wire::EditorOptions>,
     transactions: Option<super::editor_transactions::Shared>,
     status: widget::text_editor::Status,
@@ -37,6 +40,11 @@ pub(super) struct HostEditor {
     height: Length,
     min_height: Option<f32>,
     max_height: Option<f32>,
+    reference: wire::editor_document::EditorDocumentRef,
+    #[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
+    presented: OnceLock<Arc<[crate::rich_text_editor::PresentedLine]>>,
+    #[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
+    valid_presentation: OnceLock<bool>,
 }
 
 impl HostEditor {
@@ -44,6 +52,7 @@ impl HostEditor {
         node: &wire::Node,
         content: Shared,
         transactions: Option<super::editor_transactions::Shared>,
+        instance: u64,
     ) -> Self {
         let wire::Node::Editor {
             options,
@@ -61,6 +70,7 @@ impl HostEditor {
             unreachable!("built for an editor node")
         };
         Self {
+            instance,
             transactions,
             options: options.clone(),
             status: if *editable {
@@ -78,11 +88,259 @@ impl HostEditor {
             height: height.map_or(Length::Shrink, super::length),
             min_height: *min_height,
             max_height: *max_height,
+            reference: document.clone(),
+            #[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
+            presented: OnceLock::new(),
+            #[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
+            valid_presentation: OnceLock::new(),
         }
     }
 
+    #[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
+    fn build<'a>(&'a self, content: &'a Content) -> Element<'a, Output> {
+        let Some(presentation) = &self.options.presentation else {
+            return self.build_plain(content).into();
+        };
+        use crate::rich_text_editor::{ContentVersion, PresentationHighlighter, RichTextEditor};
+        use std::hash::{Hash, Hasher};
+        let (reset, revision, settings, current) = if let Some(shared) = &self.transactions {
+            let control = super::lock(shared);
+            let current = control.available
+                && control.loaded
+                && control.reset == self.reference.reset
+                && control.text_revision == self.reference.text_revision
+                && control.revision == self.reference.revision
+                && control.cursor == self.reference.cursor
+                && control.last_text.len() == self.reference.byte_len as usize;
+            let current = current
+                && *self
+                    .valid_presentation
+                    .get_or_init(|| presentation.validate(&control.last_text).is_ok());
+            let settings = if current {
+                self.presented
+                    .get_or_init(|| {
+                        super::editor_presentation::lines(presentation, &control.last_text)
+                            .unwrap_or_else(|| Arc::from([]))
+                    })
+                    .clone()
+            } else {
+                Arc::from([])
+            };
+            (control.reset, control.text_revision, settings, current)
+        } else {
+            (
+                self.reference.reset,
+                self.reference.text_revision,
+                self.presented
+                    .get_or_init(|| {
+                        super::editor_presentation::lines(presentation, &content.text())
+                            .unwrap_or_else(|| Arc::from([]))
+                    })
+                    .clone(),
+                *self
+                    .valid_presentation
+                    .get_or_init(|| presentation.validate(&content.text()).is_ok()),
+            )
+        };
+        // Layout identity only: acceptance uses the exact document reference above.
+        let mut identity = std::collections::hash_map::DefaultHasher::new();
+        self.document.hash(&mut identity);
+        reset.hash(&mut identity);
+        let mut editor =
+            RichTextEditor::new(content, ContentVersion::new(identity.finish(), revision))
+                .id(widget::Id::from(self.key.clone()))
+                .placeholder(self.placeholder.as_str())
+                .height(self.height)
+                .focus_enabled(self.editable)
+                .style(move |theme, _| native_style(self.options.style, theme, self.status))
+                .highlight_with::<PresentationHighlighter>(settings, 0, |format| *format);
+        if let Some(size) = self.options.size {
+            editor = editor.size(size);
+        }
+        if let Some(padding) = presentation.padding {
+            editor = editor.padding(super::padding(padding));
+        } else if let Some(padding) = self.options.padding {
+            editor = editor.padding(padding);
+        }
+        if let Some(line_height) = self.options.line_height {
+            editor = editor.line_height(match line_height {
+                wire::LineHeight::Relative(value) => widget::text::LineHeight::Relative(value),
+                wire::LineHeight::Absolute(value) => {
+                    widget::text::LineHeight::Absolute(value.into())
+                }
+            });
+        }
+        if let Some(wrapping) = self.options.wrapping {
+            editor = editor.wrapping(match wrapping {
+                wire::Wrapping::None => widget::text::Wrapping::None,
+                wire::Wrapping::Glyph => widget::text::Wrapping::Glyph,
+                wire::Wrapping::Word => widget::text::Wrapping::Word,
+                wire::Wrapping::WordOrGlyph => widget::text::Wrapping::WordOrGlyph,
+            });
+        }
+        if let Some(font) = &self.options.font {
+            editor = editor.font(super::text::named_font(font));
+        }
+        if let Some(width) = self.width {
+            editor = editor.width(width);
+        }
+        if let Some(height) = self.min_height {
+            editor = editor.min_height(height);
+        }
+        if let Some(height) = self.max_height {
+            editor = editor.max_height(height);
+        }
+        if current && self.transactions.is_some() {
+            use crate::rich_text_editor as native;
+            use wire::editor_presentation::{
+                EditorGutterButton, EditorInteraction, EditorMenuAnchor,
+            };
+            let affordances = &presentation.affordances;
+            let output = move |action| Output::EditorInteraction {
+                reference: self.reference.clone(),
+                action,
+            };
+            editor = editor
+                .on_line_press(move |_, position| {
+                    presentation
+                        .affordances
+                        .hit(wire::EditorPosition {
+                            line: position.line as u32,
+                            column: position.column as u32,
+                        })
+                        .map(output)
+                })
+                .mouse_interaction(move |_, position| {
+                    if presentation
+                        .affordances
+                        .hit(wire::EditorPosition {
+                            line: position.line as u32,
+                            column: position.column as u32,
+                        })
+                        .is_some()
+                    {
+                        mouse::Interaction::Pointer
+                    } else {
+                        mouse::Interaction::Text
+                    }
+                })
+                .margin_marks(
+                    affordances
+                        .margins
+                        .iter()
+                        .map(|mark| (mark.line as usize, mark.count as usize))
+                        .collect(),
+                    move |line| output(EditorInteraction::Margin { line: line as u32 }),
+                )
+                .margin_label(affordances.margin_label.clone());
+            if self.editable {
+                editor = editor
+                    .on_gutter(move |line, button| {
+                        let gutter = affordances
+                            .gutters
+                            .iter()
+                            .find(|gutter| gutter.line as usize == line)?;
+                        let button = match button {
+                            native::GutterButton::Plus if gutter.plus => EditorGutterButton::Plus,
+                            native::GutterButton::Handle if gutter.handle => {
+                                EditorGutterButton::Handle
+                            }
+                            _ => return None,
+                        };
+                        Some(output(EditorInteraction::Gutter {
+                            line: line as u32,
+                            button,
+                        }))
+                    })
+                    .on_gutter_drop(
+                        affordances
+                            .drop_boundaries
+                            .iter()
+                            .map(|line| *line as usize)
+                            .collect(),
+                        move |from, boundary| {
+                            Some(output(EditorInteraction::GutterDrop {
+                                from: from as u32,
+                                boundary: boundary as u32,
+                            }))
+                        },
+                    )
+                    .menu(affordances.menu.as_ref().map(|menu| {
+                        native::EditorMenu {
+                            anchor: match menu.anchor {
+                                EditorMenuAnchor::Caret => native::MenuAnchor::Caret,
+                                EditorMenuAnchor::Line(line) => {
+                                    native::MenuAnchor::Line(line as usize)
+                                }
+                            },
+                            items: menu
+                                .items
+                                .iter()
+                                .map(|item| native::MenuItem {
+                                    tag: item.tag.clone(),
+                                    label: item.label.clone(),
+                                })
+                                .collect(),
+                            selected: menu.selected as usize,
+                        }
+                    }))
+                    .on_menu(move |event| {
+                        output(match event {
+                            native::MenuEvent::Select(index) => EditorInteraction::MenuSelect {
+                                index: index as u32,
+                            },
+                            native::MenuEvent::Pick(tag) => EditorInteraction::MenuPick { tag },
+                            native::MenuEvent::Dismiss => EditorInteraction::MenuDismiss,
+                        })
+                    });
+            }
+        }
+        if self.editable {
+            editor = editor.on_action(move |action| Output::RichEditorAction {
+                reset: self.reset,
+                key: self.key.clone(),
+                action,
+            });
+            if let (Some(binding), Some(shared)) = (&self.options.binding, &self.transactions) {
+                let claimed = move |press: &widget::text_editor::KeyPress| {
+                    let control = super::lock(shared);
+                    !control.bypass_claim
+                        && !control.composing
+                        && matches!(press.status, widget::text_editor::Status::Focused { .. })
+                        && binding.claims.iter().any(|claim| {
+                            claim.matches(&key_state(press), cfg!(target_os = "macos"))
+                        })
+                };
+                editor = editor
+                    .key_binding(move |press| {
+                        if claimed(press) {
+                            None
+                        } else {
+                            crate::rich_text_editor::default_key_binding(press)
+                        }
+                    })
+                    .on_chord(move |press| {
+                        claimed(press).then(|| Output::EditorClaim {
+                            key: self.key.clone(),
+                            state: key_state(press),
+                        })
+                    });
+            }
+        }
+        editor.into()
+    }
+
+    #[cfg(not(any(feature = "tiny-skia", feature = "wgpu")))]
+    fn build<'a>(&'a self, content: &'a Content) -> Element<'a, Output> {
+        assert!(
+            self.options.presentation.is_none(),
+            "editor presentation requires a graphics renderer"
+        );
+        self.build_plain(content).into()
+    }
+
     /// The `TextEditor` for this call, over the locked content.
-    fn build<'a>(&'a self, content: &'a Content) -> TextEditor<'a, PlainText, Output> {
+    fn build_plain<'a>(&'a self, content: &'a Content) -> TextEditor<'a, PlainText, Output> {
         let mut editor = widget::text_editor(content)
             .id(widget::Id::from(self.key.clone()))
             .placeholder(self.placeholder.as_str())
@@ -175,6 +433,23 @@ impl HostEditor {
     }
 }
 
+#[cfg(any(feature = "tiny-skia", feature = "wgpu"))]
+fn key_state(press: &widget::text_editor::KeyPress) -> wire::keyboard::KeyState {
+    let event = iced::keyboard::Event::KeyPressed {
+        key: press.key.clone(),
+        modified_key: press.modified_key.clone(),
+        physical_key: press.physical_key,
+        modifiers: press.modifiers,
+        text: press.text.clone(),
+        location: iced::keyboard::Location::Standard,
+        repeat: false,
+    };
+    let wire::keyboard::Event::Press { state, .. } = event.into() else {
+        unreachable!()
+    };
+    state
+}
+
 fn native_style(
     style: wire::InputStyle,
     theme: &iced::Theme,
@@ -235,12 +510,12 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
 
     fn tag(&self) -> tree::Tag {
         let content = self.lock();
-        self.build(&content).tag()
+        self.build(&content).as_widget().tag()
     }
 
     fn state(&self) -> tree::State {
         let content = self.lock();
-        self.build(&content).state()
+        self.build(&content).as_widget().state()
     }
 
     fn layout(
@@ -250,7 +525,9 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
         limits: &layout::Limits,
     ) -> layout::Node {
         let content = self.lock();
-        self.build(&content).layout(tree, renderer, limits)
+        self.build(&content)
+            .as_widget_mut()
+            .layout(tree, renderer, limits)
     }
 
     fn draw(
@@ -265,6 +542,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
     ) {
         let content = self.lock();
         self.build(&content)
+            .as_widget()
             .draw(tree, renderer, theme, style, layout, cursor, viewport);
     }
 
@@ -277,6 +555,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
     ) {
         let content = self.lock();
         self.build(&content)
+            .as_widget_mut()
             .operate(tree, layout, renderer, operation);
     }
 
@@ -307,8 +586,21 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                 self.0 = state.is_focused();
             }
         }
+        let focused = {
+            let content = self.lock();
+            let mut native = self.build(&content);
+            let mut focus = Focus(false);
+            native
+                .as_widget_mut()
+                .operate(tree, layout, renderer, &mut focus);
+            focus.0
+        };
         let mut replay = None;
-        if self.editable
+        let navigation =
+            self.options.presentation.as_ref().is_some_and(|p| {
+                !p.affordances.hits.is_empty() || !p.affordances.margins.is_empty()
+            });
+        if (self.editable || navigation)
             && let Some(shared) = &self.transactions
         {
             let mut control = super::lock(shared);
@@ -334,13 +626,12 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                     document: self.document.clone(),
                 });
             }
-            let focused = {
-                let content = self.lock();
-                let mut native = self.build(&content);
-                let mut focus = Focus(false);
-                native.operate(tree, layout, renderer, &mut focus);
-                focus.0
-            };
+            let has_menu = self.editable
+                && self
+                    .options
+                    .presentation
+                    .as_ref()
+                    .is_some_and(|presentation| presentation.affordances.menu.is_some());
             let relevant = match event {
                 Event::Keyboard(
                     iced::keyboard::Event::KeyPressed { .. }
@@ -350,10 +641,13 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                 Event::InputMethod(_) => focused,
                 Event::Mouse(
                     iced::mouse::Event::ButtonPressed(_) | iced::mouse::Event::ButtonReleased(_),
-                ) => cursor.is_over(layout.bounds()) || focused,
+                ) => cursor.is_over(layout.bounds()) || focused || has_menu,
                 Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
-                    focused && (control.dragging || control.lane.front().is_some())
+                    control.dragging
+                        || (focused && control.lane.front().is_some())
+                        || (has_menu && cursor.is_over(layout.bounds()))
                 }
+                Event::Window(iced::window::Event::Unfocused) => has_menu,
                 Event::Mouse(iced::mouse::Event::WheelScrolled { .. }) => {
                     cursor.is_over(layout.bounds()) && control.lane.front().is_some()
                 }
@@ -426,17 +720,28 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
         if let Some((sequence, input)) = &replay {
             let actions = match &input.work {
                 super::editor_transactions::NativeWork::Event(_) => None,
-                super::editor_transactions::NativeWork::Actions(actions) => Some(actions.clone()),
+                super::editor_transactions::NativeWork::Actions(actions) => Some(
+                    actions
+                        .iter()
+                        .cloned()
+                        .map(crate::editor_action::Action::Edit)
+                        .collect(),
+                ),
+                super::editor_transactions::NativeWork::RichActions(actions) => {
+                    Some(actions.clone())
+                }
                 super::editor_transactions::NativeWork::Caret(_) => Some(Vec::new()),
             };
             if let Some(actions) = actions {
                 shell.publish(Output::EditorBatch(super::editor_transactions::Batch {
+                    instance: self.instance,
                     document: self.document.clone(),
                     key: self.key.clone(),
                     sequence: *sequence,
                     reset: self.reset,
                     actions,
                     request: None,
+                    presentation_reference: None,
                 }));
                 shell.request_redraw();
                 return;
@@ -478,7 +783,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
             if self.transactions.is_some() {
                 // A guest patch may invalidate native shaping between frames.
                 // Reuse native layout before any caret/IME query or replay.
-                let _ = editor.layout(
+                let _ = editor.as_widget_mut().layout(
                     tree,
                     renderer,
                     &layout::Limits::new(Size::ZERO, layout.bounds().size()),
@@ -511,7 +816,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                     .as_ref()
                     .and_then(|(_, input)| input.clipboard.clone()),
             };
-            editor.update(
+            editor.as_widget_mut().update(
                 tree,
                 effective_event,
                 layout,
@@ -546,17 +851,34 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                 let mut request = None;
                 for output in actions {
                     match output {
-                        Output::EditorAction { action, .. } => native_actions.push(action),
+                        Output::EditorAction { action, .. } => {
+                            native_actions.push(crate::editor_action::Action::Edit(action))
+                        }
+                        Output::RichEditorAction { action, .. } => native_actions.push(action),
+                        Output::EditorInteraction { reference, action } => {
+                            if let Some(shared) = &self.transactions {
+                                let control = super::lock(shared);
+                                if reference
+                                    == super::editor_documents::current_reference(
+                                        &self.document,
+                                        &control,
+                                    )
+                                {
+                                    request =
+                                        Some(wire::EditorRequestInput::Interaction { action });
+                                }
+                            }
+                        }
                         Output::EditorClaim { state, .. } => {
-                            request = Some((
-                                state,
-                                matches!(
+                            request = Some(wire::EditorRequestInput::Key {
+                                key: state,
+                                repeat: matches!(
                                     &input.work,
                                     super::editor_transactions::NativeWork::Event(Event::Keyboard(
                                         iced::keyboard::Event::KeyPressed { repeat: true, .. }
                                     ))
                                 ),
-                            ))
+                            })
                         }
                         _ => shell.publish(output),
                     }
@@ -575,11 +897,17 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                     }
                 } else {
                     shell.publish(Output::EditorBatch(super::editor_transactions::Batch {
+                        instance: self.instance,
                         document: self.document.clone(),
                         key: self.key.clone(),
                         sequence: *sequence,
                         reset: self.reset,
                         actions: native_actions,
+                        presentation_reference: matches!(
+                            request,
+                            Some(wire::EditorRequestInput::Interaction { .. })
+                        )
+                        .then(|| self.reference.clone()),
                         request,
                     }));
                 }
@@ -588,7 +916,9 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                 shell.merge(local, std::convert::identity);
             }
             let mut focused = Focus(false);
-            editor.operate(tree, layout, renderer, &mut focused);
+            editor
+                .as_widget_mut()
+                .operate(tree, layout, renderer, &mut focused);
             use widget::text_editor::Status;
             if !self.editable {
                 Status::Disabled
@@ -623,6 +953,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
     ) -> mouse::Interaction {
         let content = self.lock();
         self.build(&content)
+            .as_widget()
             .mouse_interaction(tree, layout, cursor, viewport, renderer)
     }
 
@@ -710,7 +1041,7 @@ mod tests {
         cache: user_interface::Cache,
     ) -> Ui {
         UserInterface::build(
-            HostEditor::new(node, content.clone(), None),
+            HostEditor::new(node, content.clone(), None, 0),
             Size::new(200.0, 120.0),
             cache,
             renderer,
@@ -735,6 +1066,63 @@ mod tests {
             cursor,
         );
         renderer.screenshot(Size::new(200, 120), 1.0, Color::WHITE)
+    }
+
+    #[test]
+    fn guest_line_highlight_is_painted_by_the_actual_editor() {
+        use wire::editor_presentation::{EditorFormat, EditorPresentation, EditorSpan};
+        let mut renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let source = "# Heading";
+        let node = wire::Node::Editor {
+            key: "editor".into(),
+            placeholder: String::new(),
+            document: document("app:notes", source),
+            on_document: 7,
+            editable: false,
+            width: Some(200.0),
+            height: Some(wire::Length::Fixed(120.0)),
+            min_height: None,
+            max_height: None,
+            options: Box::new(wire::EditorOptions {
+                padding: Some(5.0),
+                presentation: Some(Box::new(EditorPresentation {
+                    formats: vec![EditorFormat {
+                        color: Some(wire::Rgba([0.0; 4])),
+                        size: Some(24.0),
+                        line_height: Some(wire::LineHeight::Absolute(40.0)),
+                        line_background: Some(wire::Rgba([0.0, 1.0, 0.0, 1.0])),
+                        ..Default::default()
+                    }],
+                    spans: vec![EditorSpan {
+                        line: 0,
+                        start: 0,
+                        end: source.len() as u32,
+                        format: 0,
+                    }],
+                    ..Default::default()
+                })),
+                ..Default::default()
+            }),
+        };
+        let content = Arc::new(Mutex::new(Content::with_text(source)));
+        let mut ui = build(
+            &node,
+            &content,
+            &mut renderer,
+            user_interface::Cache::default(),
+        );
+        let pixels = paint(&mut ui, &mut renderer, mouse::Cursor::Unavailable);
+        assert_eq!(
+            &pixels[(15 * 200 + 100) * 4..][..3],
+            &[0, 255, 0],
+            "guest line background must reach native paint"
+        );
+        assert_eq!(content.lock().unwrap().text(), source);
     }
 
     // Claim: native editor layout, status/selection paint, edit routes and disabled behavior survive copied options.
@@ -763,6 +1151,7 @@ mod tests {
             max_height: None,
             options: Box::new(wire::EditorOptions {
                 binding: None,
+                presentation: None,
                 size: Some(20.0),
                 padding: Some(7.0),
                 line_height: Some(wire::LineHeight::Absolute(30.0)),
@@ -785,7 +1174,7 @@ mod tests {
         };
         let content = Arc::new(Mutex::new(Content::with_text("ab\ncd")));
         let mut element: Element<'_, Output, iced::Theme, iced::Renderer> =
-            HostEditor::new(&node, content.clone(), None).into();
+            HostEditor::new(&node, content.clone(), None, 0).into();
         let mut tree = Tree::new(&element);
         let bounds = element.as_widget_mut().layout(
             &mut tree,
@@ -967,8 +1356,13 @@ mod tests {
                     ..Default::default()
                 }),
             };
-            let mut editor: Element<'_, Output, iced::Theme, iced::Renderer> =
-                HostEditor::new(&node, Arc::new(Mutex::new(Content::with_text(text))), None).into();
+            let mut editor: Element<'_, Output, iced::Theme, iced::Renderer> = HostEditor::new(
+                &node,
+                Arc::new(Mutex::new(Content::with_text(text))),
+                None,
+                0,
+            )
+            .into();
             let mut tree = Tree::new(&editor);
             editor
                 .as_widget_mut()

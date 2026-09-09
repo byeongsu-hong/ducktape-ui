@@ -349,6 +349,12 @@ pub(in crate::codegen) fn generate_extern_probes(
                 item.name, item.rust_path
             )
             .unwrap(),
+            ExternKind::EditorHighlighter if program.target() == Target::Tree => writeln!(
+                out,
+                "#[allow(dead_code)] fn __ui_lang_check_editor_highlighter_{}({params}) {{ let __editor = ::ui_lang_guest::Editor::default(); let _: ::ui_lang_guest::wire::editor_presentation::EditorPresentation = {}(__editor.state_view(){}); }}",
+                item.name, item.rust_path,
+                if args.is_empty() { String::new() } else { format!(", {args}") }
+            ).unwrap(),
             ExternKind::EditorHighlighter => writeln!(
                 out,
                 "#[allow(dead_code)] fn __ui_lang_check_editor_highlighter_{}({params}) {{ let __content = ::iced::widget::text_editor::Content::new(); let __editor = ::iced::widget::text_editor(&__content).on_action(|_| ()); let _: __IceElement<'_, ()> = {}(__editor{}).into(); }}",

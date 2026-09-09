@@ -49,8 +49,11 @@ mod composition;
 use composition::*;
 #[path = "rich_text_editor/document.rs"]
 mod document;
-pub use document::Format;
+pub use crate::editor_format::Format;
 use document::*;
+#[path = "rich_text_editor/presentation.rs"]
+mod presentation;
+pub use presentation::{PresentationHighlighter, PresentedLine};
 #[path = "rich_text_editor/movement.rs"]
 mod movement;
 #[path = "rich_text_editor/paint.rs"]
@@ -146,14 +149,7 @@ impl ContentVersion {
     }
 }
 
-/// An edit produced by a [`RichTextEditor`].
-#[derive(Debug, Clone, PartialEq)]
-pub enum Action {
-    /// Apply a regular Iced text editor action.
-    Edit(text_editor::Action),
-    /// Move the content cursor to a position measured in the rich layout.
-    MoveTo(Cursor),
-}
+pub use crate::editor_action::Action;
 
 /// A press interceptor over a rich-layout source position — `Some` consumes
 /// the press.
@@ -576,6 +572,40 @@ where
         } else {
             text_editor::Status::Active
         }
+    }
+
+    /// Navigation targets remain usable without a native edit callback.
+    fn navigation_press(
+        &self,
+        state: &State<Highlighter>,
+        bounds: Rectangle,
+        point: Point,
+    ) -> Option<Message> {
+        let absolute = Point::new(bounds.x + point.x, bounds.y + point.y);
+        let text_bounds = bounds.shrink(self.padding);
+        if let Some(on_margin) = self.on_margin_press.as_deref()
+            && state.composition.is_none()
+            && point.x > self.padding.left + text_bounds.width
+            && let Some(line) = self
+                .margin_marks
+                .iter()
+                .map(|&(line, _)| line)
+                .find(|&line| {
+                    margin_mark_bounds(text_bounds, self.gutter_row(state, text_bounds, line))
+                        .contains(absolute)
+                })
+        {
+            return Some(on_margin(line));
+        }
+        let local = local_point(point, self.padding, state.scroll);
+        let on_line_press = self.on_line_press.as_deref()?;
+        let (line, position) = pointer::source_line_at(
+            self.content,
+            &state.document,
+            state.composition.as_ref(),
+            local,
+        )?;
+        on_line_press(&line, position)
     }
 
     fn interaction_at(&self, state: &State<Highlighter>, point: Point) -> mouse::Interaction {
@@ -1133,6 +1163,15 @@ where
         }
 
         let Some(on_action) = self.on_action.as_ref() else {
+            if matches!(
+                event,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            ) && let Some(point) = cursor.position_in(bounds)
+                && let Some(message) = self.navigation_press(state, bounds, point)
+            {
+                shell.publish(message);
+                shell.capture_event();
+            }
             return;
         };
 
@@ -1233,45 +1272,13 @@ where
                             return;
                         }
                     }
-                    // A margin-mark press is navigation, not editing: it
-                    // consumes the press without a caret move or focus steal.
-                    if let Some(on_margin) = self.on_margin_press.as_deref()
-                        && state.composition.is_none()
-                        && point.x > self.padding.left + text_bounds.width
-                    {
-                        let pressed =
-                            self.margin_marks
-                                .iter()
-                                .map(|&(line, _)| line)
-                                .find(|&line| {
-                                    let row = self.gutter_row(state, text_bounds, line);
-                                    margin_mark_bounds(text_bounds, row).contains(absolute)
-                                });
-                        if let Some(line) = pressed {
-                            shell.publish(on_margin(line));
-                            shell.capture_event();
-                            shell.request_redraw();
-                            return;
-                        }
-                    }
-                    let local = local_point(point, self.padding, state.scroll);
-                    // A consumed line press is its own gesture: no caret move,
-                    // no focus steal — a checkbox tick must not also relocate
-                    // the cursor into the line it ticked.
-                    if let Some(on_line_press) = self.on_line_press.as_deref()
-                        && let Some((line, position)) = pointer::source_line_at(
-                            self.content,
-                            &state.document,
-                            state.composition.as_ref(),
-                            local,
-                        )
-                        && let Some(message) = on_line_press(&line, position)
-                    {
+                    if let Some(message) = self.navigation_press(state, bounds, point) {
                         shell.publish(message);
                         shell.capture_event();
                         shell.request_redraw();
                         return;
                     }
+                    let local = local_point(point, self.padding, state.scroll);
                     let over_link =
                         self.interaction_at(state, local) == mouse::Interaction::Pointer;
                     let next = state.pointer.press(
@@ -1729,14 +1736,15 @@ where
             }
         });
 
-        if self.on_action.is_none() || state.composition.is_some() {
+        if state.composition.is_some() {
             return;
         }
 
         // The hover gutter rides the hovered line — or the line an open menu
         // anchored it to; the closure's verdict on Plus doubles as its
         // visibility switch for the line.
-        if let Some(on_gutter) = self.on_gutter.as_deref()
+        if self.on_action.is_some()
+            && let Some(on_gutter) = self.on_gutter.as_deref()
             && !state.pointer.is_dragging()
             && state.gutter_drag.is_none()
             && let Some(line) = self.gutter_line(state)
@@ -1789,6 +1797,10 @@ where
             }
         }
 
+        if self.on_action.is_none() {
+            return;
+        }
+
         // Mid-drag, the accent line marks where the grabbed block would land.
         if let Some(drag) = state.gutter_drag.as_ref()
             && drag.moved
@@ -1829,7 +1841,16 @@ where
     ) -> mouse::Interaction {
         let bounds = layout.bounds();
         if self.on_action.is_none() && cursor.is_over(bounds) {
-            return mouse::Interaction::NotAllowed;
+            let state = tree.state.downcast_ref::<State<Highlighter>>();
+            return if cursor
+                .position_in(bounds)
+                .and_then(|point| self.navigation_press(state, bounds, point))
+                .is_some()
+            {
+                mouse::Interaction::Pointer
+            } else {
+                mouse::Interaction::NotAllowed
+            };
         }
 
         let dragging_handle = tree

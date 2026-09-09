@@ -238,6 +238,7 @@ use ui_lang_wire as wire;
 pub(super) enum NativeWork {
     Event(Event),
     Actions(Vec<text_editor::Action>),
+    RichActions(Vec<crate::editor_action::Action>),
     Caret(wire::EditorCursor),
 }
 
@@ -261,7 +262,7 @@ pub(super) struct Control {
     pub cursor: wire::EditorCursor,
     pub next_sequence: u64,
     pub sequences: Arc<std::sync::atomic::AtomicU64>,
-    pub pending: Option<wire::EditorKeyRequest>,
+    pub pending: Option<wire::EditorRequest>,
     pub bypass_claim: bool,
     pub committed: Option<u64>,
     pub composing: bool,
@@ -301,12 +302,14 @@ impl Control {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Batch {
+    pub instance: u64,
     pub document: String,
     pub key: String,
     pub sequence: u64,
     pub reset: u64,
-    pub actions: Vec<text_editor::Action>,
-    pub request: Option<(wire::keyboard::KeyState, bool)>,
+    pub actions: Vec<crate::editor_action::Action>,
+    pub request: Option<wire::EditorRequestInput>,
+    pub presentation_reference: Option<wire::editor_document::EditorDocumentRef>,
 }
 
 fn reference(
@@ -401,20 +404,22 @@ pub(super) fn apply_patches(
     Ok(())
 }
 
-pub(super) fn kind(actions: &[text_editor::Action]) -> wire::EditorEditKind {
+pub(super) fn kind(actions: &[crate::editor_action::Action]) -> wire::EditorEditKind {
     use wire::EditorEditKind as K;
     actions
         .iter()
         .find_map(|action| match action {
-            text_editor::Action::Edit(edit) => Some(match edit {
-                text_editor::Edit::Insert(_) => K::Insert,
-                text_editor::Edit::Paste(_) => K::Paste,
-                text_editor::Edit::Enter => K::Enter,
-                text_editor::Edit::Backspace => K::Backspace,
-                text_editor::Edit::Delete => K::Delete,
-                text_editor::Edit::Indent => K::Indent,
-                text_editor::Edit::Unindent => K::Unindent,
-            }),
+            crate::editor_action::Action::Edit(text_editor::Action::Edit(edit)) => {
+                Some(match edit {
+                    text_editor::Edit::Insert(_) => K::Insert,
+                    text_editor::Edit::Paste(_) => K::Paste,
+                    text_editor::Edit::Enter => K::Enter,
+                    text_editor::Edit::Backspace => K::Backspace,
+                    text_editor::Edit::Delete => K::Delete,
+                    text_editor::Edit::Indent => K::Indent,
+                    text_editor::Edit::Unindent => K::Unindent,
+                })
+            }
             _ => None,
         })
         .unwrap_or(K::Cursor)
@@ -637,6 +642,9 @@ impl super::Inputs {
     }
 
     pub(super) fn apply_editor_batch(&mut self, batch: Batch, pending: &mut Vec<wire::Event>) {
+        if batch.instance != self.instance {
+            return;
+        }
         let Some(shared) = self.editor_transactions.get(&batch.document).cloned() else {
             return;
         };
@@ -645,6 +653,19 @@ impl super::Inputs {
             return;
         };
         if front.sequence != batch.sequence || control.reset != batch.reset {
+            return;
+        }
+        if batch
+            .presentation_reference
+            .as_ref()
+            .is_some_and(|reference| {
+                *reference != super::editor_documents::current_reference(&batch.document, &control)
+            })
+        {
+            // This click was painted against an older document. Discard the
+            // gesture without editing, notifying history, or blocking the lane.
+            let _ = control.lane.commit(batch.sequence);
+            let _ = control.lane.acknowledge(batch.sequence);
             return;
         }
         let Some(field) = self.editors.get(&batch.key) else {
@@ -658,7 +679,20 @@ impl super::Inputs {
             return;
         }
         let input_time_ms = front.input.time_ms;
-        if let Some((key, repeat)) = batch.request {
+        if self
+            .editor_references
+            .get(&batch.key)
+            .is_none_or(|r| !r.editable)
+            && !matches!(
+                batch.request,
+                Some(wire::EditorRequestInput::Interaction { .. })
+            )
+        {
+            let _ = control.lane.commit(batch.sequence);
+            let _ = control.lane.acknowledge(batch.sequence);
+            return;
+        }
+        if let Some(input) = batch.request {
             let now = control.now_ms();
             control.lane.request(now);
             let attempt = match control.lane.phase() {
@@ -674,15 +708,14 @@ impl super::Inputs {
                 text_revision: control.text_revision,
                 revision: before_revision,
             };
-            let request = wire::EditorKeyRequest {
+            let request = wire::EditorRequest {
                 state: super::editor_documents::current_reference(&id.document, &control),
                 id,
-                key,
-                repeat,
+                input,
                 input_time_ms,
             };
             control.pending = Some(request.clone());
-            pending.push(wire::Event::EditorKeyRequest {
+            pending.push(wire::Event::EditorRequest {
                 handler: binding.on_request,
                 request,
             });
@@ -746,7 +779,7 @@ impl super::Inputs {
         if let Some((document, binding)) = self.editor_bindings.get(&key)
             && document == &id.document
         {
-            pending.push(wire::Event::EditorKeyRequest {
+            pending.push(wire::Event::EditorRequest {
                 handler: binding.on_request,
                 request,
             });
@@ -786,6 +819,15 @@ impl super::Inputs {
                     _ => 0,
                 })
                 .sum(),
+            NativeWork::RichActions(actions) => actions
+                .iter()
+                .map(|action| match action {
+                    crate::editor_action::Action::Edit(text_editor::Action::Edit(
+                        text_editor::Edit::Paste(text),
+                    )) => text.len(),
+                    _ => 0,
+                })
+                .sum(),
             _ => 0,
         };
         let sequence = control.sequences.fetch_update(
@@ -819,7 +861,7 @@ impl super::Inputs {
         &mut self,
         document: &str,
         key: &str,
-        actions: Vec<text_editor::Action>,
+        actions: Vec<crate::editor_action::Action>,
         patches: Option<(Vec<wire::EditorPatch>, wire::EditorCursor)>,
         history: wire::EditorHistoryEffect,
         pending: &mut Vec<wire::Event>,
@@ -887,7 +929,10 @@ impl super::Inputs {
             }
         } else {
             for action in actions {
-                content.perform(action);
+                match action {
+                    crate::editor_action::Action::Edit(action) => content.perform(action),
+                    crate::editor_action::Action::MoveTo(cursor) => content.move_to(cursor),
+                }
             }
             if let NativeWork::Caret(mut cursor) = input_work {
                 cursor.clamp(&content.text());
@@ -952,6 +997,10 @@ impl super::Inputs {
         pending.push(wire::Event::EditorTransaction {
             handler: binding.on_event,
             event: wire::EditorTransactionEvent::Commit {
+                origin: control
+                    .pending
+                    .as_ref()
+                    .map(|request| request.input.clone()),
                 id,
                 before: reference(document, &before, before_text_revision),
                 after: reference(document, &after, control.text_revision),
@@ -1025,7 +1074,7 @@ impl super::Inputs {
                     retry.id.text_revision = control.text_revision;
                     control.pending = Some(retry.clone());
                     if let Some((_, binding)) = self.editor_bindings.get(&key) {
-                        pending.push(wire::Event::EditorKeyRequest {
+                        pending.push(wire::Event::EditorRequest {
                             handler: binding.on_request,
                             request: retry,
                         });
@@ -1047,10 +1096,33 @@ impl super::Inputs {
             }
             match &response.decision {
                 wire::EditorDecision::DefaultEditorAction => {
+                    if matches!(request.input, wire::EditorRequestInput::Interaction { .. }) {
+                        control.lane.fail(Fault::Identity);
+                        continue;
+                    }
                     control.bypass_claim = true;
                     control.lane.phase = Phase::Ready;
                 }
                 wire::EditorDecision::Noop => {
+                    if let wire::EditorRequestInput::Interaction { action } = request.input {
+                        let Some((_, binding)) = self.editor_bindings.get(&key) else {
+                            continue;
+                        };
+                        if control.lane.commit(request.id.sequence).is_err() {
+                            continue;
+                        }
+                        control.committed = Some(control.revision);
+                        pending.push(wire::Event::EditorTransaction {
+                            handler: binding.on_event,
+                            event: wire::EditorTransactionEvent::Interaction {
+                                id: request.id,
+                                state: request.state,
+                                action,
+                                input_time_ms: request.input_time_ms,
+                            },
+                        });
+                        continue;
+                    }
                     drop(control);
                     self.commit_editor(
                         &response.id.document,
@@ -1066,6 +1138,10 @@ impl super::Inputs {
                     cursor,
                     history,
                 } => {
+                    if self.editor_references.get(&key).is_none_or(|r| !r.editable) {
+                        control.lane.fail(Fault::Identity);
+                        continue;
+                    }
                     drop(control);
                     self.commit_editor(
                         &response.id.document,
@@ -1235,7 +1311,7 @@ mod native_tests {
             }
             control.lane.request(0);
             let state = super::super::editor_documents::current_reference("A", &control);
-            control.pending = Some(wire::EditorKeyRequest {
+            control.pending = Some(wire::EditorRequest {
                 id: wire::EditorTransactionId {
                     instance: inputs.instance,
                     document: "A".into(),
@@ -1246,16 +1322,18 @@ mod native_tests {
                     revision: 0,
                 },
                 state,
-                key: wire::keyboard::KeyState {
-                    key: wire::keyboard::Key::Named(wire::keyboard::Named::Tab),
-                    modified_key: wire::keyboard::Key::Named(wire::keyboard::Named::Tab),
-                    physical_key: wire::keyboard::Physical::Unidentified(
-                        wire::keyboard::NativeCode::Unidentified,
-                    ),
-                    modifiers: Default::default(),
-                    location: wire::keyboard::Location::Standard,
+                input: wire::EditorRequestInput::Key {
+                    key: wire::keyboard::KeyState {
+                        key: wire::keyboard::Key::Named(wire::keyboard::Named::Tab),
+                        modified_key: wire::keyboard::Key::Named(wire::keyboard::Named::Tab),
+                        physical_key: wire::keyboard::Physical::Unidentified(
+                            wire::keyboard::NativeCode::Unidentified,
+                        ),
+                        modifiers: Default::default(),
+                        location: wire::keyboard::Location::Standard,
+                    },
+                    repeat: false,
                 },
-                repeat: false,
                 input_time_ms: 0,
             });
         }
@@ -1301,7 +1379,9 @@ mod native_tests {
         inputs.commit_editor(
             "A",
             "owner",
-            vec![text_editor::Action::Edit(text_editor::Edit::Insert('!'))],
+            vec![crate::editor_action::Action::Edit(
+                text_editor::Action::Edit(text_editor::Edit::Insert('!')),
+            )],
             None,
             wire::EditorHistoryEffect::Native,
             &mut events,
@@ -1427,6 +1507,191 @@ mod document_budget_tests {
     }
 
     #[test]
+    fn interaction_notifications_do_not_commit_history_and_stale_origins_do_not_enter_the_lane() {
+        let mut inputs = assigned(&[("A", 8, 1)]);
+        let document = "A";
+        let key = "A/0";
+        let mut events = Vec::new();
+        inputs.admit_editor_work(key, 0, NativeWork::Actions(Vec::new()), &mut events);
+        let shared = inputs.editor_transactions[document].clone();
+        let control = super::super::lock(&shared);
+        let sequence = control.lane.front().unwrap().sequence;
+        let reference = super::super::editor_documents::current_reference(document, &control);
+        drop(control);
+        let batch = Batch {
+            instance: inputs.instance,
+            document: document.into(),
+            key: key.into(),
+            sequence,
+            reset: 0,
+            actions: vec![],
+            request: Some(wire::EditorRequestInput::Interaction {
+                action: wire::editor_presentation::EditorInteraction::MenuDismiss,
+            }),
+            presentation_reference: Some(reference.clone()),
+        };
+        let mut retired = batch.clone();
+        retired.instance = inputs.instance.wrapping_add(1);
+        inputs.apply_editor_batch(retired, &mut events);
+        assert!(
+            events.is_empty(),
+            "retired widget cannot request an interaction on its replacement"
+        );
+        inputs.apply_editor_batch(batch.clone(), &mut events);
+        let wire::Event::EditorRequest { request, .. } = events.pop().expect("interaction request")
+        else {
+            panic!("expected interaction request")
+        };
+        let mut frame = wire::Frame::default();
+        frame.editor_decisions.push(wire::EditorResponse {
+            id: request.id,
+            decision: wire::EditorDecision::Noop,
+        });
+        inputs.editor_frame(&frame, &mut events);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [wire::Event::EditorTransaction {
+                    event: wire::EditorTransactionEvent::Interaction { .. },
+                    ..
+                }]
+            ),
+            "read-only interaction must not create a history Commit: {events:?}"
+        );
+        assert_eq!(inputs.editor_document(key).unwrap().reference(), reference);
+
+        let mut stale = assigned(&[("A", 8, 1)]);
+        events.clear();
+        stale.admit_editor_work(key, 0, NativeWork::Actions(Vec::new()), &mut events);
+        let mut batch = batch;
+        batch.instance = stale.instance;
+        batch.sequence = super::super::lock(&stale.editor_transactions[document])
+            .lane
+            .front()
+            .unwrap()
+            .sequence;
+        batch.presentation_reference.as_mut().unwrap().revision += 1;
+        stale.apply_editor_batch(batch, &mut events);
+        assert!(
+            events.is_empty(),
+            "stale painted document must not reach the guest decider"
+        );
+        assert!(
+            !stale.editor_transactions_pending(),
+            "discarded stale gesture must not strand the lane"
+        );
+    }
+
+    #[test]
+    fn accepted_interaction_origin_survives_retry_and_readonly_apply_is_refused() {
+        let origin = wire::EditorRequestInput::Interaction {
+            action: wire::editor_presentation::EditorInteraction::MenuPick { tag: "plus".into() },
+        };
+        for readonly in [false, true] {
+            let mut inputs = assigned(&[("A", 8, 1)]);
+            let mut events = vec![];
+            inputs.admit_editor_work("A/0", 0, NativeWork::Actions(vec![]), &mut events);
+            let shared = inputs.editor_transactions["A"].clone();
+            let control = super::super::lock(&shared);
+            let sequence = control.lane.front().unwrap().sequence;
+            let reference = super::super::editor_documents::current_reference("A", &control);
+            drop(control);
+            inputs.apply_editor_batch(
+                Batch {
+                    instance: inputs.instance,
+                    document: "A".into(),
+                    key: "A/0".into(),
+                    sequence,
+                    reset: 0,
+                    actions: vec![],
+                    request: Some(origin.clone()),
+                    presentation_reference: Some(reference.clone()),
+                },
+                &mut events,
+            );
+            let wire::Event::EditorRequest { mut request, .. } = events.pop().unwrap() else {
+                panic!("request")
+            };
+            let decision = wire::EditorDecision::Apply {
+                patches: vec![wire::EditorPatch {
+                    start_byte: 0,
+                    end_byte: 1,
+                    replacement: "Y".into(),
+                }],
+                cursor: reference.cursor,
+                history: wire::EditorHistoryEffect::NewGroup,
+            };
+            let response = |request: &wire::EditorRequest| wire::Frame {
+                editor_decisions: vec![wire::EditorResponse {
+                    id: request.id.clone(),
+                    decision: decision.clone(),
+                }],
+                ..Default::default()
+            };
+            if readonly {
+                inputs.editor_references.get_mut("A/0").unwrap().editable = false;
+            } else {
+                // A same-document observation moved after admission. The retry
+                // may change its revision/attempt, never the claimed input.
+                inputs.editors.get_mut("A/0").unwrap().revision += 1;
+                super::super::lock(&shared).revision += 1;
+                inputs.editor_frame(&response(&request), &mut events);
+                let wire::Event::EditorRequest { request: retry, .. } = events.pop().unwrap()
+                else {
+                    panic!("retry")
+                };
+                assert!(retry.id.attempt > request.id.attempt);
+                assert_eq!(retry.input, origin);
+                request = retry;
+            }
+            inputs.editor_frame(&response(&request), &mut events);
+            if readonly {
+                assert_eq!(session::text(&inputs, "A/0"), "xxxxxxxx");
+                assert!(events.iter().any(|event| matches!(
+                    event,
+                    wire::Event::EditorTransaction {
+                        event: wire::EditorTransactionEvent::Fault {
+                            reason: wire::EditorFault::InvalidResponse,
+                            ..
+                        },
+                        ..
+                    }
+                )));
+                assert!(
+                    !events.iter().any(|event| matches!(
+                        event,
+                        wire::Event::EditorTransaction {
+                            event: wire::EditorTransactionEvent::Commit { .. },
+                            ..
+                        }
+                    )),
+                    "read-only Apply cannot enter history"
+                );
+            } else {
+                assert_eq!(session::text(&inputs, "A/0"), "Yxxxxxxx");
+                assert!(events.iter().any(|event| matches!(event, wire::Event::EditorTransaction { event: wire::EditorTransactionEvent::Commit { origin: Some(input), .. }, .. } if input == &origin)), "accepted Commit must carry the original interaction after retry");
+            }
+        }
+        let mut native = assigned(&[("A", 8, 1)]);
+        let events = session::edit(
+            &mut native,
+            "A/0",
+            0,
+            text_editor::Action::Edit(text_editor::Edit::Insert('z')),
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                wire::Event::EditorTransaction {
+                    event: wire::EditorTransactionEvent::Commit { origin: None, .. },
+                    ..
+                }
+            )),
+            "unclaimed native edits have no request origin"
+        );
+    }
+
+    #[test]
     fn native_and_guest_edits_reserve_all_canonical_and_projection_bytes() {
         for (specs, growth) in [
             (
@@ -1476,7 +1741,7 @@ mod document_budget_tests {
                     inputs.commit_editor(
                         "a",
                         "a/0",
-                        vec![action],
+                        vec![crate::editor_action::Action::Edit(action)],
                         None,
                         wire::EditorHistoryEffect::Native,
                         &mut events,

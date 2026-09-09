@@ -245,6 +245,7 @@ pub fn edit(frame: &Frame, name: &str, before_text: &str, text: &str) -> Vec<Eve
     vec![Event::EditorTransaction {
         handler: binding.on_event,
         event: crate::wire::EditorTransactionEvent::Commit {
+            origin: None,
             id: crate::wire::EditorTransactionId {
                 instance: 0,
                 document: document.document.clone(),

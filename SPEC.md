@@ -1048,8 +1048,13 @@ native focus state and cursor, preserving it between native widget calls.
 
 Typography, colors and font names share wire sanitization and frame budgets.
 `EditorOptions` changes the wire layout; rebuild hosts and guests together.
-Opaque Rust editor style, action, binding and highlighter callbacks, `highlight=`
-remain E190. `editor_cursor_line`, `editor_cursor_column`, `editor_has_selection`,
+Opaque Rust editor style/action callbacks and `highlight=` remain E190. Tree
+`editor-binding` uses the transaction contract, and `editor-highlighter` receives
+borrowed `EditorStateView` plus declared arguments and returns `EditorPresentation`.
+Sparse UTF-8 spans, caret menus, gutter/drop boundaries, margins and tagged hits
+are validated against the exact document reference. Interaction decisions use the
+same atomic transaction lane as keys; accepted commits retain their original
+request input. See [editor presentation](docs/editor-presentation.md). `editor_cursor_line`, `editor_cursor_column`, `editor_has_selection`,
 `editor_text`, `editor_copy`, `editor_line` and `editor_line_count` read the copied
 document state. Explicit assignment increments an authoritative reset revision,
 even for identical text. Observations carry that revision and a host sequence;

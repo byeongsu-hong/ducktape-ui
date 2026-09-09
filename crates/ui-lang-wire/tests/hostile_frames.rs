@@ -446,6 +446,7 @@ fn gen_editor(rng: &mut Rng) -> Node {
         on_document: rng.next_u64() as u32,
         editable: rng.next_bool(),
         options: Box::new(EditorOptions {
+            presentation: None,
             binding: None,
             size: gen_opt_f32(rng),
             padding: gen_opt_f32(rng),

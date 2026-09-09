@@ -38,7 +38,8 @@ mod editor_binding;
 mod editor_documents;
 pub use editor::Editor;
 pub use editor_binding::{
-    EditorBinding, EditorKeyRequest, EditorStateView, EditorTransaction, EditorTransactionEvent,
+    EditorBinding, EditorInteractionRequest, EditorKeyRequest, EditorStateView, EditorTransaction,
+    EditorTransactionEvent,
 };
 pub use editor_documents::EditorDocumentUpdate;
 pub mod keyboard;
@@ -235,8 +236,8 @@ impl<A: App> Driver<A> {
                         handler, message,
                     )
                 }
-                wire::Event::EditorKeyRequest { handler, request } => {
-                    slots::run_handler::<wire::EditorKeyRequest, A::Message>(handler, request)
+                wire::Event::EditorRequest { handler, request } => {
+                    slots::run_handler::<wire::EditorRequest, A::Message>(handler, request)
                 }
                 wire::Event::EditorTransaction { handler, event } => {
                     if let wire::EditorTransactionEvent::Fault { id, .. }

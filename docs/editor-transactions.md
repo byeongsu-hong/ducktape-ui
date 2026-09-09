@@ -98,3 +98,17 @@ guest drains complete responses in order and remains busy while later responses
 wait for the next frame; outstanding identities remain fenced until commit or
 cancellation. An individually invalid response still reaches strict host
 validation, rather than becoming a silent fallback or blocking queue progress.
+
+## Presentation interactions
+
+`EditorBinding::on_interaction` optionally decides a borrowed
+`EditorInteractionRequest` using the same transaction as keys. `Apply` commits
+atomic patches; `Noop` emits a distinct interaction notification with no history
+commit. `DefaultEditorAction` is invalid for an interaction.
+
+Accepted `Commit.origin` borrows the original `EditorRequestInput`; unclaimed
+native edits carry `None`. A revision retry preserves that original input, while
+cancelled/faulted requests do not produce a Commit. Consumers may derive menu
+successors from `Commit.before` and origin after acceptance without relying on
+factory-local callback state surviving a view rebuild. Read-only link and margin
+notifications remain available; their deciders cannot apply document patches.
