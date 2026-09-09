@@ -80,6 +80,7 @@ mod tests {
                 end: 2,
                 format: 0,
             }],
+            ..Default::default()
         };
         let native = lines(&value, "Title\n- 한글").unwrap();
         assert_eq!(native.len(), 1);
