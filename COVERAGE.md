@@ -2878,3 +2878,28 @@ against a declared `[i64]` parameter. Before the fix its intended success
 assertion failed with E196 during Native lowering. Retaining the extern
 parameter destination in checked interaction facts passes both targets;
 lowering's expression/type invariants remain unchanged.
+
+### Hosted window and IME observations
+
+`app-store-window-events-fixture` runs unchanged as a native Tree process and
+a Wasm component. `window_events_tests` mounts the real native widget tree and
+delivers Iced events: focus/unfocus, file paths, preedit UTF-8 selection, native
+IME commit, captured modal input and subscription removal. Counts assert one
+observation and one native edit; the replacement test rejects an old widget's
+events and delivers queued close-request plus closed in a terminal backend tick.
+The fixture attempts a focus effect from closed; it remains unexecuted.
+
+Both tests passed on both backends. Omitting captured-overlay forwarding made
+the commit-count assertion fail (1 instead of 2); replacing terminal Closed
+with Unfocused made the closed-count assertion fail (0 instead of 1). The exact
+production bytes were restored. These are mounted host integration checks,
+not operating-system IME or file-manager drag/drop smoke.
+
+The focused Core test rejects unsupported Tree window geometry/frame recipes
+with E190 while the same sources compile for the native language target. Wire
+tests cover category opt-in, invalid preedit boundaries and oversized strings.
+
+Removing the Tree source refusal made the expected-error assertion fail.
+Broadening focus interest to file events made the category-isolation assertion
+fail; bypassing preedit boundary validation made the invalid-range assertion
+fail. Each mutation was restored byte-for-byte before rerunning its test.

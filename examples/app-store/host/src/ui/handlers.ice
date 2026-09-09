@@ -180,6 +180,10 @@ on raise_app(id)
 
 // A guest's window closed: its instance goes with it. The store's own window
 // closing is the end of the store.
+on guest_close_requested(id)
+  return if !is_guest(running, id)
+  task window close target=id
+
 on window_closed(id)
   reload_serial = reload_serial + 1
   running = drop_window(running, id)
@@ -241,6 +245,7 @@ on focus_search(id)
 subscribe
   every 1s -> rescan
   system theme -> system_theme _
+  window close-request with-id -> guest_close_requested _
   window closed with-id -> window_closed _
   window moved with-id -> guest_moved _ _ _
   window resized with-id -> guest_resized _ _ _

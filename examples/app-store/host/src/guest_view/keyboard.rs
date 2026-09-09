@@ -88,6 +88,14 @@ impl overlay::Overlay<String, iced::Theme, iced::Renderer> for Inputs<'_> {
                 local.request_redraw();
             }
         }
+        if local.is_event_captured() {
+            let mut guest = self.guest.lock().expect("guest lock");
+            if Arc::ptr_eq(&guest.alive, &self.instance)
+                && observations::forward(&mut guest, event, true)
+            {
+                local.request_redraw();
+            }
+        }
         shell.merge(local, std::convert::identity);
     }
     fn mouse_interaction(

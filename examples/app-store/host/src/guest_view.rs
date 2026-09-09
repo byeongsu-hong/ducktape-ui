@@ -17,6 +17,7 @@ use crate::store::{Guest, MountedWidgets, Surface};
 mod keyboard;
 #[path = "guest_view/mouse.rs"]
 mod mouse_events;
+mod observations;
 
 /// The guest's window. It emits `"restart"` when the user asks for one,
 /// `"ended"` when the instance ended on its own, and `"wake"` when the tree
@@ -203,6 +204,9 @@ impl Widget<String, iced::Theme, iced::Renderer> for GuestView {
         if let Event::Mouse(event) = event
             && mouse_events::forward(&mut guest, *event, layout.bounds().position(), captured)
         {
+            shell.request_redraw();
+        }
+        if observations::forward(&mut guest, event, captured) {
             shell.request_redraw();
         }
         let Event::Window(window::Event::RedrawRequested(now)) = event else {

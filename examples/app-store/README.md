@@ -1476,7 +1476,7 @@ Only the last move before a redraw is kept, at its original position among the
 remaining events. Button, wheel, enter and leave events retain their arrival
 order. Intermediate motion is intentionally not delivered; widget routes still
 execute normally. The guest draws no pixels. Generic event listeners expose the
-keyboard+mouse subset, not native window/IME/touch parity.
+keyboard+mouse plus the opt-in window/IME subset described below; touch and window geometry/frame clocks are not carried.
 
 `bundled_mouse_native_and_wasm_deliver_local_coalesced_events_and_unsubscribe`
 uses real native window events through both installed backends, including an
@@ -1514,3 +1514,25 @@ generation, with separate provenance for advisory producer reports. Reports pers
 with a shortened tree through later patches and are preserved when a validated
 reload candidate is installed. The limits remain 64 KiB per string and 64 KiB of
 aggregate shaped text; editor-document loss is a rejected frame, not a warning.
+
+## Window and IME observations
+
+Tree subscriptions can observe window focus/unfocus, close-request/closed,
+file-hover/drop/leave and input-method opened/preedit/commit/closed. Active
+branches declare separate focus, close, files and input-method interests in
+`Frame.event_interest`; Rust subscriptions use `ui_lang_guest::events::observe`.
+The host copies observations after its native widgets handle the event, retaining
+captured status. IME observations do not apply a second editor action. Preedit
+selection offsets are UTF-8 bytes in the composition string, bounded by the
+wire string limit and checked at character boundaries.
+
+Closing a guest window is a host decision. Close-request observations cannot
+veto it. After removal, one bounded terminal tick can deliver queued observations
+and `closed`; its frame and requests are discarded. No effects can reopen the
+window, and this is not a persistence callback. Replacement instance guards
+prevent retained old widgets from forwarding events to the new guest.
+
+Window geometry, scale and frame-clock subscriptions are refused by Tree
+codegen with E190. Generic event subscriptions carry the supported copied
+subset, not all operating-system events. This schema requires wire epoch 5
+and rebuilding host and guests together.

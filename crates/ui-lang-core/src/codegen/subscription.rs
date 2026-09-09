@@ -277,7 +277,10 @@ pub(in crate::codegen) fn generate_subscription(
                 let (filter, status) = event_status_filter(value, subscription.status);
                 let listen = if *raw { "listen_raw" } else { "listen_with" };
                 let (observe, end) = if program.target() == Target::Tree {
-                    ("::ui_lang_guest::mouse::observe(", ")")
+                    (
+                        "::ui_lang_guest::events::observe(::ui_lang_guest::mouse::observe(",
+                        "), ::ui_lang_guest::wire::events::Interest::ALL)",
+                    )
                 } else {
                     ("", "")
                 };
@@ -311,7 +314,15 @@ pub(in crate::codegen) fn generate_subscription(
                     }
                 };
                 let (filter, status) = event_status_filter(filter, subscription.status);
-                writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
+                let (observe, end) = if program.target() == Target::Tree {
+                    (
+                        "::ui_lang_guest::events::observe(",
+                        ", ::ui_lang_guest::wire::events::Interest { input_method: true, ..::std::default::Default::default() })",
+                    )
+                } else {
+                    ("", "")
+                };
+                writeln!(out, "{observe}::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}){end},").unwrap();
             }
             ResolvedSubscriptionSource::Keyboard(event) => {
                 let filter = match event {
@@ -383,6 +394,24 @@ pub(in crate::codegen) fn generate_subscription(
                 writeln!(out, "::iced::event::listen_with(|__event, {status}, _| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
             }
             ResolvedSubscriptionSource::Window(event) => {
+                let interest = if program.target() == Target::Tree {
+                    match event {
+                        WindowEvent::Focused | WindowEvent::Unfocused => "focus",
+                        WindowEvent::Closed | WindowEvent::CloseRequested => "close",
+                        WindowEvent::FileHovered
+                        | WindowEvent::FileDropped
+                        | WindowEvent::FilesHoveredLeft => "files",
+                        _ => {
+                            return Err(Error::new(
+                                "E190",
+                                &subscription.span,
+                                "the tree target carries window focus, close and file-drop observations, not window geometry or frame clocks",
+                            ));
+                        }
+                    }
+                } else {
+                    ""
+                };
                 if *event == WindowEvent::Frame {
                     writeln!(
                         out,
@@ -449,7 +478,11 @@ pub(in crate::codegen) fn generate_subscription(
                     "match __event {{ ::iced::Event::Window(__event) => {{ {filter} }}, _ => ::std::option::Option::None }}"
                 );
                 let (filter, status) = event_status_filter(&filter, subscription.status);
-                writeln!(out, "::iced::event::listen_with(|__event, {status}, __id| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
+                if program.target() == Target::Tree {
+                    writeln!(out, "::ui_lang_guest::events::observe(::iced::event::listen_with(|__event, {status}, __id| {{ {filter} }}){transforms}.map(move |__value| {route}), ::ui_lang_guest::wire::events::Interest {{ {interest}: true, ..::std::default::Default::default() }}),").unwrap();
+                } else {
+                    writeln!(out, "::iced::event::listen_with(|__event, {status}, __id| {{ {filter} }}){transforms}.map(move |__value| {route}),").unwrap();
+                }
             }
         }
         if condition.is_some() {

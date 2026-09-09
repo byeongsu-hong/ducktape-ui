@@ -25,7 +25,7 @@
 pub mod authored;
 /// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
 /// This is independent of WIT signatures and the manifest text format.
-pub const WIRE_EPOCH: u32 = 4;
+pub const WIRE_EPOCH: u32 = 5;
 
 pub mod manifest;
 pub mod native;
@@ -113,12 +113,18 @@ pub enum ClipboardTarget {
     Primary,
 }
 
+pub mod events;
 pub mod keyboard;
 pub mod mouse;
 
 /// Something the host tells the guest.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Event {
+    /// Observation only: widgets already handled this event once.
+    Observation {
+        event: events::Event,
+        captured: bool,
+    },
     /// A mouse interaction in logical coordinates local to the guest surface.
     Mouse { event: mouse::Event, captured: bool },
     /// A keyboard interaction after the mounted native widgets handled it.
@@ -244,6 +250,8 @@ pub struct Frame {
     pub editor_documents: Vec<editor_document::EditorDocumentMessage>,
     /// The current subscription requests guest-local mouse observations.
     pub mouse_interest: bool,
+    /// Live subscriptions opt into each copied event category.
+    pub event_interest: events::Interest,
     /// The tree to show. `None` with `unchanged` set means "what you have";
     /// `None` otherwise means "what you have, with `patches` applied".
     pub root: Option<Node>,
@@ -3114,6 +3122,7 @@ mod tests {
             editor_decisions: Vec::new(),
             editor_documents: Vec::new(),
             mouse_interest: true,
+            event_interest: Default::default(),
             root: Some(column(vec![
                 text("hello"),
                 Node::Button {
@@ -3851,6 +3860,7 @@ mod tests {
             editor_decisions: Vec::new(),
             editor_documents: Vec::new(),
             mouse_interest: false,
+            event_interest: Default::default(),
             root: Some(column(vec![text("hello"), Node::empty()])),
             requests: vec![Request {
                 id: 7,

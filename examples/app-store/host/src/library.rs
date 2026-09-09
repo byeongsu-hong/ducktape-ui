@@ -302,6 +302,9 @@ fn guest_window_settings(
         .or_else(|| preferred.map(|size| iced::Size::from(size.dimensions())))
         .unwrap_or(iced::Size::new(560.0, 420.0));
     iced::window::Settings {
+        // Route CloseRequested before the host immediately submits Close.
+        // Otherwise Iced destroys this window before widgets see the event.
+        exit_on_close_request: false,
         size,
         min_size: Some(iced::Size::new(
             size.width.min(320.0),
@@ -384,6 +387,7 @@ pub fn drop_first(mut opening: Vec<Loaded>) -> Vec<Loaded> {
 pub fn drop_window(mut running: Vec<Running>, window: iced::window::Id) -> Vec<Running> {
     if let Some(index) = running.iter().position(|app| app.window == window) {
         let app = running.remove(index);
+        app.surface.0.lock().expect("guest lock").window_closed();
         remember(RUNNING_FILE, |ids| ids.retain(|id| *id != app.id));
     }
     running

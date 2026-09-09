@@ -1756,3 +1756,14 @@ a failed reload candidate does not change that generation or warning state.
 
 The report field changes the frame schema: wire epoch 2 requires matching hosts
 and guests; epoch 1 modules are refused before execution.
+
+### Hosted Tree window and input-method observations
+
+Hosted Tree execution supports window focus/unfocus, close-request/closed,
+file-hover/drop/leave and input-method opened/preedit/commit/closed subscriptions.
+Interest is recomputed from active recipes by category; generic event recipes
+opt into all supported categories. Observations retain captured status and
+never replay input into host widgets. Preedit ranges use UTF-8 byte offsets.
+Window geometry, scale and frame clocks are not Tree events and produce E190.
+A host may deliver `closed` in one bounded final tick after removing a window;
+that tick must not execute guest effects or delay the native close decision.
