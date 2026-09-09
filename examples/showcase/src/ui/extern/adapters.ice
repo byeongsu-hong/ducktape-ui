@@ -1,6 +1,20 @@
 // Catalog-only retained adapters. Applications define their own typed extern boundary.
 
 extern crate::adapters
+  FocusEffects()
+  task apply_focus(effects:FocusEffects) -> unit
+  CalendarTransition(state:CalendarState, focus:FocusEffects)
+  DatePickerTransition(state:DatePickerState, focus:FocusEffects)
+  CommandTransition(state:CommandState, focus:FocusEffects)
+  SelectTransition(state:SelectState, focus:FocusEffects)
+  DropdownMenuTransition(state:DropdownMenuState, focus:FocusEffects)
+  ContextMenuTransition(state:ContextMenuState, focus:FocusEffects)
+  AlertDialogTransition(state:AlertDialogState, focus:FocusEffects)
+  DrawerTransition(state:DrawerState, focus:FocusEffects)
+  NavigationMenuTransition(state:NavigationMenuState, focus:FocusEffects)
+  MenubarTransition(state:MenubarState, focus:FocusEffects)
+  RadioTransition(state:str, focus:FocusEffects)
+  PopoverTransition(state:bool, focus:FocusEffects)
   AlertDialogState()
   AlertDialogEvent()
   CalendarState()
@@ -50,27 +64,27 @@ extern crate::adapters
   component spinner(frame:i64, reduced_motion:bool) -> unit
   component draft_length(document:&editor, id:&str) -> unit
   sync calendar_state() -> CalendarState
-  task calendar_apply(state:CalendarState, event:CalendarEvent) -> CalendarState
+  sync calendar_apply(state:CalendarState, event:CalendarEvent) -> CalendarTransition
   component calendar(state:&CalendarState) -> CalendarEvent
   sync date_picker_state() -> DatePickerState
-  task date_picker_apply(state:DatePickerState, event:DatePickerEvent) -> DatePickerState
+  sync date_picker_apply(state:DatePickerState, event:DatePickerEvent) -> DatePickerTransition
   component date_picker(state:&DatePickerState) -> DatePickerEvent
   component chart(hovered:ChartHit?) -> ChartHit?
   sync command_state() -> CommandState
-  task command_apply(state:CommandState, event:CommandEvent) -> CommandState
+  sync command_apply(state:CommandState, event:CommandEvent) -> CommandTransition
   component command(state:&CommandState) -> CommandEvent
   sync select_state() -> SelectState
-  task select_apply(state:SelectState, event:SelectEvent) -> SelectState
+  sync select_apply(state:SelectState, event:SelectEvent) -> SelectTransition
   component select(state:&SelectState) -> SelectEvent
   sync dropdown_menu_state() -> DropdownMenuState
   pure dropdown_menu_is_open(state:&DropdownMenuState) -> bool
-  task dropdown_menu_apply(state:DropdownMenuState, event:DropdownMenuEvent) -> DropdownMenuState
+  sync dropdown_menu_apply(state:DropdownMenuState, event:DropdownMenuEvent) -> DropdownMenuTransition
   component dropdown_menu(state:&DropdownMenuState) -> DropdownMenuEvent
   sync context_menu_state() -> ContextMenuState
-  task context_menu_apply(state:ContextMenuState, event:ContextMenuEvent) -> ContextMenuState
+  sync context_menu_apply(state:ContextMenuState, event:ContextMenuEvent) -> ContextMenuTransition
   component context_menu(state:&ContextMenuState) -> ContextMenuEvent
   sync alert_dialog_state() -> AlertDialogState
-  task alert_dialog_apply(state:AlertDialogState, event:AlertDialogEvent) -> AlertDialogState
+  sync alert_dialog_apply(state:AlertDialogState, event:AlertDialogEvent) -> AlertDialogTransition
   pure alert_dialog_is_open(state:&AlertDialogState) -> bool
   component alert_dialog(state:&AlertDialogState) -> AlertDialogEvent
   sync sidebar_state() -> SidebarState
@@ -78,24 +92,24 @@ extern crate::adapters
   component sidebar(state:&SidebarState) -> SidebarEvent
   sync sonner_state() -> SonnerState
   pure sonner_apply(state:SonnerState, event:SonnerEvent) -> SonnerState
-  task sonner_tick(state:SonnerState) -> SonnerState
-  task sonner_set_reduced_motion(state:SonnerState, reduced_motion:bool) -> SonnerState
+  pure sonner_tick(state:SonnerState) -> SonnerState
+  pure sonner_set_reduced_motion(state:SonnerState, reduced_motion:bool) -> SonnerState
   component sonner(state:&SonnerState) -> SonnerEvent
   sync drawer_state() -> DrawerState
-  task drawer_apply(state:DrawerState, event:DrawerEvent) -> DrawerState
+  sync drawer_apply(state:DrawerState, event:DrawerEvent) -> DrawerTransition
   component drawer(state:&DrawerState, reduced_motion:bool) -> DrawerEvent
   sync navigation_menu_state() -> NavigationMenuState
   pure navigation_menu_is_open(state:NavigationMenuState) -> bool
   pure navigation_menu_route(state:NavigationMenuState) -> str
-  task navigation_menu_apply(event:NavigationMenuEvent) -> NavigationMenuState
+  sync navigation_menu_apply(event:NavigationMenuEvent) -> NavigationMenuTransition
   component navigation_menu(state:&NavigationMenuState) -> NavigationMenuEvent
   sync menubar_state() -> MenubarState
-  task menubar_apply(state:MenubarState, event:MenubarEvent) -> MenubarState
+  sync menubar_apply(state:MenubarState, event:MenubarEvent) -> MenubarTransition
   component menubar(state:&MenubarState) -> MenubarEvent
   component hover_card() -> bool
   component slider(values:&[f64]) -> [f64]
   component radio_group(selected:&str) -> str
-  task radio_apply(next:str) -> str
+  sync radio_apply(next:str) -> RadioTransition
   sync message_scroller_state() -> MessageScrollerState
   sync message_scroller_bootstrap(state:MessageScrollerState) -> MessageScrollerTransition
   sync message_scroller_apply(state:MessageScrollerState, event:MessageScrollerEvent) -> MessageScrollerTransition
@@ -129,5 +143,5 @@ extern crate::adapters
   pure data_table_page_range(query:str, page:i64) -> [i64]
   pure data_table_page_label(page:i64, current:bool) -> str
   component resizable_demo(sizes:&[f64]) -> [f64]
-  task popover_apply(event:PopoverEvent) -> bool
+  sync popover_apply(event:PopoverEvent) -> PopoverTransition
   component popover_demo(open:bool) -> PopoverEvent

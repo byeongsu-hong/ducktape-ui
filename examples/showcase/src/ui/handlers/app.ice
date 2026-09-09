@@ -1,3 +1,5 @@
+on adapter_focused
+
 on clicked
   clicks = clicks + 1
 
@@ -11,10 +13,9 @@ on volume_changed(next)
   volume = next
 
 on density_changed(next)
-  task radio_apply(next) -> density_applied _
-
-on density_applied(next)
-  density = next
+  let transition = radio_apply(next)
+  density = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on framework_changed(next)
   native_select_framework = some(next)
@@ -34,16 +35,14 @@ on otp_changed(next)
   otp = next
 
 on calendar_changed(event)
-  task calendar_apply(calendar, event) -> calendar_applied _
-
-on calendar_applied(next)
-  calendar = next
+  let transition = calendar_apply(calendar, event)
+  calendar = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on date_picker_changed(event)
-  task date_picker_apply(date_picker, event) -> date_picker_applied _
-
-on date_picker_applied(next)
-  date_picker = next
+  let transition = date_picker_apply(date_picker, event)
+  date_picker = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on chart_hovered(next)
   chart_hover = next
@@ -70,34 +69,29 @@ on show_retained_data
   showcase_page = "retained"
 
 on command_changed(event)
-  task command_apply(command, event) -> command_applied _
-
-on command_applied(next)
-  command = next
+  let transition = command_apply(command, event)
+  command = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on select_changed(event)
-  task select_apply(select, event) -> select_applied _
-
-on select_applied(next)
-  select = next
+  let transition = select_apply(select, event)
+  select = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on dropdown_changed(event)
-  task dropdown_menu_apply(dropdown, event) -> dropdown_applied _
-
-on dropdown_applied(next)
-  dropdown = next
+  let transition = dropdown_menu_apply(dropdown, event)
+  dropdown = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on context_menu_changed(event)
-  task context_menu_apply(context_menu, event) -> context_menu_applied _
-
-on context_menu_applied(next)
-  context_menu = next
+  let transition = context_menu_apply(context_menu, event)
+  context_menu = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on alert_dialog_changed(event)
-  task alert_dialog_apply(alert_dialog, event) -> alert_dialog_applied _
-
-on alert_dialog_applied(next)
-  alert_dialog = next
+  let transition = alert_dialog_apply(alert_dialog, event)
+  alert_dialog = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on sidebar_changed(event)
   sidebar = sidebar_apply(sidebar, event)
@@ -106,36 +100,27 @@ on sonner_changed(event)
   sonner = sonner_apply(sonner, event)
 
 on sonner_tick
-  task sonner_tick(sonner) -> sonner_ticked _
-
-on sonner_ticked(next)
-  sonner = next
+  sonner = sonner_tick(sonner)
 
 on reduced_motion_changed(next)
   reduced_motion = next
-  task sonner_set_reduced_motion(sonner, next) -> sonner_reduced_motion_applied _
-
-on sonner_reduced_motion_applied(next)
-  sonner = next
+  sonner = sonner_set_reduced_motion(sonner, next)
 
 on drawer_changed(event)
-  task drawer_apply(drawer, event) -> drawer_applied _
-
-on drawer_applied(next)
-  drawer = next
+  let transition = drawer_apply(drawer, event)
+  drawer = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on navigation_menu_changed(event)
-  task navigation_menu_apply(event) -> navigation_menu_applied _
-
-on navigation_menu_applied(next)
-  navigation_menu = next
+  let transition = navigation_menu_apply(event)
+  navigation_menu = transition.state
   navigation_route = navigation_menu_route(navigation_menu)
+  task apply_focus(transition.focus) -> adapter_focused
 
 on menubar_changed(event)
-  task menubar_apply(menubar, event) -> menubar_applied _
-
-on menubar_applied(next)
-  menubar = next
+  let transition = menubar_apply(menubar, event)
+  menubar = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on native_resized(next)
   native_sizes = next
@@ -204,10 +189,9 @@ on cancel_tree_rename
   task tree_view_focus(tree_view) -> tree_view_focused
 
 on native_popover_changed(event)
-  task popover_apply(event) -> native_popover_applied _
-
-on native_popover_applied(next)
-  native_popover = next
+  let transition = popover_apply(event)
+  native_popover = transition.state
+  task apply_focus(transition.focus) -> adapter_focused
 
 on open_dialog
   dialog_open = true

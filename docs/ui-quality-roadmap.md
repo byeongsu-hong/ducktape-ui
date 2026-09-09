@@ -317,3 +317,31 @@ Together with [#1028](https://github.com/byeongsu-hong/ducktape-ui/pull/1028),
 L07's native fixed/fill/shrink, multiline, padding, selection, rich decoration
 and compact-label acceptance. Tree-host and platform-specific font evidence
 are outside this audit.
+
+### S02: controlled catalog adapters commit current state
+
+The [catalog adapters](../examples/showcase/src/adapters.rs) used the same
+`Task<State>` snapshot pattern as the transcript. A native typing/navigation
+batch lost the typed query; queued menu, calendar, modal and selection events
+lost independent state fields. Toast ticks and reduced-motion changes could
+remove a notification added before their completion. A navigation completion
+could also overwrite a newer route chosen by a different control.
+
+All twelve focus-bearing catalog adapters now return an immediate state and a
+once-consumed focus task. The [production handlers](../examples/showcase/src/ui/handlers/app.ice)
+assign state before launching that task. Previous-visibility decisions remain
+inside the single reducer call. Both toast maintenance reducers return state
+directly, without asynchronous completion handlers.
+
+Nine regression tests reach their intended assertions on the prior behavior,
+including native Character/ArrowDown events routed through the actual Command
+widget and generated app handlers. The [first-class focus tests](../examples/showcase/src/ui/tests/app.ice)
+exercise Select keyboard selection and trigger restoration, plus AlertDialog's
+safe cancellation and trigger restoration. Discarding the shared focus task
+fails both native assertions. A native Driver check additionally distinguishes
+the Cancel and Confirm focus IDs and verifies restored trigger focus; its safe
+Cancel assertion rejects the same mutation. Restoration passes all 336 tests.
+The [component guide](../crates/ui-lang-components/README.md#controlled-state-and-focus)
+explains the boundary and the distinction between native replacement events
+and field-level updates. S02 remains open for product I/O ownership, failed
+saves and stale network completions; those paths are outside this catalog audit.
