@@ -1,5 +1,7 @@
 //! UI-thread ownership for a module's parked native subtrees.
 use super::{IceElement, Output};
+#[path = "focus.rs"]
+mod focus;
 use crate::{MemoParking, MemoParkingHandle};
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
@@ -9,11 +11,13 @@ pub(super) fn scope(
     content: IceElement<'static, Output>,
     instance: u64,
     handle: MemoParkingHandle,
+    root: &ui_lang_wire::Node,
 ) -> IceElement<'static, Output> {
     iced::Element::new(Scope {
         content,
         instance,
         handle,
+        focus: focus::Targets::new(root),
     })
 }
 
@@ -162,20 +166,37 @@ struct Scope {
     content: IceElement<'static, Output>,
     instance: u64,
     handle: MemoParkingHandle,
+    focus: focus::Targets,
 }
 
 struct State {
     instance: u64,
     owner: MemoParking,
+    focused: Option<focus::Target>,
+    restore: Option<focus::Target>,
 }
 
 impl Scope {
+    fn observe_focus(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &iced::Renderer) {
+        let focused = self.focus.capture(|operation| {
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                operation,
+            );
+        });
+        tree.state.downcast_mut::<State>().focused = focused;
+    }
+
     fn fresh_state(&self) -> State {
         let owner = MemoParking::default();
         self.handle.attach(&owner);
         State {
             instance: self.instance,
             owner,
+            focused: None,
+            restore: None,
         }
     }
 }
@@ -200,7 +221,12 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
         if state.instance != self.instance {
             // Release the old owner before its mounted children, so neither
             // parked nor mounted nested memos can outlive the instance.
+            let restore = state
+                .focused
+                .take()
+                .filter(|target| self.focus.contains(target));
             *state = self.fresh_state();
+            state.restore = restore;
             tree.children = self.children();
         } else {
             self.handle.attach(&state.owner);
@@ -221,9 +247,22 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
         renderer: &iced::Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        self.content
+        let layout = self
+            .content
             .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
+            .layout(&mut tree.children[0], renderer, limits);
+        if let Some(target) = tree.state.downcast_mut::<State>().restore.take() {
+            focus::restore(&target, &self.focus, |operation| {
+                self.content.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    Layout::new(&layout),
+                    renderer,
+                    operation,
+                );
+            });
+        }
+        self.observe_focus(tree, Layout::new(&layout), renderer);
+        layout
     }
 
     fn operate(
@@ -236,6 +275,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
         self.content
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
+        self.observe_focus(tree, layout, renderer);
     }
 
     fn update(
@@ -259,6 +299,16 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             shell,
             viewport,
         );
+        // Pointer observation and redraw ticks do not change a control's focus.
+        // Layout and explicit widget operations record focus separately.
+        let inert = matches!(
+            event,
+            Event::Mouse(mouse::Event::CursorMoved { .. } | mouse::Event::WheelScrolled { .. })
+                | Event::Window(iced::window::Event::RedrawRequested(_))
+        );
+        if !inert {
+            self.observe_focus(tree, layout, renderer);
+        }
     }
 
     fn draw(
@@ -348,7 +398,7 @@ mod tests {
         } else {
             iced::widget::text("hidden").into()
         };
-        scope(content, instance, handle)
+        scope(content, instance, handle, &ui_lang_wire::Node::empty())
     }
 
     fn headless() -> iced::Renderer {
@@ -359,6 +409,228 @@ mod tests {
             Some("tiny-skia"),
         ))
         .unwrap()
+    }
+
+    struct FocusInput {
+        id: iced::widget::Id,
+        set: bool,
+        focused: bool,
+    }
+    impl Operation for FocusInput {
+        fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+            visit(self);
+        }
+        fn focusable(
+            &mut self,
+            id: Option<&iced::widget::Id>,
+            _: Rectangle,
+            state: &mut dyn iced::advanced::widget::operation::Focusable,
+        ) {
+            if id == Some(&self.id) {
+                if self.set {
+                    state.focus();
+                }
+                self.focused |= state.is_focused();
+            }
+        }
+    }
+
+    fn input(key: &str, disabled: bool) -> ui_lang_wire::Node {
+        ui_lang_wire::Node::Input {
+            options: ui_lang_wire::InputOptions {
+                disabled,
+                ..Default::default()
+            },
+            key: key.into(),
+            placeholder: String::new(),
+            value: "new state".into(),
+            on_input: 1,
+            on_submit: None,
+            width: None,
+            secure: false,
+            style: Box::default(),
+        }
+    }
+
+    fn column(children: Vec<ui_lang_wire::Node>) -> ui_lang_wire::Node {
+        ui_lang_wire::Node::Linear {
+            key: "root".into(),
+            axis: ui_lang_wire::Axis::Column,
+            max_width: None,
+            clip: false,
+            wrap: None,
+            spacing: None,
+            padding: None,
+            width: None,
+            height: None,
+            align: None,
+            background: None,
+            border: None,
+            children,
+        }
+    }
+
+    fn replaced_focus(
+        before: &ui_lang_wire::Node,
+        after: &ui_lang_wire::Node,
+        focused: Option<&str>,
+        observed: &str,
+    ) -> bool {
+        replaced_focus_with_surfaces(
+            before,
+            after,
+            focused,
+            observed,
+            &super::super::Surfaces::new(),
+        )
+    }
+
+    fn replaced_focus_with_surfaces(
+        before: &ui_lang_wire::Node,
+        after: &ui_lang_wire::Node,
+        focused: Option<&str>,
+        observed: &str,
+        surfaces: &super::super::Surfaces,
+    ) -> bool {
+        use super::super::{Inputs, Pictures};
+        let renderer = headless();
+        let mut first =
+            super::super::render(before, &Inputs::default(), &Pictures::default(), surfaces);
+        let mut tree = Tree::new(first.as_widget());
+        let layout = first
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &layout::Limits::NONE);
+        if let Some(id) = focused {
+            let mut focus = FocusInput {
+                id: iced::widget::Id::from(id.to_owned()),
+                set: true,
+                focused: false,
+            };
+            first
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&layout), &renderer, &mut focus);
+            assert!(focus.focused, "old native control is actually focused");
+        }
+        drop(first);
+        let mut next =
+            super::super::render(after, &Inputs::default(), &Pictures::default(), surfaces);
+        tree.diff(next.as_widget());
+        let layout = next
+            .as_widget_mut()
+            .layout(&mut tree, &renderer, &layout::Limits::NONE);
+        let mut focus = FocusInput {
+            id: iced::widget::Id::from(observed.to_owned()),
+            set: false,
+            focused: false,
+        };
+        next.as_widget_mut()
+            .operate(&mut tree, Layout::new(&layout), &renderer, &mut focus);
+        focus.focused
+    }
+
+    #[test]
+    fn replaced_instance_focuses_only_the_same_native_input_identity() {
+        assert!(
+            replaced_focus(
+                &input("draft", false),
+                &input("draft", false),
+                Some("draft"),
+                "draft"
+            ),
+            "replacement must transfer focus into new native state",
+        );
+    }
+
+    #[test]
+    fn replacement_never_substitutes_another_or_disabled_control() {
+        let before = input("draft", false);
+        assert!(!replaced_focus(
+            &before,
+            &input("other", false),
+            Some("draft"),
+            "other"
+        ));
+        assert!(!replaced_focus(
+            &before,
+            &input("draft", true),
+            Some("draft"),
+            "draft"
+        ));
+        let changed_kind = ui_lang_wire::Node::Toggle {
+            key: "draft".into(),
+            kind: ui_lang_wire::ToggleKind::Checkbox,
+            label: "different control".into(),
+            checked: false,
+            on_toggle: Some(2),
+            width: None,
+            style: Default::default(),
+        };
+        assert!(!replaced_focus(
+            &before,
+            &changed_kind,
+            Some("draft"),
+            "draft"
+        ));
+        let duplicate = column(vec![input("draft", false), input("draft", false)]);
+        assert!(!replaced_focus(&before, &duplicate, Some("draft"), "draft"));
+        assert!(!replaced_focus(&before, &before, None, "draft"));
+    }
+
+    #[test]
+    fn replacement_does_not_focus_a_colliding_host_surface_descendant() {
+        use super::super::Surfaces;
+        let mut surfaces = Surfaces::new();
+        surfaces.insert(
+            "collision".into(),
+            std::sync::Arc::new(|_, _| {
+                iced::widget::text_input("host surface", "")
+                    .id(iced::widget::Id::from("draft"))
+                    .on_input(|_| ui_lang_wire::SurfaceValue::Bool(false))
+                    .into()
+            }),
+        );
+        let after = column(vec![
+            input("draft", false),
+            ui_lang_wire::Node::Surface {
+                key: "native".into(),
+                name: "collision".into(),
+                args: Vec::new(),
+                on_event: None,
+            },
+        ]);
+        assert!(
+            !replaced_focus_with_surfaces(
+                &input("draft", false),
+                &after,
+                Some("draft"),
+                "draft",
+                &surfaces,
+            ),
+            "an ambiguous native identity must not receive replacement focus"
+        );
+        let mut hidden = after;
+        if let ui_lang_wire::Node::Linear { children, .. } = &mut hidden {
+            children[0] = ui_lang_wire::Node::Tooltip {
+                key: "tip".into(),
+                position: ui_lang_wire::TooltipPosition::Top,
+                gap: 0.0,
+                padding: 0.0,
+                delay_ms: 0,
+                snap: false,
+                style: Default::default(),
+                children: vec![ui_lang_wire::Node::empty(), input("draft", false)],
+            };
+        }
+        assert!(
+            !replaced_focus_with_surfaces(
+                &input("draft", false),
+                &hidden,
+                Some("draft"),
+                "draft",
+                &surfaces,
+            ),
+            "an unmounted wire identity must not authorize a host surface control"
+        );
     }
 
     #[test]

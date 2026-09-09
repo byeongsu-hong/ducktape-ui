@@ -1279,7 +1279,7 @@ pub fn render(
             memo: handle.clone(),
         },
     );
-    memo::scope(content, inputs.instance, handle)
+    memo::scope(content, inputs.instance, handle, root)
 }
 
 /// What the host keeps across frames, as one borrow for the render walk.
