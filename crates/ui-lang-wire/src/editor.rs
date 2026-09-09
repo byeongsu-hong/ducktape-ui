@@ -22,7 +22,13 @@ pub fn editor_lines(text: &str) -> impl Iterator<Item = &str> {
     let mut remaining = Some(text);
     std::iter::from_fn(move || {
         let text = remaining.take()?;
-        let end = text.find(['\r', '\n']).unwrap_or(text.len());
+        // CR/LF are ASCII bytes, so their offsets are always UTF-8 boundaries.
+        // Avoid decoding every character on each presentation validation pass.
+        let end = text
+            .as_bytes()
+            .iter()
+            .position(|byte| matches!(byte, b'\r' | b'\n'))
+            .unwrap_or(text.len());
         if end < text.len() {
             let ending = &text[end..];
             let width = if ending.starts_with("\r\n") || ending.starts_with("\n\r") {
@@ -77,6 +83,30 @@ pub struct EditorState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn logical_lines_preserve_mixed_terminators_and_utf8_byte_ranges() {
+        let long = "한글 e\u{301} 👩‍💻 ordinary text ".repeat(4096);
+        for first in ["\n", "\r", "\r\n", "\n\r"] {
+            for second in ["\n", "\r", "\r\n", "\n\r"] {
+                let text = format!("{long}{first}middle 한글{second}tail 👩‍💻");
+                assert_eq!(
+                    editor_lines(&text).collect::<Vec<_>>(),
+                    [&long, "middle 한글", "tail 👩‍💻"],
+                    "terminators {first:?}, {second:?}"
+                );
+            }
+        }
+        for (text, expected) in [
+            ("", vec![""]),
+            ("\r\n", vec!["", ""]),
+            ("\n\r", vec!["", ""]),
+            ("\r\r\n\n", vec!["", "", "", ""]),
+            ("한\r\n글\n\r", vec!["한", "글", ""]),
+        ] {
+            assert_eq!(editor_lines(text).collect::<Vec<_>>(), expected);
+        }
+    }
+
     #[test]
     fn columns_exclude_native_line_ending_bytes() {
         for ending in ["\n", "\r\n", "\r", "\n\r"] {
