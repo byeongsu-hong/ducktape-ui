@@ -57,11 +57,8 @@ pub fn respond<A: TestApp + crate::SnapshotApp>(
         Request::ResolveTarget { test, step } => {
             let driver = driver.as_mut().ok_or("begin authored test first")?;
             let _context = driver.slots.enter();
-            for message in crate::slots::take_deferred::<A::Message>() {
-                crate::spawn(&mut driver.tasks, driver.app.update(message));
-                driver.settle();
-            }
-            driver.settle();
+            // The mounted host settles/render-syncs before querying. Resolving
+            // a path is read-only so it cannot get ahead of that rendered tree.
             let path = driver.app.test_target(test, step)?;
             if path.len() > crate::wire::MAX_STRING_BYTES {
                 return Err("authored target exceeds string budget".into());
@@ -226,5 +223,24 @@ mod tests {
                 .unwrap_err()
                 .contains("begin")
         );
+    }
+    #[test]
+    fn resolving_a_target_cannot_advance_past_the_rendered_state() {
+        let mut driver = Some(Driver::<Counter>::for_test(0, false).unwrap());
+        {
+            let _context = driver.as_ref().unwrap().slots.enter();
+            crate::slots::defer(vec![12_i64]);
+        }
+        let path = respond(
+            &mut driver,
+            crate::wire::authored::Request::ResolveTarget { test: 0, step: 0 },
+        )
+        .unwrap();
+        assert_eq!(path, b"Counter/rows/key(7)");
+        assert_eq!(driver.as_ref().unwrap().app.count, 7);
+        {
+            let _context = driver.as_ref().unwrap().slots.enter();
+            assert!(crate::slots::has_deferred());
+        }
     }
 }
