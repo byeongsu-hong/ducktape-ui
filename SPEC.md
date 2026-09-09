@@ -407,6 +407,11 @@ Default and monospace fonts are supported; named fonts and inline gradients
 are rejected with E190 on this target. The default runtime provider requires
 the `markdown` feature (included in `full-runtime`).
 
+Native `task widget focus` and `task widget focused` accept identified buttons,
+including buttons inside component and keyed-row scopes. They use the generated
+accessible button's native focus ID; assign navigation state before requesting
+focus on a newly rendered destination.
+
 On the tree target, checked `task widget` focus, focused-query, input cursor/
 selection and scroll/snap statements emit `host.widget` requests containing
 `ui_lang_wire::WidgetCommand`. Qualified widget paths are copied exactly;

@@ -160,13 +160,19 @@ click at 280px and 640px, including custom Page padding.
 
 ## List item sizing
 
-`Item(title, description, meta)` keeps its leading content at its chosen size.
+`Item(title, description="", meta="")` keeps its leading content at its chosen size.
+Empty descriptions and metadata omit their line or column gap.
+`Attachment(name, meta="")` also omits an empty metadata line.
 The title/description and trailing metadata share constrained space using their
 content sizes; metadata keeps its natural width when the row has enough room.
 Long text wraps rather than giving all remaining width to the trailing value.
 The leading slot accepts caller-owned content, including interactive controls,
 without replacing their routes. Use the existing `flex` and `box` primitives
 for a different content allocation policy.
+
+See the [list/detail navigation guide](docs/list-detail-navigation.md) for stable
+selection through filtering/reordering, per-project drafts, native keyboard
+Back focus and compact/customized layouts.
 
 ## Form defaults and customization
 

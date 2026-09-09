@@ -108,7 +108,11 @@ test short_metadata_keeps_its_intrinsic_width
     Page #page
       col #frame w=fill gap=8.0
         Surface #surface
-          Item #item title="Workspace" description="Ready to edit" meta="Ready"
+          Item #item
+            with
+              title="Workspace"
+              description="Ready to edit"
+              meta="Ready"
             Avatar #avatar initials="RB"
         text "Ready" #ruler @meta_compact
   target frame = #page/root/frame
@@ -131,7 +135,11 @@ test custom_leading_content_keeps_size_and_click_route
   mount
     Page #page padding=12.0
       Surface #surface
-        Item #item title="Workspace" description="Open the project" meta="Ready"
+        Item #item
+          with
+            title="Workspace"
+            description="Open the project"
+            meta="Ready"
           button "Go" #go w=48.0 h=30.0 -> activate
   target page = #page/root
   target item = page/surface/root/item/root
@@ -147,3 +155,55 @@ test custom_leading_content_keeps_size_and_click_route
   click go
   expect activated
   capture custom_leading_content
+
+test absent_item_text_leaves_no_blank_column_or_line
+  viewport 320 240
+  mount
+    Page #page
+      Item #item title="Quarterly workspace migration and accessibility review"
+        Avatar #avatar initials="RB"
+  target item = #page/root/item/root
+  target content = item/content
+  target title = content/title
+  expect content.height ~= title.height
+  // The shrink column hugs wrapped text; no whole 9px column gap remains.
+  expect content.right > item.right - 18.0
+  capture optional_item
+
+test long_attachment_text_stays_inside_its_content_column
+  viewport 280 320
+  mount
+    Page #page
+      Attachment #attachment
+        with
+          name="Quarterly workspace migration and accessibility review.pdf"
+          meta="Reviewed by the platform team, waiting for final approval"
+  target attachment = #page/root/attachment/root
+  target menu = attachment/menu
+  target name = attachment/name
+  target metadata = attachment/meta
+  expect name.text_x + name.text_width <= menu.left
+  expect metadata.text_x + metadata.text_width <= menu.left
+  expect menu.right <= attachment.right - 13.0
+  expect attachment.height > 60.0
+  capture long_attachment
+
+test long_breadcrumb_current_stays_inside_compact_viewport
+  viewport 280 320
+  mount
+    Page #page
+      Breadcrumb #breadcrumb current="Quarterly workspace migration and accessibility review"
+        button "Projects" -> activate
+  target breadcrumb = #page/root/breadcrumb/root
+  target current = breadcrumb/current
+  expect current.text_x + current.text_width <= breadcrumb.right
+  expect current.text_height > 20.0
+  capture long_breadcrumb
+
+test absent_attachment_metadata_leaves_no_blank_line
+  viewport 320 240
+  mount
+    Page #page
+      Attachment #attachment name="Review.pdf"
+  target attachment = #page/root/attachment/root
+  expect attachment.height ~= 56.0

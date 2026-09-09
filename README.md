@@ -321,6 +321,10 @@ bounds. With word wrapping, `align-x=justified` expands non-final lines across
 the available width; short final lines retain their natural width. See the
 [text layout guide](skills/design-ice-ui/references/views-and-style.md#text).
 
+The [list/detail navigation guide](crates/ui-lang-components/docs/list-detail-navigation.md)
+shows default components with stable filtered selection, independent drafts and
+native keyboard focus restoration when returning from detail.
+
 ## First-class tests
 
 Tree guests can run authored presets, typed state expectations and dispatch,

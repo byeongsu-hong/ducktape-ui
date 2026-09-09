@@ -62,8 +62,8 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
 | C01 | P0 · Done | [PR #1015](https://github.com/byeongsu-hong/ducktape-ui/pull/1015) | Default and customized fields at 360/960px; wrapping errors; no empty-help gap; short-window scroll; binding, Tab/Space/Enter and focus preserved. Local: 8 settings tests, 330 showcase tests pass; five mutation Reds; merged as 607f7ce3. |
-| C02 | P1 · Audit | [Item/Attachment/Breadcrumb](../crates/ui-lang-components/src/ice/components.ice), [VirtualList](../crates/ui-lang-components/docs/virtual-list.md) | Leading visual, long content and trailing metadata/actions remain aligned; stable-key selection survives reorder/filter; optional content does not leave blank columns. |
-| C03 | P1 · Audit | [navigation examples](../examples/showcase/src/ui/components/navigation.ice), [parity navigation contracts](../crates/ui-lang-components/docs/parity.md) | A list/detail or settings screen has one obvious selected location, coherent title/actions and predictable back behavior, with a reusable default composition. |
+| C02 | P1 · Done | [Item/Attachment/Breadcrumb](../crates/ui-lang-components/src/ice/components.ice), [VirtualList](../crates/ui-lang-components/docs/virtual-list.md) | Leading visual, long content and trailing metadata/actions remain aligned; stable-key selection survives reorder/filter; optional content does not leave blank columns. |
+| C03 | P1 · Done | [navigation examples](../examples/showcase/src/ui/components/navigation.ice), [parity navigation contracts](../crates/ui-lang-components/docs/parity.md) | A list/detail or settings screen has one obvious selected location, coherent title/actions and predictable back behavior, with a reusable default composition. |
 | C04 | P1 · Audit | [Dialog composition](../crates/ui-lang-components/src/ice/components.ice), [modal runtime contract](../crates/ui-lang-components/docs/parity.md) | A long dialog fits a small window, body scrolls as needed, actions stay reachable, focus is contained/restored and custom content preserves dismissal policy. |
 | C05 | P1 · Audit | [Select/Combobox/menus/popovers](../crates/ui-lang-components/docs/parity.md) | A searchable anchored selector near a window edge keeps the active result visible, handles empty results, and restores focus after selection/Escape, including a custom trigger. |
 | C06 | P2 · Audit | [Markdown/editor examples](../examples/markdown-editor), [AI chat](../examples/ai-chat) | Rich text, images and editor content respect readable width; long links/code and streaming additions have an explicit overflow policy and preserve reading position. |
@@ -414,3 +414,25 @@ produce intended assertion Reds; seven native fixture checks and the existing
 324-test Showcase binary pass after restoration. Typed externs continue to
 receive their complete Rust Theme explicitly; no partial palette syntax or
 Tree/platform appearance parity is claimed.
+
+### C02/C03: a native list/detail composition
+
+2026-09-09: [PR #1049](https://github.com/byeongsu-hong/ducktape-ui/pull/1049)
+completes the native list/detail acceptance.
+
+The [project browser](../examples/showcase/tests/cases/ui/list_detail_navigation.ice)
+uses default components with stable-key selection, independent project drafts,
+filter/reorder controls, clear selected location, coherent detail title/actions
+and Back that restores the selected row's native keyboard focus. The checker
+now admits identified buttons as native widget-operation targets, matching the
+focus IDs already generated for them. Item and Attachment omit empty text and
+its layout gaps; existing leading and long-text sizing remains intact.
+
+Actual mutation Reds cover lost Back focus, discarded drafts, reset selection,
+incorrect custom cap, an empty metadata column and overflowing long text. Native
+owner and composition tests pass with all mutations restored. Compact captures
+cover 320×560 and minimum 320×360; the default/custom readable cap is also checked.
+The [guide](../crates/ui-lang-components/docs/list-detail-navigation.md) documents
+public customization, button keyboard/accessibility semantics and state ownership.
+This completes C02/C03's native composition acceptance. Durable saves, large
+virtualized collections and platform-specific accessibility remain outside it.
