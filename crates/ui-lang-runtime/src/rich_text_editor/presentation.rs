@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn malformed_ranges_never_hide_unrelated_source() {
-        for range in [1..3, 0..10, 3..0] {
+        for range in [1..3, 0..10, Range { start: 3, end: 0 }] {
             let lines = Arc::from([PresentedLine {
                 line: 0,
                 spans: vec![(range, hidden())],
