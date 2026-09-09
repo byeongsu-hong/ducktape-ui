@@ -33,3 +33,8 @@ catalog `MessageScroller`.
 ![Navigation shell](screenshots/catalog-navigation.png)
 
 ![Single-column navigation shell](screenshots/catalog-narrow.png)
+
+The [native card collection example](tests/cases/ui/grid_collection.ice) uses
+minimum-cell columns with 4:3 cards. It covers narrow windows, odd rows and
+custom spacing/insets; [its rendered evidence](screenshots/grid-collection/README.md)
+includes the failing before captures and exact reproduction command.

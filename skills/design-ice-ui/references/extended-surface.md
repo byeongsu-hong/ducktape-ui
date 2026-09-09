@@ -9,6 +9,7 @@ contract does not require a dedicated keyword for every Rust method.
 
 - [Choose the smallest surface](#choose-the-smallest-surface)
 - [Extended widget inventory](#extended-widget-inventory)
+- [Repeated card grids](#repeated-card-grids)
 - [Overlays and compound layout](#overlays-and-compound-layout)
 - [Pane grids](#pane-grids)
 - [Canvas](#canvas)
@@ -93,6 +94,35 @@ properties between widget families; the checker rejects ineffective style.
 
 Cargo features may be required. Match the reference app's exact manifest and
 fixture rather than enabling an Iced default feature set wholesale.
+
+## Repeated card grids
+
+For a native card collection, give `grid min-cell=` the smallest useful card
+width. It chooses equal columns from the parent's available width and the gap;
+an incomplete final row keeps those same column widths. Below the requested
+minimum, one column fits the available width. Give the page its own inset and
+the card its own inner padding; those are separate layout decisions.
+
+Minimum-cell grids keep natural row height. For cards that need a consistent
+aspect ratio, compose an inner one-cell grid using the existing sizing surface:
+
+```ice
+grid min-cell=180.0 gap=12.0
+  for item in items
+    grid #card(item) cols=1 h=aspect(4.0,3.0)
+      box w=fill h=fill p=12.0 @bg-surface
+        text item w=fill
+```
+
+The [compiling collection example](../../../examples/showcase/tests/cases/ui/grid_collection.ice)
+adds the page inset, card actions, empty/single states and custom minimum/gap
+inputs. Its tests check the exact reflow threshold, odd rows, the narrower-than-
+minimum case, painted content bounds and the actual last-card click route.
+
+Use `max-cell=` only when a maximum cell width is intended: it can add columns
+and make cells smaller than the value. Use `cols=` when the column count itself
+is the contract. These native equal-column `min-cell` rules are not yet carried
+by the Tree wire representation, which still sends ordinary growing flex items.
 
 ## Overlays and compound layout
 

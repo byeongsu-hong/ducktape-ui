@@ -2732,3 +2732,25 @@ the production generated update handler; dropping the effects fails its
 This evidence covers the catalog Rust/Ice adapters. Native events containing
 complete replacement states keep their existing component semantics; product
 network/save completion policies remain separate work.
+
+### Native minimum-cell card grids
+
+[`grid_collection.ice`](examples/showcase/tests/cases/ui/grid_collection.ice)
+uses one collection component in its view and tests. Eight native scenarios
+cover 280px below the requested minimum, 419/420px around the exact two-column
+threshold, 480px, a fractional three-column case at 721px, custom minimum/gap/page insets
+at 640px, empty/single-item updates, and naturally unequal row heights with grid
+padding. Assertions cover equal track widths, 4:3 cells through an inner native
+grid, final-row placement, nonzero contained cells, painted heading/button bounds and the last card's real click route.
+
+The pre-fix assertions observed a 320px cell in 232px of available width and
+last-row widths of 432/330.5/298px where earlier rows used 210/216.3333/192px.
+Native minimum-cell sizing now chooses the column count once per layout and
+reuses each track width across rows; a single narrow track fits its parent.
+The existing flex engine retains natural row heights and padding. Fixed-column
+and maximum-cell Iced grids keep their existing behavior.
+
+[Inspected captures and reproduction details](examples/showcase/screenshots/grid-collection/README.md)
+record the input tuples and assertion-level Red/Green evidence. Tree's current
+minimum-cell wire representation remains ordinary flex items and does not yet
+carry this native sizing mode; no Tree parity is claimed by these tests.
