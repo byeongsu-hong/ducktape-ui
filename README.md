@@ -305,6 +305,10 @@ The [default Ice components](crates/ui-lang-components/README.md) include
 `PageHeader` and `Panel` with optional descriptions: omitted help adds no blank
 row, while long titles and descriptions wrap within the available content width.
 
+The shared component theme includes light and dark palettes. Applications can
+switch palettes or supply a complete custom palette while retaining the same
+components; see [theme customization](crates/ui-lang-components/README.md).
+
 Default list rows use content-based sizing so long trailing metadata shares
 narrow space with the main text. See [Item sizing](crates/ui-lang-components/README.md#list-item-sizing)
 for the leading-content customization boundary.

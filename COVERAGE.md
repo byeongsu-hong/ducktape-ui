@@ -2797,3 +2797,25 @@ ownership and explicit font loading. This evidence covers native tiny-skia at
 scale 1, ko-KR, Linux metadata and reduced motion. Generic font declarations
 alone are not evidence of loaded glyph coverage. Tree hosts and platform font
 fallback behavior are outside this contract.
+
+### Default semantic palettes and action-state customization
+
+`theme_state_defaults.ice` exercises native shared `Page`, `PageHeader`,
+`TextField` and action recipes through actual widget routes. Selecting the
+complete light, dark and application-owned ocean palettes changes semantic
+surface/control paint while retaining the edited value. A geometric override
+keeps hover, pressed and disabled action paint, radius and click behavior;
+the customized input retains its focus border, error label and disabled value.
+`theme_state_defaults.rs` samples the actual two-pixel keyboard ring on primary,
+danger and customized filled actions in all three palettes after Tab traversal.
+The default dark token values are also checked against the retained Rust theme.
+
+The pre-fix keyboard ring paints `[44, 43, 39]` against the dark primary surface
+instead of contrasting foreground ink. Three independent temporary mutations
+(dark background changed to light, primary hover changed to base, input focus
+border reduced from 2px to 1px) fail their corresponding authored assertions.
+After exact restoration the seven native fixture tests pass. Captures use
+560×520, scale 1, en-US, Linux metadata, reduced motion and bundled Geist;
+the palette selector is application state, not a headless theme override.
+This evidence establishes native generated controls, not automatic theme
+propagation through typed Rust externs or Tree/platform appearance parity.

@@ -50,12 +50,46 @@ frames in [`src/ice/virtual-list.ice`](src/ice/virtual-list.ice) and
 variants use checked compound names such as `Alert.Success`, `Badge.Warning`,
 and `Typography.Caption`; there are no free-form variant strings that can silently
 render an empty component. Its Ice tokens are checked against the retained Rust
-`LIGHT` palette, so the default path needs no repeated accent argument or
+`LIGHT` and `DARK` palettes, so the default path needs no repeated accent argument or
 parallel control-style callbacks. Custom retained themes use the Rust component
 API, where callers pass a complete `Theme`; the Ice interface intentionally
 does not expose partial accent-only theming. Applications that need retained
 widgets define a small typed `extern` boundary for their own data and events;
 the showcase adapter interface is not part of the default application surface.
+
+The default source supplies `AppTheme.app` (light) and `AppTheme.dark`.
+Select them through ordinary application state:
+
+```ice
+app Settings
+  palette active_palette
+
+state
+  active_palette:palette[AppTheme] = AppTheme.app
+
+on choose_palette(next)
+  active_palette = next
+```
+
+Import `default.ice` as above, then route a control to
+`choose_palette AppTheme.dark`. For a product palette, declare every token in
+`palette ocean for AppTheme` and select `AppTheme.ocean`; the same components
+and recipes follow it. The [theme/state fixture](../../examples/showcase/tests/cases/ui/theme_state_defaults.ice)
+shows all three choices with an editable field and customized controls.
+Palette selection does not automatically change a typed Rust extern's theme;
+pass its complete retained `Theme` through that application's boundary.
+
+Default action recipes own their keyboard focus color: filled primary/danger
+buttons use their contrasting foreground ink, while secondary/outline/ghost
+buttons use `ring`. A geometry override retains hover, pressed, disabled and
+keyboard-focus behavior. The [native state fixture](../../examples/showcase/tests/cases/ui/theme_state_defaults.ice)
+checks a 160px-wide action with 8px padding and a 14px radius, plus a customized
+`TextField` with focused, error-label and disabled states. A field error adds a
+semantic error label; it does not imply an automatic red input border.
+
+![Default light palette](docs/images/theme-defaults-light.png)
+![Dark palette with keyboard focus on a customized action](docs/images/theme-defaults-dark-focus.png)
+![Complete application palette with shared components](docs/images/theme-defaults-custom.png)
 
 Large fixed-row collections use the feature-gated
 [`VirtualList`](docs/virtual-list.md). Its state/event API lives in

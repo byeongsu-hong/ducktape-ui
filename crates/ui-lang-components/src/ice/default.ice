@@ -100,3 +100,52 @@ palette app for AppTheme
   shadow_modal #2826224d
   shadow_window #28262238
   shadow_window_secondary #2826221a
+
+// Same complete semantic roles as the retained Rust DARK theme.
+palette dark for AppTheme
+  bg #1b1a17
+  surface #1b1a17
+  fg #eceae4
+  muted #9f9c95
+  muted_bg #151410
+  primary #ecebe5
+  primary_hover #dad9d2
+  primary_fg #1b1a17
+  secondary #26251f
+  secondary_fg #eceae4
+  accent #2b2a25
+  accent_fg #eceae4
+  brand #c87552
+  brand_fg #1b1a17
+  brand_bg #35231c
+  brand_line #68402f
+  danger #d4655a
+  danger_fg #1b1a17
+  danger_bg #351d1b
+  danger_line #713b36
+  danger_dot #d4655a
+  success #6cc06f
+  success_fg #1b1a17
+  success_bg #182a1d
+  success_line #345b3b
+  success_dot #6cc06f
+  warning #d3a25c
+  warning_fg #1b1a17
+  warning_bg #302617
+  warning_line #68512c
+  warning_dot #d3a25c
+  avatar_bg #4d4b45
+  avatar_fg #eceae4
+  border #2e2d27
+  control_line #4d4b45
+  input #6b6a63
+  ring #ecebe5
+  disabled #2b2a25
+  disabled_fg #6b6a63
+  glass_thin #1b1a1680
+  glass_regular #1b1a169e
+  glass_sheet #1b1a16db
+  shadow_popover #28262221
+  shadow_modal #2826224d
+  shadow_window #28262238
+  shadow_window_secondary #2826221a
