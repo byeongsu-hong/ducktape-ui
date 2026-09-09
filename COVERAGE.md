@@ -3147,3 +3147,61 @@ counterpart also passes with freshly bundled current guest artifacts. The handof
 capture traverses
 the mounted native tree for scopes with scroll targets; scopes without them
 skip capture. No claim of unchanged per-frame cost is made.
+
+### Scrolled native paint inspection
+
+Runtime `testing::tests::scrolled_paint_*` covers the same visible screen region
+for direct Target paint inspection and capture manifests. Two nested scrolls
+partially clip a blue card while its layout coordinates remain unchanged; its
+text, size and surface remain inspectable. An initially painted red card is
+then fully hidden and must not inherit the visible card's text or surface.
+Pre-fix native assertion Reds report zero text primitives for the visible card
+and one unrelated primitive for the hidden card. Capture-only and surface-clip
+mutations independently protect both callers and partial-surface matching.
+Restored checks pass 400 runtime library tests (eight existing ignored) and
+29 selected Showcase tests covering nested scrolls, form scroll ownership,
+overlay customization and localized defaults.
+
+This supports G03 native authoring evidence; it does not mark the whole guidance
+workstream complete. Captures use native Linux/tiny-skia, 220×180, scale 1, light
+theme, default native font, en-US and reduced motion. The
+[reviewed capture](docs/evidence/scrolled-paint/nested-visible.png) shows the
+remaining 40px of the blue card and the fixed footer. The coordinate distinction
+is documented in [testing guidance](docs/testing.md); Tree-host and platform
+renderers are outside this evidence.
+
+### Review binary selection and baseline maintenance
+
+`cargo ice review ROOT --bin <name>` restricts Cargo to the selected application
+binary while `--test` continues to select declared Ice tests. CI's previous
+package-wide Showcase review reached the execution-count assertion with 17
+copies of `unmounted_component_coverage`; the explicit binary retains the
+exactly-one-execution guard. Full and selected review CI calls name the Showcase
+binary, and Windows preserves its review bundle even when the child process
+fails so captured compiler/test stderr remains inspectable. Local review option
+checks pass 17 tests (one existing allocation test ignored). The actual CI
+review script passes 24 full-review tests and one selected test, each executed
+once, and rejects the deliberately removed capture in its full baseline.
+
+The component API baseline records eight already-merged optional-property
+additions and five reviewed action-recipe focus styles. Regeneration reports
+zero breaking changes; this maintenance does not alter public component code.
+
+Widget-target discovery analyzes component-slot expressions independently from
+retained handler/test expression facts. Slot expansion creates temporary AST
+clones, so retaining their address keys could reuse a previous expression's type
+on a later expansion (Windows exposed a `Project` lazy alias inferred as `i64`).
+The deterministic Core regression checks the first dependency's keyed target and
+asserts discovery leaves no temporary expression addresses in handler capture;
+it fails on that cache-lifetime assertion before the fix. Existing native
+list/detail tests still cover keyboard focus and selection through filtering and
+reordering, without changing the lazy dependency contract.
+
+The seeded latency-campaign and one-off confirmation tests exercise campaign
+logic with a scoped, thread-local test action clock. Their real armed `Hit`
+update advances action time; generation, confirmation, replay, reduction and
+native captures remain exercised. Scheduler stalls cannot replace the intended
+finding with an unrelated longest action. Removing that update's clock advance
+reaches the existing missing-finding assertion. These tests establish campaign
+logic, not a measured wall-clock budget; production recording and the explicit
+trace-overhead performance probe continue to use wall time.
