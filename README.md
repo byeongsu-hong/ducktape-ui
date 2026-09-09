@@ -852,3 +852,6 @@ Hosted Tree native/Wasm apps support opt-in window focus, close, file-drop and
 IME observations after native widget handling. See the
 [window observation contract](examples/app-store/README.md#window-and-ime-observations)
 for lifecycle limits and the remaining platform gaps.
+
+For accessible component composition and explicitly localized native layouts,
+see the [keyboard and localized-defaults guide](crates/ui-lang-components/docs/accessible-localized-defaults.md).

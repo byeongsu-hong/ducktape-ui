@@ -12,7 +12,7 @@ use super::theme::{Theme, alpha};
 use iced::advanced::{
     Clipboard, Layout, Renderer as _, Shell, Widget, layout, mouse, overlay, renderer, widget,
 };
-use iced::alignment::{Horizontal, Vertical};
+use iced::alignment::Horizontal;
 use iced::widget::text::IntoFragment;
 use iced::widget::{Column, Container, Stack, container, text};
 use iced::{
@@ -20,6 +20,7 @@ use iced::{
     touch,
 };
 use std::rc::Rc;
+use ui_lang_runtime::AlignItems;
 
 pub const SHEET_SIDE_WIDTH: f32 = 384.0;
 pub const SHEET_SIDE_MAX_WIDTH: f32 = 512.0;
@@ -404,8 +405,8 @@ where
             (Some(header), Some(close)) => Some(
                 directed_row([header, close], self.direction)
                     .width(Length::Fill)
-                    .spacing(self.spacing)
-                    .align_y(Vertical::Top)
+                    .gap(self.spacing)
+                    .align_items(AlignItems::Start)
                     .into(),
             ),
             (Some(header), None) => Some(header),

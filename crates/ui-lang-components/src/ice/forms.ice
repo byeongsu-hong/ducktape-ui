@@ -26,14 +26,15 @@ component FormSection(title:str, description:str="", padding:f64=20.0, radius:f6
       col w=fill gap=4.0
         text title #title
           with
+            heading=2
             w=fill
-            wrap=word
+            wrap=word-or-glyph
             @section_title
         if !empty(description)
           text description #description
             with
               w=fill
-              wrap=word
+              wrap=word-or-glyph
               @caption
       slot
 

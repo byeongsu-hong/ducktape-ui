@@ -31,7 +31,7 @@ ui-lang-components targets the complete [official shadcn/ui component catalog](h
 | Data Table | Shipped | Headless sorting, filtering-copy, and pagination state composed with table, input, checkbox, and pagination primitives. |
 | Date Picker | Shipped | Controlled single/range trigger and collision-aware popover composed with Calendar, including placeholder/custom formats, constraints, completed-range close behavior, initial day focus, dismissal restoration, invalid/disabled states, and RTL. |
 | Dialog | Shipped | Root-level controlled modal with inert underlay, wrapping Tab order, initial/restore focus tasks, bounded scrolling copy/custom body with reserved actions and focus reveal, Escape/backdrop dismissal, and explicit LTR/RTL copy/action alignment. |
-| Direction | Shipped | Explicit LTR/RTL alignment and reading-order helpers. |
+| Direction | Shipped | Explicit LTR/RTL alignment and reading-order helpers; native rows preserve logical keyboard order while reversing visual positions, including wrapped lines. See [localized defaults](accessible-localized-defaults.md). |
 | Drawer | Shipped | Controlled draggable drawer on all four edges with mouse/touch distance and velocity thresholds, focus/dismissal rules, viewport caps, handle, reduced-motion snap behavior, and caller-owned state. |
 | Dropdown Menu | Shipped | Controlled anchored trigger/content with focus restoration, collision placement, LTR/RTL, and shared groups, labels, separators, inset/disabled/check/radio/shortcut/submenu items plus complete keyboard navigation. |
 | Empty | Shipped | Optional leading visual, title, and description. |

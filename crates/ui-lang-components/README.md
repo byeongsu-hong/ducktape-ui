@@ -548,3 +548,7 @@ The [action example](../../examples/showcase/tests/cases/ui/action_layout.ice)
 and [slot interaction tests](../../examples/showcase/tests/cases/ui/multi_child_slots.ice)
 exercise the actual shared components. Page still owns screen insets; action
 layout does not add a second page boundary.
+
+The [keyboard and localized-defaults guide](docs/accessible-localized-defaults.md)
+covers default heading levels, raw control names, removal focus, translated
+larger content, explicit Hebrew font loading and logical RTL traversal.

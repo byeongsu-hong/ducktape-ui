@@ -80,9 +80,9 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
-| A01 | P0 · Audit | [focus tests](../examples/showcase/tests/cases/ui/focus_visible.ice), [modal/selection contracts](../crates/ui-lang-components/docs/parity.md) | Keyboard-only completion works through default and custom content; focus stays visible, moves predictably after removal and returns from overlays. C01 is evidence for its form only. |
-| A02 | P1 · Audit | [accessibility contract](../SPEC.md), [test driver](testing.md) | Visible names, descriptions, heading levels, errors and disabled states produce matching semantic output; interactive content is not a decorative text substitute. |
-| A03 | P1 · Audit | [direction/localization support](../crates/ui-lang-components/docs/parity.md), [environment tests](testing.md) | Translated long labels, larger text and RTL reading order have explicit tested layouts; scale/locale metadata alone is not proof of translated content or larger text. |
+| A01 | P0 · Done | [PR #1057](https://github.com/byeongsu-hong/ducktape-ui/pull/1057), [localized keyboard fixture](../examples/showcase/tests/cases/ui/accessible_localized_defaults.ice), [list/detail #1049](https://github.com/byeongsu-hong/ducktape-ui/pull/1049), [overlay #1052](https://github.com/byeongsu-hong/ducktape-ui/pull/1052) | Default/custom form Tab/Enter/Shift-Tab completes removal, validation, correction and save; removal explicitly focuses the surviving field and disabled controls are skipped. Native RTL focus paint is asserted. List/detail Back restoration and default/custom modal/menu/ComboBox focus entry, containment, reveal and restoration complete the overlay/navigation slices. |
+| A02 | P1 · Done | [PR #1057](https://github.com/byeongsu-hong/ducktape-ui/pull/1057), [native semantic fixture](../examples/showcase/tests/cases/ui/accessible_localized_defaults.ice), [composition guide](../crates/ui-lang-components/docs/accessible-localized-defaults.md) | PageHeader exports level 1; Panel/FormSection level 2. Native keyboard tests verify matching names, descriptions, heading values/levels, polite errors and disabled actions in default and custom forms. Retained output is covered; platform announcements remain a separate boundary. |
+| A03 | P1 · Done | [PR #1057](https://github.com/byeongsu-hong/ducktape-ui/pull/1057), [localized fixture](../examples/showcase/tests/cases/ui/accessible_localized_defaults.ice), [native RTL matrix](../examples/showcase/tests/accessible_localized_defaults.rs), [captures](../crates/ui-lang-components/docs/accessible-localized-defaults.md) | Actual German labels fit 640/420px forms and 260px sections, including long compound headings; custom input/actions render at 21px. Explicit Hebrew font assets and native RTL rows preserve logical Tab order, wrapped line groups and physical alignment; keyboard focus paint and pointer activation are asserted. Locale/scale metadata is not the oracle. |
 | A04 | P2 · Done | [PR #1056](https://github.com/byeongsu-hong/ducktape-ui/pull/1056), [native gesture contracts](../examples/showcase/tests/custom_interaction_contracts.rs), [drawer/carousel behavior](../crates/ui-lang-components/docs/parity.md), [motion guidance](../skills/design-ice-ui/references/design-workflow.md) | Pointer/touch cancellation and interrupted motion preserve state; reduced motion remains usable; customization does not remove the alternative keyboard action. |
 
 ## Agent authoring and evidence
@@ -451,9 +451,10 @@ queries, Escape and touch reopening; a ComboBox custom dialog body verifies
 inner-menu dismissal before outer-modal dismissal. See the overlay lifecycle
 section in [COVERAGE](../COVERAGE.md) for assertion Red/Green and capture inputs.
 
-This completes the C04/C05 representative native acceptance. A01 still includes
-non-overlay traversal and removal behavior. D05 row/trigger/body lifecycle
-evidence here combines with the direct semantic checks below and the Item/Form custom-content checks. Native Rust custom
+This completes the C04/C05 representative native acceptance. A01 combines this
+overlay evidence with the localized form traversal and removal checks above.
+D05 combines these row/trigger/body lifecycle checks with the direct semantic
+checks below and the Item/Form custom-content checks. Native Rust custom
 controls still own their semantic labels. Structural
 Ice Dialog presentation alone does not supply modal lifecycle behavior. S02's
 request/save completion policies are covered separately below.

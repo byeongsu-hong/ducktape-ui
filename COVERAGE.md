@@ -3044,3 +3044,51 @@ presses now move focus away while preserving retained pointer ownership and
 cancelling keyboard presses. All ten native tests pass after this refinement;
 17 affected owner tests and Clippy (`--all-targets --no-deps -- -D warnings`)
 also pass without repeating the full suite.
+
+### Keyboard, semantic headings and localized defaults
+
+`examples/showcase/tests/cases/ui/accessible_localized_defaults.ice` and its
+native Rust companion cover default and custom German forms, native heading
+levels and Hebrew RTL action layouts. PageHeader now exports heading level 1;
+Panel and FormSection export level 2. Their word-or-glyph wrapping keeps a
+German compound heading within a 260px section or 420px custom form. Native
+inspection retains `accessibility.level`; the typed `accessibility_level`
+accessor fails when absent.
+
+The form tests use actual Tab/Enter/Shift-Tab and text input to remove the
+optional address, restore focus to the surviving primary input, skip disabled
+controls, submit invalid input, read the polite error value, correct it and
+Save. Names, descriptions, disabled activation and heading values are asserted.
+The custom form uses real 21px input/action text, not scale metadata. The RTL
+matrix checks unequal widths, asymmetric padding, wrapped logical lines,
+physical right alignment, all ten LTR/RTL Tab stops, visible focus pixels and a
+pointer activation. `directed_row` now uses the existing runtime Flex reversal,
+retaining source order for logical traversal instead of reversing the child vector. All affected
+AlertDialog, Sidebar and Sheet callers use the same public Flex builders, and
+the downstream fixture enables these features against packaged stock Iced.
+The exact Sheet header allocation contract retains 18,432 allocations and zero
+reallocations for 1,024 LTR/RTL pairs; Flex item metadata adds 312 bytes per
+header (2,228,224 total bytes, previously 1,589,248). The 4,096 three-item Sidebar
+rows retain 24,576 allocations and zero reallocations, adding 280 bytes per row
+(3,473,408 total bytes, previously 2,326,528).
+
+Pre-fix native assertion Reds observed `label` instead of `heading`, action 2
+instead of action 1 after the first RTL Tab/Enter, and an overflowing German
+heading. Additional temporary mutations reached intended assertion Reds for a
+wrong heading level, omitted removal focus in both forms, reduced large text,
+omitted bundled font declarations, the old RTL vector reversal, removed focus
+border paint and word-only section wrapping. Final Flex mutations independently
+fail fill-growth, fixed-width preservation and RTL position assertions. A
+packaged downstream consumer compiles all affected component features against
+stock crates.io `iced_widget` 0.14.2, with no workspace source or Iced patches.
+Restoring the exact sources passed
+the focused suite. The font-declaration mutation fails native settings' font
+count; actual Hebrew glyph width is also asserted, but the latter alone cannot
+distinguish explicitly loaded DejaVu from this host's installed copy.
+
+Captures use native Linux/tiny-skia at scale 1 with light theme, German forms at
+640×800 and 420×800, narrow sections at 260×500, and Hebrew RTL layouts at
+520×700 and 400×180. The [composition guide](crates/ui-lang-components/docs/accessible-localized-defaults.md)
+records explicit font loading and supported keyboard/layout semantics. This
+proves retained native semantic output, not platform announcements, Tree-host
+parity, automatic translation, or automatic application-wide direction changes.
