@@ -348,12 +348,18 @@ neutral foreground and keep success as a redundant dot/icon. Avatar initials
 remain text: the default `#4f4d47` foreground clears 4.5:1 against the avatar
 fill.
 
-Native typography roles name the canonical Geist and Geist Mono families and
-encode their exact sizes and weights. This crate does not bundle font assets:
-the consuming application must preload both families through iced's application
-`font` settings before rendering these roles. Ice applications likewise load
-the font bytes at the app boundary; their default font supplies Geist while the
-shared `font-mono` recipes select the loaded monospace face.
+Default Ducktape text roles share their sizes, weights, line heights and
+semantic colors between the Rust and Ice APIs. Rust themes start with generic
+`Font::DEFAULT` and `Font::MONOSPACE`; use `Theme::with_fonts` to bind named application-loaded
+families. This crate does not bundle font assets. Ice apps likewise load bytes
+through app `font` settings and select their default family with a font
+declaration; `font-mono` recipes select the loaded monospace family.
+
+The [spacing and typography guide](docs/design-metrics.md) shows compact recipe
+inheritance, explicit Korean font loading, and the native role comparisons.
+Its [workspace example](../../examples/showcase/tests/cases/ui/design_metrics.ice)
+checks longer copy, Korean glyph metrics, control hit areas, centered labels,
+and pointer/keyboard editing at standard and compact densities.
 
 ## Custom content
 
