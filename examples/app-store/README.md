@@ -477,12 +477,14 @@ The host generates tests with `compile_tree_tests`; the dedicated test package
 uses `compile_tree_guest_tests` and `export_test_app!`. Predicates and dispatch
 arguments evaluate inside the guest, without Snapshot or a serialized state
 mirror. A source fingerprint rejects stale test artifacts; their distinct
-manifest keeps them out of the production catalog. Normal guest exports remain
+manifest v3 rejects older test transports and keeps them out of the production catalog.
+Key expressions resolve read-only in the guest on every alias or inline use after
+the host redraws. Nested numeric keys and Unicode rendered labels are covered;
+keys retain the existing bool/i64/f64 restriction. Normal guest exports remain
 unchanged, including when the test feature is enabled elsewhere in the workspace.
 
-Presets, typed state expectations and dispatch, targets with literal keys,
-clicks, `exists`/`missing` and literal text expectations are supported. A key
-that reads state, mounts and other test actions still report a source-position
+Presets, typed state expectations and dispatch, targets with live state keys,
+clicks, `exists`/`missing` and literal text expectations are supported. Mounts and other test actions still report a source-position
 diagnostic. Direct Tree guest library
 tests continue to explain that authored scenarios need the host harness;
 Native-language tests keep their existing generated harness.

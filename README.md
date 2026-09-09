@@ -332,7 +332,7 @@ native keyboard focus restoration when returning from detail.
 ## First-class tests
 
 Tree guests can run authored presets, typed state expectations and dispatch,
-static-target clicks, and literal rendered-text tests in a native host. The
+live state-keyed target clicks, and literal rendered-text tests in a native host. The
 app-store Counter runs the same source through native and Wasm test artifacts.
 `ui_lang_build::compile_tree_tests` generates the mounted semantic Driver tests;
 `compile_tree_guest_tests` evaluates checked predicates and dispatch arguments
