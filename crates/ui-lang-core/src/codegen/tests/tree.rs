@@ -1102,11 +1102,10 @@ const COVERAGE: &[Coverage] = &[
         "",
         "  lazy draft as cached\n    text cached @text-fg\n",
     ),
-    refused(
+    emitted(
         "resize handle",
         "on resized(_dx, _dy)\n",
         "  resize-handle drag=resized\n    box w=24.0 h=12.0\n      text \"a\" @text-fg\n",
-        "`resize handle`",
     ),
     refused(
         "theme",

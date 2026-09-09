@@ -25,7 +25,7 @@
 pub mod authored;
 /// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
 /// This is independent of WIT signatures and the manifest text format.
-pub const WIRE_EPOCH: u32 = 6;
+pub const WIRE_EPOCH: u32 = 7;
 
 pub mod manifest;
 pub mod native;
@@ -191,6 +191,8 @@ pub enum Event {
     /// the pointer crosses a thousand pixels a second and every event is a
     /// guest tick. A press is never coalesced.
     Pointer { handler: u32, x: f32, y: f32 },
+    /// Accumulated logical-pixel movement of a grabbed resize handle.
+    Drag { handler: u32, dx: f64, dy: f64 },
     /// The wheel turned over a [`Node::MouseArea`] by (`dx`, `dy`), in
     /// pixels when `pixels` is set and in lines otherwise.
     Scroll {
@@ -737,6 +739,16 @@ pub enum Node {
         #[serde(deserialize_with = "decode_child")]
         content: Box<Node>,
     },
+    /// A grabbed divider: local movement deltas and native cursor; one child.
+    ResizeHandle {
+        key: String,
+        on_press: Option<u32>,
+        on_release: Option<u32>,
+        on_drag: Option<u32>,
+        cursor: Option<mouse::Cursor>,
+        #[serde(deserialize_with = "decode_child")]
+        content: Box<Node>,
+    },
     /// A region that reports what the pointer does over its one child. The
     /// discrete routes carry per-frame message indices like a button's
     /// `on_press`; `on_move` and `on_press_at` carry a handler index the
@@ -1180,6 +1192,7 @@ impl Node {
     pub fn key(&self) -> Option<&str> {
         match self {
             Self::Container { key, .. }
+            | Self::ResizeHandle { key, .. }
             | Self::MouseArea { key, .. }
             | Self::Linear { key, .. }
             | Self::Grid { key, .. }
@@ -1230,6 +1243,7 @@ impl Node {
             | Self::Responsive { content, .. }
             | Self::Lazy { content, .. }
             | Self::Sensor { child: content, .. }
+            | Self::ResizeHandle { content, .. }
             | Self::MouseArea { content, .. }
             | Self::Scroll { content, .. } => std::slice::from_ref(content),
             Self::Linear { children, .. }
@@ -1284,6 +1298,7 @@ impl Node {
             | Self::Responsive { content, .. }
             | Self::Lazy { content, .. }
             | Self::Sensor { child: content, .. }
+            | Self::ResizeHandle { content, .. }
             | Self::MouseArea { content, .. }
             | Self::Scroll { content, .. } => std::slice::from_mut(content),
             Self::Linear { children, .. }
@@ -1342,6 +1357,7 @@ impl Node {
             | Self::Responsive { .. }
             | Self::Lazy { .. }
             | Self::Sensor { .. }
+            | Self::ResizeHandle { .. }
             | Self::MouseArea { .. }
             | Self::Scroll { .. }
             | Self::Button { .. }
@@ -2018,9 +2034,10 @@ fn sanitize_node(
                 *delay = finite(*delay).max(0.0);
             }
         }
-        Node::MouseArea { key, .. } | Node::Responsive { key, .. } | Node::Lazy { key, .. } => {
-            claim(key, taken)
-        }
+        Node::ResizeHandle { key, .. }
+        | Node::MouseArea { key, .. }
+        | Node::Responsive { key, .. }
+        | Node::Lazy { key, .. } => claim(key, taken),
         Node::Stack {
             key,
             padding,
@@ -2595,6 +2612,7 @@ fn lengths_mut(node: &mut Node) -> Vec<&mut Length> {
         | Node::Lazy { .. }
         | Node::Flex { .. }
         | Node::Sensor { .. }
+        | Node::ResizeHandle { .. }
         | Node::MouseArea { .. }
         | Node::Overlay { .. }
         | Node::Tooltip { .. }

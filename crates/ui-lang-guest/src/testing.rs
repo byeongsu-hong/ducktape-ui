@@ -21,6 +21,7 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
         | Node::Float { content, .. }
         | Node::Responsive { content, .. }
         | Node::Lazy { content, .. }
+        | Node::ResizeHandle { content, .. }
         | Node::MouseArea { content, .. }
         | Node::Scroll { content, .. } => collect_texts(content, out),
         Node::Linear { children, .. }
@@ -117,6 +118,7 @@ fn find_by<'a>(node: &'a Node, matches: &dyn Fn(&Node) -> bool) -> Option<&'a No
         | Node::Float { content, .. }
         | Node::Responsive { content, .. }
         | Node::Lazy { content, .. }
+        | Node::ResizeHandle { content, .. }
         | Node::MouseArea { content, .. }
         | Node::Scroll { content, .. } => find_by(content, matches),
         Node::Linear { children, .. }
@@ -462,6 +464,7 @@ fn collect_keys(node: &Node, out: &mut Vec<String>) {
         | Node::Float { content, .. }
         | Node::Responsive { content, .. }
         | Node::Lazy { content, .. }
+        | Node::ResizeHandle { content, .. }
         | Node::MouseArea { content, .. }
         | Node::Scroll { content, .. } => collect_keys(content, out),
         Node::Linear { children, .. }

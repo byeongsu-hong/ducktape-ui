@@ -1558,3 +1558,21 @@ Other window operations and system-information/font-load/image-allocation tasks
 are refused with E190. Raw Rust tasks still receive the runtime's explicit
 unsupported-action diagnostic; font/image/reload toolkit actions are not portable
 guest effects.
+
+## Resize handles
+
+Tree `resize-handle` uses the native grabbed-pointer widget on both backends.
+`press=` and `release=` are discrete routes; `drag=` receives signed `(dx, dy)`
+logical-pixel deltas, including movement outside the divider. `cursor=` uses
+the same declarative native cursor names. The child supplies all painting and
+layout; size limits remain guest policy. Consecutive deltas accumulate before
+a redraw without crossing discrete event boundaries. Removing the widget or
+replacing its instance drops the old native drag state. Wire epoch 7 requires
+rebuilding both host and guest; no app pin is changed by this fixture.
+
+Build `app-store-resize-fixture` using the standard native packaging script and
+`cargo ice bundle --target wasm32-unknown-unknown --no-wasm-opt`, with outputs
+`target/resize-native` and `target/resize-wasm`, respectively. Run the ignored
+`bundled_resize_native_and_wasm_grab_outside_release_and_retire` host test.
+Its [rendered fixture](tests/resize-guest/evidence.png) is byte-identical across
+backends after the interaction assertions.

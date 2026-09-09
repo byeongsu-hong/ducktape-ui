@@ -43,6 +43,7 @@ mod combo;
 mod flex;
 mod float;
 mod lists;
+mod resize_handle;
 pub(super) use flex::item_code as flex_item_code;
 pub(super) use lists::keyed_column;
 mod pick;
@@ -84,6 +85,9 @@ pub(in crate::codegen) fn render_tree_node(
             node, identity, *content, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::Sensor { content } => sensor(
+            node, identity, *content, document, message, env, scope, slot,
+        )?,
+        ResolvedViewKind::ResizeHandle { content } => resize_handle::render(
             node, identity, *content, document, message, env, scope, slot,
         )?,
         ResolvedViewKind::MouseArea { content } => mouse_area(
