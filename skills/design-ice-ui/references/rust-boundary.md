@@ -584,3 +584,14 @@ the relevant app compilation/tests.
 - Keep task-producing statements final.
 - Add only required Iced features.
 - Let `cargo ice check` and rustc verify the boundary.
+
+## Controlled widgets with follow-up tasks
+
+When a Rust widget update both changes state and returns an `iced::Task<Event>`,
+assign its next state synchronously in the Ice handler and launch the follow-up
+as a separate task whose events re-enter that handler. Do not send copied state
+back later from each task: a single native input can emit several events before
+any task completes, and those snapshots overwrite one another. The showcase
+[MessageScroller adapter](../../../examples/showcase/src/message_scroller_adapter.rs)
+and [Ice handler](../../../examples/showcase/src/ui/handlers/app.ice) show the
+cloneable transition boundary and one-time task consumption.

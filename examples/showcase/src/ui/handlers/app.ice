@@ -166,14 +166,10 @@ on demo_page_next
   return if demo_page >= demo_page_max
   demo_page = demo_page + 1
 
-on message_scroller_bootstrapped(next)
-  message_scroller = next
-
 on message_scroller_changed(event)
-  task message_scroller_apply(message_scroller, event) -> message_scroller_applied _
-
-on message_scroller_applied(next)
-  message_scroller = next
+  let transition = message_scroller_apply(message_scroller, event)
+  message_scroller = transition.state
+  task message_scroller_effects(transition) -> message_scroller_changed _
 
 on virtual_list_changed(event)
   virtual_list = virtual_list_apply(virtual_list, event)
@@ -228,7 +224,9 @@ on close_dialog
   dialog_open = false
 
 on mount
-  task message_scroller_bootstrap(message_scroller) -> message_scroller_bootstrapped _
+  let transcript_boot = message_scroller_bootstrap(message_scroller)
+  message_scroller = transcript_boot.state
+  task message_scroller_effects(transcript_boot) -> message_scroller_changed _
 
 subscribe
   every 1s -> sonner_tick

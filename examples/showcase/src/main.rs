@@ -6,6 +6,7 @@
 mod adapters;
 #[cfg(test)]
 mod frame_probe;
+mod message_scroller_adapter;
 
 ui_lang::include_app!("src/ui/app.ice");
 
