@@ -627,3 +627,36 @@ test accessibility_scroll_into_view_reaches_an_offscreen_control
   a11y scroll-into-view open_dialog
   expect open_dialog.visible
   expect scroller.scroll_y > 0.0
+
+test select_adapter_keeps_keyboard_focus_through_selection
+  preset test
+  viewport 420 360
+  mount
+    box p=24.0
+      extern select(select) -> select_changed _
+  click-at 70.0 42.0
+  key arrow-down
+  key enter
+  expect text "Selected: select"
+  // Enter must reach the restored trigger, reopening the option list.
+  key enter
+  expect text "Overlays"
+  key escape
+  expect text "Selected: select"
+
+test alert_adapter_restores_trigger_after_keyboard_cancel
+  preset test
+  viewport 560 240
+  mount
+    DemoStage height=190.0 padding=8.0
+      extern alert_dialog(alert_dialog) -> alert_dialog_changed _
+  click-at 455.0 92.0
+  expect alert_dialog_is_open(alert_dialog)
+  // Initial focus is the safe cancel action.
+  key enter
+  expect !alert_dialog_is_open(alert_dialog)
+  // Closing must restore focus to the trigger.
+  key enter
+  expect alert_dialog_is_open(alert_dialog)
+  key escape
+  expect !alert_dialog_is_open(alert_dialog)

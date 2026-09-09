@@ -2703,3 +2703,32 @@ After exact restoration, the owner test and all eight tests in the existing
 and wrapped alignment fixtures pass (four authored, four generated checks).
 The broader runtime suite passes 386 tests with eight existing ignored; the
 Showcase binary passes all 324 tests after the renderer change.
+
+### Controlled catalog adapters preserve queued updates
+
+`examples/showcase/src/adapters.rs` has nine state-race regressions through the
+production generated Showcase handlers. The Command regression creates the
+real native widget, focuses its input, and sends Character(`c`) and ArrowDown
+through one `UserInterface::update` batch before processing its two emitted
+messages. The old deferred-state adapter loses `c`; no synthetic Command event
+or fake native measurement is injected. Other queued events protect calendar
+selection, DatePicker visibility, Select values, menu actions/anchors, modal
+visibility/drag state, both toast maintenance paths and newer navigation routes.
+All nine tests reach their intended assertions on the pre-fix implementation.
+
+The twelve focus adapters now assign state synchronously and consume native
+focus tasks once; the toast reducers have no deferred state completions.
+`select_adapter_keeps_keyboard_focus_through_selection` and
+`alert_adapter_restores_trigger_after_keyboard_cancel` exercise native keyboard
+selection, safe cancellation and trigger restoration in first-class Ice tests.
+Temporarily consuming and discarding the shared focus task fails both intended
+native assertions: Select does not show `Selected: select`, and Enter does not
+close the alert through its safe cancel action. Production source was restored
+byte-for-byte; all 336 showcase binary tests then pass, including both native
+focus tests and all nine state regressions. A native Driver test additionally
+asserts the actual Cancel/Confirm focus IDs and restored trigger focus through
+the production generated update handler; dropping the effects fails its
+`opening must focus the safe cancel action` assertion.
+This evidence covers the catalog Rust/Ice adapters. Native events containing
+complete replacement states keep their existing component semantics; product
+network/save completion policies remain separate work.

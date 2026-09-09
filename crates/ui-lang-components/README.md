@@ -196,6 +196,30 @@ and custom geometry, a checkbox slot, narrow layouts and validation feedback.
 These are reusable Ice components, not new language keywords or automatic
 platform-native controls.
 
+## Controlled state and focus
+
+Apply controlled-widget events to the current app state in the same handler
+that receives them. `Task::done(next_state)` still delivers its value later:
+several input messages can read the same old state before any completion runs.
+This can erase a selection, reopen a dismissed overlay, or discard an unrelated
+edit. Changing task ordering does not make those snapshots current.
+
+For a reducer with no effects, return its state directly through a `pure`
+extern. The showcase's toast timer and reduced-motion handler use this pattern.
+When an update also returns native focus operations, assign its state first,
+then run those operations without sending state back. The showcase
+[focus adapters](../../examples/showcase/src/adapters.rs) return an immediate
+`FocusTransition<State>` containing the state and a cloneable, once-consumed
+focus task. The [Ice handlers](../../examples/showcase/src/ui/handlers/app.ice)
+assign `transition.state` before launching `apply_focus(transition.focus)`.
+Keep decisions that depend on previous visibility in that single update;
+re-running the reducer to reconstruct focus can lose an opening/closing edge.
+
+If follow-up work produces new widget events, route those events through the
+current reducer, as in the transcript example below. A native event that itself
+contains a complete replacement state retains that component's replacement
+semantics; this adapter pattern does not turn it into a field-level patch.
+
 ## Reading position in a changing transcript
 
 Use `MessageScroller` with stable item IDs when a capped list inserts and
