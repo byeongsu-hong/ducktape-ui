@@ -57,17 +57,17 @@ report no verified result rather than replacing it with compilation success.
 
 ## Result record
 
-The before condition is in progress in `.worktree/agent-authoring-before`
+The before condition ran in `.worktree/agent-authoring-before`
 on `agent/agent-authoring-before`, using a fresh agent with inherited model and
 reasoning settings and exclusive target `/tmp/ice-compact-input-layout-target`.
 Dispatch occurred on 2026-09-09; the agent records exact task timestamps. The
-after condition starts from `c4524da0` in `.worktree/agent-authoring-after`:
+after condition ran from `c4524da0` in `.worktree/agent-authoring-after`:
 the same source plus six documentation files. It uses exclusive target
-`/tmp/ice-adapter-state-updates-target`. The follow-up report must include both revisions,
-agent settings, start/end timestamps, submitted commits, commands, capture paths,
-criterion-by-criterion findings, structural mistakes and manual interventions.
+`/tmp/ice-adapter-state-updates-target`. The [result report](results.md) records
+revisions, agent settings, timestamps, submitted commits, commands, capture paths,
+criterion findings, structural mistakes, manual interventions and timing limits.
 One pair cannot establish a general causal effect; use it to identify the next
-specific authoring obstacle. G04 remains open until the observations are recorded.
+specific authoring obstacle. Delivery remains subject to final review and merge.
 
 ### Execution deviation
 
