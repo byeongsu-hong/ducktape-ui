@@ -105,4 +105,3 @@ test wide_input_respects_custom_page_padding
   click action
   expect applied == "ui-lang"
   capture wide_input_respects_custom_page_padding
-
