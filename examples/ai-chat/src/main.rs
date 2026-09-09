@@ -1,6 +1,8 @@
 mod auth;
 mod codex;
 mod composer;
+#[cfg(test)]
+mod content_workspace;
 mod frame_probe;
 mod render;
 mod select;

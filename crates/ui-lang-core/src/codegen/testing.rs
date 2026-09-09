@@ -1214,7 +1214,7 @@ fn resolved_test_target_path_code(
     // A target addresses a widget in the rendered view, so its path has to
     // start at the same root scope the view gives its ids — window-qualified
     // exactly when the view's is, for the window this driver renders.
-    let mut scope = root_scope_code(program, "__test.window()");
+    let scope = root_scope_code(program, "__test.window()");
     if target.segments.iter().all(|segment| segment.key.is_none()) {
         let names = target
             .segments
@@ -1223,19 +1223,24 @@ fn resolved_test_target_path_code(
             .collect::<String>();
         return Ok(format!("{scope} + {}", rust_string(&names)));
     }
-    for segment in &target.segments {
-        let borrowed = borrowed_scope(&scope);
-        scope = if let Some(key) = segment.key {
+    let mut template = String::from("{}");
+    let mut arguments = String::from("__ice_target_root");
+    let mut bindings = format!("let __ice_target_root = {scope};");
+    for (index, segment) in target.segments.iter().enumerate() {
+        write!(template, "/{}", segment.name).unwrap();
+        if let Some(key) = segment.key {
+            template.push_str("({})");
             let key = resolved_expr_use_code(program, key, env, ValueMode::Borrowed)?;
-            format!(
-                "format!(\"{{}}/{}({{}})\", {borrowed}, {key})",
-                segment.name
-            )
-        } else {
-            format!("format!(\"{{}}/{}\", {borrowed})", segment.name)
-        };
+            write!(bindings, " let __ice_target_key_{index} = {key};").unwrap();
+            write!(arguments, ", __ice_target_key_{index}").unwrap();
+        }
     }
-    Ok(scope)
+    // Roots and key expressions can themselves format strings. Evaluate each
+    // once outside the final format call, also preserving borrowed temporaries.
+    Ok(format!(
+        "{{ {bindings} format!({}, {arguments}) }}",
+        rust_string(&template)
+    ))
 }
 
 fn target_ref_path_code(

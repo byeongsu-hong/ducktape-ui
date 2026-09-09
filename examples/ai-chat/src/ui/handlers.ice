@@ -13,10 +13,12 @@ on send
   draft = editor("")
   error = ""
   busy = true
+  following = true
   status = "Thinking"
   live = markdown("")
   live_thinking = markdown("")
   parallel
+    task follow_latest(following) -> followed
     sip codex_turn(session)
       progress -> streamed _
       done -> settled _
@@ -28,25 +30,27 @@ on send
 // than reparsed from the top — the reasoning summary included, which is why a
 // long trace costs the same per token as a short one.
 //
-// Nothing scrolls here. `#transcript` is `anchor-y=end`, so it already rests on
-// its newest row and follows the reply as it is written; snapping per token
-// only took the scroll away from a reader who had moved it.
+// Snap only while following. A reader who moved into history keeps the
+// top-relative offset while this content grows below the viewport.
 on streamed(part)
   status = part.status
   markdown live append part.answer
   markdown live_thinking append part.thinking
-  // A summary is replaced rather than extended, and the stream says when: the
-  // reasoning item it was building settles into a row of its own, and the live
-  // box lets go of it rather than carrying it under the next one. Nothing here
-  // reads the text to find that boundary.
-  return if !part.thinking_ended
-  live_thinking = markdown("")
+  match thinking_boundary(part.thinking_ended)
+    ThinkingBoundary.continuing
+      return if !following
+      task widget snap-end #shell/app/transcript
+    ThinkingBoundary.settled
+      live_thinking = markdown("")
+      return if !following
+      task widget snap-end #shell/app/transcript
 
 // A block settled, or a tool started or finished. The live surfaces are left
 // alone: they are cleared once, when the turn ends, so a late chunk can never
 // land in a surface that has already been reset.
 on rows(next)
   entries = next
+  return if !following
   task widget snap-end #shell/app/transcript
 
 // A turn ends, and a message typed while it ran goes out on its own.
@@ -66,6 +70,7 @@ on settled(complete)
   entries = push_user(session, next)
   status = "Thinking"
   parallel
+    task follow_latest(following) -> followed
     sip codex_turn(session)
       progress -> streamed _
       done -> settled _
@@ -190,7 +195,9 @@ on forget
 // start typing. It fills as it is read rather than when it is done, so a store
 // that has grown shows something while it is being counted.
 on mount
-  stream every scan_chats() -> chats_scanned _
+  parallel
+    task follow_latest(signed) -> followed
+    stream every scan_chats() -> chats_scanned _
 
 on chats_scanned(scan)
   chats = scan.chats
@@ -209,6 +216,7 @@ on pick_chat(path)
 // carrying on from it resends its own history and writes back to its own file
 // rather than starting beside it.
 on chat_opened(rows)
+  following = true
   entries = rows
   loading_chat = false
   live = markdown("")
@@ -220,3 +228,14 @@ on chat_failed(cause)
   open_path = ""
   loading_chat = false
   error = cause.message
+
+// The reversed absolute offset is zero at the live edge, including content
+// shorter than the viewport. Normalized offsets alone cannot distinguish that.
+on transcript_viewport(ax, ay, reverse_x, reverse_y, rx, ry, bx, by, bw, bh, cx, cy, cw, ch)
+  following = reverse_y <= 1.0
+
+on resume_latest
+  following = true
+  task widget snap-end #shell/app/transcript
+
+on followed

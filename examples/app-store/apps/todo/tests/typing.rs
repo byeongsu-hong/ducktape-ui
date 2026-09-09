@@ -101,30 +101,76 @@ fn typing_into_the_input_and_adding_appends_a_row_and_saves_it() {
     assert!(has_text(&frame, "saved 2 items"), "{:?}", texts(&frame));
 }
 
-/// The notes are an `editor` the host edits: the guest hears the whole text
-/// and echoes it, and Save writes it under its own storage key.
+// Read the actual guest document through the same bounded transfer used by a
+// host; the display tree intentionally carries metadata, not editor text.
+fn read_notes(frame: &Frame) -> (Frame, String) {
+    use ui_lang_guest::wire::editor_document::{
+        EditorDocumentMessage as Message, EditorTransferId, EditorTransferReceiver,
+    };
+    let Some(Node::Editor {
+        document,
+        on_document,
+        editable,
+        options,
+        ..
+    }) = find(frame, "Todo/app/content/notes")
+    else {
+        panic!("no editor in {:?}", keys(frame));
+    };
+    assert!(
+        *editable && options.binding.is_some(),
+        "the editor is enabled"
+    );
+    let handler = *on_document;
+    let id = EditorTransferId {
+        instance: 1,
+        document: document.document.clone(),
+        reset: document.reset,
+        serial: document.revision,
+        attempt: 0,
+    };
+    let mut receiver = EditorTransferReceiver::new(id.clone(), document.clone()).unwrap();
+    let mut events = vec![ui_lang_guest::wire::Event::EditorDocument {
+        handler,
+        message: Message::Request {
+            id: id.clone(),
+            target: document.clone(),
+        },
+    }];
+    for _ in 0..4 {
+        let frame = tick_native(std::mem::take(&mut events));
+        for message in &frame.editor_documents {
+            let Message::Transfer(transfer) = message else {
+                panic!("document transfer: {message:?}");
+            };
+            if let Some(text) = receiver.receive(transfer).unwrap() {
+                let settled = tick_native(vec![ui_lang_guest::wire::Event::EditorDocument {
+                    handler,
+                    message: Message::Acknowledged { id },
+                }]);
+                return (settled, text);
+            }
+        }
+    }
+    panic!("the small notes document must finish its bounded transfer");
+}
+
+/// Notes commits update the guest document, then Save writes its storage key.
 #[test]
 fn editing_the_notes_echoes_them_and_save_writes_them() {
     let frame = boot_with_notes(&[], "carried over");
-    let Some(Node::Editor { text, on_edit, .. }) = find(&frame, "Todo/app/content/notes") else {
-        panic!("no editor in {:?}", keys(&frame));
-    };
-    assert_eq!(text, "carried over");
-    assert!(on_edit.is_some(), "the editor is enabled");
-    assert!(has_text(&frame, "carried over"), "{:?}", texts(&frame));
-
-    let frame = tick_native(edit(&frame, "Notes", "buy milk\nand eggs"));
-    let Some(Node::Editor { text, .. }) = find(&frame, "Todo/app/content/notes") else {
-        panic!("no editor in {:?}", keys(&frame));
-    };
-    assert_eq!(
-        text, "buy milk\nand eggs",
-        "the guest echoes the host's text"
-    );
+    let (frame, before) = read_notes(&frame);
+    assert_eq!(before, "carried over");
+    let frame = tick_native(edit(&frame, "Notes", &before, "buy milk\nand eggs"));
     assert!(
         frame.requests.is_empty(),
         "typing saves nothing: {:?}",
         frame.requests
+    );
+    let (frame, text) = read_notes(&frame);
+    assert_eq!(
+        text, "buy milk\nand eggs",
+        "the guest echoes the host's text"
     );
 
     let frame = tick_native(press(&frame, "Save notes"));

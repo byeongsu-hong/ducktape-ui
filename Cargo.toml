@@ -30,8 +30,7 @@ resolver = "3"
 exclude = ["vendor/iced_graphics", "vendor/iced_tiny_skia", "vendor/iced_winit", "vendor/alacritty_terminal"]
 
 # `vendor/iced_tiny_skia` is the published 0.14.0 source with the changes
-# below: seven defects fixed, one module opened, one present shortened, four
-# repaints narrowed and one cache hit unburdened. Every one of them reaches
+# below. Every one of them reaches
 # every software render, which is what every headless capture, `cargo ice
 # inspect` and any `tiny-skia` window draws with. Drop the directory and this
 # patch when a release carries all of them.
@@ -145,6 +144,12 @@ exclude = ["vendor/iced_graphics", "vendor/iced_tiny_skia", "vendor/iced_winit",
 # before scaling. Translation now stays in the floating-point transform, so
 # enlarged images keep their authored origin. Actual native/Wasm image fixture
 # tests assert white margins and source colors independently of native parity.
+#
+# 15. Raster and SVG images discarded their own clip rectangles, so cover
+# images painted over surrounding content. Image clips now intersect the
+# parent layer; raster corner radii mask the logical image surface. One reused
+# scratch mask avoids allocating a frame-sized buffer per rounded image.
+# Pinned by `crates/ui-lang-runtime/tests/image_clip.rs`.
 #
 # `vendor/iced_winit` is the published 0.14.0 source with three changes.
 #

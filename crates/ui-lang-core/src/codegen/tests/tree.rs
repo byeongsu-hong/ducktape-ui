@@ -2042,14 +2042,20 @@ fn mouse_interest_is_constructed_inside_the_active_tree_subscription_branch() {
         "app Pointer\n{PALETTE}state\n  active = true\non moved(_x, _y)\non event(_event)\nsubscribe\n  mouse moved when active -> moved _ _\n  event raw when active -> event _\nview\n  text \"Pointer\"\n"
     );
     let generated = compile_for(&source, "pointer.ice", Target::Tree).unwrap();
-    assert_eq!(
-        generated
-            .matches(
-                "if self.active { ::iced::Subscription::batch([::ui_lang_guest::mouse::observe("
-            )
-            .count(),
-        2
-    );
+    for observer in [
+        "::ui_lang_guest::mouse::observe(",
+        "::ui_lang_guest::events::observe(::ui_lang_guest::mouse::observe(",
+    ] {
+        assert_eq!(
+            generated
+                .matches(&format!(
+                    "if self.active {{ ::iced::Subscription::batch([{observer}"
+                ))
+                .count(),
+            1,
+            "{observer} must be constructed inside its active branch"
+        );
+    }
     assert_eq!(
         generated
             .matches("::ui_lang_guest::mouse::observe(")
