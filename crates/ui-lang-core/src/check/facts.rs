@@ -4791,13 +4791,39 @@ impl<'a> FactsBuilder<'a> {
         env: &dyn FactEnvironment,
         span: &Span,
     ) -> Result<(), Error> {
+        // Extern arguments retain their declared context just like ordinary
+        // calls. In particular, an empty list has no element type of its own.
+        let mut destinations = HashMap::new();
+        for call in [
+            &options.highlighter,
+            &options.key_binding,
+            &options.action,
+            &options.custom_style,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let function = self
+                .declarations
+                .extern_decl_by_name(&call.function)
+                .filter(|function| function.params.len() == call.args.len())
+                .ok_or_else(|| {
+                    self.invariant(span, "editor extern arguments lost their declaration")
+                })?;
+            for (argument, (_, destination)) in call.args.iter().zip(&function.params) {
+                destinations.insert(super::expr::expr_key(argument), destination.clone());
+            }
+        }
         self.lower_interaction_facts(
             editor,
             CheckedInteractionKind::TextEditor,
             crate::ast::text_editor_semantic_key(binding, disabled, options),
             crate::ast::text_editor_expression_roots(disabled, options)
                 .into_iter()
-                .map(|expression| (expression, None))
+                .map(|expression| {
+                    let destination = destinations.remove(&super::expr::expr_key(expression));
+                    (expression, destination)
+                })
                 .collect(),
             options.key_binding_route.iter().collect(),
             env,
