@@ -384,6 +384,7 @@ impl widget::operation::Focusable for ViewportState {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Drag {
+    context: (CarouselState, CarouselOrientation, Direction),
     source: DragSource,
     start: Point,
     current: Point,
@@ -412,8 +413,15 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CarouselViewport<
     fn diff(&self, tree: &mut widget::Tree) {
         tree.diff_children(std::slice::from_ref(&self.content));
 
+        let interaction = tree.state.downcast_mut::<ViewportState>();
         if self.state.slide_count() <= 1 {
-            tree.state.downcast_mut::<ViewportState>().unfocus();
+            interaction.unfocus();
+        } else if interaction
+            .drag
+            .is_some_and(|drag| drag.context != (self.state, self.orientation, self.direction))
+        {
+            // An explicit selection or changed axis ends the older gesture.
+            interaction.drag = None;
         }
     }
 
@@ -502,6 +510,7 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for CarouselViewport<
                 shell.request_redraw();
             }
             interaction.drag = (focused && !shell.is_event_captured()).then_some(Drag {
+                context: (self.state, self.orientation, self.direction),
                 source,
                 start: position,
                 current: position,
@@ -1230,6 +1239,7 @@ mod tests {
         let first = touch::Finger(1);
         let second = touch::Finger(2);
         let drag = Drag {
+            context: Default::default(),
             source: DragSource::Touch(first),
             start: point(0.0, 0.0),
             current: point(10.0, 0.0),
@@ -1251,6 +1261,7 @@ mod tests {
         let mut state = ViewportState {
             focused: true,
             drag: Some(Drag {
+                context: Default::default(),
                 source: DragSource::Mouse,
                 start: point(0.0, 0.0),
                 current: point(10.0, 0.0),

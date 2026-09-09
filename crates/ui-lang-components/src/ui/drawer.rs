@@ -472,6 +472,20 @@ impl<Message> Widget<Message, iced::Theme, iced::Renderer> for DrawerGesture<'_,
             }
 
             if is_cancel(event, drag.source) {
+                // Window blur also cancels retained presses in custom body controls.
+                // Forward it before marking the gesture event captured.
+                if matches!(event, Event::Window(iced::window::Event::Unfocused)) {
+                    self.content.as_widget_mut().update(
+                        &mut tree.children[0],
+                        event,
+                        layout.children().next().expect("drawer content layout"),
+                        cursor,
+                        renderer,
+                        clipboard,
+                        shell,
+                        viewport,
+                    );
+                }
                 tree.state.downcast_mut::<GestureState>().drag = None;
                 shell.publish((self.on_event)(DrawerEvent::SnapBack {
                     animate: !self.reduced_motion,

@@ -3001,3 +3001,46 @@ light theme, scale 1, en-US, Linux, reduced motion and each app's bundled fonts.
 The music API is a deterministic example; Markdown owner tests use actual local
 files. This evidence does not establish platform accessibility or network
 service behavior. Media painting is covered by the separate content audit.
+
+## Accessible customization and gesture cancellation (D05/A04)
+
+`examples/showcase/tests/custom_interaction_contracts.rs` uses real public
+FocusControl, Item, Select, Carousel and Drawer widgets with the native Driver.
+Ten tests cover a selectable custom row, selector trigger and drawer body with
+role/name/state/actions/focus, actual keyboard and accessibility activation,
+selection, dismissal and restored trigger focus. Existing Item/Form and overlay
+lifecycle evidence supplies the corresponding structural/custom slot coverage.
+No component source is copied and no new customization API is introduced.
+
+Three pre-fix assertion Reds establish real owner bugs: a second finger steals a
+press (activation 1 instead of 0), an older swipe overrides an explicit selection
+(index 2 instead of 1), and a Drawer body activates a held Space press after blur.
+The fixes preserve the first press, invalidate a swipe when controlled context
+changes and forward blur before capturing drag cancellation. Additional minimal
+mutations fail the checked-state and selected-value semantics, mouse-vs-touch
+ownership, fresh swipe after touch cancellation, nonanimated snap-back request
+and pointer-blur cancellation assertions. All mutations are restored for Green.
+
+The fixture tuple is 360×260, native default font, light component theme, scale 1,
+en-US and Linux. Reduced motion is enabled except the explicit normal-motion
+half of the drawer test. Reviewed captures are in
+`examples/showcase/screenshots/custom-interactions/`. The tests establish native
+semantic operations and immediate controlled transitions, not OS accessibility
+or interpolated animation. Custom Rust visuals remain responsible for labels,
+state projection and actions; these examples use the public Accessible wrapper
+and native focus IDs. D05 is the representative row/trigger/body contract, not
+an all-component semantic parity claim.
+
+
+Validation: `cargo test -p showcase -p ui-lang-components -p ui-lang-runtime
+--features ui-lang-components/full -j4 --no-fail-fast` passes 337 Showcase binary,
+473 component library (two existing ignored) and 398 runtime library tests
+(eight existing ignored), plus their integration and doc tests, including all
+nine custom-interaction tests. Existing allocation budgets pass unchanged.
+
+A review-driven tenth native test then proved that an outside second pointer
+also cancelled the first finger's release (0 activations instead of 1). Outside
+presses now move focus away while preserving retained pointer ownership and
+cancelling keyboard presses. All ten native tests pass after this refinement;
+17 affected owner tests and Clippy (`--all-targets --no-deps -- -D warnings`)
+also pass without repeating the full suite.

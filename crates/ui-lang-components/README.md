@@ -236,6 +236,31 @@ and custom geometry, a checkbox slot, narrow layouts and validation feedback.
 These are reusable Ice components, not new language keywords or automatic
 platform-native controls.
 
+## Accessible custom content and cancelled gestures
+
+The public Item row, Select trigger and Drawer body can keep their visual slots
+and add semantics with `ui_lang_runtime::accessible`. Supply the role, label,
+current checked/value/expanded state and `on_activate` message on that wrapper.
+Use `focus_id` for the native control ID and `focus_descendant` when the visual
+contains that control. Keep custom body IDs in the modal `FocusScope` and return
+the component event's focus task after updating controlled state. The
+[public native examples](../../examples/showcase/tests/custom_interaction_contracts.rs)
+show complete selectable-row, selector and drawer compositions; none copies a
+component implementation or requires a new extension point. Structural visual
+slots alone do not infer an application's semantic labels or actions.
+
+A FocusControl retains the first active press until its matching release or
+cancellation; a second finger or mouse press cannot steal it. An outside press
+moves focus away while preserving the first pointer release and cancelling a
+pending keyboard activation. Carousel discards
+an older swipe when controlled selection, axis or direction changes. Drawer
+forwards window blur to custom body controls before capturing drag cancellation,
+so a held Space key cannot activate a control after the window loses focus.
+Touch loss and window blur end gestures without removing keyboard navigation or
+the custom close action. `Drawer::reduced_motion(true)` requests a nonanimated
+snap-back; applying `DrawerEvent::SnapBack` resets the controlled offset. Carousel
+navigation changes selection immediately and adds no animation policy.
+
 ## Controlled state and focus
 
 Apply controlled-widget events to the current app state in the same handler
