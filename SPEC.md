@@ -1434,7 +1434,11 @@ and window. It stages snapshot/restore and a complete first frame before the UI
 thread checks request serial, current window/instance and unchanged guest ticks.
 Failed or stale candidates preserve the old guest and consent hash. Keyed native
 focus/scroll and permitted host resources survive; removed terminal permission
-removes its provider. Staged requests dispatch before their cancellations and
+removes its provider. Scroll handoff carries only numeric offsets for unique,
+matching native scroll IDs with unchanged direction and anchors, clamped to the
+replacement's laid-out content. Host-surface descendants and ambiguous IDs are
+excluded. The retired instance's mounted children and parked memos are released.
+Staged requests dispatch before their cancellations and
 platform effects, and old instance input routes are refused. This host policy is
 separate from the guest exports; it does not migrate incompatible state schemas.
 
