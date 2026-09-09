@@ -237,6 +237,7 @@ fn pump_theme(
     // A fixed frame count does not establish snapshot readiness.
     const MAX_REDRAWS: usize = 64;
     for _ in 0..MAX_REDRAWS {
+        let mounted_revision = surface.0.lock().unwrap().frame_rev;
         ui = iced_test::runtime::UserInterface::build(
             wasm_view(surface.clone(), dark),
             iced::Size::new(480.0, 600.0),
@@ -264,7 +265,13 @@ fn pump_theme(
             Ok(_) => {
                 // A subscription may be snapshot-safe while a host reply still
                 // waits to deliver the requested theme to the guest.
-                if guest.pending.is_empty() && !guest.frame.busy && guest.widgets.is_empty() {
+                // A settled redraw may publish a new tree. Mount that revision
+                // before returning a UI that the next pointer input can use.
+                if guest.pending.is_empty()
+                    && !guest.frame.busy
+                    && guest.widgets.is_empty()
+                    && guest.frame_rev == mounted_revision
+                {
                     return ui;
                 }
             }
