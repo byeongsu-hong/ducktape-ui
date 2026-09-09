@@ -34,8 +34,16 @@ fn tree_editor_binding_uses_a_deferred_commit_and_logical_document_identity() {
     assert!(code.contains("fn(bool) -> ::ui_lang_guest::EditorBinding<::std::string::String>"));
     assert!(!code.contains("fn __ice_map_editor_binding"));
     assert_eq!(
-        code.matches("document: (\"app:notes\").to_owned()").count(),
-        2
+        code.matches("__editor.document((\"app:notes\").to_owned()")
+            .count(),
+        2,
+        "both widgets deliver the one logical document"
+    );
+    assert_eq!(
+        code.matches("::ui_lang_guest::EditorBinding::<()>::plain(")
+            .count(),
+        1,
+        "only the editor without an authored key binding commits through the plain route"
     );
 }
 
@@ -53,6 +61,10 @@ fn tree_editor_binding_captures_route_arguments_and_component_scope() {
     );
     assert!(code.contains("Clone::clone(&__route_arg_0)"));
     assert!(code.contains("__scope.clone(), __transaction"));
+    assert!(
+        code.contains("__scope.clone(), __document"),
+        "each instance owns the scope its document route reports under"
+    );
     assert!(
         code.contains("draft: __state.draft.text()"),
         "component test state exposes editor text on Tree too"
@@ -464,21 +476,25 @@ fn a_mouse_area_compiles_to_a_mouse_area_node_with_handler_slots() {
     );
 }
 
-/// Tree editor bindings carry copied document state and fenced observations.
+/// Tree editors carry a document reference and its delivery route; a
+/// disabled editor still receives its document, and only loses host input.
 #[test]
-fn an_editor_carries_document_state_the_host_edits() {
+fn an_editor_carries_a_document_reference_the_host_requests() {
     let generated = tree_with(
         "on clear\n  notes = editor(\"\")\nderived\n  lines = editor_line_count(notes)\n  second = editor_line(notes, 1)\n",
         "  col\n    editor #notes <-> notes hint=\"Write\" h=fill min-h=80.0 disabled=busy\n    text editor_text(notes) @text-fg\n    text lines @text-fg\n    button \"Clear\" -> clear\n    button \"×\" -> remove 0\n",
     );
     for expected in [
         "notes: ::ui_lang_guest::Editor,",
-        "__EditNotes(::ui_lang_guest::wire::EditorState),",
-        "__DemoMessage::__EditNotes(__text) => {",
+        "__EditNotes(::ui_lang_guest::EditorDocumentUpdate),",
+        "__DemoMessage::__EditNotes(__document) => {",
+        "__document.apply(&mut self.notes)",
+        "let (__document, __on_document) = __editor.document((\"app:notes\").to_owned(), __DemoMessage::__EditNotes as fn(::ui_lang_guest::EditorDocumentUpdate) -> __DemoMessage);",
         "::ui_lang_guest::wire::Node::Editor { options:",
         "placeholder: \"Write\".to_owned()",
-        "text: __editor.text()",
-        "on_edit: if (self.busy) { ::std::option::Option::None } else { ::std::option::Option::Some(::ui_lang_guest::slots::handler::<::ui_lang_guest::wire::EditorState, __DemoMessage>(",
+        "document: __document, on_document: __on_document",
+        "editable: !(self.busy)",
+        "::ui_lang_guest::EditorBinding::<()>::plain(",
         "height: ::std::option::Option::Some(::ui_lang_guest::wire::Length::Fill)",
         "min_height: ::std::option::Option::Some((80.0) as f32)",
         "(self.notes).text()",
@@ -489,6 +505,10 @@ fn an_editor_carries_document_state_the_host_edits() {
             "missing {expected:?} in:\n{generated}"
         );
     }
+    assert!(
+        !generated.contains("__editor.text()"),
+        "the node carries a reference, never a copy of the document:\n{generated}"
+    );
     assert!(
         !generated.contains("text_editor::Content"),
         "a view module never holds a Content:\n{generated}"

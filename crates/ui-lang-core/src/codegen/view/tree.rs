@@ -1743,47 +1743,15 @@ fn editor(
         "a style on an editor",
     )?;
     let state = resolved_editor_state(editor, env, program)?;
-    let constructor = match &state.state {
-        Some(StateBinding::App(name)) => {
-            let variant = editor_variant(name);
-            format!("{message}::{variant} as fn(::ui_lang_guest::wire::EditorState) -> {message}")
-        }
-        Some(StateBinding::Component {
-            component,
-            name,
-            scope,
-        }) => {
-            let variant = component_editor_variant(component, name);
-            format!(
-                "{{ let __scope = ({}).clone(); move |__value| {message}::{variant}(__scope.clone(), __value) }}",
-                borrowed_scope(scope)
-            )
-        }
-        None => {
-            return Err(program.invariant_at_origin(
-                origin,
-                "normalized editor binding does not resolve to editor state",
-            ));
-        }
-    };
-    let handler = handler_code(
-        "::ui_lang_guest::wire::EditorState",
-        message,
-        &constructor,
-        "move |__sent: ::ui_lang_guest::wire::EditorState| ::std::option::Option::Some(__route(__sent))",
-    );
-    let on_edit = match editor.disabled {
-        Some(disabled) => format!(
-            "if ({}) {{ ::std::option::Option::None }} else {{ ::std::option::Option::Some({handler}) }}",
-            resolved_expr_use_code(program, disabled, env, ValueMode::Owned)?
-        ),
-        None => format!("::std::option::Option::Some({handler})"),
-    };
     // A logical cell, not its rendered widget identity: base and overlay
     // editors share a lane, while repeated component instances do not.
-    let (document, transaction_constructor) = match &state.state {
+    let (document, document_constructor, transaction_constructor) = match &state.state {
         Some(StateBinding::App(name)) => (
             format!("({}).to_owned()", rust_string(&format!("app:{name}"))),
+            format!(
+                "{message}::{} as fn(::ui_lang_guest::EditorDocumentUpdate) -> {message}",
+                editor_variant(name)
+            ),
             format!("{message}::{}", editor_transaction_variant(name)),
         ),
         Some(StateBinding::Component {
@@ -1798,20 +1766,55 @@ fn editor(
                 borrowed_scope(scope)
             ),
             format!(
+                "{{ let __scope = ({}).clone(); move |__document| {message}::{}(__scope.clone(), __document) }}",
+                borrowed_scope(scope),
+                component_editor_variant(component, name)
+            ),
+            format!(
                 "{{ let __scope = ({}).clone(); move |__transaction| {message}::{}(__scope.clone(), __transaction) }}",
                 borrowed_scope(scope),
                 component_editor_transaction_variant(component, name)
             ),
         ),
-        None => unreachable!("editor state checked above"),
+        None => {
+            return Err(program.invariant_at_origin(
+                origin,
+                "normalized editor binding does not resolve to editor state",
+            ));
+        }
     };
-    let binding = editor.key_binding.as_ref().map(|binding| {
-        let arguments = binding.arguments.iter().map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned)).collect::<Result<Vec<_>, _>>()?.join(", ");
-        let route = snapshot_callback(&binding.route, "__value", &["__value"], env, program, message)?;
-        let factory = &program.extern_function(binding.function).rust_path;
-        Ok::<_, Error>(format!("::std::boxed::Box::new({factory}({arguments}).register({route}, {transaction_constructor}))"))
-    }).transpose()?;
-    let binding = option_code(binding);
+    // Every editor commits through one ordered transaction route; an
+    // authored key binding only adds claims and its own history payload.
+    let binding = match editor.key_binding.as_ref() {
+        Some(binding) => {
+            let arguments = binding
+                .arguments
+                .iter()
+                .map(|argument| resolved_expr_use_code(program, *argument, env, ValueMode::Owned))
+                .collect::<Result<Vec<_>, _>>()?
+                .join(", ");
+            let route = snapshot_callback(
+                &binding.route,
+                "__value",
+                &["__value"],
+                env,
+                program,
+                message,
+            )?;
+            let factory = &program.extern_function(binding.function).rust_path;
+            format!("{factory}({arguments}).register({route}, {transaction_constructor})")
+        }
+        None => format!("::ui_lang_guest::EditorBinding::<()>::plain({transaction_constructor})"),
+    };
+    let binding = format!("::std::option::Option::Some(::std::boxed::Box::new({binding}))");
+    // Disabling withholds host input, never the document the editor shows.
+    let editable = match editor.disabled {
+        Some(disabled) => format!(
+            "!({})",
+            resolved_expr_use_code(program, disabled, env, ValueMode::Owned)?
+        ),
+        None => "true".to_owned(),
+    };
     let pixels = |value: Option<CheckedExprUseId>| -> Result<Option<String>, Error> {
         value
             .map(|value| {
@@ -1879,12 +1882,12 @@ fn editor(
             .map(|value| format!("{:?}f32", value.min(f64::from(f32::MAX))))
     }));
     let options = format!(
-        "::std::boxed::Box::new({WIRE}::EditorOptions {{ document: {document}, binding: {binding}, size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
+        "::std::boxed::Box::new({WIRE}::EditorOptions {{ binding: {binding}, size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
         option_code(pixels(editor.padding)?)
     );
     let key = key_code(identity, "editor", origin, scope, env, program)?;
     Ok(format!(
-        "{{ let __editor = &({}); {WIRE}::Node::Editor {{ options: {options}, key: {key}, placeholder: {}, text: __editor.text(), cursor: __editor.cursor(), reset: __editor.reset_revision(), revision: __editor.observation_revision(), on_edit: {on_edit}, width: {}, height: {}, min_height: {}, max_height: {} }} }}",
+        "{{ let __editor = &({}); let (__document, __on_document) = __editor.document({document}, {document_constructor}); {WIRE}::Node::Editor {{ options: {options}, key: {key}, placeholder: {}, document: __document, on_document: __on_document, editable: {editable}, width: {}, height: {}, min_height: {}, max_height: {} }} }}",
         state.code,
         editor
             .placeholder

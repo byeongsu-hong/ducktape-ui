@@ -870,11 +870,11 @@ pub(in crate::codegen) fn generate_update(
                     program,
                     "__local",
                     ResolvedValueRef::ComponentState(state.id),
-                    StateWrite::Mutate(format!("__local.{}.accept(__text)", state.name)),
+                    StateWrite::Mutate(format!("__document.apply(&mut __local.{})", state.name)),
                 );
                 writeln!(
                     out,
-                    "{message}::{variant}(__scope, __text) => {{ {entry} {write} ::iced::Task::none() }},"
+                    "{message}::{variant}(__scope, __document) => {{ {entry} {write} ::iced::Task::none() }},"
                 )
                 .unwrap();
                 continue;
@@ -990,11 +990,11 @@ pub(in crate::codegen) fn generate_update(
                 program,
                 "self",
                 ResolvedValueRef::AppState(binding.state),
-                StateWrite::Mutate(format!("self.{}.accept(__text)", binding.name)),
+                StateWrite::Mutate(format!("__document.apply(&mut self.{})", binding.name)),
             );
             writeln!(
                 out,
-                "{message}::{variant}(__text) => {{ {write} ::iced::Task::none() }}"
+                "{message}::{variant}(__document) => {{ {write} ::iced::Task::none() }}"
             )
             .unwrap();
             continue;

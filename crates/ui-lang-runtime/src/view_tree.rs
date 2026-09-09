@@ -8,8 +8,8 @@
 //! fact, and gets to overwrite the host's copy only by reporting a value
 //! that differs from the one it reported last frame (its own handler
 //! cleared or set the field). An editor's `text_editor::Content` lives
-//! here the same way, and the guest hears its whole text as a
-//! [`wire::Event::Edit`].
+//! as a revisioned document, and the guest receives atomic patches through
+//! [`wire::Event::EditorTransaction`].
 //!
 //! The rendered element speaks [`Output`]; the host turns each one into the
 //! wire event with [`Inputs::apply`] and hands it to the guest.
@@ -44,6 +44,8 @@ mod button;
 mod canvas;
 mod combo;
 mod editor;
+mod editor_documents;
+pub use editor_documents::EditorDocument;
 mod editor_presentation;
 mod editor_transactions;
 mod layers;
@@ -102,13 +104,11 @@ pub enum Output {
     EditorAction {
         reset: u64,
         key: String,
-        handler: u32,
         action: text_editor::Action,
     },
     /// Accessibility asked the editor under `key` to move its caret.
     MoveCaret {
         reset: u64,
-        handler: Option<u32>,
         key: String,
         line: usize,
         column: usize,
@@ -189,6 +189,7 @@ pub type Surfaces = HashMap<String, Surface>;
 /// lock on the guest that owns this.
 #[derive(Clone, Debug)]
 struct EditorField {
+    document: String,
     content: editor::Shared,
     reset: u64,
     revision: u64,
@@ -201,6 +202,10 @@ pub struct Inputs {
     fields: HashMap<String, Field>,
     editors: HashMap<String, EditorField>,
     editor_revision: u64,
+    editor_references: HashMap<String, editor_documents::Reference>,
+    editor_transfer: Option<editor_documents::Incoming>,
+    editor_outgoing: Option<editor_documents::Outgoing>,
+    editor_document_fault: Option<(wire::editor_document::EditorDocumentRef, &'static str)>,
     editor_sequence: Arc<std::sync::atomic::AtomicU64>,
     editor_transactions: HashMap<String, editor_transactions::Shared>,
     editor_bindings: HashMap<String, (String, wire::EditorBinding)>,
@@ -223,6 +228,10 @@ impl Default for Inputs {
             fields: HashMap::new(),
             editors: HashMap::new(),
             editor_revision: 0,
+            editor_references: HashMap::new(),
+            editor_transfer: None,
+            editor_outgoing: None,
+            editor_document_fault: None,
             editor_sequence: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             editor_transactions: HashMap::new(),
             editor_bindings: HashMap::new(),
@@ -246,6 +255,10 @@ impl Inputs {
         let mut seen = HashMap::new();
         let mut editors = HashMap::new();
         collect_inputs(root, &mut seen, &mut editors);
+        if let Err((reference, reason)) = editor_documents::validate(self, &editors) {
+            self.editor_document_fault = Some((reference, reason));
+            return;
+        }
         self.fields.retain(|key, _| seen.contains_key(key));
         for (key, value) in seen {
             match self.fields.get_mut(&key) {
@@ -266,30 +279,9 @@ impl Inputs {
             }
         }
         self.editors.retain(|key, _| editors.contains_key(key));
-        for (key, state) in editors {
-            self.editor_revision = self.editor_revision.max(state.revision);
-            match self.editors.get_mut(&key) {
-                Some(field)
-                    if field.reset > state.reset
-                        || (field.reset == state.reset && field.revision >= state.revision) => {}
-                Some(field) => {
-                    *lock(&field.content) = editor_content(&state);
-                    field.reset = state.reset;
-                    field.revision = state.revision;
-                }
-                None => {
-                    self.editors.insert(
-                        key,
-                        EditorField {
-                            content: Arc::new(Mutex::new(editor_content(&state))),
-                            reset: state.reset,
-                            revision: state.revision,
-                        },
-                    );
-                }
-            }
-        }
+        self.editor_references = editors;
         editor_transactions::adopt(self, root);
+        editor_documents::adopt(self);
     }
 
     /// Restore only a matching combo identity, reset revision and option set.
@@ -383,98 +375,34 @@ impl Inputs {
                 return;
             }
             Output::EditorClaim { .. } => return,
-            Output::EditorAction {
-                reset,
-                key,
-                handler,
-                action,
-            } => {
-                let Some(field) = self.editors.get_mut(&key) else {
-                    return;
-                };
-                if field.reset != reset {
-                    return;
-                }
-                // Guest snapshots are untrusted. Exhaustion rejects this action
-                // before changing Content; never panic or emit duplicate revisions.
-                let Some(revision) = self.editor_revision.checked_add(1) else {
-                    return;
-                };
-                let mut content = lock(&field.content);
-                let before = (content.text(), content.cursor());
-                content.perform(action);
-                let text = content.text();
-                if text == before.0 && content.cursor() == before.1 {
-                    return;
-                }
-                if text.len() > wire::MAX_STRING_BYTES {
-                    *content = text_editor::Content::with_text(&before.0);
-                    content.move_to(before.1);
-                    eprintln!("editor document exceeds text limit; edit rejected");
-                    return;
-                }
-                self.editor_revision = revision;
-                field.revision = revision;
-                wire::Event::Edit {
-                    handler,
-                    text,
-                    cursor: editor_cursor(&content),
-                    reset: field.reset,
-                    revision: field.revision,
-                }
+            Output::EditorAction { reset, key, action } => {
+                self.admit_editor_work(
+                    &key,
+                    reset,
+                    editor_transactions::NativeWork::Actions(vec![action]),
+                    pending,
+                );
+                return;
             }
             Output::MoveCaret {
                 key,
                 line,
                 column,
                 reset,
-                handler,
             } => {
-                let Some(handler) = handler else {
-                    return;
-                };
-                let Some(field) = self.editors.get_mut(&key) else {
-                    return;
-                };
-                if field.reset != reset {
-                    return;
-                }
-                let Some(revision) = self.editor_revision.checked_add(1) else {
-                    return;
-                };
-                let mut content = lock(&field.content);
-                let before = content.cursor();
-                let text = content.text();
-                let mut cursor = wire::EditorCursor {
-                    position: wire::EditorPosition {
-                        line: u32::try_from(line).unwrap_or(u32::MAX),
-                        column: u32::try_from(column).unwrap_or(u32::MAX),
-                    },
-                    selection: None,
-                };
-                cursor.clamp(&text);
-                content.perform(text_editor::Action::Move(
-                    text_editor::Motion::DocumentStart,
-                ));
-                content.move_to(text_editor::Cursor {
-                    position: text_editor::Position {
-                        line: cursor.position.line as usize,
-                        column: cursor.position.column as usize,
-                    },
-                    selection: None,
-                });
-                if content.cursor() == before {
-                    return;
-                }
-                self.editor_revision = revision;
-                field.revision = revision;
-                wire::Event::Edit {
-                    handler,
-                    text,
-                    cursor: editor_cursor(&content),
+                self.admit_editor_work(
+                    &key,
                     reset,
-                    revision,
-                }
+                    editor_transactions::NativeWork::Caret(wire::EditorCursor {
+                        position: wire::EditorPosition {
+                            line: u32::try_from(line).unwrap_or(u32::MAX),
+                            column: u32::try_from(column).unwrap_or(u32::MAX),
+                        },
+                        selection: None,
+                    }),
+                    pending,
+                );
+                return;
             }
             Output::Toggle { handler, on } => wire::Event::Toggle { handler, on },
             Output::Slide { handler, value } => wire::Event::Slide { handler, value },
@@ -557,9 +485,12 @@ fn editor_cursor(content: &text_editor::Content) -> wire::EditorCursor {
 }
 
 fn editor_content(state: &wire::EditorState) -> text_editor::Content {
-    let mut content = text_editor::Content::with_text(&state.text);
-    let mut cursor = state.cursor;
-    cursor.clamp(&state.text);
+    editor_content_parts(&state.text, state.cursor)
+}
+
+fn editor_content_parts(text: &str, mut cursor: wire::EditorCursor) -> text_editor::Content {
+    let mut content = text_editor::Content::with_text(text);
+    cursor.clamp(text);
     let position = |p: wire::EditorPosition| text_editor::Position {
         line: p.line as usize,
         column: p.column as usize,
@@ -574,7 +505,7 @@ fn editor_content(state: &wire::EditorState) -> text_editor::Content {
 fn collect_inputs(
     node: &wire::Node,
     into: &mut HashMap<String, String>,
-    editors: &mut HashMap<String, wire::EditorState>,
+    editors: &mut HashMap<String, editor_documents::Reference>,
 ) {
     match node {
         wire::Node::Input { key, value, .. } => {
@@ -582,19 +513,17 @@ fn collect_inputs(
         }
         wire::Node::Editor {
             key,
-            text,
-            cursor,
-            reset,
-            revision,
+            document,
+            on_document,
+            editable,
             ..
         } => {
             editors.insert(
                 key.clone(),
-                wire::EditorState {
-                    text: text.clone(),
-                    cursor: *cursor,
-                    reset: *reset,
-                    revision: *revision,
+                editor_documents::Reference {
+                    document: document.clone(),
+                    handler: *on_document,
+                    editable: *editable,
                 },
             );
         }
@@ -1280,7 +1209,7 @@ pub fn render(
             memo: handle.clone(),
         },
     );
-    memo::scope(content, inputs.instance, handle)
+    memo::scope(content, inputs.instance, handle, root)
 }
 
 /// What the host keeps across frames, as one borrow for the render walk.
@@ -1972,53 +1901,50 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
         wire::Node::Editor {
             key,
             placeholder,
-            text,
-            on_edit,
-            reset,
-            revision,
-            cursor,
+            document,
+            editable,
             ..
         } => {
-            if inputs.editor_revision == u64::MAX || *revision == u64::MAX {
+            if inputs.editor_revision == u64::MAX || document.revision == u64::MAX {
                 return widget::text("Editor observation limit reached").into();
             }
-            // A key the host has not adopted yet (a render before the frame
-            // was taken in) shows the guest's text and keeps nothing.
-            let content = inputs.editor(key).cloned().unwrap_or_else(|| {
-                Arc::new(Mutex::new(editor_content(&wire::EditorState {
-                    text: text.clone(),
-                    cursor: *cursor,
-                    reset: *reset,
-                    revision: *revision,
-                })))
-            });
+            let Some(content) = inputs.editor(key).cloned() else {
+                return widget::text(
+                    inputs
+                        .editor_documents_status()
+                        .err()
+                        .unwrap_or("Loading document…"),
+                )
+                .into();
+            };
+            let Some(control) = inputs.editor_transactions.get(&document.document).cloned() else {
+                return widget::text("Loading document…").into();
+            };
+            if !lock(&control).available {
+                return widget::text(
+                    inputs
+                        .editor_documents_status()
+                        .err()
+                        .unwrap_or("Loading document…"),
+                )
+                .into();
+            }
             let (value, cursor) = {
                 let content = lock(&content);
                 (content.text(), content.cursor())
             };
             let move_to = {
                 let key = key.clone();
-                let reset = *reset;
-                let handler = *on_edit;
+                let reset = document.reset;
                 move |line, column| Output::MoveCaret {
                     reset,
-                    handler,
                     key: key.clone(),
                     line,
                     column,
                 }
             };
             accessible(
-                editor::HostEditor::new(
-                    node,
-                    content,
-                    match node {
-                        wire::Node::Editor { options, .. } => {
-                            inputs.editor_transactions.get(&options.document).cloned()
-                        }
-                        _ => None,
-                    },
-                ),
+                editor::HostEditor::new(node, content, Some(control)),
                 StableId::new(key),
                 Role::MultilineTextInput,
             )
@@ -2028,7 +1954,7 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             .value(value)
             .editor_caret(cursor)
             .on_move_to(move_to)
-            .disabled(on_edit.is_none())
+            .disabled(!editable)
             .into()
         }
         wire::Node::Button {
@@ -3508,16 +3434,39 @@ mod tests {
         assert_eq!(inputs.text("App/draft", "fallback"), "fallback");
     }
 
-    fn editor_node(text: &str) -> wire::Node {
-        wire::Node::Editor {
-            cursor: Default::default(),
+    use super::editor_documents::test_support as session;
+
+    /// The document a guest publishes: text crosses by transfer, never in the
+    /// tree, so a node carries only the reference that names it.
+    fn document(text: &str) -> wire::editor_document::EditorDocumentRef {
+        wire::editor_document::EditorDocumentRef {
+            document: "app:notes".into(),
             reset: 0,
+            text_revision: 0,
             revision: 0,
-            options: Default::default(),
+            cursor: wire::EditorCursor::default(),
+            byte_len: text.len() as u32,
+        }
+    }
+
+    /// Every generated editor joins the transaction lane, an ordinary one with
+    /// no key claims of its own.
+    fn editor_node(document: &wire::editor_document::EditorDocumentRef) -> wire::Node {
+        wire::Node::Editor {
+            options: Box::new(wire::EditorOptions {
+                binding: Some(Box::new(wire::EditorBinding {
+                    authored: true,
+                    claims: Vec::new(),
+                    on_request: 2,
+                    on_event: 3,
+                })),
+                ..Default::default()
+            }),
             key: "App/notes".into(),
             placeholder: "Notes".into(),
-            text: text.into(),
-            on_edit: Some(3),
+            document: document.clone(),
+            on_document: 4,
+            editable: true,
             width: None,
             height: Some(wire::Length::Fill),
             min_height: Some(80.0),
@@ -3526,7 +3475,40 @@ mod tests {
     }
 
     fn editor_text(inputs: &Inputs) -> String {
-        lock(inputs.editor("App/notes").expect("adopted")).text()
+        session::text(inputs, "App/notes")
+    }
+
+    /// The one commit a transaction produced, if it produced one.
+    fn commit(events: &[wire::Event]) -> Option<&wire::EditorTransactionEvent> {
+        let commits: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                wire::Event::EditorTransaction { event, .. }
+                    if matches!(event, wire::EditorTransactionEvent::Commit { .. }) =>
+                {
+                    Some(event)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(commits.len() <= 1, "{commits:?}");
+        commits.first().copied()
+    }
+
+    /// The text a commit produces, derived from the document it names rather
+    /// than read out of the event: the wire no longer carries editor text.
+    fn committed_text(before: &str, event: &wire::EditorTransactionEvent) -> String {
+        let wire::EditorTransactionEvent::Commit { patches, after, .. } = event else {
+            panic!("a commit");
+        };
+        let text = wire::patched_editor_text(before, patches, after.cursor)
+            .expect("a commit describes its own document");
+        assert_eq!(
+            text.len(),
+            after.byte_len as usize,
+            "the committed reference measures the document its patches make"
+        );
+        text
     }
 
     /// What `apply` queues for one output.
@@ -3539,11 +3521,15 @@ mod tests {
 
     #[test]
     fn sibling_editor_observations_sync_without_rewinding_pending_input() {
-        let first = editor_node("ab");
-        let mut second = first.clone();
-        if let wire::Node::Editor { key, .. } = &mut second {
-            *key = "App/overlay".into();
-        }
+        // Both projections name one logical document, so both bindings must
+        // repeat the same reference exactly.
+        let projection = |reference: &wire::editor_document::EditorDocumentRef, key: &str| {
+            let mut node = editor_node(reference);
+            if let wire::Node::Editor { key: slot, .. } = &mut node {
+                *slot = key.into();
+            }
+            node
+        };
         let tree = |first, second| wire::Node::Linear {
             key: "root".into(),
             axis: wire::Axis::Column,
@@ -3559,64 +3545,43 @@ mod tests {
             border: None,
             children: vec![first, second],
         };
+        let start = document("ab");
+        let published = |reference: &wire::editor_document::EditorDocumentRef| {
+            tree(
+                projection(reference, "App/notes"),
+                projection(reference, "App/overlay"),
+            )
+        };
         let mut inputs = Inputs::default();
-        inputs.adopt(&tree(first.clone(), second.clone()));
-        let edit = |key: &str, c| Output::EditorAction {
-            reset: 0,
-            key: key.into(),
-            handler: 3,
-            action: text_editor::Action::Edit(text_editor::Edit::Insert(c)),
-        };
-        let Some(wire::Event::Edit {
-            text,
-            cursor,
-            revision,
-            ..
-        }) = applied(&mut inputs, edit("App/notes", 'x'))
-        else {
-            panic!("edit");
-        };
-        let echo = |mut node: wire::Node, text: &str, cursor, revision| {
-            if let wire::Node::Editor {
-                text: target,
-                cursor: caret,
-                revision: seq,
-                ..
-            } = &mut node
-            {
-                *target = text.into();
-                *caret = cursor;
-                *seq = revision;
-            }
-            node
-        };
-        inputs.adopt(&tree(
-            echo(first.clone(), &text, cursor, revision),
-            echo(second.clone(), &text, cursor, revision),
-        ));
-        assert_eq!(lock(inputs.editor("App/overlay").unwrap()).text(), "xab");
-        let Some(wire::Event::Edit {
-            text: next,
-            cursor: caret,
-            revision: newer,
-            ..
-        }) = applied(&mut inputs, edit("App/overlay", 'y'))
-        else {
-            panic!("overlay edit");
-        };
-        inputs.adopt(&tree(
-            echo(first.clone(), &text, cursor, revision),
-            echo(second.clone(), &text, cursor, revision),
-        ));
+        session::assign(&mut inputs, &published(&start), &[("app:notes", "ab")]);
+        let insert = |c| text_editor::Action::Edit(text_editor::Edit::Insert(c));
+        let typed = session::edit(&mut inputs, "App/notes", 0, insert('x'));
+        assert_eq!(
+            committed_text("ab", commit(&typed).expect("a base commit")),
+            "xab"
+        );
+        // The guest heard the commit and re-publishes the document it names.
+        let echoed = session::reference(&inputs, "App/notes");
+        session::settle(&mut inputs, &published(&echoed));
+        assert_eq!(
+            lock(inputs.editor("App/overlay").unwrap()).text(),
+            "xab",
+            "a sibling projection adopts the canonical document"
+        );
+        let overlay = session::edit(&mut inputs, "App/overlay", 0, insert('y'));
+        assert_eq!(
+            committed_text("xab", commit(&overlay).expect("an overlay commit")),
+            "xyab"
+        );
+        session::settle(&mut inputs, &published(&echoed));
         assert_eq!(
             lock(inputs.editor("App/overlay").unwrap()).text(),
             "xyab",
             "old echo cannot rewind pending edit"
         );
-        inputs.adopt(&tree(
-            echo(first, &next, caret, newer),
-            echo(second, &next, caret, newer),
-        ));
+        let latest = session::reference(&inputs, "App/overlay");
+        assert!(latest.revision > echoed.revision);
+        session::settle(&mut inputs, &published(&latest));
         assert_eq!(
             editor_text(&inputs),
             "xyab",
@@ -3626,38 +3591,53 @@ mod tests {
 
     #[test]
     fn editor_reload_sequences_and_exhaustion_preserve_content() {
-        let mut node = editor_node("a");
-        if let wire::Node::Editor { revision, .. } = &mut node {
-            *revision = 100;
-        }
+        let mut snapshotted = document("a");
+        snapshotted.revision = 100;
         let mut inputs = Inputs::default();
-        inputs.adopt(&node);
-        let insert = || Output::EditorAction {
-            reset: 0,
-            key: "App/notes".into(),
-            handler: 3,
-            action: text_editor::Action::Edit(text_editor::Edit::Insert('x')),
+        session::assign(
+            &mut inputs,
+            &editor_node(&snapshotted),
+            &[("app:notes", "a")],
+        );
+        let insert = || text_editor::Action::Edit(text_editor::Edit::Insert('x'));
+        let typed = session::edit(&mut inputs, "App/notes", 0, insert());
+        let Some(wire::EditorTransactionEvent::Commit { after, .. }) = commit(&typed) else {
+            panic!("a commit");
         };
-        assert!(
-            matches!(
-                applied(&mut inputs, insert()),
-                Some(wire::Event::Edit { revision: 101, .. })
-            ),
+        assert_eq!(
+            after.revision, 101,
             "fresh host starts above snapshotted guest observations"
         );
-        if let wire::Node::Editor { revision, .. } = &mut node {
-            *revision = u64::MAX;
-        }
-        inputs.adopt(&node);
+        // A reset is a new assignment: the exhausted observation arrives with
+        // the document it fences, not as a field edited in place.
+        let mut exhausted = document("a");
+        exhausted.reset = 1;
+        exhausted.revision = u64::MAX;
+        let node = editor_node(&exhausted);
+        session::assign(&mut inputs, &node, &[("app:notes", "a")]);
         assert_eq!(editor_text(&inputs), "a");
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            applied(&mut inputs, insert())
+            session::edit(&mut inputs, "App/notes", 1, insert())
         }));
         assert!(
             outcome.is_ok(),
             "untrusted observation exhaustion must not panic the host"
         );
-        assert_eq!(outcome.unwrap(), None);
+        let refused = outcome.unwrap();
+        assert_eq!(commit(&refused), None);
+        assert!(
+            refused.iter().any(|event| matches!(
+                event,
+                wire::Event::EditorTransaction {
+                    event: wire::EditorTransactionEvent::Fault {
+                        reason: wire::EditorFault::Limit,
+                        ..
+                    },
+                    ..
+                }
+            )),
+            "exhaustion is reported to the guest, not dropped: {refused:?}"
+        );
         assert_eq!(
             editor_text(&inputs),
             "a",
@@ -3727,23 +3707,26 @@ mod tests {
     #[test]
     fn editor_caret_only_actions_reach_the_guest() {
         let mut inputs = Inputs::default();
-        inputs.adopt(&editor_node("éx"));
-        let event = applied(
+        session::assign(
             &mut inputs,
-            Output::EditorAction {
-                reset: 0,
-                key: "App/notes".into(),
-                handler: 3,
-                action: text_editor::Action::Move(text_editor::Motion::End),
-            },
+            &editor_node(&document("éx")),
+            &[("app:notes", "éx")],
         );
-        assert!(
-            event.is_some(),
-            "a caret-only change must reach guest editor state"
+        let moved = session::edit(
+            &mut inputs,
+            "App/notes",
+            0,
+            text_editor::Action::Move(text_editor::Motion::End),
         );
+        let Some(wire::EditorTransactionEvent::Commit { patches, after, .. }) = commit(&moved)
+        else {
+            panic!("a caret-only change must reach guest editor state");
+        };
+        assert!(patches.is_empty(), "a caret move changes no bytes");
+        assert_eq!(after.cursor.position.column, 3);
         assert_eq!(
-            lock(inputs.editor("App/notes").unwrap())
-                .cursor()
+            session::reference(&inputs, "App/notes")
+                .cursor
                 .position
                 .column,
             3
@@ -3753,23 +3736,29 @@ mod tests {
     #[test]
     fn editor_echoes_preserve_caret_and_authoritative_resets_replace_it() {
         use text_editor::{Action, Edit, Motion};
+        let stale = document("ab");
         let mut inputs = Inputs::default();
-        inputs.adopt(&editor_node("ab"));
-        let action = |action| Output::EditorAction {
-            reset: 0,
-            key: "App/notes".into(),
-            handler: 3,
-            action,
+        session::assign(&mut inputs, &editor_node(&stale), &[("app:notes", "ab")]);
+        let inserted = session::edit(&mut inputs, "App/notes", 0, Action::Edit(Edit::Insert('x')));
+        let event = commit(&inserted).expect("an insert commit");
+        assert_eq!(committed_text("ab", event), "xab");
+        let wire::EditorTransactionEvent::Commit { before, after, .. } = event else {
+            panic!("a commit")
         };
-        let inserted = applied(&mut inputs, action(Action::Edit(Edit::Insert('x')))).unwrap();
-        assert!(
-            matches!(inserted, wire::Event::Edit { text, cursor, reset: 0, .. }
-            if text == "xab" && cursor.position.column == 1)
-        );
-        let moved = applied(&mut inputs, action(Action::Select(Motion::End))).unwrap();
-        assert!(matches!(moved, wire::Event::Edit { text, cursor, .. }
-            if text == "xab" && cursor.position.column == 3 && cursor.selection.unwrap().column == 1));
-        inputs.adopt(&editor_node("ab"));
+        assert_eq!((before.reset, after.reset), (0, 0));
+        assert_eq!(after.cursor.position.column, 1);
+        let echoed = editor_node(&session::reference(&inputs, "App/notes"));
+        session::settle(&mut inputs, &echoed);
+        let moved = session::edit(&mut inputs, "App/notes", 0, Action::Select(Motion::End));
+        let Some(wire::EditorTransactionEvent::Commit { after, patches, .. }) = commit(&moved)
+        else {
+            panic!("a selection commit");
+        };
+        assert!(patches.is_empty(), "selecting changes no bytes");
+        assert_eq!(after.cursor.position.column, 3);
+        assert_eq!(after.cursor.selection.unwrap().column, 1);
+        // An older reference names the same document at an earlier revision.
+        session::settle(&mut inputs, &editor_node(&stale));
         assert_eq!(
             editor_text(&inputs),
             "xab",
@@ -3781,25 +3770,17 @@ mod tests {
                 .selection
                 .is_some()
         );
-        let mut reset = editor_node("xab");
-        if let wire::Node::Editor { reset, cursor, .. } = &mut reset {
-            *reset = 1;
-            cursor.position.column = 2;
-        }
-        inputs.adopt(&reset);
+        // An authoritative reset is a new assignment, with its own caret.
+        let mut reset = document("xab");
+        reset.reset = 1;
+        reset.cursor.position.column = 2;
+        let node = editor_node(&reset);
+        session::assign(&mut inputs, &node, &[("app:notes", "xab")]);
         let cursor = lock(inputs.editor("App/notes").unwrap()).cursor();
         assert_eq!(cursor.position.column, 2, "same text reset controls caret");
         assert_eq!(cursor.selection, None, "None must clear previous selection");
-        applied(
-            &mut inputs,
-            Output::EditorAction {
-                reset: 1,
-                key: "App/notes".into(),
-                handler: 3,
-                action: Action::Move(Motion::End),
-            },
-        );
-        inputs.adopt(&reset);
+        session::edit(&mut inputs, "App/notes", 1, Action::Move(Motion::End));
+        session::settle(&mut inputs, &node);
         assert_eq!(
             lock(inputs.editor("App/notes").unwrap())
                 .cursor()
@@ -3808,10 +3789,9 @@ mod tests {
             3,
             "the same reset is applied only once"
         );
-        inputs.adopt(&wire::Node::empty());
-        assert_eq!(
-            applied(&mut inputs, action(Action::Edit(Edit::Insert('q')))),
-            None
+        session::settle(&mut inputs, &wire::Node::empty());
+        assert!(
+            session::edit(&mut inputs, "App/notes", 1, Action::Edit(Edit::Insert('q'))).is_empty()
         );
     }
 
@@ -3819,18 +3799,19 @@ mod tests {
     fn a_paste_into_an_editor_past_the_bound_preserves_the_document() {
         use text_editor::{Action, Edit};
         let mut inputs = Inputs::default();
-        inputs.adopt(&editor_node(""));
-        let prefix = "a".repeat(wire::MAX_STRING_BYTES - 1);
-        let event = applied(
+        session::assign(
             &mut inputs,
-            Output::EditorAction {
-                reset: 0,
-                key: "App/notes".into(),
-                handler: 3,
-                action: Action::Edit(Edit::Paste(Arc::new(format!("{prefix}€€€")))),
-            },
+            &editor_node(&document("")),
+            &[("app:notes", "")],
         );
-        assert_eq!(event, None);
+        let prefix = "a".repeat(wire::editor_transaction::MAX_EDITOR_INPUT_BYTES - 1);
+        let pasted = session::edit(
+            &mut inputs,
+            "App/notes",
+            0,
+            Action::Edit(Edit::Paste(Arc::new(format!("{prefix}€€€")))),
+        );
+        assert_eq!(commit(&pasted), None);
         assert_eq!(editor_text(&inputs), "");
         assert_eq!(inputs.editor_revision, 0);
     }
@@ -4096,7 +4077,7 @@ mod tests {
                             height: Some(wire::Length::Fixed(40.0)),
                         }),
                     },
-                    editor_node("notes"),
+                    editor_node(&document("notes")),
                     wire::Node::Button {
                         checked: None,
                         expanded: None,

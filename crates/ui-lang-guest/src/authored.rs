@@ -77,7 +77,7 @@ pub fn respond<A: TestApp + crate::SnapshotApp>(
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run<A: TestApp + crate::SnapshotApp>(manifest: &[u8]) -> Result<(), String> {
     use crate::wire::{
-        decode, encode,
+        decode,
         native::{read_packet, write_packet},
     };
     use std::io::Write;
@@ -96,7 +96,10 @@ pub fn run<A: TestApp + crate::SnapshotApp>(manifest: &[u8]) -> Result<(), Strin
     loop {
         let request = decode(&read_packet(&mut input)?)?;
         let response = respond::<A>(&mut driver, request);
-        write_packet(&mut output, &encode(&response))?;
+        write_packet(
+            &mut output,
+            &crate::wire::native::encode_response(&response),
+        )?;
     }
 }
 

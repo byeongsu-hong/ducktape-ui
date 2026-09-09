@@ -15,7 +15,8 @@ pub(super) fn markdown_type_code(program: &LoweredProgram) -> &'static str {
 
 /// What an `editor` state field holds. A view module never holds a
 /// `text_editor::Content`: the host owns native interaction; the guest
-/// keeps text, cursor and revisions (`ui_lang_wire::Node::Editor`).
+/// keeps text, cursor and revisions, and the view carries only a
+/// reference to them.
 pub(super) fn editor_type_code(program: &LoweredProgram) -> &'static str {
     match program.target() {
         Target::Tree => "::ui_lang_guest::Editor",
@@ -24,10 +25,10 @@ pub(super) fn editor_type_code(program: &LoweredProgram) -> &'static str {
 }
 
 /// What an editor's message carries: the action the widget performed
-/// natively, the complete host observation on the tree target.
+/// natively, one bounded step of document delivery on the tree target.
 pub(super) fn editor_message_payload_code(program: &LoweredProgram) -> &'static str {
     match program.target() {
-        Target::Tree => "::ui_lang_guest::wire::EditorState",
+        Target::Tree => "::ui_lang_guest::EditorDocumentUpdate",
         Target::Native => "::iced::widget::text_editor::Action",
     }
 }

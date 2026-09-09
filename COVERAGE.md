@@ -1650,9 +1650,11 @@ editor_wasm_ -- --ignored`. CI bundles and runs the fixture explicitly.
 
 ### Tree editor document observations
 
-The Tree editor state is copied text plus active caret, optional selection anchor,
-reset revision and host observation revision. Cursor-only keyboard, pointer and
-accessibility changes cross `Event::Edit`. Columns are UTF-8 byte offsets with
+The guest owns Tree editor text plus active caret, optional selection anchor,
+reset revision, text revision and host observation revision. Tree projections
+carry document references; text assignments cross a bounded chunk handshake.
+Cursor-only keyboard, pointer and accessibility changes cross the same ordered
+transaction commit as text edits. Columns are UTF-8 byte offsets with
 external positions clamped backward to extended grapheme boundaries. Explicit
 assignment or guest `Editor::move_to` resets once; ordinary host observations do
 not. Same-reset sibling bindings synchronize newer observations, while delayed

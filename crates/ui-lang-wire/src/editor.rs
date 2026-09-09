@@ -73,12 +73,6 @@ pub struct EditorState {
     /// Monotonic host observation order within the instance.
     pub revision: u64,
 }
-impl EditorState {
-    pub fn sanitize(&mut self) {
-        crate::truncate_string(&mut self.text);
-        self.cursor.clamp(&self.text);
-    }
-}
 
 #[cfg(test)]
 mod tests {
