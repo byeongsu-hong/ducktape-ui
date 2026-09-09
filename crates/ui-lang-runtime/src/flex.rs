@@ -180,6 +180,7 @@ where
     max_width: f32,
     max_height: f32,
     clip: bool,
+    grid_min_cell: Option<f32>,
     items: Vec<FlexItem<'a, Message, Theme, Renderer>>,
 }
 
@@ -203,6 +204,7 @@ where
         max_width: f32::INFINITY,
         max_height: f32::INFINITY,
         clip: false,
+        grid_min_cell: None,
         items,
     }
 }
@@ -218,6 +220,13 @@ where
 
     pub fn wrap(mut self, wrap: FlexWrap) -> Self {
         self.wrap = wrap;
+        self
+    }
+
+    /// Compiler-owned equal-column sizing for native Ice minimum-cell grids.
+    #[doc(hidden)]
+    pub fn grid_min_cell(mut self, minimum: f32) -> Self {
+        self.grid_min_cell = Some(non_negative(minimum).max(f32::EPSILON));
         self
     }
 
@@ -429,6 +438,20 @@ where
         let (main_length, _) = axis.lengths(Size::new(self.width, self.height));
         let definite_main = definite_length(main_length, max_main);
         let basis_available = definite_main.unwrap_or(f32::INFINITY);
+        let grid_columns = self.grid_min_cell.map(|minimum| {
+            let capacity = ((f64::from(max_main) + f64::from(main_gap))
+                / (f64::from(minimum) + f64::from(main_gap)))
+            .floor() as usize;
+            capacity.clamp(1, self.items.len().max(1))
+        });
+        let grid_basis = grid_columns.map(|columns| {
+            if max_main.is_finite() {
+                ((f64::from(max_main) - f64::from(main_gap) * (columns - 1) as f64)
+                    / columns as f64) as f32
+            } else {
+                self.grid_min_cell.unwrap()
+            }
+        });
 
         let order = self.items.iter().any(|item| item.order != 0).then(|| {
             let mut order = (0..self.items.len()).collect::<Vec<_>>();
@@ -442,7 +465,8 @@ where
             let item = &mut self.items[source];
             let hint = item.content.as_widget().size();
             let (main_hint, _) = axis.lengths(hint);
-            let basis = resolve_basis(item.basis, basis_available, main_hint);
+            let basis =
+                grid_basis.or_else(|| resolve_basis(item.basis, basis_available, main_hint));
             let measure_limits = child_limits(axis, basis, max_main, max_cross, true, None);
             let node = item.content.as_widget_mut().layout(
                 &mut tree.children[source],
@@ -451,7 +475,11 @@ where
             );
             let intrinsic_main = axis.main(node.size());
             let fill = main_hint.fill_factor();
-            let grow = item.grow.unwrap_or(fill as f32);
+            let grow = if grid_basis.is_some() {
+                0.0
+            } else {
+                item.grow.unwrap_or(fill as f32)
+            };
             let content_basis = matches!(item.basis, FlexBasis::Content | FlexBasis::Percent(_));
             let base_main = basis.unwrap_or(if content_basis || fill == 0 || main_compress {
                 intrinsic_main
@@ -464,7 +492,11 @@ where
                 target_main: non_negative(base_main),
                 natural_cross: axis.cross(node.size()),
                 grow: non_negative(grow),
-                shrink: item.shrink,
+                shrink: if grid_basis.is_some() {
+                    0.0
+                } else {
+                    item.shrink
+                },
                 margins: resolve_margins(
                     item.margins,
                     axis,
@@ -475,7 +507,21 @@ where
         }
 
         let wrap_limit = definite_main.unwrap_or(max_main);
-        let mut lines = build_lines(&measured, self.wrap, wrap_limit, main_gap);
+        let mut lines = if let Some(columns) = grid_columns {
+            // Chunk by the chosen column count: adding rounded fractional
+            // cell widths must not accidentally wrap a full row early.
+            measured
+                .chunks(columns)
+                .enumerate()
+                .map(|(row, items)| Line {
+                    start: row * columns,
+                    end: row * columns + items.len(),
+                    cross: items.iter().map(item_outer_cross).fold(0.0, f32::max),
+                })
+                .collect()
+        } else {
+            build_lines(&measured, self.wrap, wrap_limit, main_gap)
+        };
         let natural_main = lines
             .iter()
             .map(|line| line_base(&measured[line.start..line.end], main_gap))

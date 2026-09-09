@@ -595,6 +595,21 @@ natural width; explicit newline-only text and single-line text do not expand.
 Unbounded paragraphs use natural measured widths. A shrink text with justified
 soft wraps measures the expanded lines, so it can occupy the available width.
 
+### Native minimum-cell grids
+
+`grid min-cell=M gap=G` chooses as many equal columns as fit its available
+content width `W`: `max(1, floor((W + G) / (M + G)))`, capped by the nonempty
+item count. Each cell receives `(W - (columns - 1) * G) / columns`; an odd
+final row uses those same column tracks. If `W < M`, the one cell receives `W`
+so the requested minimum never forces horizontal overflow. Empty grids have no
+rows or gaps. Parent and grid padding remain outside the cell calculation.
+
+Rows retain natural height. `min-cell` cannot combine with grid `h=`; an inner
+`grid cols=1 h=aspect(width,height)` supplies aspect-ratio cards through existing
+composition. Fixed-column and `max-cell` grids retain native Iced sizing.
+The Tree target still represents minimum-cell grids as ordinary flex items;
+its equal-column and narrower-than-minimum behavior remains separate work.
+
 ### Accessibility
 
 Ice owns a checked accessibility layer above stock iced. Generated Core nodes
@@ -1261,7 +1276,9 @@ the host's existing native flex engine. It preserves direction/reversal,
 nowrap/wrap/wrap-reverse, justify/items/content alignment, independent gaps,
 padding, dimensions/maxima and clipping. Item order, grow/shrink, fixed/content/
 percentage basis, self alignment and fixed/percentage/auto margins use the same
-checked lowering, including min-cell and if/for/match expansion. Utility sizing
+checked lowering and if/for/match expansion. Minimum-cell grids currently use
+ordinary growing, non-shrinking flex items on Tree; they do not yet carry the
+native equal-column sizing described above. Utility sizing
 on the painted outer container remains separate from explicit inner dimensions.
 
 Metadata is decode-bounded and normalized to surviving child count after the

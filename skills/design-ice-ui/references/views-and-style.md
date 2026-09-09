@@ -124,6 +124,13 @@ Direct `box` children may set flex-item behavior:
 
 Do not emulate flex with nested rows and state logic.
 
+### Grid
+
+Use `grid min-cell=` for native repeated cards that reflow into equal columns;
+`cols=` fixes the column count, while `max-cell=` caps each cell's width.
+[Repeated card grids](extended-surface.md#repeated-card-grids) covers natural
+row height, aspect-ratio composition, padding and the compiling example.
+
 ### Box
 
 Use `box` as a single-child container for padding, alignment, surface styling,

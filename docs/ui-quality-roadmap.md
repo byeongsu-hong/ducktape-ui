@@ -44,7 +44,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | L03 | P0 · Done | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
 | L04 | P0 · Done | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
 | L05 | P1 · Done | [PR #1043](https://github.com/byeongsu-hong/ducktape-ui/pull/1043), [responsive workspace guide](../crates/ui-lang-components/docs/responsive-workspace.md), [native Ice contract](../examples/showcase/tests/cases/ui/responsive_workspace.ice) | Wide/compact navigation preserves project selection, independent drafts, native focus, selection and caret across 960→360→960 resizing. Exact/custom content breakpoints, readable-width action alignment and reachable Save at 320×240 are verified; 4 authored tests plus 3 generated harness checks pass. |
-| L06 | P1 · Audit | [grid/flex surface](../skills/design-ice-ui/references/extended-surface.md), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Repeated cards use a consistent minimum useful width and aspect ratio; odd item counts and narrow windows leave no clipped or zero-width cells. |
+| L06 | P1 · Done | [PR #1045](https://github.com/byeongsu-hong/ducktape-ui/pull/1045), [native collection contract](../examples/showcase/tests/cases/ui/grid_collection.ice), [rendered evidence](../examples/showcase/screenshots/grid-collection/README.md) | Native minimum-cell grids retain equal columns across odd rows and clamp below the minimum without clipped or zero-width cells. Eight scenarios verify aspect-ratio composition, exact/fractional reflow, custom spacing/insets, natural rows, empty/single updates and real card clicks. Tree equal-column parity remains outside this native acceptance. |
 | L07 | P0 · Done | [text/layout emission](../crates/ui-lang-core/src/codegen/view), [text runtime](../crates/ui-lang-runtime/src) | Horizontal and vertical text alignment inside assigned bounds work independently of parent placement, including fixed/fill/shrink sizes, multiline wrapping and padding. Verify painted text geometry, not only the enclosing widget's rectangle. Added from the user's explicit two-axis text-alignment request. |
 
 ## Design defaults and customization
@@ -361,3 +361,24 @@ using scale 1, en-US, Linux metadata, reduced motion, native light theme and
 the default app palette. Native window-manager and touch behavior are outside
 this evidence. Source/API support is unchanged; the delivered scope is a
 reusable composition, executable examples, screenshots and guidance.
+
+### L06: equal native collection columns at every tested width
+
+2026-09-09: [PR #1045](https://github.com/byeongsu-hong/ducktape-ui/pull/1045)
+closes the native grid acceptance. Before the fix, a 320px minimum overflowed
+232px of available width, and incomplete rows stretched to 432/330.5/298px
+instead of the preceding 210/216.3333/192px tracks. One column calculation now
+keeps track widths consistent and fits a narrow parent. Existing Flex layout
+retains padding and natural row heights; inner one-cell grids provide 4:3 cards.
+
+Eight authored scenarios plus three generated harness checks verify 280/419/420/480/721px
+widths, custom 640px minimum/gap/insets, empty/single-item updates, natural rows,
+painted content containment and the last card's actual pointer route. Five
+pre-fix geometry assertions and three production mutations prove the oracles;
+restoration passes. All 19 grid/fill-portion checks passed after renderer
+integration. The broader earlier core/runtime and showcase runs passed 1,508
+and 421 tests respectively. Inspected before/after captures and a 60-frame
+production-view measurement are recorded in the
+[evidence directory](../examples/showcase/screenshots/grid-collection/README.md).
+Tree still sends ordinary growing, non-shrinking Flex items; these tests and
+the completed L06 status claim native behavior only.
