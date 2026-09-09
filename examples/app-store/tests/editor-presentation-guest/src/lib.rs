@@ -68,9 +68,7 @@ mod fixture {
                 drop_boundaries: vec![1, 2],
                 margins: vec![EditorMargin { line: 1, count: 1 }],
                 margin_label: "Open comments".into(),
-                ..Default::default()
             },
-            ..Default::default()
         }
     }
     pub fn remember(previous: Vec<u8>, event: Vec<u8>) -> Vec<u8> {

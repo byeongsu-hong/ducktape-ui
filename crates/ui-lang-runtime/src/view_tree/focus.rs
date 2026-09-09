@@ -1,10 +1,10 @@
-//! The only native interaction state carried to a replacement is eligible focus.
+//! Eligible focus transferred into a replacement native tree.
 use iced::advanced::widget::{Operation, operation::Focusable};
 use iced::{Rectangle, widget::Id};
 use std::collections::{HashMap, HashSet};
 use ui_lang_wire::{Node, ToggleKind};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum Kind {
     Input,
     Editor,
@@ -22,11 +22,96 @@ pub(super) struct Target {
     kind: Kind,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct Targets {
     controls: HashMap<Id, Option<Kind>>,
     surfaces: HashSet<crate::StableId>,
 }
+#[derive(Clone, Debug, Default)]
+pub(in crate::view_tree) struct Cache(std::sync::Arc<std::sync::Mutex<Option<Cached>>>);
+
+#[derive(Debug)]
+struct Cached {
+    // None marks a host surface; controls retain their exact kind and order,
+    // including duplicate keys. No hashes authorize cache reuse.
+    entries: Vec<(String, Option<Kind>)>,
+    targets: std::sync::Arc<Targets>,
+}
+
+fn visit(node: &Node, visitor: &mut impl FnMut(&str, Option<Kind>)) {
+    if let Node::Surface { key, .. } = node {
+        visitor(key, None);
+    }
+    if let Some((key, kind)) = control(node).filter(|(key, _)| !key.is_empty()) {
+        visitor(key, Some(kind));
+    }
+    for child in node.children() {
+        visit(child, visitor);
+    }
+}
+
+impl Cache {
+    #[cfg(test)]
+    pub(super) fn snapshot(&self) -> Option<std::sync::Arc<Targets>> {
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|cached| cached.targets.clone())
+    }
+
+    pub(super) fn get(&self, root: &Node) -> std::sync::Arc<Targets> {
+        let mut cached = self.0.lock().expect("focus metadata cache poisoned");
+        if let Some(current) = cached.as_ref() {
+            let mut entries = current.entries.iter();
+            let mut matches = true;
+            visit(root, &mut |key, kind| {
+                matches &= entries
+                    .next()
+                    .is_some_and(|entry| entry.0 == key && entry.1 == kind);
+            });
+            if matches && entries.next().is_none() {
+                return current.targets.clone();
+            }
+        }
+        let mut entries = Vec::new();
+        visit(root, &mut |key, kind| entries.push((key.to_owned(), kind)));
+        let targets = std::sync::Arc::new(Targets::new(root));
+        *cached = Some(Cached {
+            entries,
+            targets: targets.clone(),
+        });
+        targets
+    }
+}
+
+fn control(node: &Node) -> Option<(&str, Kind)> {
+    match node {
+        Node::Input { key, options, .. } if !options.disabled => Some((key.as_str(), Kind::Input)),
+        Node::Editor {
+            key,
+            editable: true,
+            ..
+        } => Some((key.as_str(), Kind::Editor)),
+        Node::Button {
+            key,
+            on_press: Some(_),
+            ..
+        } => Some((key.as_str(), Kind::Button)),
+        Node::Toggle {
+            key,
+            kind,
+            on_toggle: Some(_),
+            ..
+        } => Some((key.as_str(), Kind::Toggle(*kind))),
+        Node::Radio { key, .. } => Some((key.as_str(), Kind::Radio)),
+        Node::Slider { key, .. } => Some((key.as_str(), Kind::Slider)),
+        Node::PickList { key, .. } => Some((key.as_str(), Kind::Pick)),
+        Node::ComboBox { key, .. } => Some((key.as_str(), Kind::Combo)),
+        _ => None,
+    }
+}
+
 impl Targets {
     pub fn new(root: &Node) -> Self {
         let mut targets = Self::default();
@@ -38,34 +123,10 @@ impl Targets {
         if let Node::Surface { key, .. } = node {
             self.surfaces.insert(crate::StableId::new(key));
         }
-        let control = match node {
-            Node::Input { key, options, .. } if !options.disabled => Some((key, Kind::Input)),
-            Node::Editor {
-                key,
-                editable: true,
-                ..
-            } => Some((key, Kind::Editor)),
-            Node::Button {
-                key,
-                on_press: Some(_),
-                ..
-            } => Some((key, Kind::Button)),
-            Node::Toggle {
-                key,
-                kind,
-                on_toggle: Some(_),
-                ..
-            } => Some((key, Kind::Toggle(*kind))),
-            Node::Radio { key, .. } => Some((key, Kind::Radio)),
-            Node::Slider { key, .. } => Some((key, Kind::Slider)),
-            Node::PickList { key, .. } => Some((key, Kind::Pick)),
-            Node::ComboBox { key, .. } => Some((key, Kind::Combo)),
-            _ => None,
-        };
-        if let Some((key, kind)) = control.filter(|(key, _)| !key.is_empty()) {
+        if let Some((key, kind)) = control(node).filter(|(key, _)| !key.is_empty()) {
             // An ambiguous identity cannot authorize selecting one of its uses.
             self.controls
-                .entry(Id::from(key.clone()))
+                .entry(Id::from(key.to_owned()))
                 .and_modify(|kind| *kind = None)
                 .or_insert(Some(kind));
         }
@@ -181,13 +242,16 @@ pub(super) fn restore(
 // Accessible already marks semantic subtree boundaries. Only these private
 // handoff operations omit host surfaces; normal focus and accessibility still
 // traverse them. A hidden wire control never authorizes a foreign descendant.
-struct WithoutSurfaces<'a> {
+pub(super) struct WithoutSurfaces<'a> {
     surfaces: &'a HashSet<crate::StableId>,
     inner: &'a mut dyn Operation,
     excluded: bool,
 }
 impl<'a> WithoutSurfaces<'a> {
-    fn new(surfaces: &'a HashSet<crate::StableId>, inner: &'a mut dyn Operation) -> Self {
+    pub(super) fn new(
+        surfaces: &'a HashSet<crate::StableId>,
+        inner: &'a mut dyn Operation,
+    ) -> Self {
         Self {
             surfaces,
             inner,
@@ -208,9 +272,115 @@ impl Operation for WithoutSurfaces<'_> {
             self.excluded = false;
         }
     }
+    fn scrollable(
+        &mut self,
+        id: Option<&Id>,
+        bounds: Rectangle,
+        content: Rectangle,
+        translation: iced::Vector,
+        state: &mut dyn iced::advanced::widget::operation::Scrollable,
+    ) {
+        if !self.excluded {
+            self.inner
+                .scrollable(id, bounds, content, translation, state);
+        }
+    }
     fn focusable(&mut self, id: Option<&Id>, bounds: Rectangle, state: &mut dyn Focusable) {
         if !self.excluded {
             self.inner.focusable(id, bounds, state);
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn input(key: &str) -> Node {
+        Node::Input {
+            key: key.into(),
+            options: Default::default(),
+            placeholder: String::new(),
+            value: String::new(),
+            on_input: 0,
+            on_submit: None,
+            width: None,
+            secure: false,
+            style: Box::default(),
+        }
+    }
+
+    #[test]
+    fn exact_focus_metadata_reuses_values_but_rejects_authority_changes() {
+        let cache = Cache::default();
+        let original = input("draft");
+        let first = cache.get(&original);
+        let target = Target {
+            id: Id::from("draft"),
+            kind: Kind::Input,
+        };
+        assert!(first.contains(&target));
+        let mut edited = original.clone();
+        if let Node::Input { value, .. } = &mut edited {
+            *value = "edited".into();
+        }
+        assert!(Arc::ptr_eq(&first, &cache.get(&edited)));
+        let mut disabled = original.clone();
+        if let Node::Input { options, .. } = &mut disabled {
+            options.disabled = true;
+        }
+        assert!(!cache.get(&disabled).contains(&target));
+        assert!(!cache.get(&input("other")).contains(&target));
+        let mut root = Node::Linear {
+            key: "root".into(),
+            axis: ui_lang_wire::Axis::Column,
+            max_width: None,
+            clip: false,
+            wrap: None,
+            spacing: None,
+            padding: None,
+            width: None,
+            height: None,
+            align: None,
+            background: None,
+            border: None,
+            children: vec![original.clone(), original.clone()],
+        };
+        assert!(
+            !cache.get(&root).contains(&target),
+            "duplicate keys cannot authorize focus"
+        );
+        if let Node::Linear { children, .. } = &mut root {
+            children.pop();
+        }
+        assert!(cache.get(&root).contains(&target));
+        let changed_kind = Node::Radio {
+            key: "draft".into(),
+            label: String::new(),
+            selected: false,
+            on_select: 0,
+            width: None,
+            style: Default::default(),
+        };
+        assert!(!cache.get(&changed_kind).contains(&target));
+        let surface = Node::Surface {
+            key: "host".into(),
+            name: "surface".into(),
+            args: vec![],
+            on_event: None,
+        };
+        let surfaces = cache.get(&surface);
+        assert!(surfaces.surfaces.contains(&crate::StableId::new("host")));
+        assert!(
+            !cache
+                .get(&Node::empty())
+                .surfaces
+                .contains(&crate::StableId::new("host"))
+        );
+        assert!(
+            first.contains(&target),
+            "mounted scope keeps its immutable authority snapshot"
+        );
     }
 }

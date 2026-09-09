@@ -5,6 +5,11 @@ Ice delivery path visible: `build.rs` compiles `src/ui/app.ice`,
 `ui_lang::include_app!` includes the generated program, and the authored Ice
 test drives the real headless application.
 
+For a screen built from default UI components, start with
+[Settings](../settings/README.md) and the
+[screen authoring guide](../../docs/ui-authoring.md). They show the source
+import and reusable layouts alongside this minimal integration path.
+
 ![Starter input with a visible focus ring](screenshots/starter_name_focus_is_visible/focused.png)
 
 ```bash

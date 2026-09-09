@@ -49,7 +49,17 @@ pauses following when it leaves the live edge.
 removal, or replacement returns `HistoryChanged` without publishing partial
 identity. `replace` makes an intentional discontinuity visible in code, resets
 unread state, and resumes the new stream's tail. Duplicate keys are rejected in
-both paths. State retains only keys and virtualization metadata; row payloads
+both paths.
+
+For a capped log that evicts a known prefix, use
+`reconcile_trimmed(rows, key, removed, config)`. The surviving old keys must
+remain a prefix of the new window. It preserves a paused reader's surviving
+rows and selection, counts only appended suffix rows as unread, and keeps tail
+following paused. An incorrect removed count or changed surviving history
+fails atomically. Use `replace` for a different stream, rather than for ordinary
+front eviction.
+
+State retains only keys and virtualization metadata; row payloads
 and elements remain with the caller, and rendering invokes the row callback
 only for visible plus overscan rows.
 

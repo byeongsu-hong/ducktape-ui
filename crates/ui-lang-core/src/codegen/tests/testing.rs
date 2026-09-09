@@ -474,3 +474,46 @@ view
     assert!(!generated.contains("#[cfg(test)]\npub(crate) __pane_test_panes:"));
     assert!(!generated.contains("#[cfg(test)]\nlet __pane_test_panes ="));
 }
+
+#[test]
+fn keyed_test_targets_use_one_format_with_ordered_keys() {
+    let source = r#"app Keyed
+theme contract AppTheme
+  bg
+  fg
+  primary
+  danger
+palette app for AppTheme
+  bg #000000
+  fg #ffffff
+  primary #333333
+  danger #ff0000
+state
+  rows: [i64] = [1, 2]
+view
+  col #root
+    keyed outer in rows by=outer #rows
+      keyed inner in rows by=inner #nested
+        text inner #label
+test keys
+  target label = #root/rows/key(1)/nested/key(2)/label
+  expect exists label
+"#;
+    let daemon = source.replace("app Keyed", "daemon Keyed").replace(
+        "view\n  col #root",
+        "component Panel()\n  lifetime mounted\n  state\n    open = false\n  text \"panel\"\nview\n  col #root\n    Panel #panel",
+    );
+    for source in [source, daemon.as_str()] {
+        let generated = compile(source, "keyed.ice").unwrap();
+        assert!(generated.contains("let __ice_target_key_2 = 1; let __ice_target_key_4 = 2;"));
+        assert!(
+            generated.contains("format!(\"{}/root/rows/key({})/nested/key({})/label\", __ice_target_root, __ice_target_key_2, __ice_target_key_4)"),
+            "keyed targets must use one formatting operation and preserve ordered keys"
+        );
+        if source.starts_with("daemon") {
+            assert!(generated.contains(
+                "let __ice_target_root = format!(\"{}/{:?}\", \"Keyed\", __test.window());"
+            ));
+        }
+    }
+}

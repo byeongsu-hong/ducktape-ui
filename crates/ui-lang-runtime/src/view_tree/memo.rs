@@ -2,6 +2,9 @@
 use super::{IceElement, Output};
 #[path = "focus.rs"]
 mod focus;
+pub(super) use focus::Cache as FocusCache;
+#[path = "scroll.rs"]
+mod scroll;
 use crate::{MemoParking, MemoParkingHandle};
 use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
@@ -12,12 +15,14 @@ pub(super) fn scope(
     instance: u64,
     handle: MemoParkingHandle,
     root: &ui_lang_wire::Node,
+    focus: &FocusCache,
 ) -> IceElement<'static, Output> {
     iced::Element::new(Scope {
         content,
         instance,
         handle,
-        focus: focus::Targets::new(root),
+        focus: focus.get(root),
+        scroll: scroll::Targets::new(root),
     })
 }
 
@@ -30,6 +35,7 @@ pub(super) fn render(
     use std::{collections::HashMap, rc::Rc};
     let mut inputs = super::Inputs {
         instance: kept.inputs.instance,
+        focus_cache: kept.inputs.focus_cache.clone(),
         fields: HashMap::new(),
         editors: HashMap::new(),
         editor_references: kept.inputs.editor_references.clone(),
@@ -170,7 +176,8 @@ struct Scope {
     content: IceElement<'static, Output>,
     instance: u64,
     handle: MemoParkingHandle,
-    focus: focus::Targets,
+    focus: std::sync::Arc<focus::Targets>,
+    scroll: scroll::Targets,
 }
 
 struct State {
@@ -178,6 +185,8 @@ struct State {
     owner: MemoParking,
     focused: Option<focus::Target>,
     restore: Option<focus::Target>,
+    positions: scroll::Positions,
+    restore_positions: scroll::Positions,
 }
 
 impl Scope {
@@ -193,6 +202,18 @@ impl Scope {
         tree.state.downcast_mut::<State>().focused = focused;
     }
 
+    fn observe_scroll(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &iced::Renderer) {
+        let positions = self.scroll.capture(|operation| {
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                operation,
+            );
+        });
+        tree.state.downcast_mut::<State>().positions = positions;
+    }
+
     fn fresh_state(&self) -> State {
         let owner = MemoParking::default();
         self.handle.attach(&owner);
@@ -201,6 +222,8 @@ impl Scope {
             owner,
             focused: None,
             restore: None,
+            positions: Default::default(),
+            restore_positions: Default::default(),
         }
     }
 }
@@ -229,7 +252,9 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
                 .focused
                 .take()
                 .filter(|target| self.focus.contains(target));
+            let positions = std::mem::take(&mut state.positions);
             *state = self.fresh_state();
+            state.restore_positions = positions;
             state.restore = restore;
             tree.children = self.children();
         } else {
@@ -265,7 +290,17 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
                 );
             });
         }
+        let positions = std::mem::take(&mut tree.state.downcast_mut::<State>().restore_positions);
+        self.scroll.restore(positions, |operation| {
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                Layout::new(&layout),
+                renderer,
+                operation,
+            );
+        });
         self.observe_focus(tree, Layout::new(&layout), renderer);
+        self.observe_scroll(tree, Layout::new(&layout), renderer);
         layout
     }
 
@@ -280,6 +315,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
         self.observe_focus(tree, layout, renderer);
+        self.observe_scroll(tree, layout, renderer);
     }
 
     fn update(
@@ -303,6 +339,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             shell,
             viewport,
         );
+        self.observe_scroll(tree, layout, renderer);
         // Pointer observation and redraw ticks do not change a control's focus.
         // Layout and explicit widget operations record focus separately.
         let inert = matches!(
@@ -402,7 +439,13 @@ mod tests {
         } else {
             iced::widget::text("hidden").into()
         };
-        scope(content, instance, handle, &ui_lang_wire::Node::empty())
+        scope(
+            content,
+            instance,
+            handle,
+            &ui_lang_wire::Node::empty(),
+            &FocusCache::default(),
+        )
     }
 
     fn headless() -> iced::Renderer {
@@ -530,6 +573,299 @@ mod tests {
         next.as_widget_mut()
             .operate(&mut tree, Layout::new(&layout), &renderer, &mut focus);
         focus.focused
+    }
+
+    fn scroll_node(
+        key: &str,
+        height: f32,
+        anchor_y: ui_lang_wire::ScrollAnchor,
+    ) -> ui_lang_wire::Node {
+        use ui_lang_wire::{Length, Node, ScrollAnchor, ScrollDirection};
+        Node::Scroll {
+            key: key.into(),
+            on_scroll: None,
+            virtual_rows: false,
+            direction: ScrollDirection::Vertical,
+            width: Some(Length::Fixed(100.0)),
+            height: Some(Length::Fixed(100.0)),
+            bar_hidden: true,
+            bar_width: None,
+            bar_margin: None,
+            scroller_width: None,
+            bar_spacing: None,
+            anchor_x: ScrollAnchor::Start,
+            anchor_y,
+            auto_scroll: false,
+            background: None,
+            border: None,
+            content: Box::new(Node::Space {
+                width: Some(Length::Fixed(100.0)),
+                height: Some(Length::Fixed(height)),
+            }),
+        }
+    }
+
+    #[derive(Default)]
+    struct ScrollPosition(Vec<(iced::widget::Id, f32)>);
+    impl Operation for ScrollPosition {
+        fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+            visit(self);
+        }
+        fn scrollable(
+            &mut self,
+            id: Option<&iced::widget::Id>,
+            _: Rectangle,
+            _: Rectangle,
+            translation: Vector,
+            _: &mut dyn iced::advanced::widget::operation::Scrollable,
+        ) {
+            if let Some(id) = id {
+                self.0.push((id.clone(), translation.y));
+            }
+        }
+    }
+
+    fn replaced_scroll(
+        after: &ui_lang_wire::Node,
+        anchor: ui_lang_wire::ScrollAnchor,
+    ) -> Vec<(iced::widget::Id, f32)> {
+        replaced_scroll_with_surfaces(after, anchor, &super::super::Surfaces::new())
+    }
+
+    fn replaced_scroll_with_surfaces(
+        after: &ui_lang_wire::Node,
+        anchor: ui_lang_wire::ScrollAnchor,
+        surfaces: &super::super::Surfaces,
+    ) -> Vec<(iced::widget::Id, f32)> {
+        use super::super::{Inputs, Pictures, Surfaces, render};
+        use iced_test::runtime::{UserInterface, user_interface};
+        let mut renderer = headless();
+        let before = scroll_node("history", 600.0, anchor);
+        let mut ui = UserInterface::build(
+            render(
+                &before,
+                &Inputs::default(),
+                &Pictures::default(),
+                &Surfaces::new(),
+            ),
+            Size::new(100.0, 200.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        ui.update(
+            &[Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Pixels {
+                    x: 0.0,
+                    y: if anchor == ui_lang_wire::ScrollAnchor::End {
+                        60.0
+                    } else {
+                        -60.0
+                    },
+                },
+            })],
+            mouse::Cursor::Available(iced::Point::new(25.0, 25.0)),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut vec![],
+        );
+        // Do not inspect/operate/layout before replacement: wheel observation
+        // must record the position without another chance to capture it.
+        let mut ui = UserInterface::build(
+            render(after, &Inputs::default(), &Pictures::default(), surfaces),
+            Size::new(100.0, 200.0),
+            ui.into_cache(),
+            &mut renderer,
+        );
+        let mut position = ScrollPosition::default();
+        ui.operate(&renderer, &mut position);
+        position.0
+    }
+
+    #[test]
+    fn replaced_instance_retains_immediate_wheel_scroll() {
+        let node = scroll_node("history", 600.0, ui_lang_wire::ScrollAnchor::Start);
+        assert_eq!(
+            replaced_scroll(&node, ui_lang_wire::ScrollAnchor::Start),
+            vec![(iced::widget::Id::new("history"), 60.0)]
+        );
+    }
+
+    #[test]
+    fn replaced_scroll_preserves_both_axes() {
+        use super::super::{Inputs, Pictures, Surfaces, render};
+        use iced_test::runtime::{UserInterface, user_interface};
+        let mut renderer = headless();
+        let mut node = scroll_node("history", 600.0, ui_lang_wire::ScrollAnchor::Start);
+        if let ui_lang_wire::Node::Scroll {
+            direction, content, ..
+        } = &mut node
+        {
+            *direction = ui_lang_wire::ScrollDirection::Both;
+            if let ui_lang_wire::Node::Space { width, .. } = content.as_mut() {
+                *width = Some(ui_lang_wire::Length::Fixed(600.0));
+            }
+        }
+        let view = || {
+            render(
+                &node,
+                &Inputs::default(),
+                &Pictures::default(),
+                &Surfaces::new(),
+            )
+        };
+        let mut ui = UserInterface::build(
+            view(),
+            Size::new(100.0, 100.0),
+            user_interface::Cache::default(),
+            &mut renderer,
+        );
+        ui.update(
+            &[Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Pixels { x: -45.0, y: -60.0 },
+            })],
+            mouse::Cursor::Available(iced::Point::new(25.0, 25.0)),
+            &mut renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut vec![],
+        );
+        let mut ui = UserInterface::build(
+            view(),
+            Size::new(100.0, 100.0),
+            ui.into_cache(),
+            &mut renderer,
+        );
+        #[derive(Default)]
+        struct Position(Option<Vector>);
+        impl Operation for Position {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
+                visit(self);
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&iced::widget::Id>,
+                _: Rectangle,
+                _: Rectangle,
+                translation: Vector,
+                _: &mut dyn iced::advanced::widget::operation::Scrollable,
+            ) {
+                self.0 = Some(translation);
+            }
+        }
+        let mut position = Position::default();
+        ui.operate(&renderer, &mut position);
+        assert_eq!(position.0, Some(Vector::new(45.0, 60.0)));
+    }
+
+    #[test]
+    fn replaced_scroll_clamps_and_preserves_anchor_distance() {
+        use ui_lang_wire::ScrollAnchor::{End, Start};
+        assert_eq!(
+            replaced_scroll(&scroll_node("history", 130.0, Start), Start)[0].1,
+            30.0
+        );
+        assert_eq!(
+            replaced_scroll(&scroll_node("history", 800.0, End), End)[0].1,
+            640.0
+        );
+        assert_eq!(
+            replaced_scroll(&scroll_node("history", 130.0, End), End)[0].1,
+            0.0
+        );
+    }
+
+    #[test]
+    fn replaced_scroll_rejects_removed_ambiguous_and_changed_identities() {
+        use ui_lang_wire::ScrollAnchor::{End, Start};
+        assert!(replaced_scroll(&ui_lang_wire::Node::empty(), Start).is_empty());
+        assert_eq!(
+            replaced_scroll(&scroll_node("different", 600.0, Start), Start)[0].1,
+            0.0
+        );
+        let duplicate = column(vec![
+            scroll_node("history", 600.0, Start),
+            scroll_node("history", 600.0, Start),
+        ]);
+        assert!(
+            replaced_scroll(&duplicate, Start)
+                .iter()
+                .all(|(_, y)| *y == 0.0)
+        );
+        assert_eq!(
+            replaced_scroll(&scroll_node("history", 600.0, End), Start)[0].1,
+            500.0
+        );
+        let mut direction = scroll_node("history", 600.0, Start);
+        if let ui_lang_wire::Node::Scroll { direction, .. } = &mut direction {
+            *direction = ui_lang_wire::ScrollDirection::Both;
+        }
+        assert_eq!(replaced_scroll(&direction, Start)[0].1, 0.0);
+    }
+
+    #[test]
+    fn replaced_scroll_does_not_target_a_colliding_host_surface() {
+        use ui_lang_wire::ScrollAnchor::Start;
+        let mut surfaces = super::super::Surfaces::new();
+        surfaces.insert(
+            "collision".into(),
+            std::sync::Arc::new(|_, _| {
+                iced::widget::scrollable(iced::widget::Space::new().height(600.0))
+                    .id("history")
+                    .height(100.0)
+                    .into()
+            }),
+        );
+        let surface = ui_lang_wire::Node::Surface {
+            key: "native".into(),
+            name: "collision".into(),
+            args: vec![],
+            on_event: None,
+        };
+        let mut after = column(vec![scroll_node("history", 600.0, Start), surface]);
+        let offsets = replaced_scroll_with_surfaces(&after, Start, &surfaces);
+        assert_eq!(offsets.len(), 2);
+        assert!(offsets.iter().all(|(_, y)| *y == 0.0));
+        // The declared guest ID is now hidden; the lone native match belongs
+        // to the host surface and must not inherit guest state either.
+        if let ui_lang_wire::Node::Linear { children, .. } = &mut after {
+            children[0] = ui_lang_wire::Node::Tooltip {
+                key: "tip".into(),
+                position: ui_lang_wire::TooltipPosition::Top,
+                gap: 0.0,
+                padding: 0.0,
+                delay_ms: 0,
+                snap: false,
+                style: Default::default(),
+                children: vec![
+                    ui_lang_wire::Node::empty(),
+                    scroll_node("history", 600.0, Start),
+                ],
+            };
+        }
+        let offsets = replaced_scroll_with_surfaces(&after, Start, &surfaces);
+        assert_eq!(offsets.len(), 1);
+        assert_eq!(offsets[0].1, 0.0);
+    }
+
+    #[test]
+    fn rendering_changed_roots_without_adopt_refreshes_focus_metadata() {
+        let inputs = super::super::Inputs::default();
+        let before = input("before", false);
+        let after = input("after", false);
+        let pictures = super::super::Pictures::default();
+        let surfaces = super::super::Surfaces::new();
+        drop(super::super::render(&before, &inputs, &pictures, &surfaces));
+        let first = inputs
+            .focus_cache
+            .snapshot()
+            .expect("render initialized metadata");
+        drop(super::super::render(&after, &inputs, &pictures, &surfaces));
+        let second = inputs.focus_cache.snapshot().unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&first, &second));
+        drop(super::super::render(&after, &inputs, &pictures, &surfaces));
+        assert!(std::sync::Arc::ptr_eq(
+            &second,
+            &inputs.focus_cache.snapshot().unwrap()
+        ));
     }
 
     #[test]

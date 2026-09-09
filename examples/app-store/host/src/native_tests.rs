@@ -233,7 +233,11 @@ fn pump_theme(
     now: &mut Instant,
     dark: bool,
 ) -> super::layers_tests::Ui {
-    for _ in 0..4 {
+    // Mount tasks and editor transfers can require several host/guest exchanges.
+    // A fixed frame count does not establish snapshot readiness.
+    const MAX_REDRAWS: usize = 64;
+    for _ in 0..MAX_REDRAWS {
+        let mounted_revision = surface.0.lock().unwrap().frame_rev;
         ui = iced_test::runtime::UserInterface::build(
             wasm_view(surface.clone(), dark),
             iced::Size::new(480.0, 600.0),
@@ -250,9 +254,41 @@ fn pump_theme(
             &mut iced::advanced::clipboard::Null,
             &mut vec![],
         );
-        assert!(surface.0.lock().unwrap().fault.is_none());
+        let mut guest = surface.0.lock().unwrap();
+        assert!(
+            guest.fault.is_none(),
+            "{}: {:?}",
+            guest.entry.id,
+            guest.fault
+        );
+        match guest.backend.snapshot() {
+            Ok(_) => {
+                // A subscription may be snapshot-safe while a host reply still
+                // waits to deliver the requested theme to the guest.
+                // A settled redraw may publish a new tree. Mount that revision
+                // before returning a UI that the next pointer input can use.
+                if guest.pending.is_empty()
+                    && !guest.frame.busy
+                    && guest.widgets.is_empty()
+                    && guest.frame_rev == mounted_revision
+                {
+                    return ui;
+                }
+            }
+            Err(error) if error == "guest has pending work; snapshot after it settles" => {}
+            Err(error) => panic!("{}: snapshot failed: {error}", guest.entry.id),
+        }
     }
-    ui
+    let mut guest = surface.0.lock().unwrap();
+    let snapshot = guest.backend.snapshot().map(|_| ());
+    panic!(
+        "{}: did not settle after {MAX_REDRAWS} redraws: pending={}, busy={}, widgets={}, snapshot={:?}",
+        guest.entry.id,
+        guest.pending.len(),
+        guest.frame.busy,
+        guest.widgets.len(),
+        snapshot,
+    );
 }
 
 #[test]
