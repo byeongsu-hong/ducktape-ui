@@ -10,7 +10,7 @@ ui-lang-components targets the complete [official shadcn/ui component catalog](h
 | --- | --- | --- |
 | Accordion | Shipped | Controlled single/multiple disclosure with stable header IDs, aligned copy/indicator/content, pointer/touch/Enter/Space activation, disabled-aware ArrowUp/Down/Home/End navigation, and direct focus tasks. |
 | Alert | Shipped | Composable semantic container; visible text carries intent. |
-| Alert Dialog | Shipped | Controlled high-friction modal with safe initial focus, wrapping Tab order, explicit cancel/action outcomes, Escape cancellation, and no backdrop dismissal. |
+| Alert Dialog | Shipped | Controlled high-friction modal with safe initial focus, wrapping Tab order, explicit cancel/action outcomes, Escape cancellation, scrollable long copy, wrapping custom actions, and no backdrop dismissal. |
 | Aspect Ratio | Shipped | Native responsive layout constrained to a caller-selected ratio. |
 | Attachment | Shipped | Visible file name/metadata row with caller-owned controls. |
 | Avatar | Shipped | Circular caller-owned content frame and text fallback without forcing image support. |
@@ -25,12 +25,12 @@ ui-lang-components targets the complete [official shadcn/ui component catalog](h
 | Chart | Shipped | Keyed Canvas line/area/grouped-or-stacked bar/pie/donut charts with safe domains, axes/grids, controlled hit testing, semantic light/dark series colors, aligned legends, shadcn-style tooltip indicators, and explicit visible companion-table data. |
 | Checkbox | Shipped | Styled controlled checkbox with visible focus and pointer/touch/Enter/Space activation. |
 | Collapsible | Shipped | Controlled open/close reducer and caller-owned trigger/content composition. |
-| Combobox | Shipped | Searchable selection built on iced's keyboard-capable native combo box. |
+| Combobox | Shipped | Searchable native selection with explicit input focus ID, active-option reveal, empty-query handling, selection/Escape retaining input focus, Tab traversal and nested modal dismissal; requires the workspace widget patch. |
 | Command | Shipped | Controlled grouped command palette with native editing/paste/IME, label/keyword filtering, disabled-aware navigation, active-row reveal, one roving result focus stop, Enter/pointer selection, shortcuts, empty state, and stable focus tasks. |
 | Context Menu | Shipped | Exact right-click/touch point anchoring and re-anchoring with collision handling, dismissal/focus restoration, and the complete shared grouped/check/radio/submenu/shortcut keyboard menu contract. |
 | Data Table | Shipped | Headless sorting, filtering-copy, and pagination state composed with table, input, checkbox, and pagination primitives. |
 | Date Picker | Shipped | Controlled single/range trigger and collision-aware popover composed with Calendar, including placeholder/custom formats, constraints, completed-range close behavior, initial day focus, dismissal restoration, invalid/disabled states, and RTL. |
-| Dialog | Shipped | Root-level controlled modal with inert underlay, wrapping Tab order, initial/restore focus tasks, Escape/backdrop dismissal, and explicit LTR/RTL copy/action alignment. |
+| Dialog | Shipped | Root-level controlled modal with inert underlay, wrapping Tab order, initial/restore focus tasks, bounded scrolling copy/custom body with reserved actions and focus reveal, Escape/backdrop dismissal, and explicit LTR/RTL copy/action alignment. |
 | Direction | Shipped | Explicit LTR/RTL alignment and reading-order helpers. |
 | Drawer | Shipped | Controlled draggable drawer on all four edges with mouse/touch distance and velocity thresholds, focus/dismissal rules, viewport caps, handle, reduced-motion snap behavior, and caller-owned state. |
 | Dropdown Menu | Shipped | Controlled anchored trigger/content with focus restoration, collision placement, LTR/RTL, and shared groups, labels, separators, inset/disabled/check/radio/shortcut/submenu items plus complete keyboard navigation. |

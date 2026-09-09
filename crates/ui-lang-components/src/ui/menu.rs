@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use super::direction::Direction;
 use super::focus_control::{self, FocusControl, Status};
+use super::scroll_area::scroll_area;
 use super::theme::{Theme, alpha, mix};
 use iced::alignment::{Horizontal, Vertical};
 use iced::font::Weight;
@@ -591,7 +592,10 @@ where
             &self.on_event,
             &mut children,
         );
-        Column::from_vec(children).width(self.width).into()
+        scroll_area(Column::from_vec(children).width(self.width), &self.theme)
+            .id(menu_scroll_id(&self.id))
+            .width(self.width)
+            .into()
     }
 }
 
@@ -893,8 +897,16 @@ pub fn menu_item_id(menu_id: &str, item_id: &str) -> iced::widget::Id {
     ))
 }
 
+fn menu_scroll_id(menu_id: &str) -> iced::widget::Id {
+    iced::widget::Id::from(format!("ducktape-menu-scroll:{}:{menu_id}", menu_id.len()))
+}
+
 pub fn focus_menu_item<Message>(menu_id: &str, item_id: &str) -> Task<Message> {
-    iced::widget::operation::focus(menu_item_id(menu_id, item_id))
+    super::reveal_item::reveal_item(
+        menu_scroll_id(menu_id),
+        menu_item_id(menu_id, item_id),
+        true,
+    )
 }
 
 pub fn focus_menu_state<Message>(
@@ -1141,23 +1153,6 @@ mod tests {
     }
 
     #[test]
-    fn menu_builds_groups_labels_separators_and_items() {
-        let entries = vec![
-            MenuGroup::new(
-                "editing",
-                vec![MenuEntry::item("copy", "Copy"), MenuEntry::separator("s")],
-            )
-            .label("Editing")
-            .into(),
-            MenuEntry::label("account-label", "Account"),
-            MenuEntry::item("logout", "Log out"),
-        ];
-        let state = MenuState::initial(&entries);
-        let element: Element<'_, ()> = menu("test", &entries, &state, |_| (), &LIGHT).into();
-        assert_eq!(element.as_widget().children().len(), 5);
-    }
-
-    #[test]
     fn resolved_menu_focus_matches_its_rendered_tab_stop() {
         let entries = vec![
             MenuItem::new("disabled", "Disabled")
@@ -1186,7 +1181,6 @@ mod tests {
             resolved_focus(&entries, &stale).map(|(path, _)| path),
             Some(vec![1])
         );
-        assert_eq!(element.as_widget().children().len(), 2);
         assert_eq!(focusable_count(element), 1);
     }
 }

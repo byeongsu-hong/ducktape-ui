@@ -71,7 +71,7 @@ use crate::overlay::menu;
 use crate::text::LineHeight;
 use crate::text_input::{self, TextInput};
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt::Display;
 
 /// A widget for searching and selecting a single value from a list of options.
@@ -193,6 +193,12 @@ where
             menu_class: <Theme as Catalog>::default_menu(),
             menu_height: Length::Shrink,
         }
+    }
+
+    /// Sets the stable input ID used by focus scopes and widget operations.
+    pub fn id(mut self, id: impl Into<widget::Id>) -> Self {
+        self.text_input = self.text_input.id(id);
+        self
     }
 
     /// Sets the message that should be produced when some text is typed into
@@ -485,6 +491,8 @@ where
 
 struct Menu<T> {
     menu: menu::State,
+    open: Cell<bool>,
+    focused: bool,
     hovered_option: Option<usize>,
     new_selection: Option<T>,
     filtered_options: Filtered<T>,
@@ -525,7 +533,8 @@ where
             &mut tree.children[0],
             renderer,
             limits,
-            (!is_focused).then_some(&self.selection),
+            (!is_focused || !tree.state.downcast_ref::<Menu<T>>().open.get())
+                .then_some(&self.selection),
         )
     }
 
@@ -536,6 +545,8 @@ where
     fn state(&self) -> widget::tree::State {
         widget::tree::State::new(Menu::<T> {
             menu: menu::State::new(),
+            open: Cell::new(false),
+            focused: false,
             filtered_options: Filtered::empty(),
             hovered_option: Some(0),
             new_selection: None,
@@ -548,6 +559,21 @@ where
 
     fn diff(&self, _tree: &mut widget::Tree) {
         // do nothing so the children don't get cleared
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut widget::Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        self.text_input.operate(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            operation,
+        );
     }
 
     fn update(
@@ -570,6 +596,36 @@ where
 
             text_input_state.is_focused()
         };
+        let was_open = menu.open.get();
+        if started_focused && !menu.focused {
+            menu.open.set(true);
+        }
+        let escape = started_focused
+            && matches!(
+                event,
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(key::Named::Escape),
+                    ..
+                })
+            );
+        if escape {
+            if !menu.open.get() {
+                return;
+            }
+            menu.open.set(false);
+            menu.focused = true;
+            self.state.with_inner_mut(|state| {
+                state.value.clear();
+                state.filtered_options.update(self.state.options.clone());
+            });
+            if was_open && let Some(on_close) = self.on_close.take() {
+                shell.publish(on_close);
+            }
+            shell.capture_event();
+            shell.invalidate_widgets();
+            shell.request_redraw();
+            return;
+        }
         // This is intended to check whether or not the message buffer was empty,
         // since `Shell` does not expose such functionality.
         let mut published_message_to_shell = false;
@@ -600,6 +656,8 @@ where
         // Then finally react to them here
         for message in local_messages {
             let TextInputEvent::TextChanged(new_value) = message;
+            menu.open.set(true);
+            menu.menu = menu::State::new();
 
             if let Some(on_input) = &self.on_input {
                 shell.publish((on_input)(new_value.clone()));
@@ -634,7 +692,38 @@ where
             text_input_state.is_focused()
         };
 
-        if is_focused {
+        if is_focused
+            && (!started_focused
+                || matches!(
+                    event,
+                    Event::Mouse(mouse::Event::ButtonPressed(
+                        mouse::Button::Left
+                    )) | Event::Touch(
+                        crate::core::touch::Event::FingerPressed { .. }
+                    )
+                ) && cursor.is_over(layout.bounds()))
+        {
+            menu.open.set(true);
+        }
+        let keyboard_open = is_focused
+            && !menu.open.get()
+            && matches!(
+                event,
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: keyboard::Key::Named(
+                        key::Named::ArrowDown
+                            | key::Named::ArrowUp
+                            | key::Named::Enter
+                    ),
+                    ..
+                })
+            );
+        if keyboard_open {
+            menu.open.set(true);
+            shell.capture_event();
+            shell.request_redraw();
+        }
+        if is_focused && menu.open.get() && !keyboard_open {
             self.state.with_inner(|state| {
                 if !started_focused
                     && let Some(on_option_hovered) = &mut self.on_option_hovered
@@ -668,7 +757,7 @@ where
                             shell.capture_event();
                             shell.request_redraw();
                         }
-                        (key::Named::ArrowUp, _) | (key::Named::Tab, true) => {
+                        (key::Named::ArrowUp, _) => {
                             if let Some(index) = &mut menu.hovered_option {
                                 if *index == 0 {
                                     *index = state
@@ -703,10 +792,7 @@ where
                             shell.capture_event();
                             shell.request_redraw();
                         }
-                        (key::Named::ArrowDown, _)
-                        | (key::Named::Tab, false)
-                            if !modifiers.shift() =>
-                        {
+                        (key::Named::ArrowDown, _) => {
                             if let Some(index) = &mut menu.hovered_option {
                                 if *index
                                     >= state
@@ -767,22 +853,9 @@ where
                 shell.publish((self.on_selected)(selection));
                 published_message_to_shell = true;
 
-                // Unfocus the input
-                let mut local_messages = Vec::new();
-                let mut local_shell = Shell::new(&mut local_messages);
-                self.text_input.update(
-                    &mut tree.children[0],
-                    &Event::Mouse(mouse::Event::ButtonPressed(
-                        mouse::Button::Left,
-                    )),
-                    layout,
-                    mouse::Cursor::Unavailable,
-                    renderer,
-                    clipboard,
-                    &mut local_shell,
-                    viewport,
-                );
-                shell.request_input_method(local_shell.input_method());
+                menu.open.set(false);
+                shell.invalidate_widgets();
+                shell.request_redraw();
             }
         });
 
@@ -794,12 +867,14 @@ where
             text_input_state.is_focused()
         };
 
-        if started_focused != is_focused {
-            // Focus changed, invalidate widget tree to force a fresh `view`
+        if !is_focused {
+            menu.open.set(false);
+        }
+        menu.focused = is_focused;
+        if was_open != menu.open.get() || started_focused != is_focused {
             shell.invalidate_widgets();
-
             if !published_message_to_shell {
-                if is_focused {
+                if menu.open.get() {
                     if let Some(on_open) = self.on_open.take() {
                         shell.publish(on_open);
                     }
@@ -845,7 +920,10 @@ where
             text_input_state.is_focused()
         };
 
-        let selection = if is_focused || self.selection.is_empty() {
+        let selection = if (is_focused
+            && tree.state.downcast_ref::<Menu<T>>().open.get())
+            || self.selection.is_empty()
+        {
             None
         } else {
             Some(&self.selection)
@@ -878,14 +956,16 @@ where
             text_input_state.is_focused()
         };
 
-        if is_focused {
+        if is_focused && tree.state.downcast_ref::<Menu<T>>().open.get() {
             let Menu {
                 menu,
+                open,
                 filtered_options,
                 hovered_option,
                 ..
             } = tree.state.downcast_mut::<Menu<T>>();
 
+            let open = &*open;
             self.state.sync_filtered_options(filtered_options);
 
             if filtered_options.options.is_empty() {
@@ -900,13 +980,12 @@ where
                     |selection| {
                         self.state.with_inner_mut(|state| {
                             state.value = String::new();
-                            state.filtered_options.update(self.state.options.clone());
+                            state
+                                .filtered_options
+                                .update(self.state.options.clone());
                         });
 
-                        tree.children[0]
-                            .state
-                            .downcast_mut::<text_input::State<Renderer::Paragraph>>()
-                            .unfocus();
+                        open.set(false);
 
                         (self.on_selected)(selection)
                     },
@@ -915,7 +994,17 @@ where
                 )
                 .width(bounds.width)
                 .padding(self.padding)
-                .text_shaping(self.text_shaping);
+                .text_shaping(self.text_shaping)
+                .on_escape(|| {
+                    open.set(false);
+                    self.state.with_inner_mut(|state| {
+                        state.value.clear();
+                        state
+                            .filtered_options
+                            .update(self.state.options.clone());
+                    });
+                    self.on_close.clone()
+                });
 
                 if let Some(font) = self.font {
                     menu = menu.font(font);

@@ -335,8 +335,8 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostCombo {
             combo.update(
                 tree, event, layout, cursor, renderer, clipboard, shell, viewport,
             );
-            // Iced ComboBox owns its TextInput as the first widget child;
-            // its default `operate` does not expose that child's focus state.
+            // The native input stays focused when its menu closes; that focus,
+            // rather than menu visibility, determines the control's style.
             type Paragraph = <iced::Renderer as iced::advanced::text::Renderer>::Paragraph;
             let input = tree.children[0]
                 .state

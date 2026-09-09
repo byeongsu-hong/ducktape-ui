@@ -150,10 +150,10 @@ toggle = ["focus-control"]
 toggle-group = ["toggle"]
 resizable = ["focus-control"]
 modal = ["theme"]
-dialog = ["modal", "direction", "theme"]
+dialog = ["modal", "direction", "scroll-area", "theme"]
 alert-dialog = ["modal", "dialog", "direction", "focus-control", "button", "theme"]
 sonner = ["theme", "focus-control"]
-command = ["theme", "focus-control", "input", "scroll-area"]
+command = ["theme", "focus-control", "input", "scroll-area", "dep:iced_runtime"]
 chart = ["theme", "iced/canvas"]
 candle-chart = ["theme", "iced/canvas"]
 popover = ["theme"]
@@ -161,7 +161,7 @@ navigation-menu = ["direction", "focus-control", "menu", "popover", "tooltip", "
 tooltip = ["focus-control", "popover", "theme"]
 hover-card = ["popover", "tooltip", "theme"]
 sidebar = ["direction", "focus-control", "scroll-area", "skeleton", "tooltip", "popover", "theme"]
-menu = ["direction", "focus-control", "theme"]
+menu = ["direction", "focus-control", "scroll-area", "theme", "dep:iced_runtime"]
 dropdown-menu = ["menu", "popover"]
 context-menu = ["menu", "popover"]
 menubar = ["menu", "popover", "focus-control"]
@@ -170,6 +170,7 @@ sheet = ["modal", "direction", "theme"]
 drawer = ["sheet", "modal", "theme"]
 
 [dependencies]
+iced_runtime = { version = "=0.14.0", optional = true }
 alacritty_terminal = { version = "=0.26.0", default-features = false, optional = true }
 iced = { version = "=0.14.0", default-features = false, features = ["advanced"], optional = true }
 # NOT an exact pin: this crate is a library, and `=` on tokio would force
