@@ -350,11 +350,60 @@ pub fn markdown_body(source: String, size: f64, dark: bool) -> Element<'static, 
     Element::new(MarkdownBody::new(&source, size, dark))
 }
 
+/// Handler matches use the app's fieldless boundary enum.
+pub fn thinking_boundary(ended: bool) -> crate::ThinkingBoundary {
+    if ended {
+        crate::ThinkingBoundary::Settled
+    } else {
+        crate::ThinkingBoundary::Continuing
+    }
+}
+
+/// A task group can follow the transcript alongside an independent stream.
+pub fn follow_latest(following: bool) -> iced::Task<()> {
+    if following {
+        ui_lang_runtime::snap_to_content_end(iced::widget::Id::from("AiChat/shell/app/transcript"))
+    } else {
+        iced::Task::none()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Weak;
+
+    #[test]
+    fn long_code_keeps_its_line_inside_a_horizontal_scroller() {
+        use iced::advanced::renderer::Headless;
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(14.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut element = markdown_body(
+            format!("```rust\n{}\n```", "unbrokenpath".repeat(30)),
+            13.5,
+            false,
+        );
+        let mut tree = Tree::new(&element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(180.0, 10000.0)),
+        );
+        assert!(
+            node.size().width <= 180.0,
+            "the code surface must fit its column"
+        );
+        assert!(
+            node.size().height < 80.0,
+            "one code line must not wrap into a tall paragraph: {:?}",
+            node.size()
+        );
+    }
 
     type Lazy = ui_lang_runtime::MemoLazy<
         'static,

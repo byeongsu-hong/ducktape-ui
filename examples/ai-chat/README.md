@@ -29,6 +29,18 @@ how it will fill instead of leaving an unfinished-looking blank panel.
 
 ![The empty Recent list beside a new chat](screenshots/empty_recent.png)
 
+## Reading and overflow
+
+The transcript has a 760-pixel readable cap. Prose and long link labels wrap
+with glyph fallback; code blocks keep their line structure and scroll
+horizontally. Markdown image references currently show their alt text rather
+than fetching remote media.
+
+Scrolling into history pauses following. New tokens and background row updates
+leave the visible history in place; Latest returns to the live edge. The
+composer keeps its draft while the window resizes. The `rich_content` preset
+and native tests exercise the same layout at 1180×800 and 760×600.
+
 ## What it draws
 
 A turn is not one answer, and the screen does not pretend otherwise. The

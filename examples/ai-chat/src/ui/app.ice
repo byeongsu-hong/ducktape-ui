@@ -31,6 +31,10 @@ use "tests/app.ice"
 font body family="JetBrains Mono" default=true
 font code family="JetBrains Mono"
 
+enum ThinkingBoundary
+  continuing
+  settled
+
 state
   session:Session = codex_session()
   account:str = codex_account()
@@ -43,6 +47,7 @@ state
   live_thinking:markdown = ""
   status = ""
   busy = false
+  following = true
   error = ""
   draft:editor = ""
   copied = ""
@@ -115,6 +120,11 @@ preset one_answer
     effort = some("xhigh")
     efforts = ["xhigh"]
     entries = sample_answer()
+
+preset rich_content
+  state
+    signed = true
+    entries = sample_rich_content()
 
 // An empty chat with nobody's address in it, for a test that starts from the
 // welcome screen and captures what it reaches.
@@ -325,6 +335,7 @@ view
             align=center
           Avatar.Agent initials="C"
           text "Codex" @pane_header
+          button "Latest" #latest disabled=following @ghost_action -> resume_latest
           space w=fill
           if !empty(account)
             Typography.Machine content=account
@@ -385,19 +396,13 @@ view
                   button "Copy link" #copy-link @outline_action -> copy_url
                 text "Waiting for it to be approved…" @meta
       if signed
-        // End-anchored: the offset is a distance from the bottom, so history
-        // measured for real above the viewport — or a beat appending below —
-        // carries the reader's rows with it instead of shifting them, and the
-        // chat rests on its newest row, where `snap-end` already points it.
-        // End-anchored: the offset is a distance from the bottom, so history
-        // measured for real above the viewport carries the reader's rows with
-        // it instead of shifting them, and the chat rests on its newest row,
-        // where `snap-end` already points it.
+        // History keeps its top-relative offset while content arrives below.
+        // Following is explicit; wheel navigation pauses it and Latest resumes it.
         scroll #transcript
           with
             w=fill
             h=fill
-            anchor-y=end
+            viewport=transcript_viewport
           box
             with
               w=fill

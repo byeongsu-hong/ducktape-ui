@@ -360,8 +360,8 @@ fn composer_keystroke() {
 /// One streamed token, against a reasoning summary that is already long.
 ///
 /// `on streamed` does three things per token: it appends to the live answer, it
-/// appends to the live reasoning summary, and it issues `task widget snap-end`
-/// at the transcript, which walks the tree. Both appends extend a parsed
+/// appends to the live reasoning summary, and while following it issues
+/// `task widget snap-end` at the transcript, which walks the tree. Both appends extend a parsed
 /// document rather than rebuilding it, so what a token costs should not depend
 /// on how much either surface already holds.
 ///

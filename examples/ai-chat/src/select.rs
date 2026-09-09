@@ -300,7 +300,7 @@ impl Selectable {
             align_x: text::Alignment::Default,
             align_y: alignment::Vertical::Top,
             shaping: Shaping::Advanced,
-            wrapping: Wrapping::default(),
+            wrapping: Wrapping::WordOrGlyph,
         }
     }
 }
@@ -760,6 +760,35 @@ fn cuts(at: usize, len: usize, range: &std::ops::Range<usize>) -> [std::ops::Ran
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_unbroken_prose_wraps_inside_the_readable_column() {
+        use iced::advanced::renderer::Headless;
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            Font::DEFAULT,
+            Pixels(14.0),
+            Some("tiny-skia"),
+        ))
+        .expect("headless renderer");
+        let mut element = selectable_text(
+            format!("https://example.test/{}", "unbrokenpath".repeat(20)),
+            14.0,
+            1.3,
+            Color::WHITE,
+        );
+        let mut tree = Tree::new(&element);
+        let _ = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(180.0, 10000.0)),
+        );
+        let bounds = tree.state.downcast_ref::<State>().paragraph.min_bounds();
+        assert!(
+            bounds.width <= 180.0,
+            "long URL ink overflows its readable column: {bounds:?}"
+        );
+        assert!(bounds.height > 36.0, "the URL must wrap onto several lines");
+    }
 
     fn spans(pieces: &[&str]) -> Arc<[Line]> {
         pieces
