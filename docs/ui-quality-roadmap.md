@@ -53,8 +53,8 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | --- | --- | --- | --- |
 | D01 | P0 · Done | [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047), [metric guide](../crates/ui-lang-components/docs/design-metrics.md), [native fixture](../examples/showcase/tests/cases/ui/design_metrics.ice) | Default 640px and compact 360/640px compositions verify page/section/field spacing, exact input/action heights, at least 32px desktop hit areas, centered labels and pointer/keyboard Save. Existing recipe inheritance and typed inputs cover the overrides; no new global density mechanism is needed. |
 | D02 | P0 · Done | [PR #1047](https://github.com/byeongsu-hong/ducktape-ui/pull/1047), [typography owner](../crates/ui-lang-components/src/ui/typography.rs), [font guide](../crates/ui-lang-components/docs/design-metrics.md) | All 13 native Rust/Ice text roles agree on size, font, line height, measured height, baseline offset and semantic color. Longer wrapped copy and Korean editing use explicitly loaded IBM Plex Sans KR faces; omission of those assets fails actual glyph-width assertions. |
-| D03 | P0 · Audit | [default palette](../crates/ui-lang-components/src/ice/default.ice), [theme contract](../SPEC.md) | Changing an application's semantic palette keeps fields, surfaces and control states coherent; light/dark and custom accent examples do not require copying component source. Distinguish existing complete palettes from proposed partial overrides. |
-| D04 | P0 · Audit | [control/action recipes](../crates/ui-lang-components/src/ice/recipes.ice), [button-status tests](../examples/showcase/tests/cases/ui/button_status_children.ice) | Default, hover, focus, pressed, disabled and invalid states remain legible; overriding one geometric or color property does not reset unrelated states. |
+| D03 | P0 · Done | [PR #1048](https://github.com/byeongsu-hong/ducktape-ui/pull/1048), [default palette](../crates/ui-lang-components/src/ice/default.ice), [theme contract](../SPEC.md) | Changing an application's semantic palette keeps fields, surfaces and control states coherent; light/dark and custom accent examples do not require copying component source. Distinguish existing complete palettes from proposed partial overrides. |
+| D04 | P0 · Done | [PR #1048](https://github.com/byeongsu-hong/ducktape-ui/pull/1048), [native state fixture](../examples/showcase/tests/cases/ui/theme_state_defaults.ice), [control/action recipes](../crates/ui-lang-components/src/ice/recipes.ice), [button-status tests](../examples/showcase/tests/cases/ui/button_status_children.ice) | Default, hover, focus, pressed, disabled and invalid states remain legible; overriding one geometric or color property does not reset unrelated states. |
 | D05 | P1 · Audit | [component slots and custom content](../crates/ui-lang-components/README.md) | Replace a row/trigger/body visual through the public interface while retaining its selection, dismissal, keyboard and accessibility contract. Identify actual source-copy requirements before adding new extension points. |
 
 ## Common compositions
@@ -402,3 +402,15 @@ font-asset and page-inset mutations fail the intended geometry assertions.
 The font guide distinguishes loading bytes from selecting families and records
 the actual IBM Plex Sans KR/Geist Mono setup. This completes native D01/D02;
 Tree and platform font-fallback evidence are outside the scope.
+
+D03/D04: the default Ice source now supplies the retained Rust light/dark
+semantic palettes. The native `theme_state_defaults` fixture selects light,
+dark and a complete application palette without copying shared components,
+retains edited values, and checks customized geometry across hover, pressed,
+disabled and input error/focus states. Pixel assertions cover contrasting
+keyboard rings on filled primary/danger/custom actions in all three palettes.
+The original low-contrast ring and three independent palette/state mutations
+produce intended assertion Reds; seven native fixture checks and the existing
+324-test Showcase binary pass after restoration. Typed externs continue to
+receive their complete Rust Theme explicitly; no partial palette syntax or
+Tree/platform appearance parity is claimed.

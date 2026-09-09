@@ -688,6 +688,10 @@ ordered and the first is the initial default. They generate the nominal
 match, not a string lookup or a reactive theme graph. `white`, `black`, and
 `transparent` are built in and cannot be redeclared.
 
+The default component source supplies complete `AppTheme.app` (light) and
+`AppTheme.dark` palettes; applications can select either through the existing
+`palette[AppTheme]` state or supply another complete palette for that contract.
+
 Utilities and recipes are resolved at compile time. There is no CSS engine,
 selector matching, runtime cascade, or runtime string parser. Recipes expand in
 place with the base first, then the child; later utilities win, and direct typed
