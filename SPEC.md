@@ -1149,8 +1149,11 @@ The tree target copies resolved button preset, recipe colors, border, label
 size/relative line height/font and focus-visible ring color. Hosts resolve the
 native preset, recipe base/status colors, typed active face, typed status face,
 then recipe disabled treatment unless a typed disabled face exists. Guest
-default font and text size apply to compact labels; fixed dimensions center
-content on the corresponding axes. Explicit zero padding overrides native
+default font and text size apply to compact labels; a fixed dimension centers
+content on that axis, and a fill or fill-portion dimension centers a compact
+label the same way, in the content box the padding leaves. Written-out child
+content keeps its own layout under a fill dimension, and `shrink` keeps the
+button hugging its content. Explicit zero padding overrides native
 defaults, including `@p-0px`. Font names share the frame text budget and trusted
 host registry; numeric recipe values are sanitized. Unsupported utility
 properties and Rust style callbacks remain E190. ButtonStyle changes require
