@@ -176,7 +176,17 @@ radii, shadows, colors, fonts, sizes, and line heights without comparing
 screenshots. Primitive counts, text/image bounds, shaped text baseline,
 scale-aware pixel alignment, focus, and accessibility fields are also available
 when a conformance report needs more than the single-primitive convenience
-accessors. `accessibility_level` returns the retained one-based heading or
+accessors. Layout `x/y/top/bottom` remain unscrolled logical-pixel coordinates.
+`visible_*` fields describe the screen region after ancestor scroll offsets and
+clipping; check `visible` before reading them. Prefer these fields to manually
+subtracting one scroll offset, especially with nested scrolls. Structured paint
+is collected from that visible screen region; fully hidden targets have no
+text, image or surface primitives. Single-primitive accessors still fail when
+none or multiple matching primitives are present. Visible geometry alone does
+not prove text fit: pair it with `expect text "…" within target`, appropriate
+paint assertions and an inspected capture.
+
+`accessibility_level` returns the retained one-based heading or
 hierarchy level as an integer and fails if the property is absent. Capture
 JSON records the same nullable `accessibility.level` value.
 

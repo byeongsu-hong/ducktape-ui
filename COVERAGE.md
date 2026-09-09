@@ -3139,3 +3139,24 @@ counterpart also passes with freshly bundled current guest artifacts. The handof
 capture traverses
 the mounted native tree for scopes with scroll targets; scopes without them
 skip capture. No claim of unchanged per-frame cost is made.
+### Scrolled native paint inspection
+
+Runtime `testing::tests::scrolled_paint_*` covers the same visible screen region
+for direct Target paint inspection and capture manifests. Two nested scrolls
+partially clip a blue card while its layout coordinates remain unchanged; its
+text, size and surface remain inspectable. An initially painted red card is
+then fully hidden and must not inherit the visible card's text or surface.
+Pre-fix native assertion Reds report zero text primitives for the visible card
+and one unrelated primitive for the hidden card. Capture-only and surface-clip
+mutations independently protect both callers and partial-surface matching.
+Restored checks pass 400 runtime library tests (eight existing ignored) and
+29 selected Showcase tests covering nested scrolls, form scroll ownership,
+overlay customization and localized defaults.
+
+This supports G03 native authoring evidence; it does not mark the whole guidance
+workstream complete. Captures use native Linux/tiny-skia, 220×180, scale 1, light
+theme, default native font, en-US and reduced motion. The
+[reviewed capture](docs/evidence/scrolled-paint/nested-visible.png) shows the
+remaining 40px of the blue card and the fixed footer. The coordinate distinction
+is documented in [testing guidance](docs/testing.md); Tree-host and platform
+renderers are outside this evidence.
