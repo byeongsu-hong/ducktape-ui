@@ -18,6 +18,20 @@ palette app for AppTheme
 "#;
 
 #[test]
+fn editor_highlighter_keeps_declared_empty_collection_argument_types() {
+    let source = format!(
+        "app Docs\n{PALETTE}extern crate::paint\n  editor-highlighter paint(dark:bool, commented:[i64])\nstate\n  notes:editor = \"hello\"\nview\n  editor <-> notes highlighter=paint(false, [])\n"
+    );
+    for target in [Target::Native, Target::Tree] {
+        let result = compile_for(&source, "editor-arguments.ice", target);
+        assert!(
+            result.is_ok(),
+            "declared empty list must survive {target:?} lowering: {result:?}"
+        );
+    }
+}
+
+#[test]
 fn tree_editor_binding_uses_a_deferred_commit_and_logical_document_identity() {
     let source = format!(
         "app Docs\n{PALETTE}extern crate::keys\n  editor-binding keys(readonly:bool) -> str\nstate\n  notes:editor = \"hello\"\non command(_value)\nview\n  col\n    editor #one <-> notes key-binding=keys(false) -> command _\n    editor #two <-> notes\n"

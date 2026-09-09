@@ -2869,3 +2869,12 @@ Seventeen focused native tests pass. A 60-frame debug inspection of the three-ro
 list records 180 lazy hits and zero misses, plus 120 revision-memo hits and zero
 misses; this is an idle-boundary check, not a large-list performance budget.
 See the [reusable guide](crates/ui-lang-components/docs/list-detail-navigation.md).
+
+### Editor extern argument context
+
+`editor_highlighter_keeps_declared_empty_collection_argument_types` checks the
+actual Native and Tree compiler pipelines for `highlighter=paint(false, [])`
+against a declared `[i64]` parameter. Before the fix its intended success
+assertion failed with E196 during Native lowering. Retaining the extern
+parameter destination in checked interaction facts passes both targets;
+lowering's expression/type invariants remain unchanged.
