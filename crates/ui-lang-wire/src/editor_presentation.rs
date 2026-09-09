@@ -116,7 +116,7 @@ impl EditorAffordances {
             })
     }
 
-    fn validate(&self, source: &str) -> Result<(), PresentationError> {
+    fn validate_limits(&self) -> Result<(), PresentationError> {
         if [
             self.gutters.len(),
             self.drop_boundaries.len(),
@@ -130,6 +130,10 @@ impl EditorAffordances {
         {
             return Err(PresentationError::Limit);
         }
+        Ok(())
+    }
+
+    fn validate(&self, line_count: usize) -> Result<(), PresentationError> {
         if self.menu.is_none()
             && self.gutters.is_empty()
             && self.drop_boundaries.is_empty()
@@ -138,7 +142,6 @@ impl EditorAffordances {
         {
             return Ok(());
         }
-        let line_count = crate::editor_lines(source).count();
         if let Some(menu) = &self.menu {
             if menu.items.len() > MAX_EDITOR_MENU_ITEMS
                 || menu
@@ -191,10 +194,6 @@ impl EditorAffordances {
         {
             return Err(PresentationError::Range);
         }
-        validate_ranges(
-            source,
-            self.hits.iter().map(|hit| (hit.line, hit.start, hit.end)),
-        )?;
         Ok(())
     }
 }
@@ -281,7 +280,7 @@ impl EditorPresentation {
 
     /// Validate against the exact resident document before any source is hidden.
     pub fn validate(&self, text: &str) -> Result<(), PresentationError> {
-        self.affordances.validate(text)?;
+        self.affordances.validate_limits()?;
         if self.formats.len() > MAX_EDITOR_FORMATS || self.spans.len() > MAX_EDITOR_SPANS {
             return Err(PresentationError::Limit);
         }
@@ -290,25 +289,52 @@ impl EditorPresentation {
                 return Err(PresentationError::Format);
             }
         }
-        validate_ranges(
-            text,
+        let count_lines = self.affordances.menu.is_some()
+            || !self.affordances.gutters.is_empty()
+            || !self.affordances.drop_boundaries.is_empty()
+            || !self.affordances.margins.is_empty();
+        let line_count = validate_ranges(
+            crate::editor_lines(text),
             self.spans
                 .iter()
                 .map(|span| (span.line, span.start, span.end)),
-        )
+            self.affordances
+                .hits
+                .iter()
+                .map(|hit| (hit.line, hit.start, hit.end)),
+            count_lines,
+        )?;
+        self.affordances.validate(line_count)
     }
 }
 
-fn validate_ranges(
-    text: &str,
-    ranges: impl Iterator<Item = (u32, u32, u32)>,
-) -> Result<(), PresentationError> {
-    let mut lines = crate::editor_lines(text).enumerate();
+// Both ordered range streams share one forward scan of the document. Their
+// overlap rules remain independent: a clickable hit may overlap styled text.
+fn validate_ranges<'a>(
+    lines: impl Iterator<Item = &'a str>,
+    spans: impl Iterator<Item = (u32, u32, u32)>,
+    hits: impl Iterator<Item = (u32, u32, u32)>,
+    count_lines: bool,
+) -> Result<usize, PresentationError> {
+    let mut lines = lines.enumerate();
+    let mut spans = spans.peekable();
+    let mut hits = hits.peekable();
     let mut current = None;
-    let mut previous: Option<(u32, u32)> = None;
-    for (span_line, start, end) in ranges {
+    let mut previous: [Option<(u32, u32)>; 2] = [None, None];
+    while spans.peek().is_some() || hits.peek().is_some() {
+        let stream = match (spans.peek(), hits.peek()) {
+            (Some(span), Some(hit)) => usize::from(hit.0 < span.0),
+            (Some(_), None) => 0,
+            _ => 1,
+        };
+        let (span_line, start, end) = if stream == 0 {
+            spans.next()
+        } else {
+            hits.next()
+        }
+        .unwrap();
         if start > end
-            || previous
+            || previous[stream]
                 .is_some_and(|(line, end)| span_line < line || (span_line == line && start < end))
         {
             return Err(PresentationError::Range);
@@ -328,9 +354,10 @@ fn validate_ranges(
         {
             return Err(PresentationError::Range);
         }
-        previous = Some((span_line, end));
+        previous[stream] = Some((span_line, end));
     }
-    Ok(())
+    let consumed = current.map_or(0, |(line, _)| line + 1);
+    Ok(consumed + if count_lines { lines.count() } else { 0 })
 }
 
 fn decode_bounded<'de, D, T, const LIMIT: usize>(d: D) -> Result<Vec<T>, D::Error>
@@ -462,6 +489,71 @@ mod tests {
             tag: 0,
         });
         assert!(value.validate("Title\n한글").is_err());
+    }
+
+    #[test]
+    fn shared_range_scan_preserves_independent_unicode_ranges_and_line_counts() {
+        let text = "한x\r\nz\n\r끝\r";
+        let source: Vec<_> = crate::editor_lines(text).collect();
+        let ranges: Vec<_> = (0..=4)
+            .flat_map(|line| {
+                (0..=5).flat_map(move |start| (0..=5).map(move |end| (line, start, end)))
+            })
+            .collect();
+        let valid = |(line, start, end): (u32, u32, u32)| {
+            start <= end
+                && source.get(line as usize).is_some_and(|text| {
+                    text.is_char_boundary(start as usize) && text.is_char_boundary(end as usize)
+                })
+        };
+        for &span in &ranges {
+            for &hit in &ranges {
+                let result = validate_ranges(
+                    crate::editor_lines(text),
+                    [span].into_iter(),
+                    [hit].into_iter(),
+                    true,
+                );
+                assert_eq!(
+                    result.is_ok(),
+                    valid(span) && valid(hit),
+                    "{span:?}, {hit:?}"
+                );
+                if let Ok(count) = result {
+                    assert_eq!(count, source.len());
+                }
+            }
+        }
+        // Hits overlap styling freely, but may not overlap one another.
+        let spans = [(0, 0, 4), (2, 0, 3)];
+        let hits = [(0, 0, 3), (2, 0, 3)];
+        let visited = std::cell::Cell::new(0);
+        let lines = crate::editor_lines(text).inspect(|_| visited.set(visited.get() + 1));
+        assert_eq!(
+            validate_ranges(lines, spans.into_iter(), hits.into_iter(), true),
+            Ok(source.len())
+        );
+        assert_eq!(visited.get(), source.len());
+        for invalid in [[(0, 0, 3), (0, 0, 3)], [(2, 0, 3), (0, 0, 3)]] {
+            assert_eq!(
+                validate_ranges(
+                    crate::editor_lines(text),
+                    spans.into_iter(),
+                    invalid.into_iter(),
+                    true
+                ),
+                Err(PresentationError::Range)
+            );
+        }
+        assert_eq!(
+            validate_ranges(
+                crate::editor_lines(text),
+                [].into_iter(),
+                [].into_iter(),
+                true
+            ),
+            Ok(source.len())
+        );
     }
 
     #[test]

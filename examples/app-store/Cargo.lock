@@ -5479,6 +5479,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "iced_core",
+ "memchr",
  "serde",
  "unicode-segmentation",
  "wasmparser 0.251.0",
