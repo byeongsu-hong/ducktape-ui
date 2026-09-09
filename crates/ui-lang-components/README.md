@@ -552,3 +552,11 @@ layout does not add a second page boundary.
 The [keyboard and localized-defaults guide](docs/accessible-localized-defaults.md)
 covers default heading levels, raw control names, removal focus, translated
 larger content, explicit Hebrew font loading and logical RTL traversal.
+
+## Content-heavy workspaces
+
+See the [content workspace guide](docs/content-workspaces.md) for readable
+Markdown/editor/media widths, long-link and code overflow, streaming reading
+position, and default grid/tree/log empty, selected, and editing compositions.
+It links the native fixtures and distinguishes finite composition captures
+from the retained owners' 100,000-row performance contracts.

@@ -17,9 +17,10 @@ The pending-save preset represents in-flight work; separate owner tests execute
 real scratch-file writes, defer their actual completion, and verify failure and
 retry. The native music test follows this frame by submitting the edited query
 through Enter and asserting the resulting title, results and cleared loading.
-Raw music cover-image paint overflow discovered in that result capture belongs
-to the separate shared media-renderer audit; this delivery makes no media fix
-claim. This directory is not evidence for platform or Tree-host behavior.
+The cover-image overflow found in that result capture is fixed at the shared
+software renderer. The [content workspace evidence](../content-workspaces/README.md)
+covers raster/SVG clipping, rounded covers and a bounded editor beneath media.
+This directory is not evidence for platform or Tree-host behavior.
 
 A 60-frame debug inspection of the same pending music root/preset at 1180×760
 reported view p50/p95 472/782µs, layout 1003/1599µs, update 114/181µs,
