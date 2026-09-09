@@ -2074,8 +2074,21 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
                     (None, inner)
                 }
             };
-            let center_x = matches!(width, Some(wire::Length::Fixed(_)));
-            let center_y = matches!(height, Some(wire::Length::Fixed(_)));
+            // Same rule the native generator applies: a dimension sized past
+            // the label centers the label in the slack however that size was
+            // written, while `Shrink` and an undeclared dimension leave the
+            // button hugging its label. Child content the author wrote keeps
+            // its own layout under a growing dimension.
+            let grows = |length: &Option<wire::Length>| {
+                matches!(length, Some(wire::Length::Fixed(_)))
+                    || (label_fallback.is_some()
+                        && matches!(
+                            length,
+                            Some(wire::Length::Fill | wire::Length::FillPortion(_))
+                        ))
+            };
+            let center_x = grows(width);
+            let center_y = grows(height);
             let inner = if center_x || center_y {
                 let mut centered = widget::container(inner);
                 if center_x {
@@ -2917,6 +2930,138 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A host button sized past its label centers the label the same way for
+    /// every spelling of that size — `Fixed(300)` and `Fill` under a 300pt
+    /// limit are the same button — on both axes, while content the guest
+    /// wrote out keeps its own layout. `padding` is the wire's per-side
+    /// `Edges`, so this is also where the centre can be shown to be the
+    /// CONTENT box's, not the button's: 32 left against 8 right puts the
+    /// label right of the button's own middle.
+    #[test]
+    fn wire_growing_buttons_center_compact_labels() {
+        use iced::advanced::{layout::Limits, renderer::Headless, widget::Tree};
+        let renderer = iced::futures::executor::block_on(<iced::Renderer as Headless>::new(
+            iced::Font::DEFAULT,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        ))
+        .unwrap();
+        let button = |content: wire::ButtonContent,
+                      width: Option<wire::Length>,
+                      height: Option<wire::Length>,
+                      padding: Option<wire::Edges>| wire::Node::Button {
+            key: "save".into(),
+            content,
+            label: Some("Save".into()),
+            checked: None,
+            expanded: None,
+            description: None,
+            on_press: Some(0),
+            width,
+            height,
+            padding,
+            style: wire::ButtonStyle::default(),
+        };
+        let label = || wire::ButtonContent::Label("Save".into());
+        let written_out = || {
+            wire::ButtonContent::Child(Box::new(wire::Node::Text {
+                options: wire::TextOptions::default(),
+                key: "save-label".into(),
+                content: "Save".into(),
+                size: None,
+                color: None,
+                font: wire::Font::default(),
+                width: None,
+                align_x: None,
+            }))
+        };
+        // Descends the single-child chain — accessible wrapper, button, the
+        // centring container when there is one — summing the parent-relative
+        // offsets `layout::Node` reports, and returns the label's own box in
+        // the button's coordinates alongside the button's size.
+        let label_box = |node: &wire::Node| {
+            let mut element = render(
+                node,
+                &Inputs::default(),
+                &Pictures::default(),
+                &Surfaces::new(),
+            );
+            let mut tree = Tree::new(&element);
+            let layout = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &Limits::new(iced::Size::ZERO, iced::Size::new(300.0, 120.0)),
+            );
+            let mut origin = iced::Point::ORIGIN;
+            let mut node = &layout;
+            while let [only] = node.children() {
+                let bounds = only.bounds();
+                origin += iced::Vector::new(bounds.x, bounds.y);
+                node = only;
+            }
+            (
+                layout.size(),
+                iced::Rectangle::new(origin, node.bounds().size()),
+            )
+        };
+        let plain = |width, height| button(label(), width, height, None);
+        let (fixed_size, fixed_label) = label_box(&plain(Some(wire::Length::Fixed(300.0)), None));
+        let (fill_size, fill_label) = label_box(&plain(Some(wire::Length::Fill), None));
+        let (portion_size, portion_label) =
+            label_box(&plain(Some(wire::Length::FillPortion(2)), None));
+        let (_, shrink_label) = label_box(&plain(Some(wire::Length::Shrink), None));
+        let (tall_size, tall_label) = label_box(&plain(None, Some(wire::Length::Fill)));
+        let (_, child_label) =
+            label_box(&button(written_out(), Some(wire::Length::Fill), None, None));
+        let padding = wire::Edges {
+            top: 0.0,
+            right: 8.0,
+            bottom: 0.0,
+            left: 32.0,
+        };
+        let (padded_size, padded_label) = label_box(&button(
+            label(),
+            Some(wire::Length::Fill),
+            None,
+            Some(padding),
+        ));
+
+        assert_eq!(fill_size, fixed_size);
+        assert_eq!(portion_size, fixed_size);
+        assert!(
+            fixed_label.x > 100.0,
+            "a 300pt button centers its short label, got x={}",
+            fixed_label.x
+        );
+        assert_eq!(fill_label, fixed_label);
+        assert_eq!(portion_label, fixed_label);
+        assert_eq!(tall_size.height, 120.0);
+        assert_eq!(
+            tall_label.y,
+            (tall_size.height - tall_label.height) / 2.0,
+            "a fill-height button centers its label vertically"
+        );
+        assert_eq!(
+            shrink_label.x, child_label.x,
+            "shrink and written-out content both hug the padding"
+        );
+        assert!(
+            child_label.x < 100.0,
+            "written-out content keeps its own layout, got x={}",
+            child_label.x
+        );
+        assert_eq!(
+            padded_label.x,
+            padding.left
+                + (padded_size.width - padding.left - padding.right - padded_label.width) / 2.0,
+            "the label centers in the content box, not the button box"
+        );
+        assert!(
+            padded_label.x > (padded_size.width - padded_label.width) / 2.0,
+            "32 left against 8 right pushes the label right of the button's middle"
+        );
     }
 
     #[test]

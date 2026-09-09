@@ -74,14 +74,28 @@ pub(in crate::codegen) fn render_button(
             ));
         }
     };
-    let center_x = matches!(
-        button.width,
-        Some(ResolvedContainerLength::FixedF64(_) | ResolvedContainerLength::FixedLength(_))
-    );
-    let center_y = matches!(
-        button.height,
-        Some(ResolvedContainerLength::FixedF64(_) | ResolvedContainerLength::FixedLength(_))
-    );
+    // A dimension the author sized larger than the label leaves slack inside
+    // the button, and a compact label centers in it whichever way that size
+    // was written: `w=fill` and `w=fill(2)` hand the label more room the same
+    // way `w=200.0` does, so a label that hugged the left padding under fill
+    // while an equally wide fixed button centered it was an inconsistency, not
+    // a layout. `shrink` (and an undeclared dimension) is left alone: the
+    // button hugs its label there, so a fill wrapper would only force an
+    // expansion nobody asked for. Custom child content also keeps its own
+    // layout under a growing dimension — writing the child out is how an
+    // author opts out of this centering.
+    let grows = |length: &Option<ResolvedContainerLength>| {
+        matches!(
+            length,
+            Some(ResolvedContainerLength::FixedF64(_) | ResolvedContainerLength::FixedLength(_))
+        ) || (matches!(button.content, ResolvedButtonContent::Label(_))
+            && matches!(
+                length,
+                Some(ResolvedContainerLength::Fill | ResolvedContainerLength::FillPortion(_))
+            ))
+    };
+    let center_x = grows(&button.width);
+    let center_y = grows(&button.height);
     if center_x || center_y {
         let mut centered = format!(
             "{{ let __button_inner: __IceElement<'_, {message}> = {content}; ::iced::widget::container(__button_inner)"
