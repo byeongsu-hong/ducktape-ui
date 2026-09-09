@@ -55,6 +55,37 @@ test keyed_rows_answer_to_their_key_through_reorder_and_removal
   expect exists first_row
   expect no text "picked" within first_row
 
+test a_state_key_is_resolved_again_for_every_alias_use
+  viewport 640 900
+  target chosen = #app/content/rows/key(selected)/row
+  target choose = #app/content/rows/key(selected)/row/pick
+  click choose
+  expect picked == 1
+  dispatch select_row(2)
+  dispatch reorder_rows
+  click choose
+  expect picked == 2
+  expect text "picked" within chosen
+  expect no text "picked" within #app/content/rows/key(1)/row
+  dispatch drop_second_row
+  expect missing chosen
+  dispatch select_row(1)
+  expect exists chosen
+  click choose
+  expect picked == 1
+
+test nested_state_keys_select_unicode_labels
+  viewport 640 900
+  target choose = #app/content/groups/key(group)/names/key(label)/label_row/label_pick
+  click choose
+  expect picked_label == 1
+  expect text "한글" within #app/content/groups/key(group)/names/key(label)/label_row
+  dispatch select_label(2)
+  click choose
+  expect picked_label == 2
+  expect text "café" within #app/content/groups/key(group)/names/key(label)/label_row
+  expect exists #app/content/groups/key(group)/names/key(label)/label_row/label_pick
+
 use "theme.ice"
 
 extern crate::host
@@ -75,6 +106,12 @@ state
   // and watch it stay itself.
   rows = [1, 2]
   picked = 0
+  selected = 1
+  group = 1
+  groups = [1]
+  label = 1
+  labels = [1, 2]
+  picked_label = 0
   auto = false
   published = false
   answer = "Ask host sends a question through the host and shows what comes back."
@@ -120,6 +157,15 @@ on toggle_auto
 
 on pick(number)
   picked = number
+
+on select_row(value)
+  selected = value
+
+on select_label(value)
+  label = value
+
+on pick_label(value)
+  picked_label = value
 
 on reorder_rows
   rows = [2, 1]
@@ -229,5 +275,13 @@ view
             hovered bg=border text=fg r=6.0
           if picked == number
             text "picked" #mark size=12.0 @text-muted
+      keyed group_name in groups by=group_name #groups
+        keyed name in labels by=name #names
+          row #label_row gap=4.0
+            button "Choose" #label_pick -> pick_label(name)
+            if name == 1
+              text "한글"
+            if name == 2
+              text "café"
       text answer #answer size=12.0 @text-muted
       text shared_label(published) #shared size=11.0 @text-muted

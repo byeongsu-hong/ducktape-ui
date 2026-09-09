@@ -9,7 +9,7 @@ pub(crate) fn generate_tree_tests(
     for test in program.tests() {
         let unsupported = |origin, detail| {
             program.error_at_origin(
-            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: presets, typed state expectations and dispatch, targets with literal keys, click, exists/missing, and literal text expectations"),
+            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: presets, typed state expectations and dispatch, targets with live state keys, click, exists/missing, and literal text expectations"),
         )
         };
         if program.settings().kind == ProgramKind::Daemon
@@ -25,65 +25,24 @@ pub(crate) fn generate_tree_tests(
                 "daemon windows, mounts, or environment overrides",
             ));
         }
-        let literal = |value| {
-            let expressions = program.expressions();
-            matches!(
-                expressions
-                    .expression(expressions.expression_use(value).root)
-                    .kind,
-                crate::lower::ResolvedExpressionKind::Bool(_)
-                    | crate::lower::ResolvedExpressionKind::I64(_)
-                    | crate::lower::ResolvedExpressionKind::F64(_)
-                    | crate::lower::ResolvedExpressionKind::Str(_)
-            )
-        };
-        // A TARGET PATH IS LOWERED INTO THE HOST, and the host's `__test.state()`
-        // is its own mounted surface, not the guest's Ice state — typed steps go
-        // to the guest precisely because the two are different states. So a key
-        // that READS state has nothing to read here, while a literal key lowers
-        // to a constant and needs no state at all. Same rule, same reason, as
-        // the literal text expectation below.
-        let host_path = |path: &ResolvedTestTargetPath| {
-            path.segments
-                .iter()
-                .all(|segment| segment.key.is_none_or(&literal))
-        };
-        // An alias names a target this loop already checked.
-        let host_ref = |target: &ResolvedTestTargetRef| match target {
-            ResolvedTestTargetRef::Alias(_) => true,
-            ResolvedTestTargetRef::Id(path) => host_path(path),
-        };
-        for target in &test.targets {
-            if !host_path(&target.path) {
-                return Err(unsupported(
-                    target.origin,
-                    "a keyed target whose key reads state; write the key as a literal",
-                ));
-            }
-        }
         for step in &test.steps {
             let supported = match &step.kind {
-                ResolvedTestStepKind::Click { target, .. } => host_ref(target),
-                ResolvedTestStepKind::Expect(ResolvedTestExpectation::Text {
-                    value,
-                    within,
-                    ..
-                }) => {
+                ResolvedTestStepKind::Click { .. } => true,
+                ResolvedTestStepKind::Expect(ResolvedTestExpectation::Text { value, .. }) => {
                     let expressions = program.expressions();
                     matches!(
                         expressions
                             .expression(expressions.expression_use(*value).root)
                             .kind,
                         crate::lower::ResolvedExpressionKind::Str(_)
-                    ) && within.as_ref().is_none_or(host_ref)
+                    )
                 }
                 // Whether a target resolves at all IS the keyed oracle: a row
                 // that was removed must stop answering to its key rather than
                 // silently resolving to whichever row now sits in its place.
                 ResolvedTestStepKind::Expect(
-                    ResolvedTestExpectation::Exists(target)
-                    | ResolvedTestExpectation::Missing(target),
-                ) => host_ref(target),
+                    ResolvedTestExpectation::Exists(_) | ResolvedTestExpectation::Missing(_),
+                ) => true,
                 ResolvedTestStepKind::Dispatch { .. }
                 | ResolvedTestStepKind::Expect(ResolvedTestExpectation::Equality { .. })
                 | ResolvedTestStepKind::Expect(ResolvedTestExpectation::Expr { .. }) => true,
@@ -198,6 +157,25 @@ pub(crate) fn generate_tree_guest_tests(
     }
     out.push_str(
         "_ => ::std::result::Result::Err(\"unknown typed authored step\".into()),\n}\n}\n}\n",
+    );
+    out.push_str("impl ");
+    out.push_str(app);
+    out.push_str(" { fn __ice_test_target(&self, test: u32, step: u32) -> ::std::result::Result<::std::string::String, ::std::string::String> { match (test, step) {\n");
+    for test in program.tests() {
+        for (index, step) in test.steps.iter().enumerate() {
+            if let Some(target) = tree_step_target(&step.kind) {
+                let path = target_ref_path_code(target, test, &env, program, None)?;
+                writeln!(
+                    out,
+                    "({}, {index}) => ::std::result::Result::Ok({path}),",
+                    test.id.0
+                )
+                .unwrap();
+            }
+        }
+    }
+    out.push_str(
+        "_ => ::std::result::Result::Err(\"unknown authored target step\".into()), } } }\n",
     );
     Ok(resolve_source_markers(out, program, source_path))
 }
@@ -536,7 +514,7 @@ fn generate_test(
                 },
             );
         }
-        for (target_index, target) in test.targets.iter().enumerate() {
+        for (target_index, target) in test.targets.iter().enumerate().filter(|_| !host) {
             if target.id
                 != (TestTargetId {
                     test: test.id,
@@ -568,13 +546,19 @@ fn generate_test(
             rust_string(&test.name)
         )
         .unwrap();
+        let target_override = if host && tree_step_target(&step.kind).is_some() {
+            writeln!(out, "let __ice_resolved_target = __ice_tree_test_target(&mut __test, {index}, {step_index}, {location});").unwrap();
+            Some("__ice_resolved_target.clone()")
+        } else {
+            None
+        };
         match &step.kind {
             ResolvedTestStepKind::Click {
                 target,
                 button,
                 count,
             } => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 let button = test_mouse_button_code(*button);
                 writeln!(
                     out,
@@ -597,7 +581,7 @@ fn generate_test(
                 writeln!(out, "let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Leave, {location});").unwrap();
             }
             ResolvedTestStepKind::MoveTarget(target) => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::MoveTo(__target.to_owned()), {location});"
@@ -610,7 +594,7 @@ fn generate_test(
                 writeln!(out, "let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::MoveToPoint(::iced::Point::new(__x, __y)), {location});").unwrap();
             }
             ResolvedTestStepKind::Press { target, button } => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 let button = test_mouse_button_code(*button);
                 writeln!(
                     out,
@@ -632,7 +616,7 @@ fn generate_test(
                 writeln!(out, "let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Wheel(::ui_lang_runtime::testing::WheelDelta::{delta} {{ x: __x, y: __y }}), {location});").unwrap();
             }
             ResolvedTestStepKind::Scroll { mode, target, x, y } => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 let x = expr_code(x, &env, ValueMode::Owned)?;
                 let y = expr_code(y, &env, ValueMode::Owned)?;
                 let action = match mode {
@@ -642,13 +626,13 @@ fn generate_test(
                 writeln!(out, "let __target = {path}; let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::{action} {{ target: __target.to_owned(), x: __x, y: __y }}, {location});").unwrap();
             }
             ResolvedTestStepKind::Snap { target, x, y } => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 let x = expr_code(x, &env, ValueMode::Owned)?;
                 let y = expr_code(y, &env, ValueMode::Owned)?;
                 writeln!(out, "let __target = {path}; let __x = ({x}) as f32; let __y = ({y}) as f32; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Snap {{ target: __target.to_owned(), x: __x, y: __y }}, {location});").unwrap();
             }
             ResolvedTestStepKind::SnapEnd(target) => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::SnapEnd(__target.to_owned()), {location});"
@@ -656,8 +640,8 @@ fn generate_test(
                 .unwrap();
             }
             ResolvedTestStepKind::Drag { from, to } => {
-                let from = target_ref_path_code(from, test, &env, program)?;
-                let to = target_ref_path_code(to, test, &env, program)?;
+                let from = target_ref_path_code(from, test, &env, program, target_override)?;
+                let to = target_ref_path_code(to, test, &env, program, target_override)?;
                 writeln!(
                     out,
                     "let __from = {from}; let __to = {to}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Drag {{ from: __from.to_owned(), to: __to.to_owned() }}, {location});"
@@ -665,7 +649,7 @@ fn generate_test(
                 .unwrap();
             }
             ResolvedTestStepKind::Drop(target) => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::DropAt(__target.to_owned()), {location});"
@@ -673,7 +657,7 @@ fn generate_test(
                 .unwrap();
             }
             ResolvedTestStepKind::Focus(target) => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Focus(__target.to_owned()), {location});"
@@ -762,7 +746,7 @@ fn generate_test(
                 writeln!(out, "let __count = ::std::primitive::usize::try_from({count}).expect(\"repeat count must fit usize\"); let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Repeat {{ key: {key}, count: __count }}, {location});").unwrap();
             }
             ResolvedTestStepKind::Tap { target, count } => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 writeln!(
                     out,
                     "let __target = {path}; let _ = __test.perform_action(::ui_lang_runtime::testing::Action::Tap {{ target: __target.to_owned(), count: {count} }}, {location});"
@@ -859,7 +843,7 @@ fn generate_test(
                 .unwrap();
             }
             ResolvedTestStepKind::Accessibility { action, target } => {
-                let path = target_ref_path_code(target, test, &env, program)?;
+                let path = target_ref_path_code(target, test, &env, program, target_override)?;
                 let action = match action {
                     ResolvedTestAccessibilityAction::Activate => "Click",
                     ResolvedTestAccessibilityAction::Focus => "Focus",
@@ -911,7 +895,15 @@ fn generate_test(
                 .unwrap();
             }
             ResolvedTestStepKind::Expect(expectation) => {
-                generate_expectation(out, expectation, test, &env, program, &location)?;
+                generate_expectation(
+                    out,
+                    expectation,
+                    test,
+                    &env,
+                    program,
+                    &location,
+                    target_override,
+                )?;
             }
         }
         writeln!(out, "}});").unwrap();
@@ -927,6 +919,7 @@ fn generate_expectation(
     env: &HashMap<String, Binding>,
     program: &LoweredProgram,
     location: &str,
+    target_override: Option<&str>,
 ) -> Result<(), Error> {
     match expectation {
         ResolvedTestExpectation::Equality {
@@ -973,7 +966,7 @@ fn generate_expectation(
             .unwrap();
         }
         ResolvedTestExpectation::Exists(target) | ResolvedTestExpectation::Missing(target) => {
-            let path = target_ref_path_code(target, test, env, program)?;
+            let path = target_ref_path_code(target, test, env, program, target_override)?;
             let expected = matches!(expectation, ResolvedTestExpectation::Exists(_));
             writeln!(
                 out,
@@ -988,7 +981,7 @@ fn generate_expectation(
         } => {
             let value = resolved_expr_use_code(program, *value, env, ValueMode::Owned)?;
             if let Some(within) = within {
-                let path = target_ref_path_code(within, test, env, program)?;
+                let path = target_ref_path_code(within, test, env, program, target_override)?;
                 writeln!(
                     out,
                     "let __value = {value}; let __within = {path}; __test.check_text(&__value, ::std::option::Option::Some(&__within), {negated}, {location});"
@@ -1030,7 +1023,7 @@ fn generate_expectation(
             value,
             negated,
         } => {
-            let scope = target_ref_path_code(target, test, env, program)?;
+            let scope = target_ref_path_code(target, test, env, program, target_override)?;
             let component = program.component(*component);
             let field = &component
                 .states
@@ -1052,7 +1045,7 @@ fn generate_expectation(
             .unwrap();
         }
         ResolvedTestExpectation::Accessibility { target, property } => {
-            let path = target_ref_path_code(target, test, env, program)?;
+            let path = target_ref_path_code(target, test, env, program, target_override)?;
             match property {
                 ResolvedTestAccessibilityProperty::Role(value)
                 | ResolvedTestAccessibilityProperty::Name(value)
@@ -1255,7 +1248,11 @@ fn target_ref_path_code(
     test: &ResolvedTest,
     env: &HashMap<String, Binding>,
     program: &LoweredProgram,
+    target_override: Option<&str>,
 ) -> Result<String, Error> {
+    if let Some(path) = target_override {
+        return Ok(path.to_owned());
+    }
     let target = match target {
         ResolvedTestTargetRef::Alias(id) => {
             &test
@@ -1343,4 +1340,18 @@ fn test_program_code(
     format!(
         "{root}{index}){title}{subscription}.theme(Self::__theme){style}{settings}{default_font}{fonts}{window}{scale_factor}{executor}{presets}"
     )
+}
+
+/// Every currently supported mounted assertion/action has at most one target.
+fn tree_step_target(step: &ResolvedTestStepKind) -> Option<&ResolvedTestTargetRef> {
+    match step {
+        ResolvedTestStepKind::Click { target, .. }
+        | ResolvedTestStepKind::Expect(
+            ResolvedTestExpectation::Exists(target) | ResolvedTestExpectation::Missing(target),
+        ) => Some(target),
+        ResolvedTestStepKind::Expect(ResolvedTestExpectation::Text { within, .. }) => {
+            within.as_ref()
+        }
+        _ => None,
+    }
 }

@@ -2087,9 +2087,18 @@ reports `exists`. Positional resolution passes the first half and fails from the
 reorder on. The owning behavioral mutation changes `pick` from `picked = number`
 to `picked = 1`, so the mark is drawn in the wrong keyed row: both backends fail
 at the `within` assertion, and pass after exact restoration and rebuilding. A
-target path is lowered into the host, whose state is the mounted surface rather
-than the guest's, so keys must be literals; keys that read state keep their
-E190.
+target path now resolves through the existing test-only guest transport on every
+use. The state-key scenario changes the selected key, reorders, clicks the same
+alias again, and removes its row; it checks both selected state and mounted
+`within`/`exists`/`missing` results. A nested numeric-key scenario selects Korean
+and accented Latin labels. String keys remain unsupported on both targets.
+The target query is read-only so deferred changes cannot get ahead of the host's
+rendered frame. Test-manifest v3 rejects old test artifacts before initialization.
+Actual native/Wasm runs pass all ten Counter authored cases. Replacing resolved
+row key 2 with key 1 fails `picked == 2` on both backends; exact restoration
+passes both. Draining deferred messages inside the target query fails the
+read-only regression (key 12 instead of rendered key 7), then passes restored.
+
 
 The same Counter source also boots preset `seven`, asserts typed count and drawn
 `7`, clicks the mounted increment control, asserts count and drawn `8`, directly

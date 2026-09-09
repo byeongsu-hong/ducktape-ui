@@ -1047,7 +1047,7 @@ macro_rules! __manifest_header {
         "ice.manifest.v2\n"
     };
     (test) => {
-        "ice.test.manifest.v2\n"
+        "ice.test.manifest.v3\n"
     };
 }
 #[doc(hidden)]
@@ -1082,6 +1082,9 @@ macro_rules! __test_app_impl {
             ) -> ::std::result::Result<(Self, ::iced::Task<Self::Message>), ::std::string::String>
             {
                 $app::__ice_test_boot(test).map(|(app, task)| (Self(app), task))
+            }
+            fn test_target(&self, test: u32, step: u32) -> Result<String, String> {
+                self.0.__ice_test_target(test, step)
             }
             fn test_step(
                 &self,
