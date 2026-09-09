@@ -41,7 +41,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | --- | --- | --- | --- |
 | L01 | P0 · Done | [view layout rules](../skills/design-ice-ui/references/views-and-style.md), [Item/InputGroup](../crates/ui-lang-components/src/ice/components.ice) | A label + flexible input + trailing action share a narrow parent without overlap; the action stays usable, fill/shrink ownership is explicit, and custom padding remains inside the parent. |
 | L02 | P0 · Done | [PR #1020](https://github.com/byeongsu-hong/ducktape-ui/pull/1020): optional descriptions, conditional rows and bounded wrapping | An omitted/empty subtitle allocates no blank row; a long title/subtitle wraps inside its container without overlapping the next element. Local: 6 header tests and 324 existing showcase tests pass; empty-row and wrapping assertion Reds recorded. Semantic heading roles remain tracked under A02; merged as b709ea51. |
-| L03 | P0 · Audit | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
+| L03 | P0 · Done | [scroll guidance](../skills/design-ice-ui/references/design-workflow.md), [MessageScroller contract](../crates/ui-lang-components/docs/parity.md) | A short window can reach the last action; headers/actions that should stay visible do so; nested scroll ownership and reading-position preservation are explicit. C01 covers only a single form scroller. |
 | L04 | P0 · Done | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
 | L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
 | L06 | P1 · Audit | [grid/flex surface](../skills/design-ice-ui/references/extended-surface.md), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Repeated cards use a consistent minimum useful width and aspect ratio; odd item counts and narrow windows leave no clipped or zero-width cells. |
@@ -277,6 +277,22 @@ A native driver runs [the Ice transcript](../examples/showcase/tests/cases/ui/sc
 through the same production adapter. It checks a surviving row's full visible
 height and screen coordinate after capped prepend/tail removal and head
 removal/tail append. The previous deferred-state path hides the reading row;
-the corrected path retains it. L03 remains open for deleting the currently
-anchoring row. Similar deferred-state adapters belong to the S02 state audit;
+the corrected path retains it. Deleting the currently anchoring row is covered
+below. Similar deferred-state adapters belong to the S02 state audit;
 this delivery changes only MessageScroller.
+
+### L03: deleted anchor and completion
+
+The first surviving previously visible transcript row now anchors the viewport
+when its predecessor is deleted. Owner-level Red proves the missing correction;
+a native delete click proves the previously clipped next row remains fully
+visible at the same y=107.25px. All 48 MessageScroller unit tests and all five
+native transcript tests pass. No surviving visible row means native offset and
+clamping, not an invented replacement anchor.
+
+This completes L03's native acceptance cases: fixed heading/actions and reachable
+body end ([#1036](https://github.com/byeongsu-hong/ducktape-ui/pull/1036)), nested
+wheel ownership ([#1037](https://github.com/byeongsu-hong/ducktape-ui/pull/1037)),
+current-state transcript updates ([#1039](https://github.com/byeongsu-hong/ducktape-ui/pull/1039))
+and deleted-anchor restoration here. Touch and Tree-specific integration remain
+outside this native evidence.

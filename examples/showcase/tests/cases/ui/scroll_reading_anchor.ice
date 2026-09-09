@@ -14,6 +14,7 @@ extern crate::backend
   pure items(rows:[i64]) -> Event
   pure prepend(rows:[i64]) -> [i64]
   pure remove_first(rows:[i64]) -> [i64]
+  pure remove_visible(rows:[i64], state:&State) -> [i64]
   sync apply(state:State, event:Event) -> Transition
   task effects(transition:Transition) -> Event
   component transcript(rows:&[i64], state:&State) -> Event
@@ -47,10 +48,17 @@ on remove
   scroller = transition.state
   task effects(transition) -> event _
 
+on delete_visible
+  rows = remove_visible(rows, scroller)
+  let transition = apply(scroller, items(rows))
+  scroller = transition.state
+  task effects(transition) -> event _
+
 view
   Page #page
     col w=fill h=fill gap=12.0
       row gap=8.0
         button "Prepend" #prepend @secondary_action -> prepend
         button "Remove first" #remove @secondary_action -> remove
+        button "Delete visible" #delete-visible @secondary_action -> delete_visible
       extern transcript(rows, scroller) #transcript -> event _
