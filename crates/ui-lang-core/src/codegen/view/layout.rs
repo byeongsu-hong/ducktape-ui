@@ -372,6 +372,31 @@ fn render_resolved_regular_layout(
         write!(body, ".padding({padding})").unwrap();
     }
     append_size(&mut body, style);
+    match &layout.mode {
+        ResolvedLayoutMode::Linear(linear) => append_forwarded_fill_portions(
+            &mut body,
+            [linear.width.as_ref(), linear.height.as_ref()],
+        ),
+        ResolvedLayoutMode::Stack(stack) => {
+            append_forwarded_fill_portions(&mut body, [stack.width.as_ref(), stack.height.as_ref()])
+        }
+        // A grid's own height is the cell length verbatim — iced's `Grid::size`
+        // returns the `EvenlyDistribute` one and `Shrink` for an aspect ratio —
+        // and its width is numeric, so only that one length can carry a portion.
+        ResolvedLayoutMode::Grid(grid) => append_forwarded_fill_portions(
+            &mut body,
+            [
+                None,
+                match &grid.height {
+                    Some(ResolvedGridHeight::EvenlyDistribute(height)) => Some(height),
+                    _ => None,
+                },
+            ],
+        ),
+        ResolvedLayoutMode::Hover(_)
+        | ResolvedLayoutMode::Flex(_)
+        | ResolvedLayoutMode::Scroll(_) => {}
+    }
     if let Some(max_width) = style.max_width {
         write!(body, ".max_width({max_width})").unwrap();
     }
@@ -548,6 +573,7 @@ fn render_resolved_flexbox(
     body.push(';');
     body.push_str(" let __content = ::iced::widget::container(__layout)");
     append_size(&mut body, style);
+    append_forwarded_fill_portions(&mut body, [flex.width.as_ref(), flex.height.as_ref()]);
     if let Some(max_width) = style.max_width {
         write!(body, ".max_width({max_width})").unwrap();
     }
@@ -1143,6 +1169,25 @@ pub(super) fn resolved_flex_content_alignment_name(
         ResolvedFlexContentAlignment::SpaceBetween => "SpaceBetween",
         ResolvedFlexContentAlignment::SpaceAround => "SpaceAround",
         ResolvedFlexContentAlignment::SpaceEvenly => "SpaceEvenly",
+    }
+}
+
+/// Restates a `fill(n)` dimension on the `container` a layout is decorated
+/// with. `Container::new` takes its own size from its content through
+/// `Length::fluid()`, and that answers `Fill` for every portion — so without
+/// this the wrapper reports a factor of 1 to the parent and a `fill(3)` column
+/// comes out the same width as the `fill(1)` beside it. A portion is a
+/// literal, so restating it evaluates nothing twice; the other lengths already
+/// survive `fluid()` unchanged in the fluidity the parent needs, and `fixed`
+/// keeps its number by measurement, so only this case is written again.
+fn append_forwarded_fill_portions(
+    code: &mut String,
+    dimensions: [Option<&ResolvedContainerLength>; 2],
+) {
+    for (method, length) in ["width", "height"].into_iter().zip(dimensions) {
+        if let Some(ResolvedContainerLength::FillPortion(portion)) = length {
+            write!(code, ".{method}(::iced::Length::FillPortion({portion}))").unwrap();
+        }
     }
 }
 
