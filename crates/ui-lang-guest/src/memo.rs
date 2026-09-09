@@ -20,6 +20,13 @@ pub(crate) struct Cache {
     generation: u64,
 }
 
+pub(crate) fn invalidate() {
+    let cache = slots::memo_cache();
+    let entries = std::mem::take(&mut cache.borrow_mut().entries);
+    // Authored captured values may run destructors that consult the context.
+    drop(entries);
+}
+
 pub(crate) struct Cached {
     pub node: wire::Node,
     pub generation: u64,

@@ -27,7 +27,7 @@ fn serve<A: SnapshotApp>(
     loop {
         let request = wire::decode::<Request>(&read_packet(input)?)?;
         let result = respond(&mut driver, request);
-        write_packet(output, &wire::encode(&result))?;
+        write_packet(output, &wire::native::encode_response(&result))?;
     }
 }
 

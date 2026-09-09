@@ -415,13 +415,37 @@ fn gen_input(rng: &mut Rng) -> Node {
     }
 }
 
+/// One logical document per identifier, so every reference the tree makes to
+/// the same document is exactly the one `validate_editor_document_refs`
+/// requires. Byte lengths stay small: a projection is charged per binding, and
+/// the fuzz is about tree shape, not the aggregate byte ceilings the focused
+/// `editor_document` tests already pin.
+fn gen_document(rng: &mut Rng) -> editor_document::EditorDocumentRef {
+    const POOL: [&str; 5] = ["app:draft", "app:notes", "dup", "x", "app:same"];
+    let index = rng.next_range(POOL.len());
+    let byte_len = (index * 37) as u32;
+    editor_document::EditorDocumentRef {
+        document: POOL[index].to_string(),
+        reset: index as u64,
+        text_revision: 2 * index as u64,
+        revision: 3 * index as u64,
+        cursor: EditorCursor {
+            position: EditorPosition {
+                line: 0,
+                column: byte_len,
+            },
+            selection: None,
+        },
+        byte_len,
+    }
+}
+
 fn gen_editor(rng: &mut Rng) -> Node {
     Node::Editor {
-        cursor: Default::default(),
-        reset: 0,
-        revision: 0,
+        document: gen_document(rng),
+        on_document: rng.next_u64() as u32,
+        editable: rng.next_bool(),
         options: Box::new(EditorOptions {
-            document: String::new(),
             binding: None,
             size: gen_opt_f32(rng),
             padding: gen_opt_f32(rng),
@@ -441,8 +465,6 @@ fn gen_editor(rng: &mut Rng) -> Node {
         }),
         key: gen_key(rng),
         placeholder: gen_string(rng),
-        text: gen_string(rng),
-        on_edit: rng.next_bool().then(|| rng.next_u64() as u32),
         width: rng.next_bool().then(|| gen_f32(rng)),
         height: gen_opt_length(rng),
         min_height: rng.next_bool().then(|| gen_f32(rng)),
@@ -923,6 +945,7 @@ fn gen_frame_with(rng: &mut Rng, depth: usize, width: usize) -> Frame {
     Frame {
         upstream_sanitization: Default::default(),
         editor_decisions: Vec::new(),
+        editor_documents: Vec::new(),
         mouse_interest: rng.next_bool(),
         root: Some(root),
         requests,
@@ -2138,7 +2161,7 @@ fn check_bounds(
         Node::Editor {
             options,
             placeholder,
-            text,
+            document,
             width,
             height,
             min_height,
@@ -2181,7 +2204,13 @@ fn check_bounds(
                 check_color(&face.selection, ctx);
             }
             check_string(placeholder, ctx, "editor placeholder");
-            check_string(text, ctx, "editor text");
+            // A document is metadata: sanitize keeps a valid reference whole,
+            // and never spends the display budget on the bytes it names.
+            assert_eq!(
+                document.validate(),
+                Ok(()),
+                "{ctx}: sanitize kept an invalid editor document reference"
+            );
             check_length(height, ctx);
             for value in [width, min_height, max_height].into_iter().flatten() {
                 assert!(
@@ -2196,6 +2225,20 @@ fn check_bounds(
 /// Every post-condition `sanitize` promises about a whole frame: the tree's
 /// node count and every bound `check_bounds` covers, plus every request's
 /// `kind`.
+/// Every editor document reference in the tree, in one fixed walk order, so
+/// the same tree before and after `sanitize` compares element for element.
+fn document_refs(root: &Node) -> Vec<editor_document::EditorDocumentRef> {
+    let mut pending = vec![root];
+    let mut references = Vec::new();
+    while let Some(node) = pending.pop() {
+        if let Node::Editor { document, .. } = node {
+            references.push(document.clone());
+        }
+        pending.extend(node.children());
+    }
+    references
+}
+
 fn check_frame(frame: &Frame, ctx: &str) {
     if let Some(root) = &frame.root {
         assert!(
@@ -2253,8 +2296,27 @@ fn random_trees_come_out_of_sanitize_inside_every_bound() {
                 assert!(names_the_door, "{ctx}: unexpected refusal: {message}");
             }
             Ok(mut decoded) => {
-                if sanitize(&mut decoded).is_ok() {
-                    check_frame(&decoded, &ctx);
+                let before = decoded.root.as_ref().map(document_refs).unwrap_or_default();
+                match sanitize(&mut decoded) {
+                    Ok(_) => {
+                        check_frame(&decoded, &ctx);
+                        let after = decoded.root.as_ref().map(document_refs).unwrap_or_default();
+                        assert_eq!(
+                            before, after,
+                            "{ctx}: sanitize rewrote an editor document reference"
+                        );
+                    }
+                    // The only frame sanitize refuses is one whose editor
+                    // documents it could not keep whole; every other bound is
+                    // pulled into range instead.
+                    Err(refused) => assert!(
+                        [
+                            "invalid editor document references or budget",
+                            "frame budget would remove an editor document projection",
+                        ]
+                        .contains(&refused),
+                        "{ctx}: unexpected refusal: {refused}"
+                    ),
                 }
             }
         }
@@ -2391,8 +2453,8 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
                 let applied = ui_lang_wire::apply(&mut candidate, vec![patch.clone()]);
                 if matches!(
                     applied,
-                    Err("editor document exceeds text limit"
-                        | "frame budget would truncate an editor document")
+                    Err("invalid editor document references or budget"
+                        | "frame budget would remove an editor document projection")
                 ) {
                     continue;
                 }
@@ -2426,8 +2488,8 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
                     || outcome.is_ok()
                     || matches!(
                         outcome,
-                        Err("editor document exceeds text limit"
-                            | "frame budget would truncate an editor document")
+                        Err("invalid editor document references or budget"
+                            | "frame budget would remove an editor document projection")
                     ),
                 "{ctx}: a structurally valid sequence was refused: {outcome:?}"
             );
@@ -2446,8 +2508,8 @@ fn a_patched_sanitized_tree_is_a_sanitized_tree() {
                         "a list edit on no list",
                         "props of another arity",
                         "more patches than the host applies",
-                        "editor document exceeds text limit",
-                        "frame budget would truncate an editor document",
+                        "invalid editor document references or budget",
+                        "frame budget would remove an editor document projection",
                     ]
                     .contains(&refused);
                     assert!(named, "{ctx}: unexpected refusal: {refused}");
@@ -2502,8 +2564,8 @@ fn a_diff_applied_to_the_old_tree_is_the_new_tree_for_random_pairs() {
                         match ui_lang_wire::apply(&mut candidate, vec![patch]) {
                             Ok(_) => edited = candidate,
                             Err(
-                                "editor document exceeds text limit"
-                                | "frame budget would truncate an editor document",
+                                "invalid editor document references or budget"
+                                | "frame budget would remove an editor document projection",
                             ) => {}
                             Err(refused) => panic!("{ctx}: {refused}"),
                         }

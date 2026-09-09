@@ -9,9 +9,9 @@ ui_lang_guest::export_app!(
 mod fixture {
     use ui_lang_guest::wire::{
         self, EditorCursor, EditorDecision, EditorHistoryEffect, EditorKeyClaim, EditorPatch,
-        EditorPosition, EditorState, EditorTransactionEvent,
+        EditorPosition, EditorState,
     };
-    use ui_lang_guest::{Editor, EditorBinding};
+    use ui_lang_guest::{Editor, EditorBinding, EditorStateView, EditorTransactionEvent};
     use wire::keyboard::{Key, Modifiers, Named};
 
     #[derive(Clone, Debug, PartialEq)]
@@ -32,6 +32,14 @@ mod fixture {
         pub kind: String,
         pub history: String,
     }
+    fn owned(state: EditorStateView<'_>) -> EditorState {
+        EditorState {
+            text: state.text.into(),
+            cursor: state.cursor,
+            reset: state.reset,
+            revision: state.revision,
+        }
+    }
     pub fn initial_history() -> History {
         History {
             undo: vec![],
@@ -46,7 +54,10 @@ mod fixture {
     pub fn record(mut history: History, outcome: Outcome, document: Editor) -> History {
         let before: EditorState = wire::decode(&outcome.before).expect("fixture before state");
         let after: EditorState = wire::decode(&outcome.after).expect("fixture after state");
-        history.accepted &= document.snapshot() == outcome.after;
+        history.accepted &= document.text() == after.text
+            && document.cursor() == after.cursor
+            && document.observation_revision() == after.revision
+            && document.reset_revision() == after.reset;
         history.ordered &= outcome.sequence > history.last_sequence;
         history.last_sequence = outcome.sequence;
         history.commits += 1;
@@ -157,8 +168,8 @@ mod fixture {
                     history,
                     ..
                 } => Some(Outcome {
-                    before: wire::encode(&before),
-                    after: wire::encode(&after),
+                    before: wire::encode(&owned(before)),
+                    after: wire::encode(&owned(after)),
                     sequence: id.sequence as i64,
                     kind: format!("{kind:?}"),
                     history: format!("{history:?}"),

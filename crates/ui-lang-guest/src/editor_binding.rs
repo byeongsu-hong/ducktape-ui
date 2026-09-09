@@ -1,19 +1,71 @@
-//! Guest-local editor decisions and post-acceptance authored event routes.
+//! Guest-local decisions borrow the canonical document owned by application state.
 use crate::{Editor, slots, wire};
 use std::rc::Rc;
 
-pub use wire::{EditorDecision, EditorKeyRequest, EditorTransactionEvent};
+pub use wire::EditorDecision;
 
+#[derive(Clone, Copy, Debug)]
+pub struct EditorStateView<'a> {
+    pub text: &'a str,
+    pub cursor: wire::EditorCursor,
+    pub reset: u64,
+    pub text_revision: u64,
+    pub revision: u64,
+}
+impl<'a> EditorStateView<'a> {
+    fn new(text: &'a str, reference: &wire::editor_document::EditorDocumentRef) -> Self {
+        Self {
+            text,
+            cursor: reference.cursor,
+            reset: reference.reset,
+            text_revision: reference.text_revision,
+            revision: reference.revision,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug)]
+pub struct EditorKeyRequest<'a> {
+    pub id: &'a wire::EditorTransactionId,
+    pub state: EditorStateView<'a>,
+    pub key: &'a wire::keyboard::KeyState,
+    pub repeat: bool,
+    pub input_time_ms: u64,
+}
+#[derive(Clone, Copy, Debug)]
+pub enum EditorTransactionEvent<'a> {
+    Commit {
+        id: &'a wire::EditorTransactionId,
+        before: EditorStateView<'a>,
+        after: EditorStateView<'a>,
+        kind: wire::EditorEditKind,
+        history: wire::EditorHistoryEffect,
+        input_time_ms: u64,
+    },
+    Fault {
+        id: &'a wire::EditorTransactionId,
+        reason: wire::EditorFault,
+    },
+    Cancelled {
+        id: &'a wire::EditorTransactionId,
+    },
+}
+
+type Decide = Rc<dyn for<'a> Fn(EditorKeyRequest<'a>) -> EditorDecision>;
+type Observe<P> = Rc<dyn for<'a> Fn(EditorTransactionEvent<'a>) -> Option<P>>;
 pub struct EditorBinding<P> {
     claims: Vec<wire::EditorKeyClaim>,
-    decide: Rc<dyn Fn(EditorKeyRequest) -> EditorDecision>,
-    on_event: Rc<dyn Fn(EditorTransactionEvent) -> Option<P>>,
+    decide: Decide,
+    on_event: Observe<P>,
+}
+struct Callbacks<M> {
+    decide: Decide,
+    on_event: Observe<M>,
 }
 impl<P: 'static> EditorBinding<P> {
     pub fn new(
         claims: Vec<wire::EditorKeyClaim>,
-        decide: impl Fn(EditorKeyRequest) -> EditorDecision + 'static,
-        on_event: impl Fn(EditorTransactionEvent) -> Option<P> + 'static,
+        decide: impl for<'a> Fn(EditorKeyRequest<'a>) -> EditorDecision + 'static,
+        on_event: impl for<'a> Fn(EditorTransactionEvent<'a>) -> Option<P> + 'static,
     ) -> Self {
         assert!(
             claims.len() <= wire::editor_transaction::MAX_EDITOR_CLAIMS,
@@ -30,35 +82,60 @@ impl<P: 'static> EditorBinding<P> {
         route: impl Fn(P) -> M + 'static,
         wrap: impl Fn(EditorTransaction<M>) -> M + 'static,
     ) -> wire::EditorBinding {
-        let decide = self.decide;
-        let on_request = slots::handler::<EditorKeyRequest, M>(Box::new(move |request| {
-            let decision = decide(request.clone());
-            slots::editor_response(wire::EditorResponse {
-                id: request.id,
-                decision,
-            });
-            None
+        let observe = self.on_event;
+        let callbacks = Rc::new(Callbacks {
+            decide: self.decide,
+            on_event: Rc::new(move |event| observe(event).map(&route)),
+        });
+        // Existing handler storage already supplies bounded frame-local lifetime
+        // and memo capture. No second callback registry or copied document.
+        let map =
+            slots::handler::<(), Rc<Callbacks<M>>>(Box::new(move |()| Some(callbacks.clone())));
+        let wrap = Rc::new(wrap);
+        let request_wrap = wrap.clone();
+        let on_request = slots::handler::<wire::EditorKeyRequest, M>(Box::new(move |request| {
+            Some(request_wrap(EditorTransaction {
+                event: Transaction::Request(request),
+                map,
+                message: std::marker::PhantomData,
+            }))
         }));
-        let map = slots::handler::<EditorTransactionEvent, M>(Box::new(move |event| {
-            (self.on_event)(event).map(&route)
-        }));
-        let on_event = slots::handler::<EditorTransactionEvent, M>(Box::new(move |event| {
+        let on_event = slots::handler::<wire::EditorTransactionEvent, M>(Box::new(move |event| {
             Some(wrap(EditorTransaction {
-                event,
+                event: Transaction::Event(event),
                 map,
                 message: std::marker::PhantomData,
             }))
         }));
         wire::EditorBinding {
+            authored: true,
             claims: self.claims,
             on_request,
             on_event,
         }
     }
 }
-
+impl EditorBinding<()> {
+    pub fn plain<M: 'static>(
+        wrap: impl Fn(EditorTransaction<M>) -> M + 'static,
+    ) -> wire::EditorBinding {
+        let mut binding = EditorBinding::<M>::new(
+            Vec::new(),
+            |_| EditorDecision::DefaultEditorAction,
+            |_| None,
+        )
+        .register(std::convert::identity, wrap);
+        binding.authored = false;
+        binding
+    }
+}
+#[derive(Clone, Debug)]
+enum Transaction {
+    Request(wire::EditorKeyRequest),
+    Event(wire::EditorTransactionEvent),
+}
 pub struct EditorTransaction<M> {
-    event: EditorTransactionEvent,
+    event: Transaction,
     map: u32,
     message: std::marker::PhantomData<fn() -> M>,
 }
@@ -80,144 +157,245 @@ impl<M> std::fmt::Debug for EditorTransaction<M> {
 }
 impl<M: 'static> EditorTransaction<M> {
     pub fn apply(self, editor: &mut Editor) -> Option<M> {
-        let (id, state, commit) = match &self.event {
-            EditorTransactionEvent::Commit { id, after, .. } => (id, after, true),
-            EditorTransactionEvent::Fault { id, state, .. }
-            | EditorTransactionEvent::Cancelled { id, state } => (id, state, false),
-        };
-        // Cancellation belongs to the retired identity, never to the current
-        // document contents. Deliver cleanup after reset without accepting its
-        // old snapshot or relaxing any Commit validation.
-        if matches!(self.event, EditorTransactionEvent::Cancelled { .. }) {
-            if !slots::editor_matches_pending(id)
-                || id.reset != state.reset
-                || state.text.len() > wire::MAX_STRING_BYTES
-                || !slots::has_handler::<EditorTransactionEvent, M>(self.map)
-            {
-                return None;
+        let callbacks = slots::run_handler::<(), Rc<Callbacks<M>>>(self.map, ())?;
+        match self.event {
+            Transaction::Request(request) => {
+                if !slots::editor_request_current(&request.id) {
+                    return None;
+                }
+                if editor.document_reference(request.id.document.clone()) != request.state {
+                    if request.state.reset == editor.reset_revision()
+                        && let Err(reason) = slots::request_editor_mirror(&request)
+                    {
+                        slots::editor_document_failure(
+                            wire::editor_document::EditorTransferId {
+                                instance: request.id.instance,
+                                document: request.id.document.clone(),
+                                reset: request.id.reset,
+                                serial: request.id.sequence,
+                                attempt: request.id.attempt,
+                            },
+                            reason,
+                        );
+                    }
+                    return None;
+                }
+                let decision = (callbacks.decide)(EditorKeyRequest {
+                    id: &request.id,
+                    state: EditorStateView::new(editor.text_ref(), &request.state),
+                    key: &request.key,
+                    repeat: request.repeat,
+                    input_time_ms: request.input_time_ms,
+                });
+                slots::editor_response(wire::EditorResponse {
+                    id: request.id,
+                    decision,
+                });
+                None
             }
-            let mapped =
-                slots::run_handler::<EditorTransactionEvent, M>(self.map, self.event.clone());
-            slots::editor_acknowledge(&self.event);
-            return mapped;
+            Transaction::Event(event) => {
+                let id = match &event {
+                    wire::EditorTransactionEvent::Commit { id, .. }
+                    | wire::EditorTransactionEvent::Fault { id, .. }
+                    | wire::EditorTransactionEvent::Cancelled { id, .. } => id,
+                };
+                if !slots::editor_matches_pending(id) {
+                    return None;
+                }
+                let mapped = match &event {
+                    wire::EditorTransactionEvent::Commit {
+                        before,
+                        after,
+                        patches,
+                        kind,
+                        history,
+                        input_time_ms,
+                        ..
+                    } => {
+                        if before.document != id.document
+                            || before.reset != id.reset
+                            || before.text_revision != id.text_revision
+                            || before.revision != id.revision
+                        {
+                            return None;
+                        }
+                        let old = editor.accept_patch(before, after, patches)?;
+                        (callbacks.on_event)(EditorTransactionEvent::Commit {
+                            id,
+                            before: EditorStateView::new(
+                                old.as_deref().unwrap_or_else(|| editor.text_ref()),
+                                before,
+                            ),
+                            after: EditorStateView::new(editor.text_ref(), after),
+                            kind: *kind,
+                            history: *history,
+                            input_time_ms: *input_time_ms,
+                        })
+                    }
+                    wire::EditorTransactionEvent::Fault { state, reason, .. } => {
+                        if state.document != id.document
+                            || state.reset != id.reset
+                            || state.reset != editor.reset_revision()
+                        {
+                            return None;
+                        }
+                        (callbacks.on_event)(EditorTransactionEvent::Fault {
+                            id,
+                            reason: *reason,
+                        })
+                    }
+                    wire::EditorTransactionEvent::Cancelled { state, .. } => {
+                        if state.document != id.document || state.reset != id.reset {
+                            return None;
+                        }
+                        (callbacks.on_event)(EditorTransactionEvent::Cancelled { id })
+                    }
+                };
+                slots::editor_acknowledge(&event);
+                mapped
+            }
         }
-        if !slots::editor_matches_pending(id)
-            || state.text.len() > wire::MAX_STRING_BYTES
-            || id.reset != state.reset
-            || state.reset != editor.reset_revision()
-            || state.revision < editor.observation_revision()
-            || (commit && state.revision == editor.observation_revision())
-        {
-            return None;
-        }
-        if !slots::has_handler::<EditorTransactionEvent, M>(self.map) {
-            return None;
-        }
-        editor.accept(state.clone());
-        let mapped = slots::run_handler::<EditorTransactionEvent, M>(self.map, self.event.clone());
-        slots::editor_acknowledge(&self.event);
-        mapped
     }
 }
 
 #[cfg(test)]
-mod retry_tests {
+mod tests {
     use super::*;
+    use std::cell::Cell;
+    fn id(attempt: u32) -> wire::EditorTransactionId {
+        wire::EditorTransactionId {
+            instance: 1,
+            document: "app:draft".into(),
+            reset: 0,
+            sequence: 7,
+            attempt,
+            text_revision: 0,
+            revision: 0,
+        }
+    }
+    fn observer(calls: Rc<Cell<usize>>) -> u32 {
+        let callbacks = Rc::new(Callbacks::<()> {
+            decide: Rc::new(|_| EditorDecision::Noop),
+            on_event: Rc::new(move |_| {
+                calls.set(calls.get() + 1);
+                None
+            }),
+        });
+        slots::handler::<(), Rc<Callbacks<()>>>(Box::new(move |()| Some(callbacks.clone())))
+    }
+    fn transaction(event: wire::EditorTransactionEvent, map: u32) -> EditorTransaction<()> {
+        EditorTransaction {
+            event: Transaction::Event(event),
+            map,
+            message: std::marker::PhantomData,
+        }
+    }
+    fn commit(
+        id: wire::EditorTransactionId,
+        before: &Editor,
+        text: &str,
+    ) -> wire::EditorTransactionEvent {
+        let reference = before.document_reference(id.document.clone());
+        let mut after = reference.clone();
+        after.byte_len = text.len() as u32;
+        after.revision += 1;
+        after.text_revision += u64::from(before.text_ref() != text);
+        after.cursor.clamp(text);
+        wire::EditorTransactionEvent::Commit {
+            id,
+            before: reference,
+            after,
+            patches: wire::editor_document::editor_changed_span(before.text_ref(), text).unwrap(),
+            kind: wire::EditorEditKind::GuestPatch,
+            history: wire::EditorHistoryEffect::NewGroup,
+            input_time_ms: 1,
+        }
+    }
+    #[test]
+    fn a_large_caret_commit_borrows_one_canonical_text_for_both_history_views() {
+        let context = slots::Context::default();
+        let _entered = context.enter();
+        let mut editor = Editor::new("x".repeat(wire::editor_document::MAX_EDITOR_DOCUMENT_BYTES));
+        let calls = Rc::new(Cell::new(0));
+        let seen = calls.clone();
+        let callbacks = Rc::new(Callbacks::<()> {
+            decide: Rc::new(|_| EditorDecision::Noop),
+            on_event: Rc::new(move |event| {
+                let EditorTransactionEvent::Commit { before, after, .. } = event else {
+                    panic!("expected caret commit");
+                };
+                assert_eq!(
+                    before.text.as_ptr(),
+                    after.text.as_ptr(),
+                    "metadata-only commit must borrow the same canonical text, not copy/compare one MiB"
+                );
+                assert_ne!(
+                    before.cursor, after.cursor,
+                    "before/after selection metadata stays distinct"
+                );
+                seen.set(seen.get() + 1);
+                None
+            }),
+        });
+        let map =
+            slots::handler::<(), Rc<Callbacks<()>>>(Box::new(move |()| Some(callbacks.clone())));
+        let before = editor.document_reference("app:draft".into());
+        let mut after = before.clone();
+        after.revision += 1;
+        after.cursor.position.column = 1;
+        transaction(
+            wire::EditorTransactionEvent::Commit {
+                id: id(1),
+                before,
+                after,
+                patches: vec![],
+                kind: wire::EditorEditKind::Cursor,
+                history: wire::EditorHistoryEffect::Native,
+                input_time_ms: 42,
+            },
+            map,
+        )
+        .apply(&mut editor);
+        assert_eq!(calls.get(), 1);
+        assert_eq!(editor.cursor().position.column, 1);
+    }
 
     #[test]
     fn cancellation_after_reset_notifies_without_replacing_the_new_document() {
         let context = slots::Context::default();
         let _entered = context.enter();
         let mut editor = Editor::new("old");
-        let id = wire::EditorTransactionId {
-            instance: 1,
-            document: "app:draft".into(),
-            reset: 0,
-            sequence: 7,
-            attempt: 1,
-            text_revision: 0,
-            revision: 0,
-        };
+        let current = id(1);
         slots::editor_response(wire::EditorResponse {
-            id: id.clone(),
-            decision: wire::EditorDecision::Noop,
+            id: current.clone(),
+            decision: EditorDecision::Noop,
         });
-        let calls = Rc::new(std::cell::Cell::new(0));
-        let counted = calls.clone();
-        let map = slots::handler::<EditorTransactionEvent, ()>(Box::new(move |event| {
-            assert!(matches!(event, EditorTransactionEvent::Cancelled { .. }));
-            counted.set(counted.get() + 1);
-            None
-        }));
+        let state = editor.document_reference(current.document.clone());
+        let calls = Rc::new(Cell::new(0));
+        let map = observer(calls.clone());
         editor.replace(Editor::new("new"), 0);
-        EditorTransaction::<()> {
-            event: EditorTransactionEvent::Cancelled {
-                id,
-                state: wire::EditorState {
-                    text: "old".into(),
-                    ..Default::default()
-                },
-            },
+        transaction(
+            wire::EditorTransactionEvent::Cancelled { id: current, state },
             map,
-            message: std::marker::PhantomData,
-        }
+        )
         .apply(&mut editor);
-        assert_eq!(
-            calls.get(),
-            1,
-            "retired identity must reach cleanup callback"
-        );
+        assert_eq!(calls.get(), 1, "retired identity gets cleanup after reset");
         assert_eq!(editor.text(), "new");
         assert_eq!(editor.reset_revision(), 1);
         assert!(!slots::editor_pending());
     }
-
     #[test]
     fn an_old_retry_cannot_commit_over_the_current_pending_attempt() {
         let context = slots::Context::default();
         let _entered = context.enter();
         let mut editor = Editor::new("before");
-        let current = wire::EditorTransactionId {
-            instance: 1,
-            document: "app:draft".into(),
-            reset: 0,
-            sequence: 7,
-            attempt: 2,
-            text_revision: 0,
-            revision: 0,
-        };
         slots::editor_response(wire::EditorResponse {
-            id: current.clone(),
-            decision: wire::EditorDecision::Noop,
+            id: id(2),
+            decision: EditorDecision::Noop,
         });
-        let calls = Rc::new(std::cell::Cell::new(0));
-        let counted = calls.clone();
-        let map = slots::handler::<EditorTransactionEvent, ()>(Box::new(move |_| {
-            counted.set(counted.get() + 1);
-            None
-        }));
-        let transaction = |id, text: &str| EditorTransaction::<()> {
-            event: EditorTransactionEvent::Commit {
-                id,
-                before: wire::EditorState {
-                    text: "before".into(),
-                    ..Default::default()
-                },
-                after: wire::EditorState {
-                    text: text.into(),
-                    revision: 1,
-                    ..Default::default()
-                },
-                kind: wire::EditorEditKind::GuestPatch,
-                history: wire::EditorHistoryEffect::NewGroup,
-                input_time_ms: 1,
-            },
-            map,
-            message: std::marker::PhantomData,
-        };
-        let mut old = current.clone();
-        old.attempt = 1;
-        transaction(old, "stale").apply(&mut editor);
+        let calls = Rc::new(Cell::new(0));
+        let map = observer(calls.clone());
+        transaction(commit(id(1), &editor, "stale"), map).apply(&mut editor);
         assert_eq!(
             editor.text(),
             "before",
@@ -232,7 +410,7 @@ mod retry_tests {
             slots::editor_pending(),
             "current attempt remains outstanding"
         );
-        let valid = transaction(current, "accepted");
+        let valid = transaction(commit(id(2), &editor, "accepted"), map);
         valid.clone().apply(&mut editor);
         assert_eq!(editor.text(), "accepted");
         assert_eq!(calls.get(), 1);
@@ -244,11 +422,6 @@ mod retry_tests {
             "duplicate accepted commit does not repeat history"
         );
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
     #[test]
     fn native_message_envelope_is_send_and_stale_commit_cannot_acknowledge() {
         fn is_send<T: Send>() {}
@@ -256,56 +429,30 @@ mod tests {
         let context = slots::Context::default();
         let _entered = context.enter();
         let mut editor = Editor::new("before");
-        let id = wire::EditorTransactionId {
-            instance: 1,
-            document: "app:draft".into(),
-            reset: 0,
-            sequence: 1,
-            attempt: 1,
-            text_revision: 0,
-            revision: 0,
-        };
         slots::editor_response(wire::EditorResponse {
-            id: id.clone(),
-            decision: wire::EditorDecision::Noop,
+            id: id(1),
+            decision: EditorDecision::Noop,
         });
-        let mapped = Rc::new(std::cell::Cell::new(0));
-        let counted = mapped.clone();
-        let map = slots::handler::<wire::EditorTransactionEvent, ()>(Box::new(move |_| {
-            counted.set(counted.get() + 1);
-            None
-        }));
-        let before = wire::EditorState {
-            text: "before".into(),
-            ..Default::default()
-        };
-        let mut after = before.clone();
-        after.text = "after".into();
-        after.revision = 1;
-        after.reset = 99;
-        let event = |after| wire::EditorTransactionEvent::Commit {
-            id: id.clone(),
-            before: before.clone(),
-            after,
-            kind: wire::EditorEditKind::GuestPatch,
-            history: wire::EditorHistoryEffect::NewGroup,
-            input_time_ms: 1,
-        };
-        let tx = |event| EditorTransaction::<()> {
-            event,
-            map,
-            message: std::marker::PhantomData,
-        };
-        tx(event(after.clone())).apply(&mut editor);
+        let calls = Rc::new(Cell::new(0));
+        let map = observer(calls.clone());
+        let event = commit(id(1), &editor, "after");
+        let mut stale = event.clone();
+        if let wire::EditorTransactionEvent::Commit { after, .. } = &mut stale {
+            after.reset = 99;
+        }
+        transaction(stale, map).apply(&mut editor);
         assert!(slots::editor_pending());
-        assert_eq!(mapped.get(), 0);
-        after.reset = 0;
-        let valid = tx(event(after));
+        assert_eq!(calls.get(), 0);
+        // Missing callback storage cannot accept or acknowledge a state update.
+        transaction(event.clone(), u32::MAX).apply(&mut editor);
+        assert_eq!(editor.text(), "before");
+        assert!(slots::editor_pending());
+        let valid = transaction(event, map);
         valid.clone().apply(&mut editor);
         assert_eq!(editor.text(), "after");
-        assert_eq!(mapped.get(), 1);
+        assert_eq!(calls.get(), 1);
         assert!(!slots::editor_pending());
         valid.apply(&mut editor);
-        assert_eq!(mapped.get(), 1, "duplicate commit does not re-run history");
+        assert_eq!(calls.get(), 1, "duplicate commit does not re-run history");
     }
 }

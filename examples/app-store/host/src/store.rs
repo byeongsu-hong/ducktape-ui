@@ -795,6 +795,7 @@ impl Guest {
     fn quiet(&self, now: Instant) -> bool {
         self.ticks > 0
             && !self.frame.busy
+            && !self.inputs.editor_wants_redraw()
             && self.widgets.is_empty()
             && self.pending.is_empty()
             && self.terminal_notice.is_none()
@@ -1159,7 +1160,14 @@ impl Guest {
                     self.patched += 1;
                 }
                 let mut accepted = true;
-                match merge(&mut self.frame.root, &mut frame) {
+                let previous_tree = self.frame.root.clone();
+                let merged = merge(&mut self.frame.root, &mut frame).and_then(|result| {
+                    if let Some(root) = &frame.root {
+                        self.inputs.validate_editor_documents(root)?;
+                    }
+                    Ok(result)
+                });
+                match merged {
                     Ok((false, _)) => {}
                     Ok((true, report)) => {
                         reports.local.merge(report);
@@ -1181,7 +1189,7 @@ impl Guest {
                     // replacement; an invalid patch cannot erase an editor.
                     Err(refused) => {
                         accepted = false;
-                        frame.root = self.frame.root.take();
+                        frame.root = previous_tree;
                         eprintln!("[{}] patch refused: {refused}", self.entry.id);
                         self.frame_rev += 1;
                         self.pending.push(wire::Event::Resync);
@@ -1376,24 +1384,53 @@ mod tests {
 
     #[test]
     fn oversized_editor_frames_and_patches_preserve_the_accepted_document() {
-        let editor = |text: String| wire::Node::Editor {
+        use wire::editor_document::{
+            EditorDocumentMessage as Message, EditorDocumentRef, EditorTransferSender,
+        };
+        let text = "keep the complete document";
+        let editor = |byte_len| wire::Node::Editor {
             key: "document".into(),
-            text,
             placeholder: String::new(),
-            cursor: Default::default(),
-            reset: 0,
-            revision: 0,
+            document: EditorDocumentRef {
+                document: "app:draft".into(),
+                reset: 0,
+                revision: 0,
+                text_revision: 0,
+                cursor: Default::default(),
+                byte_len,
+            },
             options: Default::default(),
-            on_edit: Some(1),
+            on_document: 1,
+            editable: true,
             width: None,
             height: None,
             min_height: None,
             max_height: None,
         };
-        let original = editor("keep the complete document".into());
+        let original = editor(text.len() as u32);
         let mut inputs = Inputs::default();
         inputs.adopt(&original);
-        let oversized = editor("x".repeat(wire::MAX_STRING_BYTES + 1));
+        let mut events = vec![];
+        inputs.editor_frame(&wire::Frame::default(), &mut events);
+        let wire::Event::EditorDocument {
+            message: Message::Request { id, target },
+            ..
+        } = events.remove(0)
+        else {
+            panic!("host must request document bytes");
+        };
+        let mut sender = EditorTransferSender::new(id, target.clone()).unwrap();
+        while let Some(transfer) = sender.next_frame(&target, text).unwrap() {
+            inputs.editor_frame(
+                &wire::Frame {
+                    editor_documents: vec![Message::Transfer(transfer)],
+                    ..Default::default()
+                },
+                &mut events,
+            );
+        }
+        assert_eq!(inputs.editor_document("document").unwrap().text(), text);
+        let oversized = editor((wire::editor_document::MAX_EDITOR_DOCUMENT_BYTES + 1) as u32);
         let full = wire::Frame {
             root: Some(oversized.clone()),
             ..Default::default()
@@ -1413,24 +1450,14 @@ mod tests {
         };
         assert_eq!(
             merge(&mut held, &mut frame),
-            Err("editor document exceeds text limit")
+            Err("invalid editor document references or budget")
         );
         assert_eq!(held, Some(original));
         assert!(frame.root.is_none());
-        let mut events = vec![];
-        inputs.apply(
-            Output::EditorAction {
-                reset: 0,
-                key: "document".into(),
-                handler: 1,
-                action: iced::widget::text_editor::Action::Move(
-                    iced::widget::text_editor::Motion::Right,
-                ),
-            },
-            &mut events,
-        );
-        assert!(
-            matches!(events.as_slice(), [wire::Event::Edit { text, .. }] if text == "keep the complete document")
+        assert_eq!(
+            inputs.editor_document("document").unwrap().text(),
+            text,
+            "invalid projection must preserve the actual assembled native document"
         );
     }
 
@@ -1481,6 +1508,7 @@ mod tests {
         let (frame, _) = shape(&wire::encode(&wire::Frame {
             upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
+            editor_documents: Vec::new(),
             mouse_interest: false,
             root: Some(wire::Node::empty()),
             requests: vec![kind(wire::MAX_STRING_BYTES * 2)],
@@ -1789,6 +1817,9 @@ mod keyboard_tests;
 #[path = "editor_tests.rs"]
 mod editor_tests;
 
+#[cfg(test)]
+#[path = "editor_documents_tests.rs"]
+mod editor_documents_tests;
 #[cfg(test)]
 #[path = "editor_transactions_tests.rs"]
 mod editor_transactions_tests;

@@ -11,7 +11,7 @@
 //! `on_press`); the host sends [`Event::Message`] with that index and the
 //! guest runs its own handler. A text field carries a handler index; the host
 //! owns the text and sends [`Event::Input`] with what it now reads; a
-//! multiline editor the same, with [`Event::Edit`]. A
+//! multiline editor the same, with [`Event::EditorTransaction`]. A
 //! checkbox, slider or pick list likewise carries a handler index and the
 //! host sends the new value ([`Event::Toggle`], [`Event::Slide`],
 //! [`Event::Select`]).
@@ -25,7 +25,7 @@
 pub mod authored;
 /// Exact bincode protocol implemented by this build. Bump on serialized shape changes.
 /// This is independent of WIT signatures and the manifest text format.
-pub const WIRE_EPOCH: u32 = 2;
+pub const WIRE_EPOCH: u32 = 3;
 
 pub mod manifest;
 pub mod native;
@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 mod background;
 pub use background::{Background, ColorStop};
 mod editor;
+pub mod editor_document;
 pub mod editor_transaction;
 pub use editor_transaction::{
     EditorBinding, EditorDecision, EditorEditKind, EditorFault, EditorHistoryEffect,
@@ -136,6 +137,11 @@ pub enum Event {
     Input { handler: u32, text: String },
     /// An editor's text or cursor changed. `reset` fences document replacements;
     /// `revision` orders host observations. Caret-only changes are included.
+    /// Initial assignment, mirror repair and exact transfer acknowledgments.
+    EditorDocument {
+        handler: u32,
+        message: editor_document::EditorDocumentMessage,
+    },
     EditorKeyRequest {
         handler: u32,
         request: EditorKeyRequest,
@@ -143,13 +149,6 @@ pub enum Event {
     EditorTransaction {
         handler: u32,
         event: EditorTransactionEvent,
-    },
-    Edit {
-        handler: u32,
-        text: String,
-        cursor: EditorCursor,
-        reset: u64,
-        revision: u64,
     },
     /// A checkbox or toggler flipped. `handler` indexes the guest's
     /// per-frame handler table; `on` is the state it now shows.
@@ -238,6 +237,9 @@ pub struct Frame {
     pub upstream_sanitization: SanitizeReport,
     #[serde(deserialize_with = "editor_transaction::decode_responses")]
     pub editor_decisions: Vec<EditorResponse>,
+    /// One bounded document message, independent of display text budgets.
+    #[serde(deserialize_with = "editor_document::decode_messages")]
+    pub editor_documents: Vec<editor_document::EditorDocumentMessage>,
     /// The current subscription requests guest-local mouse observations.
     pub mouse_interest: bool,
     /// The tree to show. `None` with `unchanged` set means "what you have";
@@ -459,8 +461,6 @@ pub struct InputOptions {
 /// Copied native multiline editor presentation; state faces share input semantics.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EditorOptions {
-    #[serde(deserialize_with = "editor_transaction::decode_document")]
-    pub document: String,
     pub binding: Option<Box<EditorBinding>>,
     pub size: Option<f32>,
     pub padding: Option<f32>,
@@ -946,13 +946,11 @@ pub enum Node {
         options: Box<EditorOptions>,
         key: String,
         placeholder: String,
-        /// Copied document state, adopted by reset and host observation revision.
-        text: String,
-        cursor: EditorCursor,
-        reset: u64,
-        revision: u64,
-        /// `None` is a disabled editor.
-        on_edit: Option<u32>,
+        /// A shared logical document; its bytes travel only through a requested transfer.
+        document: editor_document::EditorDocumentRef,
+        /// Mutable guest state route, present even while editing is disabled.
+        on_document: u32,
+        editable: bool,
         /// Pixels; the editor fills its parent otherwise.
         width: Option<f32>,
         height: Option<Length>,
@@ -1465,10 +1463,10 @@ pub fn sanitize(frame: &mut Frame) -> Result<SanitizeReport, &'static str> {
 }
 
 // Sanitization may shorten display text, but never an authoritative document.
-fn text_amounts(root: &Node) -> Result<(Vec<usize>, usize), &'static str> {
+fn text_amounts(root: &Node) -> Result<(usize, usize), &'static str> {
     let mut pending = vec![root];
     let mut surface_values = Vec::new();
-    let mut lengths = Vec::new();
+    let mut references = Vec::new();
     let mut display = 0usize;
     while let Some(node) = pending.pop() {
         let mut add = |text: &str| display = display.saturating_add(text.len());
@@ -1546,11 +1544,8 @@ fn text_amounts(root: &Node) -> Result<(Vec<usize>, usize), &'static str> {
             }
             _ => {}
         }
-        if let Node::Editor { text, .. } = node {
-            if text.len() > MAX_STRING_BYTES {
-                return Err("editor document exceeds text limit");
-            }
-            lengths.push(text.len());
+        if let Node::Editor { document, .. } = node {
+            references.push(document);
         }
         pending.extend(node.children());
     }
@@ -1571,7 +1566,9 @@ fn text_amounts(root: &Node) -> Result<(Vec<usize>, usize), &'static str> {
             | SurfaceValue::Option(None) => {}
         }
     }
-    Ok((lengths, display))
+    editor_document::validate_editor_document_refs(references.iter().copied())
+        .map_err(|_| "invalid editor document references or budget")?;
+    Ok((references.len(), display))
 }
 
 fn sanitize_tree(root: &mut Node) -> Result<SanitizeReport, &'static str> {
@@ -1588,7 +1585,7 @@ fn sanitize_tree(root: &mut Node) -> Result<SanitizeReport, &'static str> {
     sanitize_node(root, 0, &mut budget, &mut budgets, &mut taken);
     let (after_documents, after) = text_amounts(root)?;
     if after_documents != documents {
-        return Err("frame budget would truncate an editor document");
+        return Err("frame budget would remove an editor document projection");
     }
     Ok(SanitizeReport {
         display_text_truncated: after < before,
@@ -2257,8 +2254,6 @@ fn sanitize_node(
             options,
             key,
             placeholder,
-            text,
-            cursor,
             width,
             min_height,
             max_height,
@@ -2275,8 +2270,6 @@ fn sanitize_node(
             options.style.sanitize();
             claim(key, taken);
             spend_text(placeholder, &mut budgets.text);
-            spend_text(text, &mut budgets.text);
-            cursor.clamp(text);
             if let Some(font) = &mut options.font {
                 font.sanitize(&mut budgets.text);
             }
@@ -2957,6 +2950,32 @@ mod tests {
         );
     }
 
+    fn document_reference(document: &str, byte_len: u32) -> editor_document::EditorDocumentRef {
+        editor_document::EditorDocumentRef {
+            document: document.into(),
+            reset: 3,
+            text_revision: 5,
+            revision: 7,
+            cursor: EditorCursor::default(),
+            byte_len,
+        }
+    }
+
+    fn editor(key: &str, placeholder: &str, document: editor_document::EditorDocumentRef) -> Node {
+        Node::Editor {
+            options: Default::default(),
+            key: key.into(),
+            placeholder: placeholder.into(),
+            document,
+            on_document: 1,
+            editable: true,
+            width: None,
+            height: None,
+            min_height: None,
+            max_height: None,
+        }
+    }
+
     fn column(children: Vec<Node>) -> Node {
         Node::Linear {
             max_width: None,
@@ -3087,6 +3106,7 @@ mod tests {
         let frame = Frame {
             upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
+            editor_documents: Vec::new(),
             mouse_interest: true,
             root: Some(column(vec![
                 text("hello"),
@@ -3115,14 +3135,12 @@ mod tests {
                     style: Box::default(),
                 },
                 Node::Editor {
-                    cursor: Default::default(),
-                    reset: 0,
-                    revision: 0,
                     options: Default::default(),
                     key: "App/e".into(),
                     placeholder: "Notes".into(),
-                    text: "line\nline".into(),
-                    on_edit: Some(5),
+                    document: document_reference("app:draft", 9),
+                    on_document: 5,
+                    editable: true,
                     width: None,
                     height: Some(Length::Fill),
                     min_height: Some(80.0),
@@ -3149,12 +3167,29 @@ mod tests {
                 handler: 0,
                 text: "xy".into(),
             },
-            Event::Edit {
-                cursor: Default::default(),
-                reset: 0,
-                revision: 0,
+            Event::EditorTransaction {
                 handler: 5,
-                text: "xy\nz".into(),
+                event: EditorTransactionEvent::Commit {
+                    id: EditorTransactionId {
+                        instance: 1,
+                        document: "app:draft".into(),
+                        reset: 0,
+                        sequence: 2,
+                        attempt: 0,
+                        text_revision: 1,
+                        revision: 3,
+                    },
+                    before: document_reference("app:draft", 9),
+                    after: document_reference("app:draft", 10),
+                    patches: vec![EditorPatch {
+                        start_byte: 9,
+                        end_byte: 9,
+                        replacement: "z".into(),
+                    }],
+                    kind: EditorEditKind::Insert,
+                    history: EditorHistoryEffect::ExtendPrevious,
+                    input_time_ms: 42,
+                },
             },
             Event::Toggle {
                 handler: 1,
@@ -3422,31 +3457,94 @@ mod tests {
     }
 
     #[test]
-    fn editor_budget_exhaustion_is_an_error_instead_of_a_truncated_document() {
-        let long = "x".repeat(MAX_TEXT_BYTES_PER_FRAME);
+    fn display_truncation_shortens_a_placeholder_and_never_a_document_reference() {
+        let long = "x".repeat(2 * MAX_TEXT_BYTES_PER_FRAME);
+        let document = document_reference(
+            "app:draft",
+            editor_document::MAX_EDITOR_DOCUMENT_BYTES as u32,
+        );
         let mut frame = Frame {
             root: Some(column(vec![
-                Node::Editor {
-                    cursor: Default::default(),
-                    reset: 0,
-                    revision: 0,
-                    options: Default::default(),
-                    key: "App/e".into(),
-                    placeholder: long.clone(),
-                    text: long,
-                    on_edit: None,
-                    width: None,
-                    height: None,
-                    min_height: Some(f32::NAN),
-                    max_height: Some(f32::INFINITY),
-                },
-                text("tail"),
+                editor("App/e", &long, document.clone()),
+                text(&long),
             ])),
             ..Frame::default()
         };
         assert_eq!(
             sanitize(&mut frame),
-            Err("frame budget would truncate an editor document")
+            Ok(SanitizeReport {
+                display_text_truncated: true
+            })
+        );
+        let Some(Node::Linear { children, .. }) = &frame.root else {
+            panic!()
+        };
+        let Node::Editor {
+            placeholder,
+            document: kept,
+            ..
+        } = &children[0]
+        else {
+            panic!()
+        };
+        assert!(
+            placeholder.len() < long.len(),
+            "an editor placeholder is display text and spends the frame budget"
+        );
+        assert_eq!(
+            kept, &document,
+            "a 1 MiB document crosses as an exact reference, not as truncated text"
+        );
+    }
+
+    #[test]
+    fn repeated_editor_bindings_must_describe_one_identical_document() {
+        let document = document_reference("app:draft", 32);
+        let mut agreeing = Frame {
+            root: Some(column(vec![
+                editor("App/one", "a", document.clone()),
+                editor("App/two", "b", document.clone()),
+            ])),
+            ..Frame::default()
+        };
+        assert_eq!(sanitize(&mut agreeing), Ok(SanitizeReport::default()));
+        // A distinct logical document is independent, even at the same state.
+        let mut independent = Frame {
+            root: Some(column(vec![
+                editor("App/one", "a", document.clone()),
+                editor("App/two", "b", document_reference("app:notes", 32)),
+            ])),
+            ..Frame::default()
+        };
+        assert_eq!(sanitize(&mut independent), Ok(SanitizeReport::default()));
+        let mut stale = document.clone();
+        stale.revision -= 1;
+        let mut conflicting = Frame {
+            root: Some(column(vec![
+                editor("App/one", "a", document),
+                editor("App/two", "b", stale),
+            ])),
+            ..Frame::default()
+        };
+        assert_eq!(
+            sanitize(&mut conflicting),
+            Err("invalid editor document references or budget")
+        );
+    }
+
+    #[test]
+    fn a_document_projection_cannot_be_silently_removed_by_the_node_budget() {
+        let mut deep = editor("App/e", "notes", document_reference("app:draft", 8));
+        for _ in 0..MAX_DEPTH {
+            deep = column(vec![deep]);
+        }
+        let mut frame = Frame {
+            root: Some(deep),
+            ..Frame::default()
+        };
+        assert_eq!(
+            sanitize(&mut frame),
+            Err("frame budget would remove an editor document projection")
         );
     }
 
@@ -3744,6 +3842,7 @@ mod tests {
         let sound = encode(&Frame {
             upstream_sanitization: Default::default(),
             editor_decisions: Vec::new(),
+            editor_documents: Vec::new(),
             mouse_interest: false,
             root: Some(column(vec![text("hello"), Node::empty()])),
             requests: vec![Request {

@@ -1,6 +1,5 @@
 //! Atomic editor patch validation shared by native and guest transaction lanes.
 use serde::{Deserialize, Serialize};
-use unicode_segmentation::UnicodeSegmentation;
 
 use crate::EditorCursor;
 
@@ -21,6 +20,11 @@ pub enum EditorPatchError {
 }
 
 pub const MAX_EDITOR_PATCHES: usize = 256;
+/// Aggregate replacement bytes in one decoded transaction frame, independent
+/// of display text. One Undo may restore the entire supported document.
+pub const MAX_EDITOR_PATCH_BYTES: usize = crate::editor_document::MAX_EDITOR_DOCUMENT_BYTES;
+/// Captured native input retained by one ordered logical-document lane.
+pub const MAX_EDITOR_INPUT_BYTES: usize = crate::editor_document::MAX_EDITOR_DOCUMENT_BYTES;
 
 /// Validate the complete batch before any native Content is mutated.
 pub fn patched_editor_text(
@@ -28,45 +32,35 @@ pub fn patched_editor_text(
     patches: &[EditorPatch],
     cursor: EditorCursor,
 ) -> Result<String, EditorPatchError> {
-    if text.len() > crate::MAX_STRING_BYTES || patches.len() > MAX_EDITOR_PATCHES {
+    if text.len() > MAX_EDITOR_PATCH_BYTES || patches.len() > MAX_EDITOR_PATCHES {
         return Err(EditorPatchError::Limit);
     }
     // Native selection positions cannot address the middle of a grapheme
     // or either two-byte line terminator accepted by Content.
-    let boundaries: Vec<_> = text
-        .grapheme_indices(true)
-        .map(|(at, _)| at)
-        .chain(std::iter::once(text.len()))
-        .filter(|at| {
-            !(*at > 0
-                && *at < text.len()
-                && matches!(&text.as_bytes()[at - 1..=*at], b"\r\n" | b"\n\r"))
-        })
-        .collect();
     let mut previous_end = 0;
     let mut removed = 0;
     let mut inserted = 0usize;
     for patch in patches {
         let start = patch.start_byte as usize;
         let end = patch.end_byte as usize;
-        if start < previous_end
-            || start > end
-            || end > text.len()
-            || boundaries.binary_search(&start).is_err()
-            || boundaries.binary_search(&end).is_err()
-        {
+        if start < previous_end || start > end || end > text.len() {
             return Err(EditorPatchError::Range);
+        }
+        for at in [start, end] {
+            if !crate::editor_document::native_editor_boundary(text, at) {
+                return Err(EditorPatchError::Range);
+            }
         }
         previous_end = end;
         removed += end - start;
         inserted = inserted
             .checked_add(patch.replacement.len())
-            .filter(|bytes| *bytes <= crate::MAX_STRING_BYTES)
+            .filter(|bytes| *bytes <= MAX_EDITOR_PATCH_BYTES)
             .ok_or(EditorPatchError::Limit)?;
     }
     let len = (text.len() - removed)
         .checked_add(inserted)
-        .filter(|bytes| *bytes <= crate::MAX_STRING_BYTES)
+        .filter(|bytes| *bytes <= MAX_EDITOR_PATCH_BYTES)
         .ok_or(EditorPatchError::Limit)?;
     let mut result = String::with_capacity(len);
     let mut offset = 0;
@@ -87,7 +81,7 @@ pub fn patched_editor_text(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EditorPosition, MAX_STRING_BYTES};
+    use crate::EditorPosition;
 
     fn patch(start: u32, end: u32, replacement: &str) -> EditorPatch {
         EditorPatch {
@@ -95,6 +89,22 @@ mod tests {
             end_byte: end,
             replacement: replacement.into(),
         }
+    }
+
+    #[test]
+    fn one_mib_undo_replacement_uses_the_document_budget() {
+        let text = "x".repeat(crate::editor_document::MAX_EDITOR_DOCUMENT_BYTES);
+        let result = patched_editor_text("", &[patch(0, 0, &text)], EditorCursor::default());
+        assert!(
+            matches!(&result, Ok(restored) if restored == &text),
+            "a valid one-MiB Undo replacement must be accepted: {:?}",
+            result.as_ref().err()
+        );
+        let unchanged = patched_editor_text(&text, &[], EditorCursor::default());
+        assert!(
+            matches!(&unchanged, Ok(restored) if restored == &text),
+            "caret-only transactions must preserve a large document"
+        );
     }
 
     #[test]
@@ -167,7 +177,7 @@ mod tests {
         assert_eq!(
             patched_editor_text(
                 "",
-                &[patch(0, 0, &"x".repeat(MAX_STRING_BYTES + 1))],
+                &[patch(0, 0, &"x".repeat(MAX_EDITOR_PATCH_BYTES + 1))],
                 EditorCursor::default()
             ),
             Err(EditorPatchError::Limit)
@@ -207,6 +217,8 @@ impl EditorKeyClaim {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorBinding {
+    /// An authored factory owns its routes; plain renderings inherit a document factory.
+    pub authored: bool,
     #[serde(deserialize_with = "decode_claims")]
     pub claims: Vec<EditorKeyClaim>,
     pub on_request: u32,
@@ -229,7 +241,7 @@ pub struct EditorTransactionId {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorKeyRequest {
     pub id: EditorTransactionId,
-    pub state: crate::EditorState,
+    pub state: crate::editor_document::EditorDocumentRef,
     pub key: crate::keyboard::KeyState,
     pub repeat: bool,
     pub input_time_ms: u64,
@@ -292,27 +304,31 @@ pub enum EditorFault {
 pub enum EditorTransactionEvent {
     Commit {
         id: EditorTransactionId,
-        before: crate::EditorState,
-        after: crate::EditorState,
+        before: crate::editor_document::EditorDocumentRef,
+        after: crate::editor_document::EditorDocumentRef,
+        #[serde(deserialize_with = "decode_patches")]
+        patches: Vec<EditorPatch>,
         kind: EditorEditKind,
         history: EditorHistoryEffect,
         input_time_ms: u64,
     },
     Fault {
         id: EditorTransactionId,
-        state: crate::EditorState,
+        state: crate::editor_document::EditorDocumentRef,
         reason: EditorFault,
     },
     Cancelled {
         id: EditorTransactionId,
-        state: crate::EditorState,
+        state: crate::editor_document::EditorDocumentRef,
     },
 }
 
 pub const MAX_EDITOR_CLAIMS: usize = 32;
 pub const MAX_EDITOR_RESPONSES: usize = 128;
 
-fn decode_bounded<'de, D, T, const LIMIT: usize>(deserializer: D) -> Result<Vec<T>, D::Error>
+pub(crate) fn decode_bounded<'de, D, T, const LIMIT: usize>(
+    deserializer: D,
+) -> Result<Vec<T>, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: Deserialize<'de>,
@@ -361,7 +377,7 @@ pub(crate) fn decode_responses<'de, D: serde::Deserializer<'de>>(
             _ => 0,
         })
         .sum();
-    if bytes > crate::MAX_STRING_BYTES {
+    if bytes > MAX_EDITOR_PATCH_BYTES {
         return Err(serde::de::Error::custom(
             "editor response aggregate byte limit",
         ));
@@ -376,7 +392,7 @@ pub(crate) fn reset_decode_budget() {
     REPLACEMENT_BYTES.with(|bytes| bytes.set(0));
 }
 fn decode_replacement<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-    decode_text(d, crate::MAX_STRING_BYTES, true)
+    decode_text(d, MAX_EDITOR_PATCH_BYTES, true)
 }
 pub(crate) fn decode_document<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
     decode_text(d, 1024, false)
@@ -404,7 +420,7 @@ fn decode_text<'de, D: serde::Deserializer<'de>>(
                     match bytes
                         .get()
                         .checked_add(value.len())
-                        .filter(|n| *n <= crate::MAX_STRING_BYTES)
+                        .filter(|n| *n <= MAX_EDITOR_PATCH_BYTES)
                     {
                         Some(next) => {
                             bytes.set(next);
@@ -451,10 +467,24 @@ mod protocol_tests {
     }
 
     #[test]
+    fn decoder_accepts_one_mib_undo_replacement_outside_display_budget() {
+        let frame = crate::Frame {
+            editor_decisions: vec![response(
+                "x".repeat(crate::editor_document::MAX_EDITOR_DOCUMENT_BYTES),
+            )],
+            ..Default::default()
+        };
+        assert!(
+            crate::decode::<crate::Frame>(&crate::encode(&frame)).is_ok(),
+            "one bounded document replacement must cross the actual frame decoder"
+        );
+    }
+
+    #[test]
     fn decoder_rejects_aggregate_patch_bytes_and_resets_budget_after_failure() {
         let mut frame = crate::Frame {
             upstream_sanitization: Default::default(),
-            editor_decisions: vec![response("a".repeat(crate::MAX_STRING_BYTES / 2 + 1)); 2],
+            editor_decisions: vec![response("a".repeat(MAX_EDITOR_PATCH_BYTES / 2 + 1)); 2],
             ..Default::default()
         };
         assert!(crate::decode::<crate::Frame>(&crate::encode(&frame)).is_err());
@@ -465,6 +495,7 @@ mod protocol_tests {
     #[test]
     fn decoder_rejects_excess_claims_and_responses() {
         let binding = EditorBinding {
+            authored: true,
             claims: vec![
                 EditorKeyClaim {
                     key: crate::keyboard::Key::Named(crate::keyboard::Named::Tab),

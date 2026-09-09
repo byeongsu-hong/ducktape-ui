@@ -386,7 +386,7 @@ a tree to walk. That refusal ends the one instance, like any other.
 What survives the door, `wire::sanitize` pulls into range: depth to
 `MAX_DEPTH` (64, the host's layout recurses that far and no further),
 nodes to `MAX_NODES` (8192, a screen's worth — a list past that is the
-guest's to window), every string to `MAX_STRING_BYTES` (64 KiB), the
+guest's to window), each display string to `MAX_STRING_BYTES` (64 KiB), the
 shaped text of the whole tree — contents, input values and placeholders,
 plain button labels — to `MAX_TEXT_BYTES_PER_FRAME` (64 KiB, taken in
 tree order so a tail past it comes out empty, because the 8 MiB of text
@@ -398,6 +398,12 @@ key used twice is moved off the one already taken (`key`, then `key#2`):
 a key is the node's widget state, its focus target, its accessibility id
 and, for an input, the text the host owns on its behalf, so two nodes
 sharing one share all of that.
+Editors carry a document reference rather than their contents in this display
+budget. Their canonical text is assigned in bounded chunks and remains unavailable
+until the complete assignment is validated. Sanitization rejects conflicting
+shared references or removal of a document projection; hosts retain the previous
+accepted tree and editor on rejection. See [editor transactions](../../docs/editor-transactions.md)
+for the separate document and input limits.
 Every frame passes through it, tree or no tree — an `unchanged` one still
 carries request kinds the host formats into refusals and shows. A
 well-behaved tree comes out untouched; a hostile one is cut, not refused,
@@ -613,8 +619,9 @@ For module packaging requirements and the connected implementation phases, see
   middle buttons, enter, exit, `move=`, `press-at=`, `scroll=` — but not
   `cursor=`: the pointer's shape over it is the host's, and the option is
   refused with E190.
-- An `editor` carries text, active caret and optional selection anchor. The host
-  keeps native `Content`, while the guest reads editor text/line/cursor builtins.
+- An `editor` owns text, active caret and optional selection anchor in the guest.
+  Host projections carry versioned document references and keep native `Content`;
+  the guest reads editor text/line/cursor builtins.
   Pointer, keyboard and accessibility cursor-only changes are delivered too.
   Positions are zero-based lines and UTF-8 byte columns, clamped backward to
   extended grapheme boundaries. A missing anchor explicitly clears selection.
@@ -630,6 +637,9 @@ For module packaging requirements and the connected implementation phases, see
   acceptance and authored history reduction. Atomic patches preserve native
   `Content`; native fallback edits and guest patches reach the same guest-owned
   history reducer. See [the transaction contract](../../docs/editor-transactions.md).
+  The actual native/Wasm one-MiB reload fixture verifies text/caret before redraw
+  and Undo without refocusing. Replacement transfers eligible focus identity
+  into fresh native widgets while retiring old input sessions.
   Native action/highlighter/style callbacks and `highlight=` stay E190. Native
   word/line selection modes are not copied by the cursor/anchor contract.
 - No scale factor or locale reaches the guest. The colour mode does, as a
