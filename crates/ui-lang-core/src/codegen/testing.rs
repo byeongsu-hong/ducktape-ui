@@ -9,7 +9,7 @@ pub(crate) fn generate_tree_tests(
     for test in program.tests() {
         let unsupported = |origin, detail| {
             program.error_at_origin(
-            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: presets, typed state expectations and dispatch, targets with live state keys, click, exists/missing, and literal text expectations"),
+            "E190", origin, format!("Tree host tests do not yet support {detail}; supported: presets, typed state expectations and dispatch, targets with live state keys, click, focus, literal input/selection arguments, keyboard actions, exists/missing, and literal text expectations"),
         )
         };
         if program.settings().kind == ProgramKind::Daemon
@@ -25,9 +25,37 @@ pub(crate) fn generate_tree_tests(
                 "daemon windows, mounts, or environment overrides",
             ));
         }
+        let literal = |value| {
+            let expressions = program.expressions();
+            matches!(
+                expressions
+                    .expression(expressions.expression_use(value).root)
+                    .kind,
+                crate::lower::ResolvedExpressionKind::Str(_)
+                    | crate::lower::ResolvedExpressionKind::I64(_)
+            )
+        };
         for step in &test.steps {
             let supported = match &step.kind {
-                ResolvedTestStepKind::Click { .. } => true,
+                ResolvedTestStepKind::Click { .. }
+                | ResolvedTestStepKind::Focus(_)
+                | ResolvedTestStepKind::FocusNext
+                | ResolvedTestStepKind::FocusPrevious
+                | ResolvedTestStepKind::Blur
+                | ResolvedTestStepKind::Clear
+                | ResolvedTestStepKind::SelectAll
+                | ResolvedTestStepKind::CursorFront
+                | ResolvedTestStepKind::CursorEnd
+                | ResolvedTestStepKind::Key(_)
+                | ResolvedTestStepKind::KeyDown(_)
+                | ResolvedTestStepKind::KeyUp(_)
+                | ResolvedTestStepKind::Modifiers(_)
+                | ResolvedTestStepKind::Chord { .. } => true,
+                ResolvedTestStepKind::Type(value)
+                | ResolvedTestStepKind::Replace(value)
+                | ResolvedTestStepKind::Cursor(value)
+                | ResolvedTestStepKind::Repeat { count: value, .. } => literal(*value),
+                ResolvedTestStepKind::Select(start, end) => literal(*start) && literal(*end),
                 ResolvedTestStepKind::Expect(ResolvedTestExpectation::Text { value, .. }) => {
                     let expressions = program.expressions();
                     matches!(
@@ -1341,6 +1369,7 @@ fn test_program_code(
 fn tree_step_target(step: &ResolvedTestStepKind) -> Option<&ResolvedTestTargetRef> {
     match step {
         ResolvedTestStepKind::Click { target, .. }
+        | ResolvedTestStepKind::Focus(target)
         | ResolvedTestStepKind::Expect(
             ResolvedTestExpectation::Exists(target) | ResolvedTestExpectation::Missing(target),
         ) => Some(target),

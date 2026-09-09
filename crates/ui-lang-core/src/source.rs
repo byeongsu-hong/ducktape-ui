@@ -790,6 +790,40 @@ mod tests {
         assert!(native.contains("agent_inspect("));
     }
 
+    #[test]
+    fn tree_authored_input_actions_reuse_driver_and_reject_host_state_arguments() {
+        let fixture = Fixture::new();
+        let source =
+            include_str!("../../../examples/app-store/tests/authored-input/src/ui/app.ice");
+        fixture.write("app.ice", source);
+        let host = super::compile_tree_tests_file(fixture.path("app.ice")).unwrap();
+        let guest = super::compile_tree_guest_tests_file(fixture.path("app.ice")).unwrap();
+        for action in [
+            "Focus(",
+            "FocusNext",
+            "Type(",
+            "Select {",
+            "CursorFront",
+            "KeyDown",
+            "KeyUp",
+        ] {
+            assert!(host.rust.contains(&format!("Action::{action}")), "{action}");
+        }
+        assert!(host.rust.contains("__ice_tree_test_target("));
+        assert!(guest.rust.contains("self.first"));
+        for (literal, state) in [
+            ("type \"hello\"", "type first"),
+            ("replace \"abc\"", "replace first"),
+            ("select 1 4", "select releases 4"),
+            ("repeat backspace 2", "repeat backspace releases"),
+        ] {
+            fixture.write("app.ice", &source.replace(literal, state));
+            let error = super::compile_tree_tests_file(fixture.path("app.ice")).unwrap_err();
+            assert_eq!(error.code, "E190", "{state}: {error:?}");
+            assert!(error.message.contains("literal input/selection arguments"));
+        }
+    }
+
     impl Fixture {
         fn new() -> Self {
             let nonce = crate::test_support::unique_nonce();

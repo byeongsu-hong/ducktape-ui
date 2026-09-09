@@ -481,11 +481,28 @@ manifest keeps them out of the production catalog. Normal guest exports remain
 unchanged, including when the test feature is enabled elsewhere in the workspace.
 
 Presets, typed state expectations and dispatch, targets with literal keys,
-clicks, `exists`/`missing` and literal text expectations are supported. A key
-that reads state, mounts and other test actions still report a source-position
-diagnostic. Direct Tree guest library
+clicks, input/focus/keyboard actions, `exists`/`missing` and literal text
+expectations are supported. Mounts and other test actions still report a
+source-position diagnostic. Direct Tree guest library
 tests continue to explain that authored scenarios need the host harness;
 Native-language tests keep their existing generated harness.
+
+The independent `tests/authored-input` fixture exercises focus, typing, selection
+replacement, cursor movement, Backspace and native key metadata on both backends:
+
+```sh
+python3 scripts/build-native.py -p app-store-authored-input --out target/authored-native
+cargo ice bundle -p app-store-authored-input --target wasm32-unknown-unknown --out target/authored-wasm
+cargo test -p app-store-host store::authored_input_tests:: -- --ignored
+```
+
+Tree authored input actions use the same mounted semantic Driver as native Ice
+tests: `focus`, `focus-next`, `focus-previous`, `blur`, `type`, `clear`, `replace`,
+`select`, `select-all`, `cursor`, `key`, `key-down`, `key-up`, `modifiers`, `chord`
+and `repeat`. Text, index and repeat-count arguments currently require literals;
+state-derived values report E190 instead of evaluating against the host Surface.
+Focus targets resolve inside the guest like click targets. The keyboard tests
+exercise rendered widget events and guest subscriptions, not OS input injection.
 
 Catalog polling and approved in-place replacement are implemented; state-schema
 migrations and remote distribution are not. See [host replacement](#approved-host-replacement).
