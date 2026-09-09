@@ -236,6 +236,13 @@ Treat Ice as a native Iced application:
 Do not assume browser viewport units, DOM measurement, media-query CSS, or
 mobile touch conventions.
 
+For a sidebar/detail screen, declare where every essential navigation and edit
+action goes at compact widths. Keep selection and unsaved values above the
+presentation branches. Test the same running instance across the breakpoint,
+then continue typing without refocusing: retained values alone do not prove
+native editor state survived. The [responsive workspace guide](../../../crates/ui-lang-components/docs/responsive-workspace.md)
+includes a compiling example, exact-boundary tests, and layout customization.
+
 ## Preserve accessibility
 
 Before polishing visuals:

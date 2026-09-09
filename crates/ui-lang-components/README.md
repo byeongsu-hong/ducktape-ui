@@ -274,6 +274,16 @@ Panel title="Profile"
 Both expose `root/title` and, when present, `root/description` for semantic
 inspection. Panel retains its existing content slot and padding/section spacing.
 
+## Responsive sidebar and detail layouts
+
+Use the [responsive workspace guide](docs/responsive-workspace.md) and its
+[executable Ice example](../../examples/showcase/tests/cases/ui/responsive_workspace.ice)
+for compact navigation, independent project drafts, and actions that remain
+reachable in a short window. The tests resize the same application across the
+breakpoint and continue typing, covering native editing state as well as bound
+values. The example also demonstrates customized page insets, sidebar width,
+and a breakpoint measured from the available content space.
+
 ## Rust library quick start
 
 Each component remains individually feature-gated, and enabling one also enables its internal component dependencies.
