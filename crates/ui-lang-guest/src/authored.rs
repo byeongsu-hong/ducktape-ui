@@ -201,6 +201,7 @@ mod tests {
     #[test]
     fn targets_read_the_current_settled_guest_without_exporting_state() {
         let mut driver = Some(Driver::<Counter>::for_test(0, false).unwrap());
+        driver.as_mut().unwrap().test_step(0, 0).unwrap();
         let target = || crate::wire::authored::Request::ResolveTarget { test: 0, step: 0 };
         assert_eq!(
             respond(&mut driver, target()).unwrap(),
@@ -227,6 +228,7 @@ mod tests {
     #[test]
     fn resolving_a_target_cannot_advance_past_the_rendered_state() {
         let mut driver = Some(Driver::<Counter>::for_test(0, false).unwrap());
+        driver.as_mut().unwrap().test_step(0, 0).unwrap();
         {
             let _context = driver.as_ref().unwrap().slots.enter();
             crate::slots::defer(vec![12_i64]);

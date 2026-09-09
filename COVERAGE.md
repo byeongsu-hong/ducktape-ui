@@ -2088,6 +2088,10 @@ alias again, and removes its row; it checks both selected state and mounted
 and accented Latin labels. String keys remain unsupported on both targets.
 The target query is read-only so deferred changes cannot get ahead of the host's
 rendered frame. Test-manifest v3 rejects old test artifacts before initialization.
+Actual native/Wasm runs pass all ten Counter authored cases. Replacing resolved
+row key 2 with key 1 fails `picked == 2` on both backends; exact restoration
+passes both. Draining deferred messages inside the target query fails the
+read-only regression (key 12 instead of rendered key 7), then passes restored.
 
 
 The same Counter source also boots preset `seven`, asserts typed count and drawn
