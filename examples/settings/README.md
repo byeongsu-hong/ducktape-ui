@@ -1,39 +1,41 @@
-# Settings form
+# Workspace preferences
 
-A complete settings screen built from the default Ice component library. The
-application supplies labels, bound values, help text and handlers; Form owns
-scrolling and readable content width, and FormSection/TextField supply the
-shared spacing and control treatment.
+A compact settings screen built from Ice's default `PageHeader`, `Form`,
+`FormSection`, `TextField`, and `Field` components. Profile, workspace and
+notification edits use the existing local save handler; nothing is persisted
+or sent to a service.
 
 ```sh
 cargo run -p settings-example
 cargo test -p settings-example
 ```
 
-The workspace-name input changes only `radius` and `padding`. It retains the
-same native input, binding, accessible name and focus behavior. The notification
-row uses Field's content slot to supply a different native control. Validation
-messages and saving are application-owned; this example does not persist data
-or validate an email address against a service.
+The heading and Save changes footer sit outside the bounded Form. At 960×820
+and 360×320, Save stays visible while fields scroll, including the final
+notification control. Success feedback shares the footer row, preserving the
+form's height and reading position.
 
-Form defaults to a 640 logical-pixel maximum outer content width and 24-pixel
-padding. Labels and descriptions stack and wrap at the available width. This
-predictable single-column layout works at 360 pixels without breakpoint code.
-It remains a desktop example, not a mobile-platform support claim.
+The form has a 640-pixel maximum content width, 16-pixel outer padding, and
+compact section spacing. The workspace input overrides only the default
+component's radius (4 pixels) and padding (14 pixels); native editing, focus,
+accessible naming and keyboard navigation remain intact. Its deliberately long
+label wraps. The optional heading explanation can be omitted with the
+`empty_explanation` preset.
 
-Capture the authored tests:
+The authored tests exercise native Iced layout, wheel scrolling, text editing,
+Tab/Space/Enter navigation, wrapped email feedback, and successful correction
+without losing other edits. Captures pin scale 1, en-US, Linux and reduced motion.
 
 ```sh
 ICE_TEST_ARTIFACT_DIR="$PWD/examples/settings/screenshots" \
   cargo test -p settings-example -- --nocapture
+cargo ice inspect examples/settings/src/ui/app.ice \
+  --viewport 960x820 --theme light --scale 1 --locale en-US \
+  --platform linux --reduced-motion --name wide
 ```
 
-The wide, narrow and error tests pin scale 1, en-US, Linux and reduced motion.
-They cover 360×1000 and
-960×1000 viewports, long labels, multiline error messages and customized input.
+![Workspace preferences](screenshots/settings_custom_input/customized.png)
 
-![Narrow settings](screenshots/settings_narrow_layout/narrow.png)
+![Short window at the last field](screenshots/settings_short_window_scroll/scrolled.png)
 
-![Customized settings](screenshots/settings_custom_input/customized.png)
-
-![Wrapped validation feedback](screenshots/settings_error_layout/error.png)
+![Wrapped validation feedback at 360×320](screenshots/settings_error_layout/error_short.png)
