@@ -159,3 +159,70 @@ mod tests {
         }
     }
 }
+
+/// Declarative native cursor, independent of window or OS handles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Cursor {
+    None,
+    Hidden,
+    Idle,
+    ContextMenu,
+    Help,
+    Pointer,
+    Progress,
+    Wait,
+    Cell,
+    Crosshair,
+    Text,
+    Alias,
+    Copy,
+    Move,
+    NoDrop,
+    NotAllowed,
+    Grab,
+    Grabbing,
+    ResizingHorizontally,
+    ResizingVertically,
+    ResizingDiagonallyUp,
+    ResizingDiagonallyDown,
+    ResizingColumn,
+    ResizingRow,
+    AllScroll,
+    ZoomIn,
+    ZoomOut,
+}
+
+#[cfg(feature = "iced")]
+impl From<Cursor> for iced_core::mouse::Interaction {
+    fn from(cursor: Cursor) -> Self {
+        match cursor {
+            Cursor::None => Self::None,
+            Cursor::Hidden => Self::Hidden,
+            Cursor::Idle => Self::Idle,
+            Cursor::ContextMenu => Self::ContextMenu,
+            Cursor::Help => Self::Help,
+            Cursor::Pointer => Self::Pointer,
+            Cursor::Progress => Self::Progress,
+            Cursor::Wait => Self::Wait,
+            Cursor::Cell => Self::Cell,
+            Cursor::Crosshair => Self::Crosshair,
+            Cursor::Text => Self::Text,
+            Cursor::Alias => Self::Alias,
+            Cursor::Copy => Self::Copy,
+            Cursor::Move => Self::Move,
+            Cursor::NoDrop => Self::NoDrop,
+            Cursor::NotAllowed => Self::NotAllowed,
+            Cursor::Grab => Self::Grab,
+            Cursor::Grabbing => Self::Grabbing,
+            Cursor::ResizingHorizontally => Self::ResizingHorizontally,
+            Cursor::ResizingVertically => Self::ResizingVertically,
+            Cursor::ResizingDiagonallyUp => Self::ResizingDiagonallyUp,
+            Cursor::ResizingDiagonallyDown => Self::ResizingDiagonallyDown,
+            Cursor::ResizingColumn => Self::ResizingColumn,
+            Cursor::ResizingRow => Self::ResizingRow,
+            Cursor::AllScroll => Self::AllScroll,
+            Cursor::ZoomIn => Self::ZoomIn,
+            Cursor::ZoomOut => Self::ZoomOut,
+        }
+    }
+}

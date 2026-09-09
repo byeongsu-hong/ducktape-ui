@@ -3092,3 +3092,20 @@ Captures use native Linux/tiny-skia at scale 1 with light theme, German forms at
 records explicit font loading and supported keyboard/layout semantics. This
 proves retained native semantic output, not platform announcements, Tree-host
 parity, automatic translation, or automatic application-wide direction changes.
+
+### Hosted resize handles
+
+The Core Tree coverage table now emits resize handles instead of E190. The
+`resize-guest` fixture exercises copied press/release/delta routes and native
+cursor through the same mounted native child and Wasm paths. The actual host
+test `bundled_resize_native_and_wasm_grab_outside_release_and_retire` asserts
+accumulated movement outside a ten-pixel divider, guest min/max policy, release
+outside the surface, removal/re-add and same-handle instance replacement.
+`resize_deltas_accumulate_without_crossing_discrete_boundaries` separately pins
+the queue boundary. These are mounted runtime assertions, not OS pointer-lock
+or platform smoke claims.
+
+Evidence: disabling horizontal drag delivery in the native adapter made the
+mounted test fail its intended width assertion (`160` instead of `230`). Exact
+source restoration passes the complete native/Wasm test with no skips, including
+unreleased-grab removal and reload. Final native and Wasm RGBA pixels match.

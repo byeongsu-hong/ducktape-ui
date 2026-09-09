@@ -1789,3 +1789,12 @@ Tree supports own-window maximize, minimize and resizable boolean controls via
 the existing host effect lane. Other unsupported window and system-information,
 font-load and image-allocation tasks fail with E190. Raw native toolkit actions
 are not a portable effect API.
+
+### Hosted resize handles
+
+Tree `resize-handle` carries its stable identity, child, declarative cursor and
+press/release/drag routes. The host uses the native resize widget, retaining
+pointer grab outside the child's bounds until left release. Drag values are
+logical-pixel deltas, independent of window position. Consecutive deltas are
+accumulated without crossing a discrete route event. Removed/replaced widget
+state never transfers an active gesture. This shape requires wire epoch 7.

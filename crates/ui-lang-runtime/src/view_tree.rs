@@ -151,6 +151,12 @@ pub enum Output {
         x: f32,
         y: f32,
     },
+    /// Incremental logical-pixel movement; consecutive deltas accumulate.
+    Drag {
+        handler: u32,
+        dx: f64,
+        dy: f64,
+    },
     /// The pointer moved to (`x`, `y`) inside a mouse area. Coalesced by
     /// [`Inputs::apply`]: one per handler per frame, the last position.
     Move {
@@ -436,6 +442,25 @@ impl Inputs {
                 height,
             },
             Output::Pointer { handler, x, y } => wire::Event::Pointer { handler, x, y },
+            Output::Drag { handler, dx, dy } => {
+                if !dx.is_finite() || !dy.is_finite() {
+                    return;
+                }
+                if let Some(wire::Event::Drag {
+                    handler: previous,
+                    dx: x,
+                    dy: y,
+                }) = pending.last_mut()
+                    && *previous == handler
+                {
+                    if (*x + dx).is_finite() && (*y + dy).is_finite() {
+                        *x += dx;
+                        *y += dy;
+                    }
+                    return;
+                }
+                wire::Event::Drag { handler, dx, dy }
+            }
             Output::Move { handler, x, y } => {
                 let queued = pending.iter_mut().rev().find(|event| {
                     matches!(event, wire::Event::Pointer { handler: queued, .. } if *queued == handler)
@@ -552,6 +577,7 @@ fn collect_inputs(
         | wire::Node::Float { content, .. }
         | wire::Node::Responsive { content, .. }
         | wire::Node::Lazy { content, .. }
+        | wire::Node::ResizeHandle { content, .. }
         | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
             collect_inputs(content, into, editors);
@@ -655,6 +681,7 @@ fn collect_pictures(node: &wire::Node, into: &mut Pictures, frame_pixels: &mut u
         | wire::Node::Float { content, .. }
         | wire::Node::Responsive { content, .. }
         | wire::Node::Lazy { content, .. }
+        | wire::Node::ResizeHandle { content, .. }
         | wire::Node::MouseArea { content, .. }
         | wire::Node::Scroll { content, .. } => {
             collect_pictures(content, into, frame_pixels);
@@ -1356,6 +1383,39 @@ fn render_node(node: &wire::Node, kept: &Kept<'_>) -> IceElement<'static, Output
             accessible(container, StableId::new(key), Role::GenericContainer)
                 .logical_id_maybe(cfg!(test).then_some(key.as_str()))
                 .into()
+        }
+        wire::Node::ResizeHandle {
+            key,
+            on_press,
+            on_release,
+            on_drag,
+            cursor,
+            content,
+        } => {
+            let mut handle = crate::resize_handle(render_node(content, kept));
+            if let Some(index) = on_press {
+                handle = handle.on_press(Output::Activate(*index));
+            }
+            if let Some(index) = on_release {
+                handle = handle.on_release(Output::Activate(*index));
+            }
+            if let Some(index) = *on_drag {
+                handle = handle.on_drag(move |dx, dy| Output::Drag {
+                    handler: index,
+                    dx,
+                    dy,
+                });
+            }
+            if let Some(cursor) = *cursor {
+                handle = handle.interaction(cursor.into());
+            }
+            accessible(
+                widget::container(handle),
+                StableId::new(key),
+                Role::GenericContainer,
+            )
+            .logical_id_maybe(cfg!(test).then_some(key.as_str()))
+            .into()
         }
         wire::Node::MouseArea {
             key,
@@ -3884,6 +3944,48 @@ mod tests {
         assert_eq!(*text, prefix);
         // The host's own copy of the field agrees with what the guest heard.
         assert_eq!(inputs.text("App/draft", ""), prefix);
+    }
+
+    #[test]
+    fn resize_deltas_accumulate_without_crossing_discrete_boundaries() {
+        let mut inputs = Inputs::default();
+        let mut pending = Vec::new();
+        for output in [
+            Output::Drag {
+                handler: 7,
+                dx: 2.0,
+                dy: -3.0,
+            },
+            Output::Drag {
+                handler: 7,
+                dx: 5.0,
+                dy: 4.0,
+            },
+            Output::Activate(8),
+            Output::Drag {
+                handler: 7,
+                dx: 9.0,
+                dy: 0.0,
+            },
+        ] {
+            inputs.apply(output, &mut pending);
+        }
+        assert_eq!(
+            pending,
+            [
+                wire::Event::Drag {
+                    handler: 7,
+                    dx: 7.0,
+                    dy: 1.0
+                },
+                wire::Event::Message(8),
+                wire::Event::Drag {
+                    handler: 7,
+                    dx: 9.0,
+                    dy: 0.0
+                },
+            ]
+        );
     }
 
     /// Moves are one event per handler per tick, at the last position; a

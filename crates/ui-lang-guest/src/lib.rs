@@ -290,6 +290,9 @@ impl<A: App> Driver<A> {
                     width,
                     height,
                 } => slots::run_handler::<(f32, f32), A::Message>(handler, (width, height)),
+                wire::Event::Drag { handler, dx, dy } => {
+                    slots::run_handler::<(f64, f64), A::Message>(handler, (dx, dy))
+                }
                 wire::Event::Pointer { handler, x, y } => {
                     slots::run_handler::<(f32, f32), A::Message>(handler, (x, y))
                 }

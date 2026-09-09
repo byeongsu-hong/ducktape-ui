@@ -1930,6 +1930,9 @@ mod viewer_tests;
 #[cfg(test)]
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
+#[cfg(test)]
+#[path = "resize_tests.rs"]
+mod resize_tests;
 
 #[cfg(test)]
 #[path = "window_events_tests.rs"]

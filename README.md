@@ -465,6 +465,11 @@ support claim has to show.
 [`RELEASING.md`](RELEASING.md) defines lockstep versions and the generated-code
 compatibility boundary.
 
+Hosted Tree-native and Wasm apps can use `resize-handle` with declarative
+`drag=`, `press=`, `release=` and `cursor=`. The host retains the native pointer
+grab outside the divider; the guest receives logical deltas and owns size limits.
+See [resize handles](examples/app-store/README.md#resize-handles).
+
 Ice's wasm `tree` target emits host-rendered widget data. Extern widgets can
 name host surfaces with copied scalar, list, optional and record arguments
 and typed return events; see
