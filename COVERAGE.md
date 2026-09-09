@@ -3134,6 +3134,8 @@ The fix adds no wire format, syntax, platform API or generic state migration.
 
 Final local checks pass 403 runtime library tests (eight existing ignored),
 strict runtime Clippy, Rust formatting, and the exact existing mounted native
-reload test with current native guest packages. The handoff capture traverses
+reload test with current native guest packages. The exact bundled/Wasm reload
+counterpart also passes with freshly bundled current guest artifacts. The handoff
+capture traverses
 the mounted native tree for scopes with scroll targets; scopes without them
 skip capture. No claim of unchanged per-frame cost is made.
