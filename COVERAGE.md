@@ -2613,3 +2613,20 @@ with 0px instead of 100px. Both mutations were restored; the focused five tests
 pass, including generated checks. Captures were inspected at scale 1, en-US,
 Linux, reduced motion, the app palette and Geist. This is native single-body
 composition evidence, not nested-scroll or inserted-content anchoring evidence.
+
+### Nested native wheel ownership
+
+`examples/showcase/tests/cases/ui/nested_scroll.ice` runs a 120px preview inside
+a bounded document at 360×300. Real wheel input moves the inner offset to 40px,
+then its 240px end, while the outer offset stays zero. Continued edge input
+stays with the preview, whose final button is clicked through the actual route.
+A second test moves the pointer out of the window and back, then verifies edge input
+moves the outer offset to 40px while the inner remains at 240px.
+
+Removing active-transaction capture temporarily from native Scrollable makes
+the continuing-input assertion fail with 40px instead of zero. Always
+capturing fresh exhausted input makes the handoff assertion fail with zero
+instead of 40px. The native source was restored byte-for-byte; all five focused
+tests pass. Both captures were inspected with the app palette, Geist, scale 1,
+en-US, Linux and reduced motion. No runtime behavior changes in this delivery;
+this evidence excludes touch, elapsed-time expiry and Tree host behavior.

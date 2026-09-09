@@ -249,6 +249,18 @@ their insets. Saving after scrolling 100px preserves that offset. Fixed body
 height and an explicit reset each produce the intended assertion-level Red;
 restoration passes five native tests. The component guide includes this pattern.
 
-L03 remains open for nested scroll ownership and reading-position preservation
-when content is inserted or removed. This evidence covers ordinary state
-updates, not those content mutations.
+The nested scroll case is covered below. This Form evidence covers ordinary
+state updates, not reading-position preservation when content is inserted or
+removed.
+
+### L03: nested preview wheel ownership
+
+[The nested preview example](../examples/showcase/tests/cases/ui/nested_scroll.ice)
+places a 120px preview inside a bounded document scroller. Native wheel input
+moves only the preview, including continued input after its end; its final
+control is visible and clickable. Moving the pointer out of the window and
+back clears the sequence, allowing edge input to move the document. Tests assert
+both offsets so neither double movement nor trapped fresh input can pass.
+
+L03 still needs reading-position preservation under inserted/removed content.
+These native pointer tests do not cover touch or elapsed-time transaction expiry.
