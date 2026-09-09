@@ -30,7 +30,8 @@ pub(super) struct HostEditor {
     key: String,
     content: Shared,
     placeholder: String,
-    on_edit: Option<u32>,
+    editable: bool,
+    document: String,
     reset: u64,
     width: Option<f32>,
     height: Length,
@@ -48,8 +49,8 @@ impl HostEditor {
             options,
             key,
             placeholder,
-            on_edit,
-            reset,
+            editable,
+            document,
             width,
             height,
             min_height,
@@ -62,7 +63,7 @@ impl HostEditor {
         Self {
             transactions,
             options: options.clone(),
-            status: if on_edit.is_some() {
+            status: if *editable {
                 widget::text_editor::Status::Active
             } else {
                 widget::text_editor::Status::Disabled
@@ -70,8 +71,9 @@ impl HostEditor {
             key: key.clone(),
             content,
             placeholder: placeholder.clone(),
-            on_edit: *on_edit,
-            reset: *reset,
+            editable: *editable,
+            document: document.document.clone(),
+            reset: document.reset,
             width: *width,
             height: height.map_or(Length::Shrink, super::length),
             min_height: *min_height,
@@ -153,12 +155,11 @@ impl HostEditor {
                 }
             });
         }
-        if let Some(handler) = self.on_edit {
+        if self.editable {
             let key = &self.key;
             editor = editor.on_action(move |action| Output::EditorAction {
                 reset: self.reset,
                 key: key.clone(),
-                handler,
                 action,
             });
         }
@@ -307,8 +308,13 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
             }
         }
         let mut replay = None;
-        if let Some(shared) = &self.transactions {
+        if self.editable
+            && let Some(shared) = &self.transactions
+        {
             let mut control = super::lock(shared);
+            if !control.available || control.reset != self.reset {
+                return;
+            }
             let now = control.now_ms();
             control.lane.check_deadline(now);
             if let super::editor_transactions::Phase::Decision { since_ms, .. } =
@@ -325,7 +331,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
             ) && !control.fault_reported
             {
                 shell.publish(Output::EditorLaneFault {
-                    document: self.options.document.clone(),
+                    document: self.document.clone(),
                 });
             }
             let focused = {
@@ -379,7 +385,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                     let sequence = previous + 1;
                     let input = super::editor_transactions::NativeInput {
                         key: self.key.clone(),
-                        event: event.clone(),
+                        work: super::editor_transactions::NativeWork::Event(event.clone()),
                         cursor,
                         clipboard: captured_clipboard,
                         time_ms: control.now_ms(),
@@ -388,14 +394,14 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                     if control.lane.admit(sequence, bytes, input).is_err() {
                         control.fault_key = Some(self.key.clone());
                         shell.publish(Output::EditorLaneFault {
-                            document: self.options.document.clone(),
+                            document: self.document.clone(),
                         });
                     }
                 } else {
                     control.lane.fail(super::editor_transactions::Fault::Limit);
                     control.fault_key = Some(self.key.clone());
                     shell.publish(Output::EditorLaneFault {
-                        document: self.options.document.clone(),
+                        document: self.document.clone(),
                     });
                 }
                 shell.capture_event();
@@ -410,7 +416,31 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                 return;
             }
         }
-        let effective_event = replay.as_ref().map_or(event, |(_, input)| &input.event);
+        if let Some((sequence, input)) = &replay {
+            let actions = match &input.work {
+                super::editor_transactions::NativeWork::Event(_) => None,
+                super::editor_transactions::NativeWork::Actions(actions) => Some(actions.clone()),
+                super::editor_transactions::NativeWork::Caret(_) => Some(Vec::new()),
+            };
+            if let Some(actions) = actions {
+                shell.publish(Output::EditorBatch(super::editor_transactions::Batch {
+                    document: self.document.clone(),
+                    key: self.key.clone(),
+                    sequence: *sequence,
+                    reset: self.reset,
+                    actions,
+                    request: None,
+                }));
+                shell.request_redraw();
+                return;
+            }
+        }
+        let effective_event = replay
+            .as_ref()
+            .map_or(event, |(_, input)| match &input.work {
+                super::editor_transactions::NativeWork::Event(event) => event,
+                _ => unreachable!("direct editor work is replayed above"),
+            });
         let effective_cursor = replay.as_ref().map_or(cursor, |(_, input)| input.cursor);
         if let Some(shared) = &self.transactions {
             let mut control = super::lock(shared);
@@ -515,11 +545,10 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                             request = Some((
                                 state,
                                 matches!(
-                                    &input.event,
-                                    Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                                        repeat: true,
-                                        ..
-                                    })
+                                    &input.work,
+                                    super::editor_transactions::NativeWork::Event(Event::Keyboard(
+                                        iced::keyboard::Event::KeyPressed { repeat: true, .. }
+                                    ))
                                 ),
                             ))
                         }
@@ -540,7 +569,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                     }
                 } else {
                     shell.publish(Output::EditorBatch(super::editor_transactions::Batch {
-                        document: self.options.document.clone(),
+                        document: self.document.clone(),
                         key: self.key.clone(),
                         sequence: *sequence,
                         reset: self.reset,
@@ -555,7 +584,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
             let mut focused = Focus(false);
             editor.operate(tree, layout, renderer, &mut focused);
             use widget::text_editor::Status;
-            if self.on_edit.is_none() {
+            if !self.editable {
                 Status::Disabled
             } else if focused.0 {
                 Status::Focused {
@@ -648,19 +677,25 @@ mod tests {
         );
         let count = messages.len();
         for message in messages {
-            let Output::EditorAction {
-                handler: 7,
-                key,
-                action,
-                ..
-            } = message
-            else {
+            let Output::EditorAction { key, action, .. } = message else {
                 panic!("native editor route");
             };
             assert_eq!(key, "editor");
             content.lock().unwrap().perform(action);
         }
         count
+    }
+    /// These tests own a `Content` directly: they check native layout, paint
+    /// and routing, not the document session that would otherwise fill it.
+    fn document(name: &str, text: &str) -> wire::editor_document::EditorDocumentRef {
+        wire::editor_document::EditorDocumentRef {
+            document: name.into(),
+            reset: 0,
+            text_revision: 0,
+            revision: 0,
+            cursor: wire::EditorCursor::default(),
+            byte_len: text.len() as u32,
+        }
     }
     fn build(
         node: &wire::Node,
@@ -711,19 +746,16 @@ mod tests {
             ..Default::default()
         };
         let mut node = wire::Node::Editor {
-            cursor: Default::default(),
-            reset: 0,
-            revision: 0,
             key: "editor".into(),
             placeholder: "File contents".into(),
-            text: "ab\ncd".into(),
-            on_edit: Some(7),
+            document: document("app:notes", "ab\ncd"),
+            on_document: 7,
+            editable: true,
             width: Some(200.0),
             height: None,
             min_height: None,
             max_height: None,
             options: Box::new(wire::EditorOptions {
-                document: String::new(),
                 binding: None,
                 size: Some(20.0),
                 padding: Some(7.0),
@@ -870,8 +902,8 @@ mod tests {
             "Z한",
             "unbound editor reads the native clipboard"
         );
-        if let wire::Node::Editor { on_edit, .. } = &mut node {
-            *on_edit = None;
+        if let wire::Node::Editor { editable, .. } = &mut node {
+            *editable = false;
         }
         ui = build(&node, &content, &mut renderer, ui.into_cache());
         assert_eq!(
@@ -905,19 +937,16 @@ mod tests {
         let height = |wrapping| {
             let text = "one two three four five six";
             let node = wire::Node::Editor {
-                cursor: Default::default(),
-                reset: 0,
-                revision: 0,
                 key: "wrapped".into(),
                 placeholder: String::new(),
-                text: text.into(),
-                on_edit: Some(7),
+                document: document("app:wrapped", text),
+                on_document: 7,
+                editable: true,
                 width: Some(100.0),
                 height: None,
                 min_height: None,
                 max_height: None,
                 options: Box::new(wire::EditorOptions {
-                    document: String::new(),
                     binding: None,
                     size: Some(20.0),
                     padding: Some(5.0),

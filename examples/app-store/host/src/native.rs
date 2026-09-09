@@ -104,7 +104,7 @@ impl Process {
             while let Ok(request) = incoming.recv() {
                 let result = write_packet(&mut input, &request)
                     .and_then(|()| read_packet(&mut output))
-                    .and_then(|bytes| ui_lang_wire::decode::<Response>(&bytes));
+                    .and_then(|bytes| ui_lang_wire::native::decode_response(&bytes));
                 let failed = result.is_err();
                 if outgoing.send(result).is_err() || failed {
                     break;

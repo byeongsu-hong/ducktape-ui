@@ -92,6 +92,7 @@ struct Candidate {
     instance: Instance,
     frame: wire::Frame,
     frame_reports: FrameReports,
+    inputs: Inputs,
     alive: Arc<AtomicBool>,
     ticks: u64,
 }
@@ -224,10 +225,12 @@ fn finish(running: &[Running], serial: i64, reload: Reload) -> Result<Loaded, St
     fresh.frame_reports = candidate.frame_reports;
     fresh.frame_rev = guest.frame_rev + 1;
     fresh.dark = guest.dark;
-    fresh.inputs = std::mem::take(&mut guest.inputs);
-    fresh.pictures = std::mem::take(&mut guest.pictures);
+    fresh.inputs = candidate.inputs;
     if let Some(root) = &mut fresh.frame.root {
-        fresh.inputs.adopt_after_reload(root);
+        fresh
+            .inputs
+            .retain_restored_projections(&guest.inputs, root)?;
+        fresh.pictures = std::mem::take(&mut guest.pictures);
         fresh.pictures.adopt(root);
         root.for_each_mut(&mut |node| match node {
             wire::Node::Svg { bytes, .. } => *bytes = None,
@@ -273,26 +276,75 @@ impl Candidate {
         let (snapshot, alive, ticks) = {
             let mut guest = surface.0.lock().expect("guest lock");
             ensure_settled(&guest)?;
-            let snapshot = guest.backend.snapshot()?;
+            let snapshot = guest
+                .backend
+                .snapshot()
+                .map_err(|error| format!("snapshot: {error}"))?;
             (snapshot, guest.alive.clone(), guest.ticks)
         };
         // Host bounds apply even if a hostile guest ignores the SDK codec.
         wire::Snapshot::decode(&snapshot)?;
         instance
             .backend
-            .restore(&snapshot, cfg!(target_os = "macos"))?;
+            .restore(&snapshot, cfg!(target_os = "macos"))
+            .map_err(|error| format!("restore: {error}"))?;
         let bytes = instance
             .backend
-            .tick(&wire::encode(&Vec::<wire::Event>::new()))?;
-        let (frame, frame_reports) = shape(&bytes)?;
+            .tick(&wire::encode(&Vec::<wire::Event>::new()))
+            .map_err(|error| format!("first restored frame: {error}"))?;
+        let (mut frame, mut frame_reports) = shape(&bytes)?;
         if frame.root.is_none() {
             return Err("The replacement did not publish a complete tree".into());
         }
+        let mut inputs = Inputs::default();
+        inputs.adopt(frame.root.as_ref().unwrap());
+        let mut events = Vec::new();
+        inputs.editor_frame(&frame, &mut events);
+        let mut requests = std::mem::take(&mut frame.requests);
+        let mut cancels = std::mem::take(&mut frame.cancels);
+        // One source at a time: Begin + <=16 chunks + Complete + receiver Ack
+        // for each bounded logical document, with a final settling frame.
+        let limit = wire::editor_document::MAX_EDITOR_DOCUMENTS
+            * (wire::editor_document::MAX_EDITOR_CHUNKS + 3)
+            + 1;
+        for _ in 0..limit {
+            if inputs.editor_documents_status()? && events.is_empty() {
+                break;
+            }
+            let bytes = instance
+                .backend
+                .tick(&wire::encode(&std::mem::take(&mut events)))
+                .map_err(|error| format!("restored document transfer: {error}"))?;
+            let (mut next, reports) = shape(&bytes)?;
+            merge(&mut frame.root, &mut next).map_err(str::to_owned)?;
+            let root = next
+                .root
+                .as_ref()
+                .ok_or("replacement document transfer lost its tree")?;
+            inputs.validate_editor_documents(root)?;
+            inputs.adopt(root);
+            inputs.editor_frame(&next, &mut events);
+            requests.append(&mut next.requests);
+            cancels.append(&mut next.cancels);
+            if requests.len() > MAX_REQUESTS_PER_TICK || cancels.len() > MAX_CANCELS {
+                return Err("replacement requests exceed the first-frame budget".into());
+            }
+            frame = next;
+            frame_reports.local.merge(reports.local);
+            frame_reports.upstream.merge(reports.upstream);
+        }
+        if !inputs.editor_documents_status()? || !events.is_empty() {
+            return Err("replacement document transfer did not complete within its budget".into());
+        }
+        requests.retain(|request| !cancels.contains(&request.id));
+        frame.requests = requests;
+        frame.cancels = cancels;
         Ok(Self {
             entry,
             instance,
             frame,
             frame_reports,
+            inputs,
             alive,
             ticks,
         })

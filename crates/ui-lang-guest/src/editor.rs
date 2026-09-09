@@ -10,7 +10,7 @@ impl Editor {
             ..Default::default()
         };
         assert!(
-            state.text.len() <= wire::MAX_STRING_BYTES,
+            state.text.len() <= wire::editor_document::MAX_EDITOR_DOCUMENT_BYTES,
             "editor document exceeds text limit"
         );
         state.cursor.clamp(&state.text);
@@ -55,7 +55,7 @@ impl Editor {
             .checked_add(1)
             .expect("editor reset revisions exhausted");
         assert!(
-            next.0.text.len() <= wire::MAX_STRING_BYTES,
+            next.0.text.len() <= wire::editor_document::MAX_EDITOR_DOCUMENT_BYTES,
             "editor document exceeds text limit"
         );
         next.0.cursor.clamp(&next.0.text);
@@ -66,7 +66,7 @@ impl Editor {
     pub fn accept(&mut self, mut state: wire::EditorState) {
         if state.reset == self.0.reset
             && state.revision > self.0.revision
-            && state.text.len() <= wire::MAX_STRING_BYTES
+            && state.text.len() <= wire::editor_document::MAX_EDITOR_DOCUMENT_BYTES
         {
             state.cursor.clamp(&state.text);
             if state.text != self.0.text {
@@ -77,6 +77,62 @@ impl Editor {
             }
             self.0 = state;
         }
+    }
+    pub(crate) fn install_mirror(
+        &mut self,
+        text: String,
+        target: &wire::editor_document::EditorDocumentRef,
+    ) -> bool {
+        if target.reset != self.0.reset
+            || target.revision < self.0.revision
+            || target.text_revision < self.1
+            || target.validate_text(&text).is_err()
+        {
+            return false;
+        }
+        self.0.text = text;
+        self.0.cursor = target.cursor;
+        self.0.revision = target.revision;
+        self.1 = target.text_revision;
+        true
+    }
+    pub(crate) fn accept_patch(
+        &mut self,
+        before: &wire::editor_document::EditorDocumentRef,
+        after: &wire::editor_document::EditorDocumentRef,
+        patches: &[wire::EditorPatch],
+    ) -> Option<Option<String>> {
+        if &self.document_reference(before.document.clone()) != before
+            || before.document != after.document
+            || before.reset != after.reset
+            || after.revision <= before.revision
+        {
+            return None;
+        }
+        if patches.is_empty() {
+            if after.text_revision != before.text_revision
+                || after.validate_text(&self.0.text).is_err()
+            {
+                return None;
+            }
+            self.0.cursor = after.cursor;
+            self.0.revision = after.revision;
+            return Some(None);
+        }
+        let text =
+            wire::editor_transaction::patched_editor_text(&self.0.text, patches, after.cursor)
+                .ok()?;
+        let expected = before
+            .text_revision
+            .checked_add(u64::from(text != self.0.text))?;
+        if after.text_revision != expected || after.validate_text(&text).is_err() {
+            return None;
+        }
+        let old = std::mem::replace(&mut self.0.text, text);
+        self.0.cursor = after.cursor;
+        self.0.revision = after.revision;
+        self.1 = after.text_revision;
+        Some(Some(old))
     }
     pub fn move_to(&mut self, mut cursor: wire::EditorCursor) {
         cursor.clamp(&self.0.text);
@@ -92,10 +148,13 @@ impl Editor {
         wire::encode(&(&self.0, self.1))
     }
     pub fn restore(bytes: &[u8]) -> Option<Self> {
-        let (mut state, text_revision): (wire::EditorState, u64) = wire::decode(bytes).ok()?;
-        let original = state.clone();
-        state.sanitize();
-        (state == original).then_some(Self(state, text_revision))
+        let (state, text_revision): (wire::EditorState, u64) = wire::decode(bytes).ok()?;
+        if state.text.len() > wire::editor_document::MAX_EDITOR_DOCUMENT_BYTES {
+            return None;
+        }
+        let mut cursor = state.cursor;
+        cursor.clamp(&state.text);
+        (cursor == state.cursor).then_some(Self(state, text_revision))
     }
 }
 
@@ -132,7 +191,7 @@ mod tests {
 
     #[test]
     fn oversized_initial_and_observed_documents_never_become_prefixes() {
-        let oversized = "x".repeat(wire::MAX_STRING_BYTES + 1);
+        let oversized = "x".repeat(wire::editor_document::MAX_EDITOR_DOCUMENT_BYTES + 1);
         assert!(std::panic::catch_unwind(|| Editor::new(oversized.clone())).is_err());
         let mut editor = Editor::new("preserved");
         editor.accept(wire::EditorState {
@@ -185,5 +244,32 @@ mod tests {
             0,
             "late old-document cursor stays rejected"
         );
+    }
+}
+
+#[cfg(test)]
+mod revision_tests {
+    use super::*;
+
+    #[test]
+    fn same_text_replacement_preserves_the_verified_text_revision() {
+        let mut editor = Editor::new("same");
+        let before = editor.document_reference("app:doc".into());
+        let mut after = before.clone();
+        after.revision += 1;
+        let patches = [wire::EditorPatch {
+            start_byte: 0,
+            end_byte: 4,
+            replacement: "same".into(),
+        }];
+        let mut invalid = after.clone();
+        invalid.text_revision += 1;
+        assert!(
+            editor.accept_patch(&before, &invalid, &patches).is_none(),
+            "patch presence alone cannot advance the text revision"
+        );
+        assert_eq!(editor.document_reference("app:doc".into()), before);
+        assert!(editor.accept_patch(&before, &after, &patches).is_some());
+        assert_eq!(editor.document_reference("app:doc".into()), after);
     }
 }

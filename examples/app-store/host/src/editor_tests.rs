@@ -106,12 +106,17 @@ fn editor(node: &wire::Node) -> Option<&wire::Node> {
 }
 fn text(guest: &Arc<Mutex<Guest>>) -> String {
     let guest = guest.lock().unwrap();
-    let wire::Node::Editor { text, .. } = editor(guest.frame.root.as_ref().unwrap()).unwrap()
-    else {
+    let wire::Node::Editor { key, .. } = editor(guest.frame.root.as_ref().unwrap()).unwrap() else {
         unreachable!()
     };
-    text.clone()
+    guest
+        .inputs
+        .editor_document(key)
+        .expect("complete editor document")
+        .text()
+        .to_owned()
 }
+
 struct Bounds<'a>(&'a str, Option<Rectangle>);
 impl Operation for Bounds<'_> {
     fn text(&mut self, _: Option<&iced::widget::Id>, bounds: Rectangle, text: &str) {
@@ -209,7 +214,10 @@ fn editor_wasm_preserves_presentation_selection_editing_and_disabled_state() {
         let g = guest.lock().unwrap();
         assert!(matches!(
             editor(g.frame.root.as_ref().unwrap()),
-            Some(wire::Node::Editor { on_edit: None, .. })
+            Some(wire::Node::Editor {
+                editable: false,
+                ..
+            })
         ));
     }
     click(&mut ui, &mut renderer, point);
@@ -360,21 +368,20 @@ fn editor_wasm_and_native_report_caret_only_changes_and_utf8_selection() {
         ui = redraw(ui, &guest, &mut renderer, &mut now);
         let state = || {
             let locked = guest.lock().unwrap();
-            let wire::Node::Editor {
-                text,
-                cursor,
-                reset,
-                revision,
-                ..
-            } = editor(locked.frame.root.as_ref().unwrap()).unwrap()
-            else {
-                unreachable!()
-            };
+            let key = editor(locked.frame.root.as_ref().unwrap())
+                .unwrap()
+                .key()
+                .unwrap();
+            let document = locked
+                .inputs
+                .editor_document(key)
+                .expect("completed editor transfer");
+            let reference = document.reference();
             wire::EditorState {
-                text: text.clone(),
-                cursor: *cursor,
-                reset: *reset,
-                revision: *revision,
+                text: document.text().to_owned(),
+                cursor: reference.cursor,
+                reset: reference.reset,
+                revision: reference.revision,
             }
         };
         let selected = state();
@@ -447,21 +454,21 @@ fn editor_wasm_and_native_report_caret_only_changes_and_utf8_selection() {
         }
         {
             let locked = restored.lock().unwrap();
-            let wire::Node::Editor {
-                text,
-                cursor,
-                revision,
-                ..
-            } = editor(locked.frame.root.as_ref().unwrap()).unwrap()
-            else {
-                unreachable!()
-            };
-            assert_eq!(text, &shifted.text);
+            let key = editor(locked.frame.root.as_ref().unwrap())
+                .unwrap()
+                .key()
+                .unwrap();
+            let document = locked
+                .inputs
+                .editor_document(key)
+                .expect("restored editor transfer");
+            let reference = document.reference();
+            assert_eq!(document.text(), shifted.text);
             assert_eq!(
-                cursor, &shifted.cursor,
+                reference.cursor, shifted.cursor,
                 "fresh restore preserves active end and anchor"
             );
-            assert_eq!(*revision, shifted.revision);
+            assert_eq!(reference.revision, shifted.revision);
         }
         click(&mut restored_ui, &mut renderer, point);
         send(

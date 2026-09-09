@@ -9,6 +9,11 @@ struct Tables {
     editor_responses: Vec<crate::wire::EditorResponse>,
     editor_documents: Vec<crate::wire::editor_document::EditorDocumentMessage>,
     editor_sender: Option<crate::wire::editor_document::EditorTransferSender>,
+    editor_receiver: Option<(
+        crate::wire::editor_document::EditorTransferId,
+        crate::wire::editor_document::EditorDocumentRef,
+        crate::wire::editor_document::EditorTransferReceiver,
+    )>,
     editor_pending: Vec<crate::wire::EditorTransactionId>,
     macos: bool,
     mouse_interest: bool,
@@ -319,6 +324,14 @@ pub(crate) fn editor_response(response: crate::wire::EditorResponse) {
 }
 /// A native commit may have no decision, but an outstanding decision must
 /// match its complete attempt/version before any state or route is accepted.
+pub(crate) fn editor_request_current(id: &crate::wire::EditorTransactionId) -> bool {
+    tables().borrow().editor_pending.iter().all(|pending| {
+        pending.instance != id.instance
+            || pending.document != id.document
+            || pending.sequence != id.sequence
+            || pending.attempt <= id.attempt
+    })
+}
 pub(crate) fn editor_matches_pending(id: &crate::wire::EditorTransactionId) -> bool {
     tables().borrow().editor_pending.iter().all(|pending| {
         pending.instance != id.instance
@@ -334,11 +347,96 @@ pub(crate) fn editor_acknowledge(event: &crate::wire::EditorTransactionEvent) {
         | EditorTransactionEvent::Fault { id, .. }
         | EditorTransactionEvent::Cancelled { id, .. } => id,
     };
-    tables()
-        .borrow_mut()
-        .editor_pending
-        .retain(|pending| pending != id);
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    tables.editor_pending.retain(|pending| pending != id);
+    tables
+        .editor_responses
+        .retain(|response| &response.id != id);
 }
+pub(crate) fn request_editor_mirror(
+    request: &crate::wire::EditorKeyRequest,
+) -> Result<(), crate::wire::editor_document::EditorTransferError> {
+    use crate::wire::editor_document::{
+        EditorDocumentMessage, EditorTransferError, EditorTransferId, EditorTransferReceiver,
+    };
+    let id = EditorTransferId {
+        instance: request.id.instance,
+        document: request.id.document.clone(),
+        reset: request.id.reset,
+        serial: request.id.sequence,
+        attempt: request.id.attempt,
+    };
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    if tables.editor_sender.is_some() || !tables.editor_documents.is_empty() {
+        return Err(EditorTransferError::Limit);
+    }
+    if let Some((current, target, _)) = &tables.editor_receiver {
+        return if current == &id && target == &request.state {
+            Ok(())
+        } else {
+            Err(EditorTransferError::Identity)
+        };
+    }
+    let receiver = EditorTransferReceiver::new(id.clone(), request.state.clone())?;
+    tables.editor_receiver = Some((id.clone(), request.state.clone(), receiver));
+    tables.editor_pending.retain(|pending| {
+        !(pending.instance == request.id.instance
+            && pending.document == request.id.document
+            && pending.sequence == request.id.sequence)
+    });
+    tables.editor_pending.push(request.id.clone());
+    tables
+        .editor_documents
+        .push(EditorDocumentMessage::Request {
+            id,
+            target: request.state.clone(),
+        });
+    Ok(())
+}
+
+pub(crate) fn receive_editor_mirror(
+    transfer: &crate::wire::editor_document::EditorTransfer,
+) -> Result<
+    Option<(String, crate::wire::editor_document::EditorDocumentRef)>,
+    crate::wire::editor_document::EditorTransferError,
+> {
+    use crate::wire::editor_document::EditorTransferError;
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    let Some((id, target, receiver)) = &mut tables.editor_receiver else {
+        return Err(EditorTransferError::Identity);
+    };
+    if transfer.id() != id {
+        return Err(EditorTransferError::Identity);
+    }
+    let text = match receiver.receive(transfer) {
+        Ok(text) => text,
+        Err(error) => {
+            tables.editor_receiver = None;
+            return Err(error);
+        }
+    };
+    if let Some(text) = text {
+        let target = target.clone();
+        tables.editor_receiver = None;
+        Ok(Some((text, target)))
+    } else {
+        Ok(None)
+    }
+}
+
+pub(crate) fn acknowledge_editor_mirror(id: crate::wire::editor_document::EditorTransferId) {
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    if tables.editor_documents.is_empty() {
+        tables
+            .editor_documents
+            .push(crate::wire::editor_document::EditorDocumentMessage::Acknowledged { id });
+    }
+}
+
 pub(crate) fn start_editor_transfer(
     id: crate::wire::editor_document::EditorTransferId,
     target: crate::wire::editor_document::EditorDocumentRef,
@@ -401,6 +499,13 @@ pub(crate) fn finish_editor_transfer(id: &crate::wire::editor_document::EditorTr
     let tables = tables();
     let mut tables = tables.borrow_mut();
     if tables
+        .editor_receiver
+        .as_ref()
+        .is_some_and(|(current, _, _)| current == id)
+    {
+        tables.editor_receiver = None;
+    }
+    if tables
         .editor_sender
         .as_ref()
         .is_some_and(|sender| sender.id() == id)
@@ -410,28 +515,46 @@ pub(crate) fn finish_editor_transfer(id: &crate::wire::editor_document::EditorTr
 }
 
 pub(crate) fn editor_transferring() -> bool {
-    tables().borrow().editor_sender.is_some()
+    {
+        let tables = tables();
+        let tables = tables.borrow();
+        tables.editor_sender.is_some() || tables.editor_receiver.is_some()
+    }
 }
 
 pub(crate) fn take_editor_documents() -> Vec<crate::wire::editor_document::EditorDocumentMessage> {
     std::mem::take(&mut tables().borrow_mut().editor_documents)
 }
 pub(crate) fn take_editor_responses() -> Vec<crate::wire::EditorResponse> {
-    std::mem::take(&mut tables().borrow_mut().editor_responses)
+    use crate::wire::editor_transaction::{MAX_EDITOR_PATCH_BYTES, MAX_EDITOR_RESPONSES};
+    let tables = tables();
+    let mut tables = tables.borrow_mut();
+    let mut bytes = 0usize;
+    let mut count = 0;
+    for response in tables.editor_responses.iter().take(MAX_EDITOR_RESPONSES) {
+        let replacement_bytes = match &response.decision {
+            crate::wire::EditorDecision::Apply { patches, .. } => {
+                patches.iter().fold(0usize, |sum, patch| {
+                    sum.saturating_add(patch.replacement.len())
+                })
+            }
+            _ => 0,
+        };
+        if count > 0 && replacement_bytes > MAX_EDITOR_PATCH_BYTES.saturating_sub(bytes) {
+            break;
+        }
+        // An invalid single response still reaches the strict host decoder;
+        // it must not strand the outbox forever or silently become a fallback.
+        bytes = bytes.saturating_add(replacement_bytes);
+        count += 1;
+    }
+    tables.editor_responses.drain(..count).collect()
+}
+pub(crate) fn editor_responses_ready() -> bool {
+    !tables().borrow().editor_responses.is_empty()
 }
 pub(crate) fn editor_pending() -> bool {
     !tables().borrow().editor_pending.is_empty()
-}
-
-pub(crate) fn has_handler<A: 'static, M: 'static>(index: u32) -> bool {
-    let tables = tables();
-    let tables = tables.borrow();
-    let handler = if index & CACHED != 0 {
-        tables.cached_handlers.get(&index)
-    } else {
-        tables.handlers.get(index as usize)
-    };
-    handler.is_some_and(|handler| handler.is::<Box<dyn Fn(A) -> Option<M>>>())
 }
 
 #[cfg(test)]
@@ -552,5 +675,63 @@ mod tests {
         outer.restore();
         assert_eq!(take_message::<u32>(hit), Some(7));
         assert_eq!(take_message::<u32>(miss), Some(9));
+    }
+}
+
+#[cfg(test)]
+mod response_budget_tests {
+    use super::*;
+    use crate::wire::{
+        self, EditorDecision, EditorHistoryEffect, EditorPatch, EditorResponse, EditorTransactionId,
+    };
+
+    #[test]
+    fn independent_large_responses_cross_decodable_frames_without_losing_identity() {
+        let context = Context::default();
+        let _entered = context.enter();
+        for sequence in 1..=2 {
+            editor_response(EditorResponse {
+                id: EditorTransactionId {
+                    instance: 1,
+                    document: format!("app:doc{sequence}"),
+                    reset: 0,
+                    sequence,
+                    attempt: 1,
+                    text_revision: 0,
+                    revision: 0,
+                },
+                decision: EditorDecision::Apply {
+                    patches: vec![EditorPatch {
+                        start_byte: 0,
+                        end_byte: 0,
+                        replacement: "x".repeat(wire::editor_transaction::MAX_EDITOR_PATCH_BYTES),
+                    }],
+                    cursor: Default::default(),
+                    history: EditorHistoryEffect::NewGroup,
+                },
+            });
+        }
+        for sequence in 1..=2 {
+            let frame = wire::Frame {
+                editor_decisions: take_editor_responses(),
+                ..Default::default()
+            };
+            assert_eq!(
+                frame.editor_decisions.len(),
+                1,
+                "one complete response per aggregate byte budget"
+            );
+            assert_eq!(frame.editor_decisions[0].id.sequence, sequence);
+            assert!(wire::decode::<wire::Frame>(&wire::encode(&frame)).is_ok());
+            assert_eq!(
+                tables().borrow().editor_responses.len(),
+                (2 - sequence) as usize
+            );
+            assert!(
+                editor_pending(),
+                "sent responses remain outstanding until their commits"
+            );
+        }
+        assert!(take_editor_responses().is_empty());
     }
 }

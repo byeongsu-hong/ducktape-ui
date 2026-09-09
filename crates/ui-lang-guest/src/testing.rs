@@ -42,14 +42,21 @@ fn collect_texts(node: &Node, out: &mut Vec<String>) {
             value: text,
             placeholder,
             ..
-        }
-        | Node::Editor {
-            text, placeholder, ..
         } => out.push(if text.is_empty() {
             placeholder.clone()
         } else {
             text.clone()
         }),
+        // Editor text belongs to its document transfer, not the display tree.
+        Node::Editor {
+            document,
+            placeholder,
+            ..
+        } => {
+            if document.byte_len == 0 {
+                out.push(placeholder.clone());
+            }
+        }
         Node::Button { content, .. } => match content {
             ButtonContent::Label(label) => out.push(label.clone()),
             ButtonContent::Child(child) => collect_texts(child, out),
@@ -203,7 +210,7 @@ pub fn type_into(frame: &Frame, name: &str, text: &str) -> Vec<Event> {
 
 /// The events the host sends when the editor with key or placeholder `name`
 /// now reads `text`.
-pub fn edit(frame: &Frame, name: &str, text: &str) -> Vec<Event> {
+pub fn edit(frame: &Frame, name: &str, before_text: &str, text: &str) -> Vec<Event> {
     let editor = frame.root.as_ref().and_then(|root| {
         find_by(root, &|node| match node {
             Node::Editor {
@@ -213,26 +220,48 @@ pub fn edit(frame: &Frame, name: &str, text: &str) -> Vec<Event> {
         })
     });
     let Some(Node::Editor {
-        on_edit,
-        cursor,
-        reset,
-        revision,
+        document,
+        options,
+        editable,
         ..
     }) = editor
     else {
-        panic!("no editor {name:?} in {:?}", texts(frame));
+        panic!("no editor {name:?}");
     };
-    let Some(handler) = on_edit else {
-        panic!("editor {name:?} is disabled");
-    };
-    vec![Event::Edit {
-        handler: *handler,
-        text: text.to_string(),
-        cursor: *cursor,
-        reset: *reset,
-        revision: revision
-            .checked_add(1)
-            .expect("editor observation revisions exhausted"),
+    assert!(editable, "editor {name:?} is disabled");
+    assert!(
+        document.validate_text(before_text).is_ok(),
+        "test must supply the actual document mirror"
+    );
+    let binding = options.binding.as_ref().expect("editor commit route");
+    let mut after = document.clone();
+    after.revision = after
+        .revision
+        .checked_add(1)
+        .expect("editor observation revisions exhausted");
+    after.text_revision += u64::from(before_text != text);
+    after.byte_len = u32::try_from(text.len()).expect("editor document limit");
+    after.cursor.clamp(text);
+    vec![Event::EditorTransaction {
+        handler: binding.on_event,
+        event: crate::wire::EditorTransactionEvent::Commit {
+            id: crate::wire::EditorTransactionId {
+                instance: 0,
+                document: document.document.clone(),
+                reset: document.reset,
+                sequence: after.revision,
+                attempt: 0,
+                text_revision: document.text_revision,
+                revision: document.revision,
+            },
+            before: document.clone(),
+            after,
+            patches: crate::wire::editor_document::editor_changed_span(before_text, text)
+                .expect("valid editor patch"),
+            kind: crate::wire::EditorEditKind::GuestPatch,
+            history: crate::wire::EditorHistoryEffect::NewGroup,
+            input_time_ms: 0,
+        },
     }]
 }
 

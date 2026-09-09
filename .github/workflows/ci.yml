@@ -704,6 +704,16 @@ jobs:
       - name: Check ordered editor transactions and guest history
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host editor_transactions_native_and_wasm_order_input_and_unify_guest_history -- --ignored --test-threads=1
+      - name: Bundle large editor documents for native and Wasm
+        run: |
+          cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
+            -p app-store-editor-documents-fixture --target wasm32-unknown-unknown \
+            --no-wasm-opt --out examples/app-store/target/editor-documents-fixture
+          cd examples/app-store
+          python3 scripts/build-native.py -p app-store-editor-documents-fixture --out target/editor-documents-native
+      - name: Check large document editing, atomic Undo and no-init reload
+        working-directory: examples/app-store
+        run: cargo test --locked -p app-store-host native_and_wasm_one_mib_documents_edit_restore_and_undo_without_reinitializing -- --ignored --test-threads=1
       - name: Bundle text budget fixtures for native and Wasm
         run: |
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \

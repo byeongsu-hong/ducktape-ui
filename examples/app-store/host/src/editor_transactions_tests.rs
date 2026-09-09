@@ -100,23 +100,22 @@ fn editor(node: &wire::Node) -> Option<&wire::Node> {
 }
 fn state(guest: &Arc<Mutex<Guest>>) -> wire::EditorState {
     let guest = guest.lock().unwrap();
-    let wire::Node::Editor {
-        text,
-        cursor,
-        reset,
-        revision,
-        ..
-    } = editor(guest.frame.root.as_ref().unwrap()).unwrap()
-    else {
+    let wire::Node::Editor { key, .. } = editor(guest.frame.root.as_ref().unwrap()).unwrap() else {
         unreachable!()
     };
+    let document = guest
+        .inputs
+        .editor_document(key)
+        .expect("complete editor document");
+    let reference = document.reference();
     wire::EditorState {
-        text: text.clone(),
-        cursor: *cursor,
-        reset: *reset,
-        revision: *revision,
+        text: document.text().to_owned(),
+        cursor: reference.cursor,
+        reset: reference.reset,
+        revision: reference.revision,
     }
 }
+
 fn assert_document_identities(guest: &Arc<Mutex<Guest>>) {
     fn editors<'a>(node: &'a wire::Node, output: &mut Vec<&'a wire::Node>) {
         if matches!(node, wire::Node::Editor { .. }) {
@@ -133,24 +132,20 @@ fn assert_document_identities(guest: &Arc<Mutex<Guest>>) {
     let mut shared = vec![];
     for node in nodes {
         let wire::Node::Editor {
-            options,
-            text,
-            reset,
-            revision,
-            ..
+            options, document, ..
         } = node
         else {
             unreachable!()
         };
-        if text.is_empty() {
+        if document.byte_len == 0 {
             assert!(
                 options.binding.is_some(),
                 "component binding reached the real guest"
             );
-            independent.push((&options.document, *reset, *revision));
+            independent.push((&document.document, document.reset, document.revision));
         } else {
-            assert_eq!(text, "ab");
-            shared.push(&options.document);
+            assert_eq!(document.byte_len, 2);
+            shared.push(&document.document);
         }
     }
     assert_eq!(independent.len(), 2, "two mounted component instances");

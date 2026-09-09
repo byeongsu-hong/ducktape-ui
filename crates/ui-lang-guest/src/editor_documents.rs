@@ -27,7 +27,20 @@ impl EditorDocumentUpdate {
                 slots::finish_editor_transfer(&id);
                 Ok(())
             }
-            EditorDocumentMessage::Transfer(_) => Err(EditorTransferError::Aborted),
+            EditorDocumentMessage::Transfer(transfer) => {
+                match slots::receive_editor_mirror(&transfer) {
+                    Ok(Some((text, target))) => {
+                        if editor.install_mirror(text, &target) {
+                            slots::acknowledge_editor_mirror(id.clone());
+                            Ok(())
+                        } else {
+                            Err(EditorTransferError::Identity)
+                        }
+                    }
+                    Ok(None) => Ok(()),
+                    Err(error) => Err(error),
+                }
+            }
         };
         if let Err(reason) = result {
             slots::editor_document_failure(id, reason);
@@ -114,6 +127,7 @@ mod tests {
             document: target.document.clone(),
             reset: target.reset,
             serial: 4,
+            attempt: 0,
         };
         let begin = driver.tick(vec![wire::Event::EditorDocument {
             handler: ROUTE.get(),

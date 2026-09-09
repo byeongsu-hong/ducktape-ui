@@ -53,7 +53,7 @@ pub enum SnapshotValue {
     I64(i64),
     F64(f64),
     Str(String),
-    Bytes(Vec<u8>),
+    Bytes(#[serde(serialize_with = "serialize_bytes")] Vec<u8>),
     List(Vec<SnapshotValue>),
     Option(Option<Box<SnapshotValue>>),
     Record {
@@ -129,7 +129,7 @@ impl<'de> Deserialize<'de> for SnapshotValue {
             I64(i64),
             F64(f64),
             Str(String),
-            Bytes(Vec<u8>),
+            Bytes(#[serde(deserialize_with = "decode_bytes")] Vec<u8>),
             List(#[serde(deserialize_with = "decode_values")] Vec<SnapshotValue>),
             Option(Option<Box<SnapshotValue>>),
             Record {
@@ -150,6 +150,41 @@ impl<'de> Deserialize<'de> for SnapshotValue {
             Value::Record { name, fields } => Self::Record { name, fields },
         })
     }
+}
+
+// Editor snapshots and application-owned history are byte blobs. Treating
+// every byte as a separate Serde value exhausts guest fuel well below the
+// snapshot byte budget. Bincode uses the same length + bytes representation.
+pub(crate) fn serialize_bytes<S: serde::Serializer>(
+    bytes: &[u8],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_bytes(bytes)
+}
+
+pub(crate) fn decode_bytes<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<u8>, D::Error> {
+    struct Bytes;
+    impl<'de> serde::de::Visitor<'de> for Bytes {
+        type Value = Vec<u8>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a bounded snapshot byte blob")
+        }
+        fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Vec<u8>, E> {
+            if bytes.len() > MAX_SNAPSHOT_BYTES {
+                return Err(E::custom("snapshot byte budget exceeded"));
+            }
+            Ok(bytes.to_vec())
+        }
+        fn visit_byte_buf<E: serde::de::Error>(self, bytes: Vec<u8>) -> Result<Vec<u8>, E> {
+            if bytes.len() > MAX_SNAPSHOT_BYTES {
+                return Err(E::custom("snapshot byte budget exceeded"));
+            }
+            Ok(bytes)
+        }
+    }
+    deserializer.deserialize_bytes(Bytes)
 }
 
 fn decode_values<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
@@ -239,5 +274,20 @@ mod tests {
             small,
             "failed decoding releases the depth budget"
         );
+    }
+}
+
+#[cfg(test)]
+mod byte_blob_tests {
+    use super::*;
+    #[test]
+    fn byte_blob_codec_keeps_its_exact_length_and_bytes_representation() {
+        let value = SnapshotValue::Bytes(vec![0x41, 0x42]);
+        let mut encoded = 5u32.to_le_bytes().to_vec();
+        encoded.extend_from_slice(&2u64.to_le_bytes());
+        encoded.extend_from_slice(b"AB");
+        assert_eq!(crate::encode(&value), encoded);
+        assert_eq!(crate::decode::<SnapshotValue>(&encoded).unwrap(), value);
+        assert_eq!(crate::encoded_size(&value), encoded.len() as u64);
     }
 }

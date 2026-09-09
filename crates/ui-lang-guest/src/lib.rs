@@ -37,7 +37,9 @@ mod editor;
 mod editor_binding;
 mod editor_documents;
 pub use editor::Editor;
-pub use editor_binding::{EditorBinding, EditorTransaction};
+pub use editor_binding::{
+    EditorBinding, EditorKeyRequest, EditorStateView, EditorTransaction, EditorTransactionEvent,
+};
 pub use editor_documents::EditorDocumentUpdate;
 pub mod keyboard;
 mod markdown;
@@ -237,6 +239,17 @@ impl<A: App> Driver<A> {
                     slots::run_handler::<wire::EditorKeyRequest, A::Message>(handler, request)
                 }
                 wire::Event::EditorTransaction { handler, event } => {
+                    if let wire::EditorTransactionEvent::Fault { id, .. }
+                    | wire::EditorTransactionEvent::Cancelled { id, .. } = &event
+                    {
+                        slots::finish_editor_transfer(&wire::editor_document::EditorTransferId {
+                            instance: id.instance,
+                            document: id.document.clone(),
+                            reset: id.reset,
+                            serial: id.sequence,
+                            attempt: id.attempt,
+                        });
+                    }
                     if let wire::EditorTransactionEvent::Cancelled { id, .. } = &event {
                         if !slots::editor_matches_pending(id) {
                             continue;
@@ -245,21 +258,6 @@ impl<A: App> Driver<A> {
                     }
                     slots::run_handler::<wire::EditorTransactionEvent, A::Message>(handler, event)
                 }
-                wire::Event::Edit {
-                    handler,
-                    text,
-                    cursor,
-                    reset,
-                    revision,
-                } => slots::run_handler::<wire::EditorState, A::Message>(
-                    handler,
-                    wire::EditorState {
-                        text,
-                        cursor,
-                        reset,
-                        revision,
-                    },
-                ),
                 wire::Event::Toggle { handler, on } => {
                     slots::run_handler::<bool, A::Message>(handler, on)
                 }
@@ -353,9 +351,11 @@ impl<A: App> Driver<A> {
             });
             self.last_root = Some(kept);
         }
+        let editor_decisions = slots::take_editor_responses();
+        self.busy |= slots::editor_responses_ready();
         wire::Frame {
             upstream_sanitization: Default::default(),
-            editor_decisions: slots::take_editor_responses(),
+            editor_decisions,
             editor_documents: slots::take_editor_documents(),
             mouse_interest: slots::mouse_interest(),
             root: Some(root),

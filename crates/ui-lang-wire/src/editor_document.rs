@@ -1,7 +1,7 @@
 //! Revisioned document transfer, independent of display text and native layout.
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::GraphemeCursor;
 
 use crate::EditorCursor;
 
@@ -57,19 +57,19 @@ pub fn validate_editor_document_refs<'a>(
     Ok(usage)
 }
 
-pub(crate) fn native_editor_boundaries(text: &str) -> impl Iterator<Item = usize> + '_ {
-    text.grapheme_indices(true)
-        .map(|(at, _)| at)
-        .chain(std::iter::once(text.len()))
-        .filter(|at| {
-            !(*at > 0
-                && *at < text.len()
-                && matches!(&text.as_bytes()[at - 1..=*at], b"\r\n" | b"\n\r"))
-        })
+pub(crate) fn native_editor_boundary(text: &str, at: usize) -> bool {
+    text.is_char_boundary(at)
+        && !(at > 0
+            && at < text.len()
+            && matches!(&text.as_bytes()[at - 1..=at], b"\r\n" | b"\n\r"))
+        && GraphemeCursor::new(at, text.len(), true)
+            .is_boundary(text, 0)
+            .unwrap_or(false)
 }
 
 /// The smallest changed span whose endpoints native Content can select.
-/// Walk boundaries without allocating an index for every byte of a long line.
+/// Compare equal byte blocks first; query grapheme boundaries only at the edit,
+/// instead of walking every grapheme in an unchanged one-MiB prefix or suffix.
 pub fn editor_changed_span(
     before: &str,
     after: &str,
@@ -80,37 +80,42 @@ pub fn editor_changed_span(
     if before == after {
         return Ok(vec![]);
     }
+    let limit = before.len().min(after.len());
     let mut start = 0;
-    for (old_end, new_end) in native_editor_boundaries(before)
-        .skip(1)
-        .zip(native_editor_boundaries(after).skip(1))
+    while start + 64 <= limit
+        && before.as_bytes()[start..start + 64] == after.as_bytes()[start..start + 64]
     {
-        if before[start..old_end] != after[start..new_end] {
-            break;
-        }
-        start = old_end;
+        start += 64;
     }
-    let suffix = before.as_bytes()[start..]
-        .iter()
-        .rev()
-        .zip(after.as_bytes()[start..].iter().rev())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let mut old_bounds = native_editor_boundaries(before).filter(|at| *at >= before.len() - suffix);
-    let mut new_bounds = native_editor_boundaries(after).filter(|at| *at >= after.len() - suffix);
-    let mut old_end = old_bounds.next().expect("document end is a boundary");
-    let mut new_end = new_bounds.next().expect("document end is a boundary");
-    while before.len() - old_end != after.len() - new_end {
-        if before.len() - old_end > after.len() - new_end {
-            old_end = old_bounds.next().expect("document end is a boundary");
-        } else {
-            new_end = new_bounds.next().expect("document end is a boundary");
-        }
+    while start < limit && before.as_bytes()[start] == after.as_bytes()[start] {
+        start += 1;
+    }
+    while !native_editor_boundary(before, start) || !native_editor_boundary(after, start) {
+        start -= 1;
+    }
+    let mut suffix = 0;
+    let limit = limit - start;
+    while suffix + 64 <= limit
+        && before.as_bytes()[before.len() - suffix - 64..before.len() - suffix]
+            == after.as_bytes()[after.len() - suffix - 64..after.len() - suffix]
+    {
+        suffix += 64;
+    }
+    while suffix < limit
+        && before.as_bytes()[before.len() - suffix - 1]
+            == after.as_bytes()[after.len() - suffix - 1]
+    {
+        suffix += 1;
+    }
+    while !native_editor_boundary(before, before.len() - suffix)
+        || !native_editor_boundary(after, after.len() - suffix)
+    {
+        suffix -= 1;
     }
     Ok(vec![crate::EditorPatch {
         start_byte: start as u32,
-        end_byte: old_end as u32,
-        replacement: after[start..new_end].to_owned(),
+        end_byte: (before.len() - suffix) as u32,
+        replacement: after[start..after.len() - suffix].to_owned(),
     }])
 }
 
@@ -162,6 +167,7 @@ pub struct EditorTransferId {
     pub document: String,
     pub reset: u64,
     pub serial: u64,
+    pub attempt: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -759,6 +765,7 @@ mod tests {
                 document: "app:draft".into(),
                 reset: 7,
                 serial: 11,
+                attempt: 0,
             },
             EditorDocumentRef {
                 document: "app:draft".into(),
@@ -1004,5 +1011,42 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("editor chunk byte limit"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod boundary_query_tests {
+    use super::*;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    #[test]
+    fn direct_queries_match_native_boundaries_for_context_sensitive_unicode() {
+        for text in [
+            "",
+            "a\r\nb\n\rc",
+            "e\u{301}",
+            "🇰🇷🇨🇦🇺🇸🇬",
+            "👩🏽‍👩‍👧‍👦",
+            "\u{600}a",
+            "क्‍ष",
+        ] {
+            let expected: Vec<_> = text
+                .grapheme_indices(true)
+                .map(|(at, _)| at)
+                .chain(std::iter::once(text.len()))
+                .filter(|at| {
+                    !(*at > 0
+                        && *at < text.len()
+                        && matches!(&text.as_bytes()[at - 1..=*at], b"\r\n" | b"\n\r"))
+                })
+                .collect();
+            for at in 0..=text.len() + 1 {
+                assert_eq!(
+                    native_editor_boundary(text, at),
+                    expected.contains(&at),
+                    "{text:?} byte {at}"
+                );
+            }
+        }
     }
 }
