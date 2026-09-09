@@ -308,6 +308,11 @@ for the leading-content customization boundary.
 For an input with a trailing action, use [Field and InputGroup](crates/ui-lang-components/README.md#input-with-a-trailing-action):
 keep the label above the control so the editable value retains room at narrow widths.
 
+Text supports independent horizontal and vertical alignment inside its own
+bounds. With word wrapping, `align-x=justified` expands non-final lines across
+the available width; short final lines retain their natural width. See the
+[text layout guide](skills/design-ice-ui/references/views-and-style.md#text).
+
 ## First-class tests
 
 Tree guests can run authored presets, typed state expectations and dispatch,

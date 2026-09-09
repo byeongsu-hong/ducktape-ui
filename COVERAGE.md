@@ -2672,3 +2672,32 @@ its visible-ID control and the viewport edge select the same row.
 Before/after captures were inspected at 400×320, app palette, Geist, scale 1,
 en-US, Linux and reduced motion. This proves native row preservation through
 the actual Ice/Rust event path; touch and Tree hosts are not covered here.
+
+### Wrapped text alignment on both axes
+
+The native `wrapped_text_alignment` fixture renders the same Geist paragraph
+as plain and rich text in padded 120×160 boxes. It checks the actual white ink
+of each soft-wrapped line: centered line centers, right edges, justified
+non-final line edges and a naturally sized final line. Relative ink y positions
+independently verify center and bottom vertical alignment. Additional native
+controls keep explicit-newline shrink text at its natural width.
+
+The local iced_graphics patch preserves the finite available shaping width for
+justification, then measures the aligned result. Previously the 120px paragraph
+was reduced to its approximately 105px natural longest line before justification.
+Owner controls cover soft wrapping, single-line text, hard newlines, unbounded
+width and a height that already matches the shaped lines. Alignment changes
+explicitly shape invalidated lines before measurement even when size is unchanged.
+
+The deterministic capture tuple is 576×480, monochrome app palette, bundled
+Geist, scale 1, en-US, Linux and reduced motion. Evidence is native tiny-skia;
+this fixture does not claim Tree-host or platform-specific font coverage.
+
+The original alignment gives intended owner and plain/rich native Reds at
+105px versus 120px. Returning the available width without remeasurement gives
+owner and native hard-newline sizing Reds. Independent left-for-center,
+left-for-right and top-for-center mutations each fail both native ink tests.
+After exact restoration, the owner test and all eight tests in the existing
+and wrapped alignment fixtures pass (four authored, four generated checks).
+The broader runtime suite passes 386 tests with eight existing ignored; the
+Showcase binary passes all 324 tests after the renderer change.

@@ -200,6 +200,11 @@ Alignment on a text is its own vocabulary and its own box:
   as its glyphs, so `align-x`/`align-y` move nothing — give it `w=`/`h=` first.
   The one exception is a multi-line `shrink` text, where `align-x` ranks the
   lines against the widest one without moving the box.
+- With `wrap=word`, `align-x=justified` distributes spaces across the available
+  line width for each non-final soft-wrapped line. Final lines and explicit
+  newline-only paragraphs retain natural width. A shrink paragraph with actual
+  justification measures the expanded lines; use a bounded readable width when
+  you want a narrower text column. An unbounded paragraph stays natural.
 - Canvas `text` takes the same two properties but anchors around the `x=`/`y=`
   point it is given rather than inside a widget box.
 

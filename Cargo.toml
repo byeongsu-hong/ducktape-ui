@@ -27,7 +27,7 @@ members = [
 resolver = "3"
 # A path dependency is not a member unless listed, and this one must not be:
 # it is a patch over a published crate, not a crate of this workspace.
-exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit", "vendor/alacritty_terminal"]
+exclude = ["vendor/iced_graphics", "vendor/iced_tiny_skia", "vendor/iced_winit", "vendor/alacritty_terminal"]
 
 # `vendor/iced_tiny_skia` is the published 0.14.0 source with the changes
 # below: seven defects fixed, one module opened, one present shortened, four
@@ -176,6 +176,8 @@ exclude = ["vendor/iced_tiny_skia", "vendor/iced_winit", "vendor/alacritty_termi
 # Upstream master still has all three original lines; drop the directory and
 # the patch when a release does not.
 [patch.crates-io]
+# Keep justified paragraphs at their finite available line width.
+iced_graphics = { path = "vendor/iced_graphics" }
 alacritty_terminal = { path = "vendor/alacritty_terminal" }
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 iced_widget = { path = "vendor/iced_widget" }

@@ -583,6 +583,18 @@ still cannot do is expose a row without laying it out, so it publishes no active
 descendant and nothing offscreen is reachable without scrolling to it; a
 collection that must be enumerated without scrolling needs a real list widget.
 
+### Text alignment
+
+Text's `align-x` positions each line inside the paragraph; `align-y` positions
+that paragraph inside its assigned height. Parent alignment positions the whole
+widget independently. Plain and rich text share these rules.
+
+For `align-x=justified`, soft-wrapped non-final lines distribute their spaces
+across the finite available line width. A paragraph's final line retains its
+natural width; explicit newline-only text and single-line text do not expand.
+Unbounded paragraphs use natural measured widths. A shrink text with justified
+soft wraps measures the expanded lines, so it can occupy the available width.
+
 ### Accessibility
 
 Ice owns a checked accessibility layer above stock iced. Generated Core nodes

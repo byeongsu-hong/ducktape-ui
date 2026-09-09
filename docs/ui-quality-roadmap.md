@@ -45,7 +45,7 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | L04 | P0 · Done | [Card.Footer/Dialog.Actions/ButtonGroup](../crates/ui-lang-components/src/ice/components.ice) | Long action labels fit or wrap into an intentional layout at narrow width; button labels remain unclipped and focus order follows the visual order. |
 | L05 | P1 · Audit | [responsive design guidance](../skills/design-ice-ui/references/design-workflow.md), [showcase root](../examples/showcase/src/ui/app.ice) | A sidebar/detail screen has a declared compact presentation; resizing preserves selection and editing state and does not silently discard essential controls. |
 | L06 | P1 · Audit | [grid/flex surface](../skills/design-ice-ui/references/extended-surface.md), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Repeated cards use a consistent minimum useful width and aspect ratio; odd item counts and narrow windows leave no clipped or zero-width cells. |
-| L07 | P0 · Audit | [text/layout emission](../crates/ui-lang-core/src/codegen/view), [text runtime](../crates/ui-lang-runtime/src) | Horizontal and vertical text alignment inside assigned bounds work independently of parent placement, including fixed/fill/shrink sizes, multiline wrapping and padding. Verify painted text geometry, not only the enclosing widget's rectangle. Added from the user's explicit two-axis text-alignment request. |
+| L07 | P0 · Done | [text/layout emission](../crates/ui-lang-core/src/codegen/view), [text runtime](../crates/ui-lang-runtime/src) | Horizontal and vertical text alignment inside assigned bounds work independently of parent placement, including fixed/fill/shrink sizes, multiline wrapping and padding. Verify painted text geometry, not only the enclosing widget's rectangle. Added from the user's explicit two-axis text-alignment request. |
 
 ## Design defaults and customization
 
@@ -296,3 +296,24 @@ wheel ownership ([#1037](https://github.com/byeongsu-hong/ducktape-ui/pull/1037)
 current-state transcript updates ([#1039](https://github.com/byeongsu-hong/ducktape-ui/pull/1039))
 and deleted-anchor restoration here. Touch and Tree-specific integration remain
 outside this native evidence.
+
+### L07: soft wrapping and justification complete the native audit
+
+The wrapped paragraph fixture adds per-line painted ink evidence for plain and
+rich text: center/right/justified horizontal alignment and independent
+center/bottom vertical alignment inside padded bounds. The renderer now
+justifies to the finite available line width instead of first reducing it to
+the longest natural line. Single-line, hard-newline-only and unbounded controls
+retain natural width; actual justified soft wraps measure their expanded width.
+
+The owner test and both native paragraph tests reject the original width loss
+and an overwide hard-newline mutation. Center/right/vertical mutations fail both
+native ink tests. After restoration, one owner and eight focused fixture tests
+pass. The 576×480 monochrome/Geist capture is inspected.
+
+Together with [#1028](https://github.com/byeongsu-hong/ducktape-ui/pull/1028),
+[#1030](https://github.com/byeongsu-hong/ducktape-ui/pull/1030) and
+[#1031](https://github.com/byeongsu-hong/ducktape-ui/pull/1031), this completes
+L07's native fixed/fill/shrink, multiline, padding, selection, rich decoration
+and compact-label acceptance. Tree-host and platform-specific font evidence
+are outside this audit.
