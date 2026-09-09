@@ -17,6 +17,11 @@ The workspace follows that split:
 
 ## Ice interface in this workspace
 
+The [Settings application](../../examples/settings/README.md) is the runnable
+default-form entry point. The [screen authoring guide](../../docs/ui-authoring.md)
+maps other common screens to focused executable examples and their customization
+boundaries.
+
 Ice `use` paths are relative to the importing `.ice` file; Cargo packages do
 not currently provide package-aware Ice imports. The workspace showcase uses
 the checked source interface directly:
@@ -552,3 +557,11 @@ layout does not add a second page boundary.
 The [keyboard and localized-defaults guide](docs/accessible-localized-defaults.md)
 covers default heading levels, raw control names, removal focus, translated
 larger content, explicit Hebrew font loading and logical RTL traversal.
+
+## Content-heavy workspaces
+
+See the [content workspace guide](docs/content-workspaces.md) for readable
+Markdown/editor/media widths, long-link and code overflow, streaming reading
+position, and default grid/tree/log empty, selected, and editing compositions.
+It links the native fixtures and distinguishes finite composition captures
+from the retained owners' 100,000-row performance contracts.

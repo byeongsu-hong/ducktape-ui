@@ -1731,14 +1731,6 @@ rows before and after reordering, checking sibling cache generations and state.
 Removing scope from the guest cache key fails the unchanged-sibling generation
 assertion. Restored bundles pass. CI builds the fixture and runs `store::lazy_tests`.
 
-Accepted `Inputs` frames share immutable focus/scroll target inventories across
-redraws; each successful adoption replaces the inventory, while a rejected
-editor reference preserves it. The release input render stays at 65,537
-allocations for 8,191 inputs without raising its budget. The inventory regression
-covers changed/removed keys, duplicate refusal and failed adoption; retaining the
-old inventory after adoption fails its old-key assertion, then passes restored.
-Standalone rendering with unadopted Inputs retains local inventory collection.
-
 The release render contract preserves the per-node allocation/time bounds. The
 module root adds two fixed allocations (weak slot and wrapper); a scope-free
 measurement separates that from the current renderer's seven fixed allocations.
@@ -2301,16 +2293,27 @@ and customizable padding/radius. Field remains the slot-based custom-control
 path and omits empty help/error nodes. No Core syntax or platform support is
 added.
 
-`cargo test -p settings-example` exercises 360px and 960px layouts, long labels,
-multiline errors, customized input geometry/binding/focus, short-window scrolling,
-and omitted help spacing. Each authored regression has assertion-level Red
-mutation evidence: fixed input width (200 vs 272), binding workspace to name
-(workspace failed to become Studio), error height 10 (multiline height assertion),
-horizontal-only Form scrolling (Save remained invisible), and unconditional
-empty help (field bottom differed from input bottom). Restored sources pass the
-same tests. PNG/JSON captures use scale 1 and the app's light palette; the wide,
-narrow and error tests pin en-US, Linux and reduced motion. Screenshots are in
-`examples/settings/screenshots`; tests render real generated native widgets.
+`cargo test -p settings-example` runs six authored native contracts for the
+maintained workspace-preferences screen and omitted field-help spacing. The
+screen keeps heading and Save outside Form at 960×820 and 360×320. Native
+wheel/keyboard tests reach the final control, retain custom input geometry and
+edits through validation recovery, and omit an empty optional heading
+explanation. Long labels and multiline feedback use bounds/full visible-height
+assertions paired with inspected captures. Screenshots are in
+`examples/settings/screenshots`; captured tests pin scale 1, the app's light
+palette, en-US, Linux and reduced motion.
+
+The former scrolling Save fails its initial visible assertion at 360×320;
+suppressing success fails the saved-state assertion. During integration,
+individual temporary mutations fail radius, empty-heading-row and
+edit-preservation assertions. Each mutation was restored and all nine generated
+native tests passed. The [authoring observation](docs/evidence/agent-authoring/results.md)
+separates original-run evidence from these integration checks. These Settings
+checks use native bounds/full visible height plus inspected captures. During the
+original authoring runs, paint lookup mismatched translated content coordinates;
+[PR #1063](https://github.com/byeongsu-hong/ducktape-ui/pull/1063) corrects direct
+and captured inspection to use visible screen bounds, with independent nested
+scroll regression evidence.
 
 ## Default header description layout
 
@@ -3205,3 +3208,122 @@ finding with an unrelated longest action. Removing that update's clock advance
 reaches the existing missing-finding assertion. These tests establish campaign
 logic, not a measured wall-clock budget; production recording and the explicit
 trace-overhead performance probe continue to use wall time.
+
+### Repeated native focus metadata inspection
+
+An input-only tree at the wire cap exposed 8,204 allocations per redraw from
+rebuilding the focus eligibility map. Instance-owned metadata now reuses an
+immutable target map only after an exact ordered comparison of eligible keys,
+control kinds, duplicate entries and host surfaces. Rendering changed roots
+without `Inputs::adopt` refreshes metadata; already mounted scopes retain their
+own immutable authority. Owner assertions cover value-only reuse, eligibility
+changes, duplicates, surfaces and the actual render-to-cache boundary.
+
+The existing allocation oracle measured 73,741 input allocations before the fix
+and its original 65,537 after; text remains 40,964. Temporary debug execution of
+the release-only oracle establishes those allocation counts, not release timing.
+Cold input rendering with fresh Inputs measures 81,936 allocations: retaining
+an exact comparison signature adds cold/change-boundary storage to avoid repeated
+per-frame key ownership. The release allocation and latency limits are unchanged.
+Bypassing exact comparison and omitting render cache lookup independently reach
+intended owner assertion Reds; restored tests retain the focus and scroll
+replacement checks. Release allocation and latency limits also passed CI after
+the cache change.
+
+### Concurrent native package launch
+
+Parallel native authored tests twice exposed `ETXTBSY` while launching uniquely
+named verified executable copies. Closing our writer before spawn was insufficient:
+a peer fork can still hold an inherited writable descriptor until its own exec.
+The native launcher now serializes only opening/writing the private copy and
+spawning it. It releases the lock before pipe exchange or child waiting; package
+hash/protocol checks, private permissions, create-new semantics, deadlines and
+cleanup are unchanged.
+
+The actual std-only launch helper is exercised by 16 concurrent threads launching
+512 unique copies of `/bin/true`. Omitting its launch lock reaches an assertion
+with real `Text file busy` errors; restoring it passes all launches. A separate
+3,200-launch reproduction measured 1,134 errors without serialization and zero
+with it. Standalone helper tests and strict Clippy pass; this is native Unix
+process evidence, not a Windows process-race claim. Final mounted package and
+authored tests remain validated by the app-store CI job.
+
+The host-inclusive lint gate also covers generated authored target paths. Keyed
+paths now evaluate the root and each key once into scoped locals before one
+format operation, including window-qualified daemon roots. The nested-key
+code-generation assertion rejects the old nested formatting; all eight focused
+code-generation tests pass. Full app-store workspace strict Clippy (host included,
+`--release --locked --workspace --tests --no-deps -- -D warnings`) passes locally;
+CI uses the debug profile. Two host pixel oracles use complete four-byte array
+chunks with their original color and count assertions unchanged.
+
+### Content workspaces: readable media and retained active work
+
+[PR #1064](https://github.com/byeongsu-hong/ducktape-ui/pull/1064) and the
+[content workspace guide](crates/ui-lang-components/docs/content-workspaces.md)
+connect native AI chat, bounded media/editor, and default DataGrid/TreeView/
+LogTimeline compositions. The data fixture reuses the Showcase's actual typed
+renderers, reducers and focus tasks with small deterministic payloads. It does
+not introduce replacement widgets or a new language API.
+
+AI chat uses a start-relative transcript and a native viewport-derived follow
+flag. Actual wheel input pauses following; actual Latest input resumes it.
+Background row updates and streamed text preserve a visible historical row.
+Terminal settlement with no queued turn leaves a unique marker after 120 final
+paragraphs visible. Original forced snaps and end anchoring fail offset or
+visibility assertions; removing the new guards or disabling Latest fails the
+restored native tests. The long unbroken link owner fails with 1951-pixel ink
+inside a 180-pixel column before word-or-glyph wrapping. Switching code from
+horizontal to vertical scrolling fails the one-line height assertion. A wider
+column mutation fails the native 760-pixel cap, and actual composer input
+survives 1180-to-760 resizing.
+
+The media fixture verifies a 160-pixel cover above an editable 120-pixel native
+editor, actual typing across resize, and caller-selected 720/480-pixel caps.
+A 240-pixel height mutation fails both geometry assertions. Separate renderer
+pixel tests fail against the original software engine for raster/SVG cover
+paint outside the image clip and a raster corner that should be rounded away.
+The fix intersects the widget and parent clips, restores the parent clip for
+siblings, and reuses one rounded scratch mask. It does not add a decoded-image
+cache. Native embedded raster literals instead retain their handle at each
+image/viewer/canvas call site, allowing the existing renderer cache to work.
+The Core assertion first observes zero retained sites where three are required.
+A deterministic native oracle reads the actual raster primitive handle ID,
+then types in the editor and resizes the window. A temporary fresh-handle
+expression changes that ID from 2 to 48 and fails equality; the restored literal
+keeps its identity. This uses a Rust test-target accessor, not a new Ice test
+statement or a wall-clock threshold.
+
+The retained-data fixture verifies empty descriptions, real grid F2 editing,
+real tree renaming, background appends while the native draft has focus,
+continued typing and Enter commit, historical log selection and explicit tail
+resumption. Mutations to the empty title, grid/tree draft, forced log following
+and custom 640-pixel cap each reach and fail their intended text or geometry
+assertions. The existing 100,000-row, fixed-height virtualization and release
+allocation/frame contracts remain the owning performance evidence; the finite
+24-row fixture establishes composition and retained work.
+
+[Inspected captures](examples/showcase/screenshots/content-workspaces/README.md)
+record roots, presets, viewports, fonts and input sequences. Native Ice captures
+use light mode, scale 1, en-US, Linux and reduced motion; the terminal-settlement
+Rust test uses the app's default light theme. Markdown image references still
+render alt text without remote fetching. The existing Markdown-editor long
+last-line test and real save-owner evidence are reused. These are native
+contracts, not platform accessibility, Tree-host parity or durable-save claims
+for the data sample.
+
+Validation includes 1040 Core library tests (62 existing ignored),
+345 Showcase binary tests and six media checks, with focused restored checks
+for all new native assertions. AI chat passes 83 tests (nine existing ignored
+performance probes). The runtime broad run passes 397 tests with eight ignored;
+its timing-sensitive seeded latency-cliff test fails under concurrent load and
+passes its exact isolated rerun. The five focused renderer integration targets
+pass. The gallery separates native frame-phase measurements from the explicit
+release twelve-cover full-raster probe; neither replaces large-data budgets.
+
+After integration with main at `7d86ab98`, 23 affected checks pass: six Core
+graphics tests, six AI chat regressions, eight data-workspace checks and three
+media regressions. Strict Clippy passes all targets of Core, runtime, Showcase
+and AI chat. Rust and Ice formatting pass. All data/media/terminal screenshots
+remain byte-identical; the joint test feature graph adds syntax colors to the
+reviewed rich-chat code blocks, as recorded in the gallery.

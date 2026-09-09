@@ -473,7 +473,9 @@ fn editor_transactions_native_and_wasm_order_input_and_unify_guest_history() {
             );
             renderer
                 .screenshot(Size::new(300, 480), 1.0, iced::Color::WHITE)
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .filter(|pixel| pixel[..3] == [255, 0, 0])
                 .count()
         };

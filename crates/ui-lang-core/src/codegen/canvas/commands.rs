@@ -162,7 +162,7 @@ pub(in crate::codegen) fn canvas_commands_code(
                     .then(|| embedded_asset_bytes_code(program, *source))
                     .flatten();
                 let handle = match embedded {
-                    Some(bytes) => format!("::iced::widget::image::Handle::from_bytes({bytes})"),
+                    Some(bytes) => embedded_image_handle_code(&bytes),
                     None if *source_type == Type::Str => format!(
                         "::iced::widget::image::Handle::from_path({})",
                         resolved_expr_use_code(program, *source, env, ValueMode::Owned)?

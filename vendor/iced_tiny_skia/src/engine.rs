@@ -618,16 +618,36 @@ impl Engine {
     ) {
         match image {
             #[cfg(feature = "image")]
-            Image::Raster { image, bounds, .. } => {
+            Image::Raster {
+                image,
+                bounds,
+                clip_bounds,
+            } => {
                 let physical_bounds = *bounds * _transformation;
+                let image_clip = *clip_bounds * _transformation;
+                let Some(clip_bounds) = _clip_bounds.intersection(&image_clip)
+                else {
+                    return;
+                };
 
-                if !_clip_bounds.intersects(&physical_bounds) {
+                if !clip_bounds.intersects(&physical_bounds) {
                     return;
                 }
 
-                let clip_mask = if physical_bounds.is_within(&_clip_bounds) {
+                let radius =
+                    <[f32; 4]>::from(image.border_radius).map(|radius| {
+                        (radius * _transformation.scale_factor())
+                            .min(image_clip.width / 2.0)
+                            .min(image_clip.height / 2.0)
+                    });
+                let rounded = radius.iter().any(|radius| *radius > 0.0);
+                let clip_mask = if rounded {
+                    _clip_mask.want(clip_bounds);
+                    Some(_clip_mask.rounded_mask(image_clip, radius))
+                } else if physical_bounds.is_within(&clip_bounds) {
                     None
                 } else {
+                    _clip_mask.want(clip_bounds);
                     Some(_clip_mask.mask())
                 };
 
@@ -649,18 +669,29 @@ impl Engine {
                     transform,
                     clip_mask,
                 );
+                _clip_mask.want(_clip_bounds);
             }
             #[cfg(feature = "svg")]
-            Image::Vector { svg, bounds, .. } => {
+            Image::Vector {
+                svg,
+                bounds,
+                clip_bounds,
+            } => {
                 let physical_bounds = *bounds * _transformation;
+                let Some(clip_bounds) = _clip_bounds
+                    .intersection(&(*clip_bounds * _transformation))
+                else {
+                    return;
+                };
 
-                if !_clip_bounds.intersects(&physical_bounds) {
+                if !clip_bounds.intersects(&physical_bounds) {
                     return;
                 }
 
-                let clip_mask = if physical_bounds.is_within(&_clip_bounds) {
+                let clip_mask = if physical_bounds.is_within(&clip_bounds) {
                     None
                 } else {
+                    _clip_mask.want(clip_bounds);
                     Some(_clip_mask.mask())
                 };
 
@@ -682,6 +713,7 @@ impl Engine {
                     transform,
                     clip_mask,
                 );
+                _clip_mask.want(_clip_bounds);
             }
             #[cfg(not(feature = "image"))]
             Image::Raster { .. } => {
@@ -734,8 +766,8 @@ fn corners(
     border_radius: [f32; 4],
     transformation: Transformation,
 ) -> [Rectangle; 4] {
-    let [top_left, top_right, bottom_right, bottom_left] = border_radius
-        .map(|radius| radius * transformation.scale_factor());
+    let [top_left, top_right, bottom_right, bottom_left] =
+        border_radius.map(|radius| radius * transformation.scale_factor());
 
     [
         Rectangle::new(bounds.position(), Size::new(top_left, top_left)),
@@ -945,6 +977,14 @@ pub struct ClipMask {
     /// The rectangle a read must be clipped to, and the one already filled.
     wanted: Rectangle,
     held: Option<Rectangle>,
+    rounded: Option<RoundedMask>,
+}
+
+struct RoundedMask {
+    mask: tiny_skia::Mask,
+    bounds: Rectangle,
+    radius: [f32; 4],
+    clip: Rectangle,
 }
 
 impl ClipMask {
@@ -956,6 +996,7 @@ impl ClipMask {
             // rather than asking `tiny_skia` for a rectangle with no shape.
             wanted: Rectangle::default(),
             held: Some(Rectangle::default()),
+            rounded: None,
         })
     }
 
@@ -995,5 +1036,62 @@ impl ClipMask {
         }
 
         &self.mask
+    }
+
+    /// Reuses one scratch mask for rounded image clips. The rectangle cache
+    /// remains intact, so a following image or text primitive restores its
+    /// own clip and no frame-sized allocation is needed after the first use.
+    fn rounded_mask(
+        &mut self,
+        bounds: Rectangle,
+        radius: [f32; 4],
+    ) -> &tiny_skia::Mask {
+        let _ = self.mask();
+        let rounded = self.rounded.get_or_insert_with(|| RoundedMask {
+            mask: tiny_skia::Mask::new(self.mask.width(), self.mask.height())
+                .expect("same dimensions as the renderer clip mask"),
+            bounds: Rectangle::default(),
+            radius: [0.0; 4],
+            clip: Rectangle::default(),
+        });
+        if rounded.bounds != bounds
+            || rounded.radius != radius
+            || rounded.clip != self.wanted
+        {
+            rounded.mask.clear();
+            rounded.mask.fill_path(
+                &rounded_rectangle(bounds, radius),
+                tiny_skia::FillRule::EvenOdd,
+                true,
+                tiny_skia::Transform::default(),
+            );
+            // Outside the rounded path's bounds the cleared mask is already
+            // zero. Intersect only those rows, not the whole window for every
+            // small album cover in a grid.
+            let width = self.mask.width() as usize;
+            let height = self.mask.height() as usize;
+            let left = bounds.x.floor().clamp(0.0, width as f32) as usize;
+            let right = (bounds.x + bounds.width)
+                .ceil()
+                .clamp(0.0, width as f32) as usize;
+            let top = bounds.y.floor().clamp(0.0, height as f32) as usize;
+            let bottom = (bounds.y + bounds.height)
+                .ceil()
+                .clamp(0.0, height as f32) as usize;
+            for row in top..bottom {
+                let range = row * width + left..row * width + right;
+                for (pixel, clip) in rounded.mask.data_mut()[range.clone()]
+                    .iter_mut()
+                    .zip(&self.mask.data()[range])
+                {
+                    *pixel = ((u16::from(*pixel) * u16::from(*clip) + 127)
+                        / 255) as u8;
+                }
+            }
+            rounded.bounds = bounds;
+            rounded.radius = radius;
+            rounded.clip = self.wanted;
+        }
+        &rounded.mask
     }
 }

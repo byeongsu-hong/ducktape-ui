@@ -5,7 +5,7 @@ use iced::{Rectangle, Vector, widget::Id};
 use std::collections::{HashMap, HashSet};
 use ui_lang_wire::{Node, ScrollAnchor, ScrollDirection};
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, PartialEq)]
 struct Kind(ScrollDirection, ScrollAnchor, ScrollAnchor);
 
 #[derive(Clone, Copy)]
@@ -15,7 +15,7 @@ pub(super) struct Position {
 }
 pub(super) type Positions = HashMap<Id, Position>;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(super) struct Targets {
     scrolls: HashMap<Id, Option<Kind>>,
     surfaces: HashSet<crate::StableId>,

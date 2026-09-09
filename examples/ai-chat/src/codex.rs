@@ -1235,6 +1235,19 @@ pub fn sample_answer() -> Vec<Entry> {
     ]
 }
 
+/// Deterministic readable-width, long-link, and horizontal-code example.
+/// Image references remain alt text; this viewer does not fetch remote media.
+pub fn sample_rich_content() -> Vec<Entry> {
+    let mut rows = sample_answer();
+    rows[0].body = "Review a publication with long references and code.".into();
+    let link = format!("https://example.test/{}", "unbrokenpath".repeat(12));
+    rows[1].body = format!(
+        "# Publication notes\n\nProse follows the readable column, including a long reference:\n\n[{link}]({link})\n\nCode keeps its line structure and scrolls horizontally:\n\n```rust\nlet source = \"{}\";\n```\n\n![Diagram supplied by the author](https://example.test/diagram.png)\n\nThe image reference is represented by its description. Uploaded media belongs in a bounded image surface.",
+        "long_native_path/".repeat(16),
+    );
+    rows
+}
+
 /// A turn caught in the middle: one step done and closed, one still running.
 pub fn sample_running(dark: bool) -> Vec<Entry> {
     let row = |id: i64, open: bool, entry: Entry| Entry {

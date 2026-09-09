@@ -815,6 +815,14 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
             continue;
         }
         node = match rng.next_range(8) {
+            7 => Node::ResizeHandle {
+                key: gen_key(rng),
+                on_press: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_release: rng.next_bool().then(|| rng.next_u64() as u32),
+                on_drag: rng.next_bool().then(|| rng.next_u64() as u32),
+                cursor: Some(mouse::Cursor::ResizingHorizontally),
+                content: Box::new(node),
+            },
             6 => Node::Tooltip {
                 key: gen_key(rng),
                 position: TooltipPosition::Bottom,
@@ -846,14 +854,6 @@ fn gen_tree(rng: &mut Rng, depth: usize, width: usize) -> Node {
                 anticipate: gen_opt_f32(rng),
                 delay: gen_opt_f32(rng),
                 child: Box::new(node),
-            },
-            7 => Node::ResizeHandle {
-                key: gen_key(rng),
-                on_press: rng.next_bool().then(|| rng.next_u64() as u32),
-                on_release: None,
-                on_drag: rng.next_bool().then(|| rng.next_u64() as u32),
-                cursor: None,
-                content: Box::new(node),
             },
             5 => Node::MouseArea {
                 key: gen_key(rng),
@@ -1215,8 +1215,8 @@ fn tree_depth(node: &Node) -> usize {
     match node {
         Node::Container { content, .. }
         | Node::Sensor { child: content, .. }
-        | Node::ResizeHandle { content, .. }
         | Node::MouseArea { content, .. }
+        | Node::ResizeHandle { content, .. }
         | Node::Pin { content, .. }
         | Node::Float { content, .. }
         | Node::Responsive { content, .. }
@@ -2695,4 +2695,39 @@ fn sanitize_is_idempotent() {
         sanitize(&mut twice).unwrap();
         assert_eq!(once, twice, "{ctx}: sanitize is not idempotent");
     }
+}
+
+#[test]
+fn resize_handle_round_trip_retains_routes_and_checks_its_child() {
+    let mut frame = gen_frame_with(&mut Rng::new(17), 0, 0);
+    frame.root = Some(Node::ResizeHandle {
+        key: "divider".into(),
+        on_press: Some(1),
+        on_release: Some(2),
+        on_drag: Some(u32::MAX),
+        cursor: Some(mouse::Cursor::ResizingHorizontally),
+        content: Box::new(Node::Space {
+            width: Some(Length::Fixed(f32::INFINITY)),
+            height: Some(Length::Fixed(-10.0)),
+        }),
+    });
+    assert_eq!(tree_depth(frame.root.as_ref().unwrap()), 1);
+    let mut decoded: Frame = decode(&encode(&frame)).unwrap();
+    sanitize(&mut decoded).unwrap();
+    check_frame(&decoded, "resize child");
+    let Node::ResizeHandle {
+        on_press,
+        on_release,
+        on_drag,
+        cursor,
+        ..
+    } = decoded.root.unwrap()
+    else {
+        panic!("resize handle retained");
+    };
+    assert_eq!(
+        (on_press, on_release, on_drag),
+        (Some(1), Some(2), Some(u32::MAX))
+    );
+    assert_eq!(cursor, Some(mouse::Cursor::ResizingHorizontally));
 }

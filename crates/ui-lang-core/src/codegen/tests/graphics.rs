@@ -195,7 +195,7 @@ view
 "#;
     let generated = compile(source, "media.ice").unwrap();
     assert!(generated.contains(
-        "::iced::widget::image(::iced::widget::image::Handle::from_bytes(include_bytes!(\"photo.ppm\").as_slice()))"
+        "::iced::widget::image({ static __ICE_IMAGE: ::std::sync::OnceLock<::iced::widget::image::Handle> = ::std::sync::OnceLock::new(); __ICE_IMAGE.get_or_init(|| ::iced::widget::image::Handle::from_bytes(include_bytes!(\"photo.ppm\").as_slice())).clone() })"
     ));
     // The tip's text rides on the trigger as its accessible description.
     assert!(generated.contains("::ui_lang_runtime::described("));
@@ -217,7 +217,7 @@ view
         assert!(generated.contains(expected), "missing {expected}");
     }
     assert!(generated.contains(
-        "::iced::widget::image::viewer(::iced::widget::image::Handle::from_bytes(include_bytes!(\"photo.ppm\").as_slice()))"
+        "::iced::widget::image::viewer({ static __ICE_IMAGE: ::std::sync::OnceLock<::iced::widget::image::Handle> = ::std::sync::OnceLock::new(); __ICE_IMAGE.get_or_init(|| ::iced::widget::image::Handle::from_bytes(include_bytes!(\"photo.ppm\").as_slice())).clone() })"
     ));
     assert!(generated.contains(".crop(::iced::Rectangle { x: (1).clamp(0, u32::MAX as i64) as u32, y: (2).clamp(0, u32::MAX as i64) as u32, width: (30).clamp(0, u32::MAX as i64) as u32, height: (40).clamp(0, u32::MAX as i64) as u32 })"));
     assert!(generated.contains(".filter_method(::iced::widget::image::FilterMethod::Nearest)"));
@@ -368,9 +368,14 @@ view
 "#;
 
     let generated = compile(source, "src/ui/assets.ice").unwrap();
+    assert_eq!(
+        generated.matches("static __ICE_IMAGE").count(),
+        3,
+        "embedded image, viewer and canvas literals must retain their native handle identity",
+    );
     for expected in [
-        "::iced::widget::image(::iced::widget::image::Handle::from_bytes(include_bytes!(\"src/ui/assets/photo.ppm\").as_slice()))",
-        "::iced::widget::image::viewer(::iced::widget::image::Handle::from_bytes(include_bytes!(\"src/ui/assets/photo.ppm\").as_slice()))",
+        "::iced::widget::image({ static __ICE_IMAGE: ::std::sync::OnceLock<::iced::widget::image::Handle> = ::std::sync::OnceLock::new(); __ICE_IMAGE.get_or_init(|| ::iced::widget::image::Handle::from_bytes(include_bytes!(\"src/ui/assets/photo.ppm\").as_slice())).clone() })",
+        "::iced::widget::image::viewer({ static __ICE_IMAGE: ::std::sync::OnceLock<::iced::widget::image::Handle> = ::std::sync::OnceLock::new(); __ICE_IMAGE.get_or_init(|| ::iced::widget::image::Handle::from_bytes(include_bytes!(\"src/ui/assets/photo.ppm\").as_slice())).clone() })",
         "::iced::widget::svg(::iced::widget::svg::Handle::from_memory(include_bytes!(\"src/ui/assets/icon.svg\").as_slice()))",
         "::iced::widget::image::Handle::from_bytes(include_bytes!(\"src/ui/assets/photo.ppm\").as_slice())",
         "::iced::advanced::svg::Handle::from_memory(include_bytes!(\"src/ui/assets/icon.svg\").as_slice())",

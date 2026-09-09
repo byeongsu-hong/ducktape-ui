@@ -2,6 +2,7 @@
 use super::{IceElement, Output};
 #[path = "focus.rs"]
 mod focus;
+pub(super) use focus::Cache as FocusCache;
 #[path = "scroll.rs"]
 mod scroll;
 use crate::{MemoParking, MemoParkingHandle};
@@ -9,48 +10,19 @@ use iced::advanced::widget::{Operation, Tree, tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer};
 use iced::{Event, Length, Rectangle, Size, Vector};
 
-/// Accepted frame inventory, shared by every render of the same Inputs.
-#[derive(Debug)]
-pub(super) struct Targets {
-    focus: focus::Targets,
-    scroll: scroll::Targets,
-}
-impl Targets {
-    pub(super) fn new(root: &ui_lang_wire::Node) -> Self {
-        Self {
-            focus: focus::Targets::new(root),
-            scroll: scroll::Targets::new(root),
-        }
-    }
-}
-enum ScopeTargets {
-    Adopted(std::sync::Arc<Targets>),
-    Unadopted(Targets),
-}
-impl std::ops::Deref for ScopeTargets {
-    type Target = Targets;
-    fn deref(&self) -> &Targets {
-        match self {
-            Self::Adopted(targets) => targets,
-            Self::Unadopted(targets) => targets,
-        }
-    }
-}
-
 pub(super) fn scope(
     content: IceElement<'static, Output>,
-    inputs: &super::Inputs,
+    instance: u64,
     handle: MemoParkingHandle,
     root: &ui_lang_wire::Node,
+    focus: &FocusCache,
 ) -> IceElement<'static, Output> {
     iced::Element::new(Scope {
         content,
-        instance: inputs.instance,
+        instance,
         handle,
-        targets: match &inputs.targets {
-            Some(targets) => ScopeTargets::Adopted(targets.clone()),
-            None => ScopeTargets::Unadopted(Targets::new(root)),
-        },
+        focus: focus.get(root),
+        scroll: scroll::Targets::new(root),
     })
 }
 
@@ -63,6 +35,7 @@ pub(super) fn render(
     use std::{collections::HashMap, rc::Rc};
     let mut inputs = super::Inputs {
         instance: kept.inputs.instance,
+        focus_cache: kept.inputs.focus_cache.clone(),
         fields: HashMap::new(),
         editors: HashMap::new(),
         editor_references: kept.inputs.editor_references.clone(),
@@ -72,7 +45,6 @@ pub(super) fn render(
         editor_revision: kept.inputs.editor_revision,
         editor_sequence: kept.inputs.editor_sequence.clone(),
         combos: HashMap::new(),
-        targets: None,
         editor_transactions: kept.inputs.editor_transactions.clone(),
         editor_bindings: kept.inputs.editor_bindings.clone(),
         editor_reported: kept.inputs.editor_reported.clone(),
@@ -204,7 +176,8 @@ struct Scope {
     content: IceElement<'static, Output>,
     instance: u64,
     handle: MemoParkingHandle,
-    targets: ScopeTargets,
+    focus: std::sync::Arc<focus::Targets>,
+    scroll: scroll::Targets,
 }
 
 struct State {
@@ -218,7 +191,7 @@ struct State {
 
 impl Scope {
     fn observe_focus(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &iced::Renderer) {
-        let focused = self.targets.focus.capture(|operation| {
+        let focused = self.focus.capture(|operation| {
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
                 layout,
@@ -230,7 +203,7 @@ impl Scope {
     }
 
     fn observe_scroll(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &iced::Renderer) {
-        let positions = self.targets.scroll.capture(|operation| {
+        let positions = self.scroll.capture(|operation| {
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
                 layout,
@@ -278,7 +251,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             let restore = state
                 .focused
                 .take()
-                .filter(|target| self.targets.focus.contains(target));
+                .filter(|target| self.focus.contains(target));
             let positions = std::mem::take(&mut state.positions);
             *state = self.fresh_state();
             state.restore_positions = positions;
@@ -308,7 +281,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits);
         if let Some(target) = tree.state.downcast_mut::<State>().restore.take() {
-            focus::restore(&target, &self.targets.focus, |operation| {
+            focus::restore(&target, &self.focus, |operation| {
                 self.content.as_widget_mut().operate(
                     &mut tree.children[0],
                     Layout::new(&layout),
@@ -318,7 +291,7 @@ impl Widget<Output, iced::Theme, iced::Renderer> for Scope {
             });
         }
         let positions = std::mem::take(&mut tree.state.downcast_mut::<State>().restore_positions);
-        self.targets.scroll.restore(positions, |operation| {
+        self.scroll.restore(positions, |operation| {
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
                 Layout::new(&layout),
@@ -468,12 +441,10 @@ mod tests {
         };
         scope(
             content,
-            &super::super::Inputs {
-                instance,
-                ..Default::default()
-            },
+            instance,
             handle,
             &ui_lang_wire::Node::empty(),
+            &FocusCache::default(),
         )
     }
 
@@ -873,6 +844,28 @@ mod tests {
         let offsets = replaced_scroll_with_surfaces(&after, Start, &surfaces);
         assert_eq!(offsets.len(), 1);
         assert_eq!(offsets[0].1, 0.0);
+    }
+
+    #[test]
+    fn rendering_changed_roots_without_adopt_refreshes_focus_metadata() {
+        let inputs = super::super::Inputs::default();
+        let before = input("before", false);
+        let after = input("after", false);
+        let pictures = super::super::Pictures::default();
+        let surfaces = super::super::Surfaces::new();
+        drop(super::super::render(&before, &inputs, &pictures, &surfaces));
+        let first = inputs
+            .focus_cache
+            .snapshot()
+            .expect("render initialized metadata");
+        drop(super::super::render(&after, &inputs, &pictures, &surfaces));
+        let second = inputs.focus_cache.snapshot().unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&first, &second));
+        drop(super::super::render(&after, &inputs, &pictures, &surfaces));
+        assert!(std::sync::Arc::ptr_eq(
+            &second,
+            &inputs.focus_cache.snapshot().unwrap()
+        ));
     }
 
     #[test]

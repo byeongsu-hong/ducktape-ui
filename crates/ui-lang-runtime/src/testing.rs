@@ -1106,6 +1106,7 @@ struct TextPaint {
 #[derive(Debug, Clone, Copy)]
 struct ImagePaint {
     pub bounds: Rectangle,
+    pub handle_id: Option<iced::advanced::image::Id>,
     /// The svg tint, when the primitive is a vector image drawn with one.
     pub color: Option<Color>,
 }
@@ -1384,6 +1385,12 @@ impl Target {
 
     pub fn image_height(&self) -> f64 {
         f64::from(self.image("image_height").bounds.height)
+    }
+
+    /// The actual raster handle identity retained by the native paint primitive.
+    /// SVG primitives use a separate identity type and return `None`.
+    pub fn image_handle_id(&self) -> Option<iced::advanced::image::Id> {
+        self.image("image_handle_id").handle_id
     }
 
     /// The tint an svg primitive is drawn with. A raster image or an svg
@@ -5558,11 +5565,13 @@ fn inspect_paint<Renderer: 'static>(
             }
         }
         for image in &layer.images {
-            let (clip_bounds, color) = match image {
-                iced_tiny_skia::graphics::Image::Raster { clip_bounds, .. } => (*clip_bounds, None),
+            let (clip_bounds, color, handle_id) = match image {
+                iced_tiny_skia::graphics::Image::Raster {
+                    clip_bounds, image, ..
+                } => (*clip_bounds, None, Some(image.handle.id())),
                 iced_tiny_skia::graphics::Image::Vector {
                     clip_bounds, svg, ..
-                } => (*clip_bounds, svg.color),
+                } => (*clip_bounds, svg.color, None),
             };
             if let Some(visible) = image
                 .bounds()
@@ -5573,6 +5582,7 @@ fn inspect_paint<Renderer: 'static>(
                 images.push(ImagePaint {
                     bounds: visible,
                     color,
+                    handle_id,
                 });
             }
         }
