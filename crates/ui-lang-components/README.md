@@ -100,6 +100,16 @@ Page does not scroll or choose a readable maximum width. A long ordinary page
 can put one scroll viewport inside Page; Form provides the bounded scrolling
 composition for forms. An intentionally full-bleed region may live outside Page.
 
+## List item sizing
+
+`Item(title, description, meta)` keeps its leading content at its chosen size.
+The title/description and trailing metadata share constrained space using their
+content sizes; metadata keeps its natural width when the row has enough room.
+Long text wraps rather than giving all remaining width to the trailing value.
+The leading slot accepts caller-owned content, including interactive controls,
+without replacing their routes. Use the existing `flex` and `box` primitives
+for a different content allocation policy.
+
 ## Form defaults and customization
 
 Import `src/ice/default.ice` and declare a form with application-owned state:
