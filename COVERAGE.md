@@ -2819,3 +2819,41 @@ After exact restoration the seven native fixture tests pass. Captures use
 the palette selector is application state, not a headless theme override.
 This evidence establishes native generated controls, not automatic theme
 propagation through typed Rust externs or Tree/platform appearance parity.
+
+### Default list/detail navigation and optional row text
+
+`examples/showcase/tests/cases/ui/list_detail_navigation.ice` composes the default
+Page, Item, Avatar, Breadcrumb, TextField and Attachment with a small typed Rust
+record boundary. Native pointer and Tab/Enter paths open a project, edit its own
+draft, return to the selected row's focus, filter to one or zero results and
+reorder by stable domain IDs. Both selected/unselected checked states and row
+accessible names are asserted. App-owned records preserve independent drafts
+while filtered rows unmount. A centered readable cap and custom Page inset hold
+at 720×640; wrapped list/detail content and persistent Save actions hold at
+320×560 and the declared minimum 320×360.
+
+Identified buttons now participate in checked native widget-operation targets,
+using their existing generated native focus IDs. The compiler fixture
+`compile/button-focus-target` covers focus and focused-query paths through a
+component inside a keyed row; native Back tests exercise the actual operation.
+Removing Back's focus task fails the selected-row focused assertion. Discarding
+the editor draft on Back fails the reopened input-value assertion; resetting
+selection on reorder yields ID 10 instead of 20, and a widened custom cap yields
+460px instead of 420px.
+
+`item_layout.ice` additionally checks empty Item description/metadata and empty
+Attachment metadata without blank lines/columns. Original empty-description
+height was 56.85px instead of 35.10px; empty Attachment metadata made its row 62.05px
+instead of 56px. Restoring the empty Item metadata column fails the final painted
+content-allocation assertion. Long Attachment and Breadcrumb content already
+fits; fixed-width, nonwrapping mutations fail their painted-right-edge assertions.
+All mutations are restored. The existing leading-control and intrinsic-metadata
+contracts remain covered.
+
+Captures use native light theme, the default app palette, loaded Geist fonts,
+scale 1, en-US, Linux metadata and reduced motion. This is native composition
+evidence, not Tree, platform screen-reader, touch or durable-persistence evidence.
+Seventeen focused native tests pass. A 60-frame debug inspection of the three-row
+list records 180 lazy hits and zero misses, plus 120 revision-memo hits and zero
+misses; this is an idle-boundary check, not a large-list performance budget.
+See the [reusable guide](crates/ui-lang-components/docs/list-detail-navigation.md).

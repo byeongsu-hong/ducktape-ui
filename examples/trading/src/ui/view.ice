@@ -961,7 +961,7 @@ view
                                 match book
                                   some(depth)
                                     for level in depth.asks
-                                      BookRow
+                                      BookRow #ask(level_key(level.price))
                                         with
                                           level=level
                                           buy=false
@@ -989,7 +989,7 @@ view
                                           font=digits
                                           @text-muted
                                     for level in depth.bids
-                                      BookRow
+                                      BookRow #bid(level_key(level.price))
                                         with
                                           level=level
                                           buy=true

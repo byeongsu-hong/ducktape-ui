@@ -124,6 +124,7 @@ extern crate::hyperliquid
   pure fmt_age(ts:i64, now:i64) -> str
   pure pane_height(wanted:f64) -> f64
   pure header_inset() -> f64
+  pure level_key(price:f64) -> i64
   pure fmt_px(value:f64) -> str
   pure fmt_usd(value:f64) -> str
   pure fmt_margin(value:f64, market:SymbolRow?) -> str
