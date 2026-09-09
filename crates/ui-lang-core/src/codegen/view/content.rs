@@ -515,8 +515,19 @@ pub(in crate::codegen) fn render_content(
                     format!("{boot_push}{materialize}")
                 }
             });
+            let cache_owner = if document.target() == Target::Tree
+                && call.storage != ComponentStorage::Stateless
+            {
+                format!(
+                    "let __ice_component_owner = ::ui_lang_guest::slots::component({}, &{scope_binding}, {}); ",
+                    rust_string(name),
+                    call.storage == ComponentStorage::Mounted
+                )
+            } else {
+                String::new()
+            };
             let body = format!(
-                "{}{}let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content",
+                "{cache_owner}{}{}let __component_content: __IceElement<'_, {message}> = {rendered}; __component_content",
                 sighting.as_deref().unwrap_or(""),
                 mount.as_deref().unwrap_or("")
             );

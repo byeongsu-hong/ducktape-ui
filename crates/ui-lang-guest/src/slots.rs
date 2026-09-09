@@ -26,6 +26,8 @@ struct Tables {
     cached_handlers: HashMap<u32, Rc<dyn Any>>,
     next_cached: u32,
     captures: Vec<SavedRoutes>,
+    components: HashSet<ComponentScope>,
+    component_stack: Vec<ComponentScope>,
     memo: Rc<RefCell<crate::memo::Cache>>,
 }
 
@@ -36,6 +38,7 @@ const CACHED: u32 = 1 << 31;
 pub(crate) struct SavedRoutes {
     messages: Vec<(u32, Rc<dyn Any>)>,
     handlers: Vec<(u32, Rc<dyn Any>)>,
+    pub(crate) components: HashSet<ComponentScope>,
 }
 
 impl SavedRoutes {
@@ -44,9 +47,11 @@ impl SavedRoutes {
         let mut tables = tables.borrow_mut();
         tables.cached_messages.extend(self.messages.iter().cloned());
         tables.cached_handlers.extend(self.handlers.iter().cloned());
+        tables.components.extend(self.components.iter().cloned());
         for capture in &mut tables.captures {
             capture.messages.extend(self.messages.iter().cloned());
             capture.handlers.extend(self.handlers.iter().cloned());
+            capture.components.extend(self.components.iter().cloned());
         }
     }
 }
@@ -69,7 +74,14 @@ impl Drop for Capture {
 pub(crate) fn capture<R>(build: impl FnOnce() -> R) -> (R, SavedRoutes) {
     let tables = tables();
     let depth = tables.borrow().captures.len();
-    tables.borrow_mut().captures.push(SavedRoutes::default());
+    {
+        let mut tables = tables.borrow_mut();
+        let components = tables.component_stack.iter().cloned().collect();
+        tables.captures.push(SavedRoutes {
+            components,
+            ..SavedRoutes::default()
+        });
+    }
     let mut guard = Capture {
         tables,
         depth,
@@ -129,6 +141,66 @@ impl Drop for Guard {
 
 fn tables() -> Rc<RefCell<Tables>> {
     CURRENT.with_borrow(|current| current.0.clone())
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct ComponentScope {
+    pub component: &'static str,
+    pub scope: String,
+    pub mounted: bool,
+}
+
+/// A component's enclosing identity belongs to every cache built inside it.
+pub struct ComponentGuard {
+    tables: Rc<RefCell<Tables>>,
+    depth: usize,
+}
+impl Drop for ComponentGuard {
+    fn drop(&mut self) {
+        self.tables
+            .borrow_mut()
+            .component_stack
+            .truncate(self.depth);
+    }
+}
+
+/// Records generated component ownership and captures nested cache dependencies.
+pub fn component(component: &'static str, scope: &str, mounted: bool) -> ComponentGuard {
+    let context = tables();
+    let depth = {
+        let mut tables = context.borrow_mut();
+        let sighting = ComponentScope {
+            component,
+            scope: scope.to_owned(),
+            mounted,
+        };
+        tables.components.insert(sighting.clone());
+        for capture in &mut tables.captures {
+            capture.components.insert(sighting.clone());
+        }
+        let depth = tables.component_stack.len();
+        tables.component_stack.push(sighting);
+        depth
+    };
+    ComponentGuard {
+        tables: context,
+        depth,
+    }
+}
+
+/// Includes mounted sightings replayed by cached subtrees in this driver's view.
+pub fn mounted_scopes(component: &'static str) -> Vec<String> {
+    tables()
+        .borrow()
+        .components
+        .iter()
+        .filter(|entry| entry.mounted && entry.component == component)
+        .map(|entry| entry.scope.clone())
+        .collect()
+}
+
+pub(crate) fn components_now() -> HashSet<ComponentScope> {
+    tables().borrow().components.clone()
 }
 
 /// First-render component messages run on the next driver tick, before input.
@@ -267,6 +339,7 @@ pub(crate) fn reset() {
             std::mem::take(&mut tables.handlers),
             std::mem::take(&mut tables.cached_messages),
             std::mem::take(&mut tables.cached_handlers),
+            std::mem::take(&mut tables.components),
         )
     };
     drop(old);

@@ -244,29 +244,34 @@ fn mounted_components_build_a_tree_and_defer_their_boot_messages() {
 }
 
 #[test]
-fn mounted_tree_refusals_follow_lazy_and_host_condition_expansion() {
+fn mounted_tree_refusals_follow_host_condition_expansion() {
     let head = format!(
         "app Mounted\n{PALETTE}state\n  value = 1\ncomponent Leaf()\n  lifetime mounted\n  state\n    count = 0\n  text count\ncomponent Wrapper()\n  Leaf #leaf\nview\n"
     );
-    for (view, reason) in [
-        ("  lazy value as cached\n    Wrapper\n", "inside lazy"),
-        (
-            "  responsive size=(width, height)\n    col\n      if width > 100.0\n        Wrapper\n",
-            "inside a host container condition",
-        ),
-    ] {
-        let source = format!("{head}{view}");
-        let error = compile_for(&source, "mounted.ice", Target::Tree)
-            .unwrap_err()
-            .render("mounted.ice");
-        let line = source
-            .lines()
-            .position(|line| line == "  Leaf #leaf")
-            .unwrap()
-            + 1;
-        assert!(error.contains("E190") && error.contains(reason), "{error}");
-        assert!(error.contains(&format!("mounted.ice:{line}:")), "{error}");
-    }
+    let source = format!(
+        "{head}  responsive size=(width, height)\n    col\n      if width > 100.0\n        Wrapper\n"
+    );
+    let error = compile_for(&source, "mounted.ice", Target::Tree)
+        .unwrap_err()
+        .render("mounted.ice");
+    let line = source
+        .lines()
+        .position(|line| line == "  Leaf #leaf")
+        .unwrap()
+        + 1;
+    assert!(
+        error.contains("E190") && error.contains("inside a host container condition"),
+        "{error}"
+    );
+    assert!(error.contains(&format!("mounted.ice:{line}:")), "{error}");
+    let cached = compile_for(
+        &format!("{head}  lazy value as cached\n    Wrapper\n"),
+        "mounted.ice",
+        Target::Tree,
+    )
+    .unwrap();
+    assert!(cached.contains("::ui_lang_guest::slots::component(\"Leaf\""));
+    assert!(cached.contains("::ui_lang_guest::slots::mounted_scopes(\"Leaf\""));
     // Refused nested expansion must unwind both guards. Unconditional children
     // of responsive have guest-known lifetime and need no host activation event.
     compile_for(

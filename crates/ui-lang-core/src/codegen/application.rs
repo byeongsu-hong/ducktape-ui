@@ -715,13 +715,23 @@ pub(in crate::codegen) fn generate_update(
             } else {
                 "or_default()".into()
             };
+            let invalidate = if program.target() == Target::Tree {
+                format!(
+                    "::ui_lang_guest::invalidate_component({}, &({scope})); ",
+                    rust_string(&component.name)
+                )
+            } else {
+                String::new()
+            };
             match component.storage {
                 ComponentStorage::Retained => {
-                    format!("let __local = self.{field}.entry({scope}).{insert};")
+                    format!("{invalidate}let __local = self.{field}.entry({scope}).{insert};")
                 }
-                ComponentStorage::Mounted => format!(
-                    "let mut __states = self.{field}.values_mut(); let __local = __states.entry({scope}).{insert};"
-                ),
+                ComponentStorage::Mounted => {
+                    format!(
+                        "{invalidate}let mut __states = self.{field}.values_mut(); let __local = __states.entry({scope}).{insert};"
+                    )
+                }
                 ComponentStorage::Stateless => unreachable!(),
             }
         };

@@ -271,7 +271,13 @@ pub(in crate::codegen) fn render_structure(
                 .chain(&revisions)
                 .map(|entry| format!("{entry}, "))
                 .collect::<String>();
-            let reads_self = keyed || key_positions.contains(&None);
+            let reads_self = keyed
+                || key_positions.contains(&None)
+                || (document.target() == Target::Tree
+                    && program
+                        .components()
+                        .iter()
+                        .any(|component| component.storage != ComponentStorage::Stateless));
             let mut bindings = String::new();
             if !keyed {
                 write!(

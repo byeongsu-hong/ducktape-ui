@@ -125,9 +125,7 @@ impl Drop for HostConditionGuard {
 
 pub(in crate::codegen) fn mounted_tree_refusal() -> Option<&'static str> {
     OUTLINE.with_borrow(|state| {
-        if state.lazy_depth > 0 {
-            Some("a mounted component inside lazy: cached trees do not replay mount sightings")
-        } else if state.host_condition_depth > 0 {
+        if state.host_condition_depth > 0 {
             Some("a mounted component inside a host container condition: branch visibility belongs to the host")
         } else {
             None

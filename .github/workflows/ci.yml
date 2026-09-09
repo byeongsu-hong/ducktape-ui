@@ -649,6 +649,9 @@ jobs:
           cargo ice bundle --manifest-path examples/app-store/Cargo.toml \
             -p app-store-component-fixture --target wasm32-unknown-unknown \
             --out examples/app-store/target/component-fixture
+      - name: Bundle native components in state loops
+        working-directory: examples/app-store
+        run: python3 scripts/build-native.py -p app-store-component-fixture --out target/component-native
       - name: Verify mounted guest component lifetime
         working-directory: examples/app-store
         run: cargo test --locked -p app-store-host store::component_tests -- --ignored
