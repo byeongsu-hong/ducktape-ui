@@ -1,6 +1,6 @@
 # Guest-authored editor presentation
 
-Tree integration builds on the #1026 document lane; actual backend verification is in progress.
+Tree integration uses the #1026 document lane and wire epoch 4.
 
 The guest owns syntax and document actions. The host owns text shaping, caret
 geometry and native input. Tree editors reuse `RichTextEditor`; they do not run
@@ -33,6 +33,10 @@ presentation bytes have their own aggregate display allowance, independent of
 the 1 MiB document transport and 8 MiB snapshot allowances.
 
 ## Interactions
+
+Read-only documents retain declared link and comment notifications while refusing
+editing decisions. Accepted `Commit.origin` exposes the original request input
+across regenerated factories and revision retries; native commits have no origin.
 
 Reuse native `EditorMenu` / `MenuAnchor::Caret`, gutter buttons/drop boundaries,
 margin marks and line press geometry. Menu and gutter metadata are declarative
@@ -90,11 +94,35 @@ With the isolated `tree-reload-focus/target` cache and `-j4`:
   marker/line formatting passes. The empty conversion failed the native line
   count assertion before implementation.
 
-These establish the adapters only. The unattached Tree conversion still has
-unused-function warnings until the document-lane integration; no native/Wasm
-end-to-end or full Pages support claim is made by this checkpoint.
+The actual native/Wasm fixture also verifies line paint, a real caret-menu
+interaction, atomic edit and Undo across reload without refocusing. Suppressing
+the routed interaction fails its expected text assertion; restoration passes
+both backends. This is runtime support, not a claim that the application Pages
+port is complete.
 
 Native host rendering requires `tiny-skia` or `wgpu`, as the native rich editor
 uses a graphics paragraph. Null-renderer guest builds keep the shared native
 Edit/MoveTo action type without enabling a graphics backend. They construct
 wire data and never render presentation.
+
+`ui_lang_runtime::editor_format::Format` is the graphics-independent native format
+type; `rich_text_editor::Format` reexports it. Pure highlighters can share formatting
+with guests without enabling a rendering backend.
+
+### Integrated route evidence
+
+The actual native/Wasm fixture also clicks a read-only link after a multibyte
+prefix and its comment margin. Both notifications preserve document, revision,
+caret and prior Undo history. Restoring the old editable-only affordance gate
+fails `read-only link click must reach its guest notification`; the corrected
+route passes both backends. Focus is seated before replacement, with no focus
+operation after reload.
+
+The focused transaction test checks that a same-document revision retry retains
+the original interaction in accepted `Commit.origin`, native edits use `None`,
+and a read-only interaction cannot Apply patches.
+
+Setting accepted `Commit.origin` to `None` failed the retry-origin assertion;
+exact source restoration passed. Final focused checks: wire presentation 7 pass,
+retry/read-only transaction 1 pass, actual native/Wasm route test 1 pass with both
+backends exercised and no skipped backend.

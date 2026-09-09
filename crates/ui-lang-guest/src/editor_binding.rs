@@ -48,6 +48,7 @@ pub enum EditorTransactionEvent<'a> {
     },
     Commit {
         id: &'a wire::EditorTransactionId,
+        origin: Option<&'a wire::EditorRequestInput>,
         before: EditorStateView<'a>,
         after: EditorStateView<'a>,
         kind: wire::EditorEditKind,
@@ -262,6 +263,7 @@ impl<M: 'static> EditorTransaction<M> {
                         })
                     }
                     wire::EditorTransactionEvent::Commit {
+                        origin,
                         before,
                         after,
                         patches,
@@ -280,6 +282,7 @@ impl<M: 'static> EditorTransaction<M> {
                         let old = editor.accept_patch(before, after, patches)?;
                         (callbacks.on_event)(EditorTransactionEvent::Commit {
                             id,
+                            origin: origin.as_ref(),
                             before: EditorStateView::new(
                                 old.as_deref().unwrap_or_else(|| editor.text_ref()),
                                 before,
@@ -362,6 +365,7 @@ mod tests {
         after.cursor.clamp(text);
         wire::EditorTransactionEvent::Commit {
             id,
+            origin: None,
             before: reference,
             after,
             patches: wire::editor_document::editor_changed_span(before.text_ref(), text).unwrap(),
@@ -406,6 +410,7 @@ mod tests {
         transaction(
             wire::EditorTransactionEvent::Commit {
                 id: id(1),
+                origin: None,
                 before,
                 after,
                 patches: vec![],

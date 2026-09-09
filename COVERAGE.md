@@ -1609,7 +1609,8 @@ through the `bundled_widget_` filter, including these assertions.
 ### Tree editor presentation evidence
 
 Tree codegen covers typography and all declarative status faces while retaining
-E190 for native action, binding, highlighter and style callbacks. Hostile frames
+E190 for opaque native action and style callbacks. Tree highlighter factories
+produce validated data and binding factories decide key/interaction transactions. Hostile frames
 generate editor sizes, padding, relative/absolute line heights, font metadata and
 all face colors/borders, then assert their sanitized limits.
 
@@ -2674,3 +2675,15 @@ its visible-ID control and the viewport edge select the same row.
 Before/after captures were inspected at 400×320, app palette, Geist, scale 1,
 en-US, Linux and reduced motion. This proves native row preservation through
 the actual Ice/Rust event path; touch and Tree hosts are not covered here.
+
+### Guest editor presentation and interaction lane
+
+`native_and_wasm_caret_menu_commits_one_edit_and_preserves_undo_across_reload`
+loads actual native and Wasm presentation guests, asserts green line-background
+pixels, drives Enter through the native caret menu to one guest edit, and checks
+Undo after replacement without refocusing. Suppressing the interaction output
+failed the expected `Chosen` text assertion; exact restoration passed both backends.
+The runtime interaction tests reject retired instances and stale presentation
+references, distinguish notification from Commit, preserve accepted input across
+retry, and refuse read-only Apply. Native sparse highlighter tests exercise UTF-8
+boundaries and hidden-source metrics without changing source bytes.

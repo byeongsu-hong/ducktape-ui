@@ -151,6 +151,7 @@ impl HostEditor {
                 .id(widget::Id::from(self.key.clone()))
                 .placeholder(self.placeholder.as_str())
                 .height(self.height)
+                .focus_enabled(self.editable)
                 .style(move |theme, _| native_style(self.options.style, theme, self.status))
                 .highlight_with::<PresentationHighlighter>(settings, 0, |format| *format);
         if let Some(size) = self.options.size {
@@ -189,7 +190,7 @@ impl HostEditor {
         if let Some(height) = self.max_height {
             editor = editor.max_height(height);
         }
-        if current && self.editable && self.transactions.is_some() {
+        if current && self.transactions.is_some() {
             use crate::rich_text_editor as native;
             use wire::editor_presentation::{
                 EditorGutterButton, EditorInteraction, EditorMenuAnchor,
@@ -223,34 +224,6 @@ impl HostEditor {
                         mouse::Interaction::Text
                     }
                 })
-                .on_gutter(move |line, button| {
-                    let gutter = affordances
-                        .gutters
-                        .iter()
-                        .find(|gutter| gutter.line as usize == line)?;
-                    let button = match button {
-                        native::GutterButton::Plus if gutter.plus => EditorGutterButton::Plus,
-                        native::GutterButton::Handle if gutter.handle => EditorGutterButton::Handle,
-                        _ => return None,
-                    };
-                    Some(output(EditorInteraction::Gutter {
-                        line: line as u32,
-                        button,
-                    }))
-                })
-                .on_gutter_drop(
-                    affordances
-                        .drop_boundaries
-                        .iter()
-                        .map(|line| *line as usize)
-                        .collect(),
-                    move |from, boundary| {
-                        Some(output(EditorInteraction::GutterDrop {
-                            from: from as u32,
-                            boundary: boundary as u32,
-                        }))
-                    },
-                )
                 .margin_marks(
                     affordances
                         .margins
@@ -259,33 +232,68 @@ impl HostEditor {
                         .collect(),
                     move |line| output(EditorInteraction::Margin { line: line as u32 }),
                 )
-                .margin_label(affordances.margin_label.clone())
-                .menu(affordances.menu.as_ref().map(|menu| {
-                    native::EditorMenu {
-                        anchor: match menu.anchor {
-                            EditorMenuAnchor::Caret => native::MenuAnchor::Caret,
-                            EditorMenuAnchor::Line(line) => native::MenuAnchor::Line(line as usize),
-                        },
-                        items: menu
-                            .items
+                .margin_label(affordances.margin_label.clone());
+            if self.editable {
+                editor = editor
+                    .on_gutter(move |line, button| {
+                        let gutter = affordances
+                            .gutters
                             .iter()
-                            .map(|item| native::MenuItem {
-                                tag: item.tag.clone(),
-                                label: item.label.clone(),
-                            })
-                            .collect(),
-                        selected: menu.selected as usize,
-                    }
-                }))
-                .on_menu(move |event| {
-                    output(match event {
-                        native::MenuEvent::Select(index) => EditorInteraction::MenuSelect {
-                            index: index as u32,
-                        },
-                        native::MenuEvent::Pick(tag) => EditorInteraction::MenuPick { tag },
-                        native::MenuEvent::Dismiss => EditorInteraction::MenuDismiss,
+                            .find(|gutter| gutter.line as usize == line)?;
+                        let button = match button {
+                            native::GutterButton::Plus if gutter.plus => EditorGutterButton::Plus,
+                            native::GutterButton::Handle if gutter.handle => {
+                                EditorGutterButton::Handle
+                            }
+                            _ => return None,
+                        };
+                        Some(output(EditorInteraction::Gutter {
+                            line: line as u32,
+                            button,
+                        }))
                     })
-                });
+                    .on_gutter_drop(
+                        affordances
+                            .drop_boundaries
+                            .iter()
+                            .map(|line| *line as usize)
+                            .collect(),
+                        move |from, boundary| {
+                            Some(output(EditorInteraction::GutterDrop {
+                                from: from as u32,
+                                boundary: boundary as u32,
+                            }))
+                        },
+                    )
+                    .menu(affordances.menu.as_ref().map(|menu| {
+                        native::EditorMenu {
+                            anchor: match menu.anchor {
+                                EditorMenuAnchor::Caret => native::MenuAnchor::Caret,
+                                EditorMenuAnchor::Line(line) => {
+                                    native::MenuAnchor::Line(line as usize)
+                                }
+                            },
+                            items: menu
+                                .items
+                                .iter()
+                                .map(|item| native::MenuItem {
+                                    tag: item.tag.clone(),
+                                    label: item.label.clone(),
+                                })
+                                .collect(),
+                            selected: menu.selected as usize,
+                        }
+                    }))
+                    .on_menu(move |event| {
+                        output(match event {
+                            native::MenuEvent::Select(index) => EditorInteraction::MenuSelect {
+                                index: index as u32,
+                            },
+                            native::MenuEvent::Pick(tag) => EditorInteraction::MenuPick { tag },
+                            native::MenuEvent::Dismiss => EditorInteraction::MenuDismiss,
+                        })
+                    });
+            }
         }
         if self.editable {
             editor = editor.on_action(move |action| Output::RichEditorAction {
@@ -588,7 +596,11 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
             focus.0
         };
         let mut replay = None;
-        if self.editable
+        let navigation =
+            self.options.presentation.as_ref().is_some_and(|p| {
+                !p.affordances.hits.is_empty() || !p.affordances.margins.is_empty()
+            });
+        if (self.editable || navigation)
             && let Some(shared) = &self.transactions
         {
             let mut control = super::lock(shared);
@@ -614,11 +626,12 @@ impl Widget<Output, iced::Theme, iced::Renderer> for HostEditor {
                     document: self.document.clone(),
                 });
             }
-            let has_menu = self
-                .options
-                .presentation
-                .as_ref()
-                .is_some_and(|presentation| presentation.affordances.menu.is_some());
+            let has_menu = self.editable
+                && self
+                    .options
+                    .presentation
+                    .as_ref()
+                    .is_some_and(|presentation| presentation.affordances.menu.is_some());
             let relevant = match event {
                 Event::Keyboard(
                     iced::keyboard::Event::KeyPressed { .. }

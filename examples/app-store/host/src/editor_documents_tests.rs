@@ -137,6 +137,16 @@ fn document(guest: &Arc<Mutex<Guest>>) -> (String, wire::editor_document::Editor
 }
 struct Bounds(String, Option<Rectangle>);
 impl Operation for Bounds {
+    fn custom(
+        &mut self,
+        id: Option<&iced::widget::Id>,
+        bounds: Rectangle,
+        _: &mut dyn std::any::Any,
+    ) {
+        if id == Some(&iced::widget::Id::from(self.0.clone())) {
+            self.1 = Some(bounds);
+        }
+    }
     fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
         visit(self);
     }
@@ -411,7 +421,7 @@ fn native_and_wasm_caret_menu_commits_one_edit_and_preserves_undo_across_reload(
         let mut now = Instant::now();
         ui = settle(ui, &guest, &mut renderer, &mut now, "presentation boot");
         let initial = document(&guest);
-        assert_eq!(initial.0, "Title\n- [ ] 한글");
+        assert_eq!(initial.0, "Title\n한글 link [ ]");
         let id = editor(guest.lock().unwrap().frame.root.as_ref().unwrap())
             .unwrap()
             .0
@@ -447,7 +457,7 @@ fn native_and_wasm_caret_menu_commits_one_edit_and_preserves_undo_across_reload(
         ui = settle(ui, &guest, &mut renderer, &mut now, "menu pick commit");
         let edited = document(&guest);
         assert_eq!(
-            edited.0, "Chosen\n- [ ] 한글",
+            edited.0, "Chosen\n한글 link [ ]",
             "caret menu must run the guest interaction decider, not insert a newline"
         );
         assert_eq!(
@@ -455,6 +465,66 @@ fn native_and_wasm_caret_menu_commits_one_edit_and_preserves_undo_across_reload(
             initial.1.text_revision + 1,
             "one atomic guest patch"
         );
+        // A separate disabled widget shares this document. Its declared link
+        // starts after a multi-byte prefix; native byte hit geometry must reach
+        // the guest without a caret move, edit, or history replacement.
+        fn readonly(node: &wire::Node) -> Option<String> {
+            if let wire::Node::Editor {
+                key,
+                editable: false,
+                ..
+            } = node
+            {
+                Some(key.clone())
+            } else {
+                node.children().iter().find_map(readonly)
+            }
+        }
+        fn has_text(node: &wire::Node, expected: &str) -> bool {
+            matches!(node, wire::Node::Text { content, .. } if content == expected)
+                || node
+                    .children()
+                    .iter()
+                    .any(|child| has_text(child, expected))
+        }
+        let readonly_id = readonly(guest.lock().unwrap().frame.root.as_ref().unwrap()).unwrap();
+        let mut bounds = Bounds(readonly_id, None);
+        ui.operate(&renderer, &mut bounds);
+        let bounds = bounds.1.expect("read-only native editor");
+        for (point, notice) in [
+            (Point::new(bounds.x + 100.0, bounds.y + 44.0), "link"),
+            (Point::new(bounds.x + 625.0, bounds.y + 44.0), "comments"),
+        ] {
+            send(
+                &mut ui,
+                &mut renderer,
+                point,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            );
+            send(
+                &mut ui,
+                &mut renderer,
+                point,
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            );
+            ui = settle(ui, &guest, &mut renderer, &mut now, "read-only navigation");
+            assert!(
+                has_text(guest.lock().unwrap().frame.root.as_ref().unwrap(), notice),
+                "read-only {notice} click must reach its guest notification"
+            );
+            assert_eq!(
+                document(&guest),
+                edited,
+                "navigation must not change document, revision or caret"
+            );
+        }
+        // Clicking the other widget normally blurs the editable control. Seat
+        // focus before replacement; no focus operation is sent after reload.
+        let id = editor(guest.lock().unwrap().frame.root.as_ref().unwrap())
+            .unwrap()
+            .0
+            .to_owned();
+        ui.operate(&renderer, &mut FocusEditor(id));
         let running = Running {
             id: entry.id.clone(),
             name: entry.name.clone(),

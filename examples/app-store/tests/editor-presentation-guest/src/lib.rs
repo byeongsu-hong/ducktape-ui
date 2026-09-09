@@ -14,13 +14,19 @@ mod fixture {
     use wire::keyboard::{Key, Modifiers};
 
     pub fn initial_document() -> Editor {
-        Editor::new("Title\n- [ ] 한글")
+        Editor::new("Title\n한글 link [ ]")
     }
     pub fn paint(
         state: ui_lang_guest::EditorStateView<'_>,
     ) -> wire::editor_presentation::EditorPresentation {
         use wire::editor_presentation::*;
         EditorPresentation {
+            padding: Some(wire::Edges {
+                top: 8.0,
+                right: 32.0,
+                bottom: 8.0,
+                left: 48.0,
+            }),
             formats: vec![EditorFormat {
                 line_background: Some(wire::Rgba([0.0, 1.0, 0.0, 1.0])),
                 ..Default::default()
@@ -40,12 +46,20 @@ mod fixture {
                     }],
                     selected: 0,
                 }),
-                hits: vec![EditorHit {
-                    line: 1,
-                    start: 2,
-                    end: 5,
-                    tag: 1,
-                }],
+                hits: vec![
+                    EditorHit {
+                        line: 1,
+                        start: 7,
+                        end: 11,
+                        tag: 2,
+                    },
+                    EditorHit {
+                        line: 1,
+                        start: 12,
+                        end: 15,
+                        tag: 1,
+                    },
+                ],
                 gutters: vec![EditorGutter {
                     line: 1,
                     plus: true,
@@ -60,7 +74,17 @@ mod fixture {
         }
     }
     pub fn remember(previous: Vec<u8>, event: Vec<u8>) -> Vec<u8> {
-        if event.is_empty() { previous } else { event }
+        if event.is_empty() || event.starts_with(b"notice:") {
+            previous
+        } else {
+            event
+        }
+    }
+    pub fn notification(event: Vec<u8>) -> String {
+        event
+            .strip_prefix(b"notice:")
+            .map(|text| String::from_utf8(text.to_vec()).unwrap())
+            .unwrap_or_default()
     }
     pub fn keys(previous: Vec<u8>) -> EditorBinding<Vec<u8>> {
         EditorBinding::new(
@@ -84,6 +108,16 @@ mod fixture {
                 }
             },
             |event| match event {
+                EditorTransactionEvent::Interaction { action, .. } => {
+                    use wire::editor_presentation::EditorInteraction;
+                    match action {
+                        EditorInteraction::LinePress { tag: 2, .. } => {
+                            Some(b"notice:link".to_vec())
+                        }
+                        EditorInteraction::Margin { .. } => Some(b"notice:comments".to_vec()),
+                        _ => None,
+                    }
+                }
                 EditorTransactionEvent::Commit {
                     before,
                     after,

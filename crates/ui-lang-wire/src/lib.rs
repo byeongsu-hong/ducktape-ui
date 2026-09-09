@@ -3176,6 +3176,7 @@ mod tests {
             Event::EditorTransaction {
                 handler: 5,
                 event: EditorTransactionEvent::Commit {
+                    origin: None,
                     id: EditorTransactionId {
                         instance: 1,
                         document: "app:draft".into(),

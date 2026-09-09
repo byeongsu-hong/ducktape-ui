@@ -320,6 +320,8 @@ pub enum EditorTransactionEvent {
     },
     Commit {
         id: EditorTransactionId,
+        /// The exact accepted request; unclaimed native edits have no origin.
+        origin: Option<EditorRequestInput>,
         before: crate::editor_document::EditorDocumentRef,
         after: crate::editor_document::EditorDocumentRef,
         #[serde(deserialize_with = "decode_patches")]

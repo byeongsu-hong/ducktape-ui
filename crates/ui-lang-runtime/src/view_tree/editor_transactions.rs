@@ -679,6 +679,19 @@ impl super::Inputs {
             return;
         }
         let input_time_ms = front.input.time_ms;
+        if self
+            .editor_references
+            .get(&batch.key)
+            .is_none_or(|r| !r.editable)
+            && !matches!(
+                batch.request,
+                Some(wire::EditorRequestInput::Interaction { .. })
+            )
+        {
+            let _ = control.lane.commit(batch.sequence);
+            let _ = control.lane.acknowledge(batch.sequence);
+            return;
+        }
         if let Some(input) = batch.request {
             let now = control.now_ms();
             control.lane.request(now);
@@ -984,6 +997,10 @@ impl super::Inputs {
         pending.push(wire::Event::EditorTransaction {
             handler: binding.on_event,
             event: wire::EditorTransactionEvent::Commit {
+                origin: control
+                    .pending
+                    .as_ref()
+                    .map(|request| request.input.clone()),
                 id,
                 before: reference(document, &before, before_text_revision),
                 after: reference(document, &after, control.text_revision),
@@ -1121,6 +1138,10 @@ impl super::Inputs {
                     cursor,
                     history,
                 } => {
+                    if self.editor_references.get(&key).is_none_or(|r| !r.editable) {
+                        control.lane.fail(Fault::Identity);
+                        continue;
+                    }
                     drop(control);
                     self.commit_editor(
                         &response.id.document,
@@ -1558,6 +1579,115 @@ mod document_budget_tests {
         assert!(
             !stale.editor_transactions_pending(),
             "discarded stale gesture must not strand the lane"
+        );
+    }
+
+    #[test]
+    fn accepted_interaction_origin_survives_retry_and_readonly_apply_is_refused() {
+        let origin = wire::EditorRequestInput::Interaction {
+            action: wire::editor_presentation::EditorInteraction::MenuPick { tag: "plus".into() },
+        };
+        for readonly in [false, true] {
+            let mut inputs = assigned(&[("A", 8, 1)]);
+            let mut events = vec![];
+            inputs.admit_editor_work("A/0", 0, NativeWork::Actions(vec![]), &mut events);
+            let shared = inputs.editor_transactions["A"].clone();
+            let control = super::super::lock(&shared);
+            let sequence = control.lane.front().unwrap().sequence;
+            let reference = super::super::editor_documents::current_reference("A", &control);
+            drop(control);
+            inputs.apply_editor_batch(
+                Batch {
+                    instance: inputs.instance,
+                    document: "A".into(),
+                    key: "A/0".into(),
+                    sequence,
+                    reset: 0,
+                    actions: vec![],
+                    request: Some(origin.clone()),
+                    presentation_reference: Some(reference.clone()),
+                },
+                &mut events,
+            );
+            let wire::Event::EditorRequest { mut request, .. } = events.pop().unwrap() else {
+                panic!("request")
+            };
+            let decision = wire::EditorDecision::Apply {
+                patches: vec![wire::EditorPatch {
+                    start_byte: 0,
+                    end_byte: 1,
+                    replacement: "Y".into(),
+                }],
+                cursor: reference.cursor,
+                history: wire::EditorHistoryEffect::NewGroup,
+            };
+            let response = |request: &wire::EditorRequest| wire::Frame {
+                editor_decisions: vec![wire::EditorResponse {
+                    id: request.id.clone(),
+                    decision: decision.clone(),
+                }],
+                ..Default::default()
+            };
+            if readonly {
+                inputs.editor_references.get_mut("A/0").unwrap().editable = false;
+            } else {
+                // A same-document observation moved after admission. The retry
+                // may change its revision/attempt, never the claimed input.
+                inputs.editors.get_mut("A/0").unwrap().revision += 1;
+                super::super::lock(&shared).revision += 1;
+                inputs.editor_frame(&response(&request), &mut events);
+                let wire::Event::EditorRequest { request: retry, .. } = events.pop().unwrap()
+                else {
+                    panic!("retry")
+                };
+                assert!(retry.id.attempt > request.id.attempt);
+                assert_eq!(retry.input, origin);
+                request = retry;
+            }
+            inputs.editor_frame(&response(&request), &mut events);
+            if readonly {
+                assert_eq!(session::text(&inputs, "A/0"), "xxxxxxxx");
+                assert!(events.iter().any(|event| matches!(
+                    event,
+                    wire::Event::EditorTransaction {
+                        event: wire::EditorTransactionEvent::Fault {
+                            reason: wire::EditorFault::InvalidResponse,
+                            ..
+                        },
+                        ..
+                    }
+                )));
+                assert!(
+                    !events.iter().any(|event| matches!(
+                        event,
+                        wire::Event::EditorTransaction {
+                            event: wire::EditorTransactionEvent::Commit { .. },
+                            ..
+                        }
+                    )),
+                    "read-only Apply cannot enter history"
+                );
+            } else {
+                assert_eq!(session::text(&inputs, "A/0"), "Yxxxxxxx");
+                assert!(events.iter().any(|event| matches!(event, wire::Event::EditorTransaction { event: wire::EditorTransactionEvent::Commit { origin: Some(input), .. }, .. } if input == &origin)), "accepted Commit must carry the original interaction after retry");
+            }
+        }
+        let mut native = assigned(&[("A", 8, 1)]);
+        let events = session::edit(
+            &mut native,
+            "A/0",
+            0,
+            text_editor::Action::Edit(text_editor::Edit::Insert('z')),
+        );
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                wire::Event::EditorTransaction {
+                    event: wire::EditorTransactionEvent::Commit { origin: None, .. },
+                    ..
+                }
+            )),
+            "unclaimed native edits have no request origin"
         );
     }
 

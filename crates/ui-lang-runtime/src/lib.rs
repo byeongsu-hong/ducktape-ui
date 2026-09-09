@@ -9,6 +9,7 @@ mod data_grid;
 pub mod dev;
 mod dynamic_themer;
 pub mod editor_action;
+pub mod editor_format;
 mod flex;
 mod hover_reveal;
 mod keyed_column;
