@@ -1123,6 +1123,7 @@ struct AccessibilityData {
     supports_activate: bool,
     supports_focus: bool,
     live: Option<crate::AccessibilityLive>,
+    level: Option<usize>,
     supports_increment: bool,
     supports_decrement: bool,
 }
@@ -1453,6 +1454,17 @@ impl Target {
     /// value changes with: `off`, `polite`, or `assertive`.
     pub fn accessibility_live(&self) -> String {
         accessibility_live_name(self.accessibility("live").live).to_owned()
+    }
+
+    /// The one-based semantic hierarchy level, for example a heading's level.
+    pub fn accessibility_level(&self) -> i64 {
+        let level = self.accessibility("level").level.unwrap_or_else(|| {
+            self.fail(
+                "level",
+                "expected: retained accessibility level\nactual: property is absent",
+            )
+        });
+        i64::try_from(level).expect("accessibility level exceeds i64")
     }
 
     pub fn accessibility_checked(&self) -> bool {
@@ -1880,6 +1892,7 @@ impl<Message: 'static> Selector for IdSelector<Message> {
                             supports_focus: !state.disabled
                                 && state.focus != crate::FocusBehavior::None,
                             live: state.live,
+                            level: state.level,
                             supports_increment: !state.disabled && state.supports_increment,
                             supports_decrement: !state.disabled && state.supports_decrement,
                         }),
@@ -6165,6 +6178,7 @@ fn target_manifest(target: &Target) -> serde_json::Value {
             "disabled": data.disabled,
             "focused": data.focused,
             "live": accessibility_live_name(data.live),
+            "level": data.level,
             "actions": {
                 "click": data.supports_activate,
                 "focus": data.supports_focus,

@@ -12,14 +12,15 @@ component PageHeader(title:str, description:str="")
   col #root @field
     text title #title
       with
+        heading=1
         w=fill
-        wrap=word
+        wrap=word-or-glyph
         @display
     if !empty(description)
       text description #description
         with
           w=fill
-          wrap=word
+          wrap=word-or-glyph
           @caption
 
 component Panel(title:str, description:str="")
@@ -28,14 +29,15 @@ component Panel(title:str, description:str="")
       col @field
         text title #title
           with
+            heading=2
             w=fill
-            wrap=word
+            wrap=word-or-glyph
             @section_title
         if !empty(description)
           text description #description
             with
               w=fill
-              wrap=word
+              wrap=word-or-glyph
               @caption
       slot
 

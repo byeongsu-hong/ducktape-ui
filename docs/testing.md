@@ -176,7 +176,9 @@ radii, shadows, colors, fonts, sizes, and line heights without comparing
 screenshots. Primitive counts, text/image bounds, shaped text baseline,
 scale-aware pixel alignment, focus, and accessibility fields are also available
 when a conformance report needs more than the single-primitive convenience
-accessors.
+accessors. `accessibility_level` returns the retained one-based heading or
+hierarchy level as an integer and fails if the property is absent. Capture
+JSON records the same nullable `accessibility.level` value.
 
 Each target generated from an Ice view also records its originating `.ice`
 path, line, and column. A target constructed wholly inside a Rust widget may

@@ -25,6 +25,7 @@ use iced::widget::{
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Padding, Pixels, Shadow, Vector,
 };
+use ui_lang_runtime::{AlignItems, Flex};
 
 /// Default shadcn-compatible sidebar measurements, in logical pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -575,7 +576,7 @@ pub fn sidebar_group_heading<'a, Message>(
     label: impl Into<Element<'a, Message>>,
     action: Option<Element<'a, Message>>,
     direction: Direction,
-) -> Row<'a, Message>
+) -> Flex<'a, Message>
 where
     Message: 'a,
 {
@@ -586,7 +587,7 @@ where
     directed_row(items, direction)
         .width(Length::Fill)
         .height(SIDEBAR_METRICS.group_label_height)
-        .align_y(Alignment::Center)
+        .align_items(AlignItems::Center)
 }
 
 pub fn sidebar_group_action<'a, Message>(
@@ -829,8 +830,8 @@ where
     });
     let trailing = trailing.filter(|_| !collapsed);
     directed_row([leading, label, trailing].into_iter().flatten(), direction)
-        .spacing(SIDEBAR_METRICS.section_padding)
-        .align_y(Alignment::Center)
+        .gap(SIDEBAR_METRICS.section_padding)
+        .align_items(AlignItems::Center)
         .width(if collapsed {
             Length::Shrink
         } else {
@@ -919,7 +920,7 @@ where
         .into();
     container(
         directed_row(vec![seam, list], direction)
-            .spacing(10.0)
+            .gap(10.0)
             .width(Length::Fill),
     )
     .padding([2, 12])
