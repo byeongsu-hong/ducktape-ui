@@ -25,10 +25,10 @@ composition. The catalog is useful when browsing individual controls.
 
 The focused Showcase files are executable native contracts, including app or
 widget composition and assertions. Copy the relevant composition into your app,
-not its test-only helpers or the catalog adapter module. For a form whose Save
-must stay visible, use the [responsive workspace](../crates/ui-lang-components/docs/responsive-workspace.md):
-the scrolling body and action row are siblings in a bounded column. The ordinary
-Settings example intentionally scrolls its Save with the rest of the form.
+not its test-only helpers or the catalog adapter module. Settings keeps Save
+visible with the scrolling body and action row as siblings
+in a bounded column. The [responsive workspace](../crates/ui-lang-components/docs/responsive-workspace.md)
+uses the same ownership in a larger composition.
 
 ## Resolve the source import once
 
