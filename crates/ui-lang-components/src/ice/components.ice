@@ -39,7 +39,7 @@ component Panel(title:str, description:str="")
               @caption
       slot
 
-component Alert(title:str, description:str)
+component Alert(title:str, description:str="")
   box #root
     with
       w=fill
@@ -62,15 +62,23 @@ component Alert(title:str, description:str)
             size=14.0
             @font-semibold
             @text-brand_fg
-      col w=fill gap=3.0
-        text title
+      col #content w=fill gap=3.0
+        text title #title
           with
+            w=fill
+            wrap=word-or-glyph
             size=14.0
             @font-semibold
             @text-fg
-        text description size=13.0 @text-muted
+        if !empty(description)
+          text description #description
+            with
+              w=fill
+              wrap=word-or-glyph
+              size=13.0
+              @text-muted
 
-component Alert.Success(title:str, description:str)
+component Alert.Success(title:str, description:str="")
   box #root
     with
       w=fill
@@ -93,15 +101,23 @@ component Alert.Success(title:str, description:str)
             size=14.0
             @font-semibold
             @text-success_fg
-      col w=fill gap=3.0
-        text title
+      col #content w=fill gap=3.0
+        text title #title
           with
+            w=fill
+            wrap=word-or-glyph
             size=14.0
             @font-semibold
             @text-fg
-        text description size=13.0 @text-muted
+        if !empty(description)
+          text description #description
+            with
+              w=fill
+              wrap=word-or-glyph
+              size=13.0
+              @text-muted
 
-component Alert.Warning(title:str, description:str)
+component Alert.Warning(title:str, description:str="")
   box #root
     with
       w=fill
@@ -124,15 +140,23 @@ component Alert.Warning(title:str, description:str)
             size=14.0
             @font-semibold
             @text-warning_fg
-      col w=fill gap=3.0
-        text title
+      col #content w=fill gap=3.0
+        text title #title
           with
+            w=fill
+            wrap=word-or-glyph
             size=14.0
             @font-semibold
             @text-fg
-        text description size=13.0 @text-muted
+        if !empty(description)
+          text description #description
+            with
+              w=fill
+              wrap=word-or-glyph
+              size=13.0
+              @text-muted
 
-component Alert.Destructive(title:str, description:str)
+component Alert.Destructive(title:str, description:str="")
   box #root
     with
       w=fill
@@ -155,13 +179,21 @@ component Alert.Destructive(title:str, description:str)
             size=14.0
             @font-semibold
             @text-danger_fg
-      col w=fill gap=3.0
-        text title
+      col #content w=fill gap=3.0
+        text title #title
           with
+            w=fill
+            wrap=word-or-glyph
             size=14.0
             @font-semibold
             @text-fg
-        text description size=13.0 @text-muted
+        if !empty(description)
+          text description #description
+            with
+              w=fill
+              wrap=word-or-glyph
+              size=13.0
+              @text-muted
 
 component Field(label:str, description:str="", error:str="")
   col #root @field
@@ -528,7 +560,7 @@ component Typography.Machine(content:str)
       r=5.0
     text content @machine text-fg
 
-component EmptyState(title:str, description:str)
+component EmptyState(title:str, description:str="")
   box #root
     with
       w=fill
@@ -540,12 +572,12 @@ component EmptyState(title:str, description:str)
       border=border
       border-w=1.0
       r=11.0
-    col
+    col #content
       with
         w=fill
         align=center
         gap=7.0
-      box
+      box #icon
         with
           w=42.0
           h=42.0
@@ -556,8 +588,20 @@ component EmptyState(title:str, description:str)
           border-w=1.0
           r=21.0
         text "◇" size=20.0 @text-primary
-      text title @section_title text-fg
-      text description @caption
+      text title #title
+        with
+          w=fill
+          wrap=word-or-glyph
+          align-x=center
+          @section_title
+          @text-fg
+      if !empty(description)
+        text description #description
+          with
+            w=fill
+            wrap=word-or-glyph
+            align-x=center
+            @caption
 
 component Tooltip(label:str)
   tooltip #root

@@ -2907,3 +2907,97 @@ fail. Each mutation was restored byte-for-byte before rerunning its test.
 The Unix invalid-path regression fails against lossy conversion (an accepted
 `/tmp/bad�` instead of an error), then passes with strict UTF-8 conversion for
 both file-hovered and file-dropped observations.
+
+### Overlay lifecycle and custom content
+
+`examples/showcase/tests/overlay_focus_customization.rs` drives the public native
+Dialog, Alert Dialog, Select and Command/Popover APIs through real widgets.
+Long copy/custom bodies at 320×300 and 360×300 retain reachable actions;
+Tab reveals a custom body control. Custom alert actions at 360×260 wrap without
+compressing their labels, safe Cancel receives initial focus, Tab remains
+contained, backdrop input is inert, and dismissal restores the trigger.
+A native ComboBox supplied as the dialog body closes its nested menu on the
+first Escape and dismisses the dialog on the next.
+
+Custom selector triggers and variable-height Command result rows are exercised
+at all four 240×240 viewport corners. Navigation skips disabled results, reveals
+the active row without stealing text-input focus, selection restores the trigger,
+empty results cannot select, and a new query resets a previously scrolled list.
+The shared Menu owner also serves Dropdown Menu, Context Menu and Menubar;
+those families retain their existing event/focus policies.
+
+`examples/showcase/tests/native_combobox_focus.rs` separately tests the actual
+patched Iced ComboBox focus operation, pointer/keyboard selection, empty query,
+Escape and touch reopening. The selected-row paint oracle first establishes a
+visible highlight, then requires it after navigating to the last option at the
+window edge. The first-class Showcase ComboBox test checks semantic focus,
+real native input/selection, and the accessible role/name/value through Ice.
+No fake selection reducer or replacement widget supplies these observations.
+
+Intended pre-fix assertion Reds cover clipped dialog actions, invisible Select
+and ComboBox active rows, query reset, swallowed Escape, custom-body focus
+reveal, wrapped alert actions, long alert copy, native focus traversal and
+selection focus, nested Escape, and touch reopening. Additional temporary
+mutations validate the custom-search and Ice integration assertions; exact
+production source is restored before Green checks.
+
+Reviewed captures are in `examples/showcase/screenshots/overlay-focus/`.
+The native fixture tuple is light component theme, default native font, scale 1,
+en-US, Linux and reduced motion; each test specifies its viewport. The Ice seam
+uses the Showcase test preset and bundled app fonts. These are native tiny-skia
+assertions/captures, not platform accessibility, Tree-host or all-component
+customization parity. Ice structural Dialog slots alone do not establish modal
+focus/dismissal behavior. External apps need the workspace widget patch for the
+native ComboBox fixes and its optional `.id(...)` customization builder.
+
+Validation passes 337 Showcase binary tests and 106 Showcase integration tests,
+including six native ComboBox and ten custom-overlay regressions. Components
+pass 473 library tests (two existing ignored); runtime passes 391 library tests
+(eight existing ignored), and their integration targets pass after the measured
+Menu/Select allocation baselines are updated. The scrollable wrapper and stable
+ID add three allocations per menu, independent of item count; Select's longer
+derived ID adds one string-growth reallocation. Existing child/group reuse
+assertions remain. Obsolete direct-child-count checks were removed when the
+scroll container became the owner of those children.
+
+### Native state feedback and request ownership
+
+The `state_feedback` native fixture covers all four Alert variants with empty
+copy, a bounded EmptyState with a reachable Create project action, long
+unbroken notice text, and multiline empty-state title/description alignment.
+Original behavior fails notice height (64.1 instead of 50), empty content
+height (96.35 instead of 70.6), actual text containment and per-line painted
+centering. Seven fixture checks pass after conditional descriptions and
+explicit word-or-glyph text layout. Geometry remains customizable through the
+existing component interface. Create opens an editable project-name form;
+omitting its focus task fails the native focused assertion, and restoration
+permits immediate typing.
+
+Apple Music uses independent busy flags for home, search and authentication.
+Its real generated query binding starts two search tasks; applying their actual
+outputs in reverse order must retain the newer results. Signing out invalidates
+an in-flight sign-in; unrelated search work does not block authentication.
+The native sidebar remains editable while authentication is busy. Another
+native test distinguishes the submitted search label from an unsubmitted draft,
+then submits through Enter and observes the new results/loading transition.
+The prior behavior and a minimal request-lane/label mutation reach the intended
+assertions; setup failures from bypassing generated binding invalidation are
+excluded from that evidence.
+
+The Markdown editor's existing save owner is exercised with real scratch-file
+writes. An actual pending completion cannot mark later edits saved; repeated
+submit launches no second write. A missing parent directory causes a real
+save error while preserving the document, and restoring it permits a clean
+retry. Removing the submit guard, marking the current revision instead of the
+written one, or discarding the error each fails its intended assertion. A native
+pending-save preset verifies actual typing while Saving is shown and Saved is
+absent; disabling that editor fails `Draft!` versus `Draft`. Exact production
+source is restored. No new persistence or asynchronous language API was added.
+
+[PR #1053](https://github.com/byeongsu-hong/ducktape-ui/pull/1053) and the
+[state feedback guide](crates/ui-lang-components/docs/state-feedback.md)
+link owners and executable examples. Captures use explicit viewports, native
+light theme, scale 1, en-US, Linux, reduced motion and each app's bundled fonts.
+The music API is a deterministic example; Markdown owner tests use actual local
+files. This evidence does not establish platform accessibility or network
+service behavior. Media painting is covered by the separate content audit.

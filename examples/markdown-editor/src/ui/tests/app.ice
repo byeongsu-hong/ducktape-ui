@@ -285,3 +285,35 @@ test a_note_row_is_the_height_the_list_virtualizes_by
   expect current_title != "Welcome to your notes"
   expect row.visible
   expect row.height ~= 72.8
+
+preset pending_save
+  boot
+    loading = false
+    saving = true
+    document = reset_document("Draft")
+    history = editor_status()
+
+test pending_save_keeps_the_native_editor_usable
+  preset pending_save
+  viewport 760 520
+  theme light
+  scale 1.0
+  locale "en-US"
+  platform linux
+  reduced-motion true
+  target document_editor = #app/sheet-frame/sheet/editor-surface/root/page/document
+  target status = #app/sheet-frame/sheet/status-bar/root/message
+  target saving_notice = status/saving
+  target saved_notice = status/saved
+  expect saving
+  expect exists saving_notice
+  expect missing saved_notice
+  click document_editor
+  key end
+  type "!"
+  expect editor_text(document) == "Draft!"
+  expect history.dirty
+  expect saving
+  expect exists saving_notice
+  expect missing saved_notice
+  capture editing_during_save

@@ -1,41 +1,47 @@
 on mount
-  loading = true
-  run every load_home() -> home_loaded _ | failed _
+  home_loading = true
+  run every load_home() -> home_loaded _ | home_failed _
 
 on home_loaded(feed)
   top_picks = feed.top_picks
   recently_played = feed.recently_played
-  loading = false
+  home_loading = false
 
 on navigate(next_section)
   section = next_section
   queue_open = false
 
 on sign_in
-  return if loading
-  loading = true
-  run every authenticate() -> authenticated _ | failed _
+  return if signing_in || signed_in
+  signing_in = true
+  error = ""
+  run latest lane=authentication authenticate() -> authenticated _ | auth_failed _
 
 on authenticated(session)
   signed_in = true
   profile_name = session.name
-  loading = false
+  signing_in = false
 
 on sign_out
+  invalidate lane=authentication
+  signing_in = false
   signed_in = false
   profile_name = "Sign In"
 
 on search
   let search_query = normalized_query
   return if !has_query
-  loading = true
+  search_loading = true
+  submitted_query = search_query
+  search_results = []
+  error = ""
   section = MusicSection.search
   queue_open = false
-  run every search_catalog(search_query) -> searched _ | failed _
+  run latest lane=search search_catalog(search_query) -> searched _ | search_failed _
 
 on searched(results)
   search_results = results
-  loading = false
+  search_loading = false
 
 on play(title, artist, cover)
   invalidate lane=playback_navigation
@@ -99,6 +105,17 @@ on track_loaded(album)
   position = 0.0
   playing = true
 
+on home_failed(cause)
+  home_loading = false
+  error = cause.message
+
+on auth_failed(cause)
+  signing_in = false
+  error = cause.message
+
+on search_failed(cause)
+  search_loading = false
+  error = cause.message
+
 on failed(cause)
-  loading = false
   error = cause.message

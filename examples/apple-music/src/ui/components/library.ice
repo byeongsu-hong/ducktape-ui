@@ -436,13 +436,15 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
         p=30.0
         pb=38.0
         gap=22.0
-      if loading
-        Alert
+      if loading && section == MusicSection.search
+        Alert #search-loading title="Searching the catalog" description=query
+      if loading && section != MusicSection.search
+        Alert #library-loading
           with
             title="Loading your library"
             description="The mock catalog is preparing the next set of recommendations."
       if error != ""
-        Alert.Destructive title="Music is unavailable" description=error
+        Alert.Destructive #request-error title="Music is unavailable" description=error
       match section
         MusicSection.home
           PageTitle #home-title
@@ -608,8 +610,8 @@ component LibraryContent(section:MusicSection, query:str, loading:bool, error:st
               eyebrow="CATALOG"
               title="Search results"
               description=query
-          if empty(search_results) && !loading
-            EmptyState
+          if empty(search_results) && !loading && empty(error)
+            EmptyState #search-empty
               with
                 title="Nothing here yet"
                 description="Search for an artist or album from the sidebar."

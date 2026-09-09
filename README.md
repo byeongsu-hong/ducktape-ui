@@ -305,6 +305,10 @@ The [default Ice components](crates/ui-lang-components/README.md) include
 `PageHeader` and `Panel` with optional descriptions: omitted help adds no blank
 row, while long titles and descriptions wrap within the available content width.
 
+`Alert` variants and `EmptyState` also omit empty description rows. See
+[state feedback](crates/ui-lang-components/docs/state-feedback.md) for bounded
+empty states, independent requests and preserving edits during a save.
+
 The shared component theme includes light and dark palettes. Applications can
 switch palettes or supply a complete custom palette while retaining the same
 components; see [theme customization](crates/ui-lang-components/README.md).
@@ -830,7 +834,7 @@ For ordinary screen content, the default library's `Page` supplies a customizabl
 24px outer inset. Surface components retain their own interior padding; Form
 already owns its screen padding. See the [page and surface guidance](crates/ui-lang-components/README.md#page-edges-and-surface-padding).
 
-Wrapping alignment fixes use the workspace's [patched Iced widget crate](vendor/iced_widget/README.md).
+Wrapping alignment and native ComboBox focus/menu fixes use the workspace's [patched Iced widget crate](vendor/iced_widget/README.md).
 External applications must select the same patch until an upstream release includes them.
 
 Tree display text retains the existing 64 KiB aggregate budget. Actual sanitizer

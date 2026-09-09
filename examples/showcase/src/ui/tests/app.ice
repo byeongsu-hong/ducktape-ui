@@ -660,3 +660,34 @@ test alert_adapter_restores_trigger_after_keyboard_cancel
   expect alert_dialog_is_open(alert_dialog)
   key escape
   expect !alert_dialog_is_open(alert_dialog)
+
+test combobox_keyboard_selection_keeps_accessible_focus
+  preset test
+  viewport 360 260
+  scale 1.0
+  locale "en-US"
+  platform linux
+  reduced-motion true
+  mount
+    box p=24.0
+      FrameworkCombo #chooser -> searched_framework_changed _
+        with
+          options=combobox_frameworks
+          selected=searched_framework
+  target chooser = #chooser/root
+  expect searched_framework == none
+  a11y focus chooser
+  type "R"
+  expect searched_framework == some("R")
+  key enter
+  expect searched_framework == some("Rust")
+  expect a11y chooser role "combo-box"
+  expect a11y chooser name "Search frameworks"
+  expect a11y chooser value "Rust"
+  key arrow-down
+  key escape
+  expect searched_framework == some("Rust")
+  capture combobox_selected
+  // Typing after Escape proves native input focus survived closing the menu.
+  type "I"
+  expect searched_framework == some("I")

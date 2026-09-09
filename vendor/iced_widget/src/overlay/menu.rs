@@ -34,6 +34,7 @@ pub struct Menu<
     hovered_option: &'a mut Option<usize>,
     on_selected: Box<dyn FnMut(T) -> Message + 'a>,
     on_option_hovered: Option<&'a dyn Fn(T) -> Message>,
+    on_escape: Option<Box<dyn FnMut() -> Option<Message> + 'a>>,
     width: f32,
     padding: Padding,
     text_size: Option<Pixels>,
@@ -68,6 +69,7 @@ where
             hovered_option,
             on_selected: Box::new(on_selected),
             on_option_hovered,
+            on_escape: None,
             width: 0.0,
             padding: Padding::ZERO,
             text_size: None,
@@ -76,6 +78,16 @@ where
             font: None,
             class,
         }
+    }
+
+    // A native combobox must close its own menu before an enclosing modal
+    // handles Escape. Keep this callback internal to the widget crate.
+    pub(crate) fn on_escape(
+        mut self,
+        on_escape: impl FnMut() -> Option<Message> + 'a,
+    ) -> Self {
+        self.on_escape = Some(Box::new(on_escape));
+        self
     }
 
     /// Sets the width of the [`Menu`].
@@ -144,6 +156,7 @@ where
 #[derive(Debug)]
 pub struct State {
     tree: Tree,
+    last_revealed: Option<(Option<usize>, Size)>,
 }
 
 impl State {
@@ -151,6 +164,7 @@ impl State {
     pub fn new() -> Self {
         Self {
             tree: Tree::empty(),
+            last_revealed: None,
         }
     }
 }
@@ -170,6 +184,12 @@ where
     viewport: Rectangle,
     tree: &'a mut Tree,
     list: Scrollable<'a, Message, Theme, Renderer>,
+    last_revealed: &'a mut Option<(Option<usize>, Size)>,
+    on_escape: Option<Box<dyn FnMut() -> Option<Message> + 'a>>,
+    active: Option<usize>,
+    text_size: Option<Pixels>,
+    text_line_height: text::LineHeight,
+    padding: Padding,
     width: f32,
     target_height: f32,
     class: &'a <Theme as Catalog>::Class<'b>,
@@ -198,6 +218,7 @@ where
             hovered_option,
             on_selected,
             on_option_hovered,
+            on_escape,
             width,
             padding,
             font,
@@ -207,6 +228,7 @@ where
             class,
         } = menu;
 
+        let active = *hovered_option;
         let list = Scrollable::new(List {
             options,
             hovered_option,
@@ -228,6 +250,12 @@ where
             viewport,
             tree: &mut state.tree,
             list,
+            last_revealed: &mut state.last_revealed,
+            on_escape,
+            active,
+            text_size,
+            text_line_height,
+            padding,
             width,
             target_height,
             class,
@@ -261,6 +289,23 @@ where
 
         let node = self.list.layout(self.tree, renderer, &limits);
         let size = node.size();
+        if *self.last_revealed != Some((self.active, size)) {
+            *self.last_revealed = Some((self.active, size));
+            if let Some(active) = self.active {
+                let height = f32::from(self.text_line_height.to_absolute(
+                    self.text_size.unwrap_or_else(|| renderer.default_size()),
+                )) + self.padding.y();
+                self.list.operate(
+                    self.tree,
+                    Layout::new(&node),
+                    renderer,
+                    &mut RevealActive {
+                        top: active as f32 * height,
+                        height,
+                    },
+                );
+            }
+        }
 
         node.move_to(if space_below > space_above {
             self.position + Vector::new(0.0, self.target_height)
@@ -278,6 +323,24 @@ where
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
+        if matches!(
+            event,
+            Event::Keyboard(crate::core::keyboard::Event::KeyPressed {
+                key: crate::core::keyboard::Key::Named(
+                    crate::core::keyboard::key::Named::Escape
+                ),
+                ..
+            })
+        ) && let Some(on_escape) = &mut self.on_escape
+        {
+            if let Some(message) = on_escape() {
+                shell.publish(message);
+            }
+            shell.capture_event();
+            shell.invalidate_widgets();
+            shell.request_redraw();
+            return;
+        }
         let bounds = layout.bounds();
 
         self.list.update(
@@ -325,6 +388,45 @@ where
 
         self.list.draw(
             self.tree, renderer, theme, defaults, layout, cursor, &bounds,
+        );
+    }
+}
+
+// Operate only on this menu's root scrollable; list rows have uniform height.
+struct RevealActive {
+    top: f32,
+    height: f32,
+}
+impl crate::core::widget::Operation for RevealActive {
+    fn traverse(
+        &mut self,
+        _operate: &mut dyn FnMut(&mut dyn crate::core::widget::Operation),
+    ) {
+    }
+    fn scrollable(
+        &mut self,
+        _id: Option<&crate::core::widget::Id>,
+        bounds: Rectangle,
+        content_bounds: Rectangle,
+        translation: Vector,
+        state: &mut dyn crate::core::widget::operation::Scrollable,
+    ) {
+        let top = self.top - translation.y;
+        let bottom = top + self.height;
+        let delta = if top < 0.0 {
+            top
+        } else if bottom > bounds.height {
+            bottom - bounds.height
+        } else {
+            0.0
+        };
+        state.scroll_by(
+            crate::core::widget::operation::scrollable::AbsoluteOffset {
+                x: 0.0,
+                y: delta,
+            },
+            bounds,
+            content_bounds,
         );
     }
 }

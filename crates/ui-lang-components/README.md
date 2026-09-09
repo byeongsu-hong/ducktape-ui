@@ -314,6 +314,14 @@ Panel title="Profile"
 Both expose `root/title` and, when present, `root/description` for semantic
 inspection. Panel retains its existing content slot and padding/section spacing.
 
+## Empty states and request feedback
+
+`Alert`, `Alert.Success`, `Alert.Warning`, `Alert.Destructive` and `EmptyState`
+accept an omitted description and remove its row when empty. Alert copy wraps
+inside its surface; EmptyState centers each wrapped line. The
+[state feedback guide](docs/state-feedback.md) connects these defaults to a
+reachable action, independent request ownership and editable pending saves.
+
 ## Responsive sidebar and detail layouts
 
 Use the [responsive workspace guide](docs/responsive-workspace.md) and its
@@ -417,6 +425,46 @@ Convenience APIs keep the stock shadcn-style presentation. Every component that 
 Text-only convenience arguments remain customizable strings, while structural content is passed as `iced::Element`. Existing default functions delegate to these composable paths, so adopting the library does not require source copies.
 
 Use the `full` feature for the complete catalog. The individual feature names and their transitive relationships are listed in [`Cargo.toml`](Cargo.toml). Full shadcn/ui behavior coverage is tracked in [the parity matrix](docs/parity.md).
+
+## Modal and anchored control contracts
+
+The native Dialog and Alert Dialog reserve space for their actions before
+laying out scrollable copy. Title, description and custom body scroll together;
+actions remain outside that scroll area. Short dialogs keep their intrinsic
+height. Alert action controls wrap onto another row when their labels need it.
+A newly focused custom body control is revealed with room for the default
+focus ring. Manual scrolling remains independent of repeated inspection.
+
+Supply the custom controls' stable IDs in the modal `FocusScope`, including
+initial and restore targets. Alert Dialog initially focuses its safe Cancel
+action, wraps Tab within the dialog, cancels on Escape, and ignores backdrop
+clicks. Ordinary Dialog retains its configurable backdrop/Escape policy. The
+structural Ice `Dialog` slots supply presentation; a native modal boundary owns
+focus containment, underlay inertness and dismissal.
+
+Select's custom trigger and Command's custom result/empty content keep their
+owner's keyboard and selection handlers. Pass visual content through these
+slots; do not install competing activation handlers in a passive trigger or
+result. Command keeps editing focus while revealing the active result, resets
+scroll on a new query and leaves Escape to its containing surface. Menu-backed
+selectors reveal the focused row after Arrow/Home/End navigation.
+
+The workspace's patched native Combobox participates in focus operations and
+accepts `.id(...)`, so a caller can include it in a custom dialog's `FocusScope`.
+Selection and Escape close its menu while retaining input focus. Arrows, typing,
+mouse and touch reopen it; Tab follows the containing focus scope. Inside a
+modal, the first Escape closes the menu and the next dismisses the modal.
+Native Ice `combo` supplies the accessible role, name and selected value;
+caller-rendered Rust controls still need their own semantic labels. External
+applications need the [same widget patch](../../vendor/iced_widget/README.md).
+
+The native [overlay tests](../../examples/showcase/tests/overlay_focus_customization.rs)
+and [Combobox tests](../../examples/showcase/tests/native_combobox_focus.rs)
+exercise these public customization paths without copying component source.
+They cover short/narrow windows, four popover corners, variable-height and
+empty results, native keyboard/pointer/touch input and focus restoration.
+This evidence does not establish all-component accessibility or Tree/platform
+host parity.
 
 ## Showcase
 

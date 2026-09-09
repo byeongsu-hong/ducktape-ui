@@ -64,8 +64,8 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 | C01 | P0 · Done | [PR #1015](https://github.com/byeongsu-hong/ducktape-ui/pull/1015) | Default and customized fields at 360/960px; wrapping errors; no empty-help gap; short-window scroll; binding, Tab/Space/Enter and focus preserved. Local: 8 settings tests, 330 showcase tests pass; five mutation Reds; merged as 607f7ce3. |
 | C02 | P1 · Done | [Item/Attachment/Breadcrumb](../crates/ui-lang-components/src/ice/components.ice), [VirtualList](../crates/ui-lang-components/docs/virtual-list.md) | Leading visual, long content and trailing metadata/actions remain aligned; stable-key selection survives reorder/filter; optional content does not leave blank columns. |
 | C03 | P1 · Done | [navigation examples](../examples/showcase/src/ui/components/navigation.ice), [parity navigation contracts](../crates/ui-lang-components/docs/parity.md) | A list/detail or settings screen has one obvious selected location, coherent title/actions and predictable back behavior, with a reusable default composition. |
-| C04 | P1 · Audit | [Dialog composition](../crates/ui-lang-components/src/ice/components.ice), [modal runtime contract](../crates/ui-lang-components/docs/parity.md) | A long dialog fits a small window, body scrolls as needed, actions stay reachable, focus is contained/restored and custom content preserves dismissal policy. |
-| C05 | P1 · Audit | [Select/Combobox/menus/popovers](../crates/ui-lang-components/docs/parity.md) | A searchable anchored selector near a window edge keeps the active result visible, handles empty results, and restores focus after selection/Escape, including a custom trigger. |
+| C04 | P1 · Done | [Dialog composition](../crates/ui-lang-components/src/ice/components.ice), [modal runtime contract](../crates/ui-lang-components/docs/parity.md) | A long dialog fits a small window, body scrolls as needed, actions stay reachable, focus is contained/restored and custom content preserves dismissal policy. |
+| C05 | P1 · Done | [Select/Combobox/menus/popovers](../crates/ui-lang-components/docs/parity.md) | A searchable anchored selector near a window edge keeps the active result visible, handles empty results, and restores focus after selection/Escape, including a custom trigger. |
 | C06 | P2 · Audit | [Markdown/editor examples](../examples/markdown-editor), [AI chat](../examples/ai-chat) | Rich text, images and editor content respect readable width; long links/code and streaming additions have an explicit overflow policy and preserve reading position. |
 | C07 | P2 · Audit | [DataGrid](../crates/ui-lang-components/docs/data-grid.md), [TreeView](../crates/ui-lang-components/docs/tree-view.md), [LogTimeline](../crates/ui-lang-components/docs/log-timeline.md) | Default table/tree/log compositions handle empty, selected and editing states; documented virtualization limits stay explicit; appending data preserves active work and fits frame budgets. |
 
@@ -73,8 +73,8 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
-| S01 | P1 · Audit | [EmptyState/Alert](../crates/ui-lang-components/src/ice/components.ice), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Empty, loading, error and success presentations use a consistent hierarchy and useful action; changing state does not introduce accidental blank space or obscure the main task. |
-| S02 | P1 · Audit | [music handlers](../examples/apple-music/src/ui/handlers/app.ice), [chat handlers](../examples/ai-chat/src/ui/handlers.ice) | Repeated submit, stale completion and failed save have clear feedback; unrelated edits remain intact; no simultaneous contradictory success/error state. Fix ownership/policy before inventing a new async DSL. |
+| S01 | P1 · Done | [EmptyState/Alert](../crates/ui-lang-components/src/ice/components.ice), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Empty, loading, error and success presentations use a consistent hierarchy and useful action; changing state does not introduce accidental blank space or obscure the main task. |
+| S02 | P1 · Done | [music handlers](../examples/apple-music/src/ui/handlers/app.ice), [chat handlers](../examples/ai-chat/src/ui/handlers.ice) | Repeated submit, stale completion and failed save have clear feedback; unrelated edits remain intact; no simultaneous contradictory success/error state. Fix ownership/policy before inventing a new async DSL. |
 
 ## Interaction and accessibility
 
@@ -343,8 +343,8 @@ the Cancel and Confirm focus IDs and verifies restored trigger focus; its safe
 Cancel assertion rejects the same mutation. Restoration passes all 336 tests.
 The [component guide](../crates/ui-lang-components/README.md#controlled-state-and-focus)
 explains the boundary and the distinction between native replacement events
-and field-level updates. S02 remains open for product I/O ownership, failed
-saves and stale network completions; those paths are outside this catalog audit.
+and field-level updates. Product I/O ownership, failed saves and stale network completions are covered
+by the S01/S02 delivery below; those paths are outside this catalog audit.
 
 ### L05: retained editing across responsive layouts
 
@@ -436,3 +436,41 @@ The [guide](../crates/ui-lang-components/docs/list-detail-navigation.md) documen
 public customization, button keyboard/accessibility semantics and state ownership.
 This completes C02/C03's native composition acceptance. Durable saves, large
 virtualized collections and platform-specific accessibility remain outside it.
+
+### C04/C05 — modal and anchored custom content
+
+Native [overlay lifecycle tests](../examples/showcase/tests/overlay_focus_customization.rs)
+cover long scrolling dialog copy, fixed reachable actions, custom-body focus
+reveal, safe initial action, contained Tab order, inert backdrop and restored
+trigger focus. Custom Select triggers and Command result/empty slots preserve
+selection and dismissal at four viewport corners, including variable row heights,
+disabled results and query changes after scrolling. The
+[native ComboBox suite](../examples/showcase/tests/native_combobox_focus.rs)
+covers active-option reveal, focus traversal, pointer/keyboard selection, empty
+queries, Escape and touch reopening; a ComboBox custom dialog body verifies
+inner-menu dismissal before outer-modal dismissal. See the overlay lifecycle
+section in [COVERAGE](../COVERAGE.md) for assertion Red/Green and capture inputs.
+
+This completes the C04/C05 representative native acceptance. A01 still includes
+non-overlay traversal and removal behavior. D05 now has row/trigger/body evidence
+here, alongside the Item and Form custom-content checks. Remaining D05 work is
+direct semantic/accessibility evidence for these representative public custom
+row/trigger/body paths. Native Rust custom controls still own their semantic
+labels. Structural
+Ice Dialog presentation alone does not supply modal lifecycle behavior. S02's
+request/save completion policies are covered separately below.
+
+
+### S01/S02: default feedback and application request ownership
+
+The native state-feedback fixture removes empty Alert/EmptyState rows, contains
+long words, centers each painted empty-state line and keeps its action reachable.
+Music separates home/search/authentication busy state, retains an editable draft
+beside the submitted query, rejects stale search results and invalidates pending
+sign-in on sign-out. Markdown's existing save owner retains new edits, rejects
+repeated submit and exposes real filesystem failure/retry without losing text.
+Native controls and actual request outputs provide the interaction/ownership
+seams; intended assertion Reds and inspected captures are described in
+[COVERAGE](../COVERAGE.md#native-state-feedback-and-request-ownership) and the
+[state feedback guide](../crates/ui-lang-components/docs/state-feedback.md).
+Delivered in [PR #1053](https://github.com/byeongsu-hong/ducktape-ui/pull/1053).
