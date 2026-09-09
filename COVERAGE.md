@@ -2293,16 +2293,27 @@ and customizable padding/radius. Field remains the slot-based custom-control
 path and omits empty help/error nodes. No Core syntax or platform support is
 added.
 
-`cargo test -p settings-example` exercises 360px and 960px layouts, long labels,
-multiline errors, customized input geometry/binding/focus, short-window scrolling,
-and omitted help spacing. Each authored regression has assertion-level Red
-mutation evidence: fixed input width (200 vs 272), binding workspace to name
-(workspace failed to become Studio), error height 10 (multiline height assertion),
-horizontal-only Form scrolling (Save remained invisible), and unconditional
-empty help (field bottom differed from input bottom). Restored sources pass the
-same tests. PNG/JSON captures use scale 1 and the app's light palette; the wide,
-narrow and error tests pin en-US, Linux and reduced motion. Screenshots are in
-`examples/settings/screenshots`; tests render real generated native widgets.
+`cargo test -p settings-example` runs six authored native contracts for the
+maintained workspace-preferences screen and omitted field-help spacing. The
+screen keeps heading and Save outside Form at 960×820 and 360×320. Native
+wheel/keyboard tests reach the final control, retain custom input geometry and
+edits through validation recovery, and omit an empty optional heading
+explanation. Long labels and multiline feedback use bounds/full visible-height
+assertions paired with inspected captures. Screenshots are in
+`examples/settings/screenshots`; captured tests pin scale 1, the app's light
+palette, en-US, Linux and reduced motion.
+
+The former scrolling Save fails its initial visible assertion at 360×320;
+suppressing success fails the saved-state assertion. During integration,
+individual temporary mutations fail radius, empty-heading-row and
+edit-preservation assertions. Each mutation was restored and all nine generated
+native tests passed. The [authoring observation](docs/evidence/agent-authoring/results.md)
+separates original-run evidence from these integration checks. These Settings
+checks use native bounds/full visible height plus inspected captures. During the
+original authoring runs, paint lookup mismatched translated content coordinates;
+[PR #1063](https://github.com/byeongsu-hong/ducktape-ui/pull/1063) corrects direct
+and captured inspection to use visible screen bounds, with independent nested
+scroll regression evidence.
 
 ## Default header description layout
 
@@ -3216,7 +3227,8 @@ an exact comparison signature adds cold/change-boundary storage to avoid repeate
 per-frame key ownership. The release allocation and latency limits are unchanged.
 Bypassing exact comparison and omitting render cache lookup independently reach
 intended owner assertion Reds; restored tests retain the focus and scroll
-replacement checks. Final release performance validation remains in CI.
+replacement checks. Release allocation and latency limits also passed CI after
+the cache change.
 
 ### Concurrent native package launch
 
