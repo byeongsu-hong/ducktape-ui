@@ -541,7 +541,7 @@ For module packaging requirements and the connected implementation phases, see
   second hand the guest never ticks), given the call's copied data arguments
   (`unit`, `bool`, `i64`, `f64`, `str`, lists, options and records); a name
   the host lacks renders a placeholder. Remaining refusals include dynamic image paths,
-  mounted components inside lazy or host container conditions, non-container gradients, and
+  mounted components inside host container conditions, non-container gradients, and
   unsupported interaction utility styles. These fail the app's build at
   its `.ice` line with E190 and need additional lowering or host contracts.
   A layout's surface utilities (`@bg-…`, `@border-…`, `@r-…`) and a box's
@@ -1190,16 +1190,24 @@ tick drains cancellation. Reappearance creates fresh state and runs boot with
 current props. `lifetime retained` already keeps state across absence and remains
 supported.
 
-Mounted descendants of explicit `lazy` or host-evaluated container conditions
-remain refused at their component call: cached views skip mount sightings, and
-host-selected branches do not report activation to the guest. Unconditional
-responsive children and lazy content inside an already-mounted component are
-supported. Host surfaces continue to own their native resources separately.
+Explicit `lazy` caches preserve component ownership along with callable routes,
+including enclosing owners of nested lazy content. Cache hits replay mounted
+sightings before pruning. Deliveries to either mounted or retained component
+state invalidate their containing caches even when the explicit lazy dependency
+is unchanged. Unmount discards caches that own mounted scopes, so the same-key
+return boots fresh; retained-only caches may remain parked.
 
-Bundle `app-store-component-fixture` to `target/component-fixture` from this
-workspace, then run `cargo test -p app-store-host bundled_component_ -- --ignored`.
-The tests use native clicks to distinguish mounted and retained counters, and
-exercise pending request cancellation, obsolete replies and separate instances.
+Mounted descendants of host-evaluated container conditions remain refused: the
+host-selected branch does not yet report activation to the guest. Unconditional
+responsive children are supported. Host surfaces own their native resources
+separately.
+
+Bundle `app-store-component-fixture` to `target/component-fixture` for Wasm and
+use `scripts/build-native.py -p app-store-component-fixture --out target/component-native`
+for Tree-native. Run `cargo test -p app-store-host bundled_component_ -- --ignored`.
+Both backends use actual native clicks to check true cache hits, local edits,
+same-dependency hide/remount, retained state, stale routes, pending request
+cancellation and obsolete replies.
 
 ## QR module views
 

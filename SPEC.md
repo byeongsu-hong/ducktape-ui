@@ -1350,11 +1350,12 @@ a deferred boot or cancellation task needs another tick. This allows an idle hos
 to deliver cancellation without input. Removed scopes lose state and boot marks;
 reappearing scopes initialize and boot again. Queues belong to their driver.
 
-Mounted descendants of explicit lazy and host-evaluated container conditions
-report E190 at the component call, including through wrapper components and
-slots. Those boundaries do not replay guest mount sightings or report host branch
-activation. An unconditional responsive child has ordinary guest-known lifetime.
-No new wire node or host lifecycle event is introduced.
+Mounted descendants of explicit lazy containers replay scope sightings on cache
+hits. Cached routes carry both enclosing and descendant component identities;
+component deliveries invalidate their containing caches, and unmount discards
+caches tied to mounted scopes. Retained state survives absence. Host-evaluated
+container conditions still reject mounted descendants until selected-branch
+activation can be reported to the guest.
 
 ## Tree QR codes
 

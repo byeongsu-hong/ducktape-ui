@@ -649,7 +649,9 @@ Tree `rich-text` carries styled spans and link routes to a single native paragra
 See [rich text module views](examples/app-store/README.md#rich-text-module-views).
 
 Tree mounted components initialize once per appearance and cancel their work on
-removal. See [component module lifetimes](examples/app-store/README.md#mounted-component-module-views).
+removal, including inside lazy caches. Cached mount sightings replay, component
+edits invalidate their cached content, and remount creates fresh routes.
+Host-selected conditional lifetimes remain refused. See [component module lifetimes](examples/app-store/README.md#mounted-component-module-views).
 
 Tree `qr` copies UTF-8 or byte payloads and encoding/style options to the native
 host. See [QR module views](examples/app-store/README.md#qr-module-views).

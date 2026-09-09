@@ -51,7 +51,7 @@ pub mod mouse;
 mod mouse_tests;
 pub mod system;
 pub use markdown::Markdown;
-pub use memo::memo_lazy;
+pub use memo::{invalidate_component, memo_lazy};
 pub mod host;
 pub mod testing;
 pub mod widget;
@@ -335,6 +335,7 @@ impl<A: App> Driver<A> {
             memo::invalidate();
         }
         let mut root = self.app.view();
+        memo::finish_render();
         // Synchronous mount pruning can cancel work after the last settle.
         // Reconcile subscriptions and request another tick to drain woken
         // tasks; updating here would publish a tree from before that update.

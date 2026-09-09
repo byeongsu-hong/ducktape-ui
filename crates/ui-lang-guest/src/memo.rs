@@ -27,6 +27,43 @@ pub(crate) fn invalidate() {
     drop(entries);
 }
 
+/// A local component delivery may change its view while the explicit lazy
+/// dependency stays the same. Invalidate every containing cached subtree.
+pub fn invalidate_component(component: &'static str, scope: &str) {
+    let cache = slots::memo_cache();
+    let removed: Vec<_> = cache
+        .borrow_mut()
+        .entries
+        .extract_if(|_, entry| {
+            entry
+                .routes
+                .components
+                .iter()
+                .any(|entry| entry.component == component && entry.scope == scope)
+        })
+        .collect();
+    drop(removed);
+}
+
+/// Mounted content must not be parked across unmount: its next appearance
+/// owns fresh state, boot effects and routes. Pure lazy content stays parked.
+pub(crate) fn finish_render() {
+    let components = slots::components_now();
+    let cache = slots::memo_cache();
+    let removed: Vec<_> = cache
+        .borrow_mut()
+        .entries
+        .extract_if(|_, entry| {
+            entry
+                .routes
+                .components
+                .iter()
+                .any(|entry| entry.mounted && !components.contains(entry))
+        })
+        .collect();
+    drop(removed);
+}
+
 pub(crate) struct Cached {
     pub node: wire::Node,
     pub generation: u64,
@@ -132,6 +169,64 @@ pub fn memo_lazy<D: Hash>(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn cached_mount_sightings_survive_hits_but_not_an_absent_render() {
+        let context = slots::Context::default();
+        let _scope = context.enter();
+        let builds = Cell::new(0);
+        let build = |_: &i32| {
+            builds.set(builds.get() + 1);
+            let _scope = slots::component("Counter", "app/lazy/counter", true);
+            wire::Node::empty()
+        };
+        memoize(0, build, 1, "outer");
+        slots::reset();
+        memoize(0, build, 1, "outer");
+        assert_eq!(builds.get(), 1, "the second view must really hit the cache");
+        assert_eq!(slots::mounted_scopes("Counter"), ["app/lazy/counter"]);
+        finish_render();
+        slots::reset();
+        finish_render();
+        memoize(0, build, 1, "outer");
+        assert_eq!(
+            builds.get(),
+            2,
+            "an unmounted scope must rebuild on re-entry"
+        );
+    }
+
+    #[test]
+    fn inner_cache_tracks_its_enclosing_component_even_without_descendants() {
+        let context = slots::Context::default();
+        let _scope = context.enter();
+        let builds = Cell::new(0);
+        let build = |_: &i32| {
+            let _owner = slots::component("Counter", "app/counter", true);
+            memoize(
+                0,
+                |_| {
+                    builds.set(builds.get() + 1);
+                    wire::Node::empty()
+                },
+                2,
+                "inner",
+            )
+            .node
+        };
+        memoize(0, build, 1, "outer");
+        slots::reset();
+        finish_render();
+        memoize(0, build, 1, "outer");
+        assert_eq!(builds.get(), 2, "inner cache survived its owning instance");
+        invalidate_component("Counter", "app/counter");
+        memoize(0, build, 1, "outer");
+        assert_eq!(
+            builds.get(),
+            3,
+            "local state change did not invalidate inner cache"
+        );
+    }
 
     #[test]
     fn nested_lazy_keeps_picture_bytes_only_in_the_first_returned_frame() {

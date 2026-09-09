@@ -46,6 +46,8 @@ on choose_slot(next)
 on toggle
   visible = !visible
   seed = seed + 10
+on toggle_same_seed
+  visible = !visible
 on toggle_fetch
   fetch_visible = !fetch_visible
   seed = seed + 10
@@ -121,14 +123,18 @@ view
     input "Draft" #draft <-> draft
     text draft #draft-value
     button "Toggle counters" #toggle -> toggle
+    button "Toggle same seed" -> toggle_same_seed
     button "Toggle fetch" #toggle-fetch -> toggle_fetch
     button "Report initializations" -> report_initializations
     text init_report #init-report
     if visible
-      MountedCounter initial=seed #mounted
-      RetainedCounter #retained
+      lazy seed as current #mounted-cache
+        col
+          MountedCounter initial=current #mounted
+          RetainedCounter #retained
     if fetch_visible
-      Fetch initial=seed #fetch
+      lazy seed as current #fetch-cache
+        Fetch initial=current #fetch
     for row in rows
       Chip label=row
     ForwardActions #forward
