@@ -24,19 +24,6 @@ on committed(event)
 on reset_document()
   draft = initial_document()
   previous = bytes()
-component MirrorPair()
-  lifetime retained
-  state
-    draft:editor = initial_document()
-  col w=640.0 gap=4.0
-    editor #first <-> draft
-      with
-        min-h=30.0
-        max-h=30.0
-    editor #second <-> draft
-      with
-        min-h=30.0
-        max-h=30.0
 
 view
   col w=640.0 gap=8.0
@@ -49,7 +36,4 @@ view
         max-h=240.0
         size=14.0
     button "Reset document" -> reset_document
-    editor #mirror <-> draft
-      with
-        min-h=30.0
-        max-h=30.0
+    editor #mirror <-> draft min-h=30.0 max-h=30.0

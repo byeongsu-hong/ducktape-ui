@@ -42,7 +42,7 @@ impl Targets {
             Node::Input { key, options, .. } if !options.disabled => Some((key, Kind::Input)),
             Node::Editor {
                 key,
-                on_edit: Some(_),
+                editable: true,
                 ..
             } => Some((key, Kind::Editor)),
             Node::Button {

@@ -151,22 +151,6 @@ impl Operation for Bounds {
         }
     }
 }
-struct FocusEditor(String);
-impl Operation for FocusEditor {
-    fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn Operation)) {
-        visit(self);
-    }
-    fn focusable(
-        &mut self,
-        id: Option<&iced::widget::Id>,
-        _: Rectangle,
-        state: &mut dyn iced::advanced::widget::operation::Focusable,
-    ) {
-        if id == Some(&iced::widget::Id::from(self.0.clone())) {
-            state.focus();
-        }
-    }
-}
 fn key(key: keyboard::Key, modifiers: keyboard::Modifiers) -> Event {
     let text = if let keyboard::Key::Character(text) = &key {
         Some(text.clone())
@@ -324,17 +308,8 @@ fn native_and_wasm_one_mib_documents_edit_restore_and_undo_without_reinitializin
         // non-default unsaved text and exact caret, with no boot replay.
         assert_eq!(document(&guest), (edited, edited_ref));
         ui = build(&guest, &mut renderer, ui.into_cache());
-        // Instance isolation retires the old widget Tree (including focus).
-        // Refocus the replacement through the native widget operation without
-        // moving its already verified, restored document caret.
-        let editor_key = {
-            let state = guest.lock().unwrap();
-            editor(state.frame.root.as_ref().unwrap())
-                .unwrap()
-                .0
-                .to_owned()
-        };
-        ui.operate(&renderer, &mut FocusEditor(editor_key));
+        // No focus operation or pointer input is injected after replacement:
+        // the next real key must reach the newly created native editor.
         let command = if cfg!(target_os = "macos") {
             keyboard::Modifiers::LOGO
         } else {
