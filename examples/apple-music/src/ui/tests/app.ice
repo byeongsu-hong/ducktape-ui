@@ -108,3 +108,37 @@ test music_interactions
   dispatch play("Missing", "Unknown", cover_path(1))
   dispatch next
   expect error == "The current song is no longer in the mock catalog."
+
+preset search_pending
+  state
+    section = MusicSection.search
+    search_loading = true
+    submitted_query = "nova"
+    query = "cloud"
+
+test pending_search_keeps_the_draft_separate_from_results
+  preset search_pending
+  viewport 1180 760
+  theme light
+  scale 1.0
+  locale "en-US"
+  platform linux
+  reduced-motion true
+  target search_input = #app/shell/sidebar/root/surface/content/music-search
+  target title = #app/shell/content/library/root/content/search-title/root
+  target loading_notice = #app/shell/content/library/root/content/search-loading/root
+  target empty_notice = #app/shell/content/library/root/content/search-empty/root
+  expect search_input.value == "cloud"
+  expect text "nova" within title
+  expect text "Searching the catalog" within loading_notice
+  expect missing empty_notice
+  capture search_pending
+  click search_input
+  key enter
+  expect !search_loading
+  expect submitted_query == "cloud"
+  expect text "cloud" within title
+  expect missing loading_notice
+  expect missing empty_notice
+  expect text "Soft Weather"
+  capture search_complete

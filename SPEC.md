@@ -1718,6 +1718,13 @@ not change primitive row fill/shrink semantics or add a layout property.
 
 ## Default page insets
 
+The standard component source also exports `Alert` and its `Success`,
+`Warning`, `Destructive` variants, plus `EmptyState`, with inputs
+`title:str, description:str=""`. Empty descriptions omit the text node and
+its gap. Alert copy wraps within its content width; EmptyState copy fills that
+width and centers each line. Both use word-or-glyph wrapping. These are
+ordinary component defaults and conditional views, not additional syntax.
+
 The standard component library exports `Page(padding:f64=24.0)`. Page fills its
 available bounds, uses the semantic background, and insets one content root on
 all four sides. Padding is customizable, including explicit zero for full-bleed

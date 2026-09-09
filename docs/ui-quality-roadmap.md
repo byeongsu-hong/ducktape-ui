@@ -73,8 +73,8 @@ Keep one review scope per worktree/PR. Update this file with evidence and the PR
 
 | ID | Priority/state | Inspect first | Acceptance scenario |
 | --- | --- | --- | --- |
-| S01 | P1 · Audit | [EmptyState/Alert](../crates/ui-lang-components/src/ice/components.ice), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Empty, loading, error and success presentations use a consistent hierarchy and useful action; changing state does not introduce accidental blank space or obscure the main task. |
-| S02 | P1 · Audit | [music handlers](../examples/apple-music/src/ui/handlers/app.ice), [chat handlers](../examples/ai-chat/src/ui/handlers.ice) | Repeated submit, stale completion and failed save have clear feedback; unrelated edits remain intact; no simultaneous contradictory success/error state. Fix ownership/policy before inventing a new async DSL. |
+| S01 | P1 · Done | [EmptyState/Alert](../crates/ui-lang-components/src/ice/components.ice), [catalog](../examples/showcase/src/ui/components/catalog.ice) | Empty, loading, error and success presentations use a consistent hierarchy and useful action; changing state does not introduce accidental blank space or obscure the main task. |
+| S02 | P1 · Done | [music handlers](../examples/apple-music/src/ui/handlers/app.ice), [chat handlers](../examples/ai-chat/src/ui/handlers.ice) | Repeated submit, stale completion and failed save have clear feedback; unrelated edits remain intact; no simultaneous contradictory success/error state. Fix ownership/policy before inventing a new async DSL. |
 
 ## Interaction and accessibility
 
@@ -343,8 +343,8 @@ the Cancel and Confirm focus IDs and verifies restored trigger focus; its safe
 Cancel assertion rejects the same mutation. Restoration passes all 336 tests.
 The [component guide](../crates/ui-lang-components/README.md#controlled-state-and-focus)
 explains the boundary and the distinction between native replacement events
-and field-level updates. S02 remains open for product I/O ownership, failed
-saves and stale network completions; those paths are outside this catalog audit.
+and field-level updates. Product I/O ownership, failed saves and stale network completions are covered
+by the S01/S02 delivery below; those paths are outside this catalog audit.
 
 ### L05: retained editing across responsive layouts
 
@@ -458,4 +458,19 @@ direct semantic/accessibility evidence for these representative public custom
 row/trigger/body paths. Native Rust custom controls still own their semantic
 labels. Structural
 Ice Dialog presentation alone does not supply modal lifecycle behavior. S02's
-product network/save completion policies remain open.
+request/save completion policies are covered separately below.
+
+
+### S01/S02: default feedback and application request ownership
+
+The native state-feedback fixture removes empty Alert/EmptyState rows, contains
+long words, centers each painted empty-state line and keeps its action reachable.
+Music separates home/search/authentication busy state, retains an editable draft
+beside the submitted query, rejects stale search results and invalidates pending
+sign-in on sign-out. Markdown's existing save owner retains new edits, rejects
+repeated submit and exposes real filesystem failure/retry without losing text.
+Native controls and actual request outputs provide the interaction/ownership
+seams; intended assertion Reds and inspected captures are described in
+[COVERAGE](../COVERAGE.md#native-state-feedback-and-request-ownership) and the
+[state feedback guide](../crates/ui-lang-components/docs/state-feedback.md).
+Delivered in [PR #1053](https://github.com/byeongsu-hong/ducktape-ui/pull/1053).

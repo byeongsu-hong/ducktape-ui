@@ -314,6 +314,14 @@ Panel title="Profile"
 Both expose `root/title` and, when present, `root/description` for semantic
 inspection. Panel retains its existing content slot and padding/section spacing.
 
+## Empty states and request feedback
+
+`Alert`, `Alert.Success`, `Alert.Warning`, `Alert.Destructive` and `EmptyState`
+accept an omitted description and remove its row when empty. Alert copy wraps
+inside its surface; EmptyState centers each wrapped line. The
+[state feedback guide](docs/state-feedback.md) connects these defaults to a
+reachable action, independent request ownership and editable pending saves.
+
 ## Responsive sidebar and detail layouts
 
 Use the [responsive workspace guide](docs/responsive-workspace.md) and its

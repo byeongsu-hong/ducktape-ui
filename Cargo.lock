@@ -3363,6 +3363,7 @@ version = "0.1.0"
 dependencies = [
  "iced",
  "iced_highlighter",
+ "iced_runtime",
  "pulldown-cmark 0.13.4",
  "ui-lang",
  "ui-lang-build",

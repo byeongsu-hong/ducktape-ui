@@ -157,9 +157,11 @@ fn albums(count: usize) -> Vec<Album> {
 fn seeded(section: MusicSection, top_picks: Vec<Album>, recently_played: Vec<Album>) -> Music {
     let (mut state, _) = Music::__boot();
     state.section = section;
-    state.loading = false;
+    state.home_loading = false;
+    state.search_loading = false;
     state.top_picks = top_picks;
     state.recently_played = recently_played;
+    state.__ice_derived = Default::default();
     state
 }
 
@@ -464,7 +466,7 @@ fn overlay_cost() {
 
 /// The first frame that shows content.
 ///
-/// `on mount` sets `loading` and spawns `load_home`; the frame after
+/// `on mount` sets `home_loading` and spawns `load_home`; the frame after
 /// `home_loaded` is the one that mounts 14 image widgets over 9 distinct
 /// 418x418 PNGs. Each round resets the state to the empty library the app boots
 /// with, settles it, then times the `HomeLoaded` frame against the steady frame
@@ -485,9 +487,10 @@ fn mount_cost() {
     let empty = || {
         let (mut state, _) = Music::__boot();
         state.section = MusicSection::Home;
-        state.loading = true;
+        state.home_loading = true;
         state.top_picks = Vec::new();
         state.recently_played = Vec::new();
+        state.__ice_derived = Default::default();
         state
     };
 

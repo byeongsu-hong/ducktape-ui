@@ -12,18 +12,22 @@ fn main() -> iced::Result {
 mod tests {
     use super::{__MusicMessage, Music};
 
-    fn output(task: iced::Task<__MusicMessage>) -> __MusicMessage {
+    fn maybe_output(task: iced::Task<__MusicMessage>) -> Option<__MusicMessage> {
         use iced::futures::StreamExt;
 
         let mut stream = iced_runtime::task::into_stream(task).expect("navigation task stream");
         iced::futures::executor::block_on(async move {
             while let Some(action) = stream.next().await {
                 if let iced_runtime::Action::Output(message) = action {
-                    return message;
+                    return Some(message);
                 }
             }
-            panic!("navigation task completed without a message")
+            None
         })
+    }
+
+    fn output(task: iced::Task<__MusicMessage>) -> __MusicMessage {
+        maybe_output(task).expect("request completes with a message")
     }
 
     #[test]
@@ -89,5 +93,62 @@ mod tests {
         assert_eq!(app.current_title, "Soft Weather");
         assert_eq!(app.position, 0.0);
         assert!(app.playing);
+    }
+
+    #[test]
+    fn newer_search_survives_an_older_completion() {
+        let (mut app, _) = Music::__boot();
+        let _ = app.__update(__MusicMessage::__BindQuery("nova".into()));
+        let older = output(app.__update(__MusicMessage::Search));
+        let _ = app.__update(__MusicMessage::__BindQuery("cloud".into()));
+        let newer = output(app.__update(__MusicMessage::Search));
+        let _ = app.__update(newer);
+        assert_eq!(app.search_results[0].artist, "Cloud House");
+        let _ = app.__update(older);
+        assert_eq!(
+            app.search_results[0].artist, "Cloud House",
+            "stale search replaced the current results"
+        );
+    }
+
+    #[test]
+    fn sign_out_invalidates_an_inflight_sign_in() {
+        let (mut app, _) = Music::__boot();
+        let pending = output(app.__update(__MusicMessage::SignIn));
+        let _ = app.__update(__MusicMessage::SignOut);
+        let _ = app.__update(pending);
+        assert!(!app.signed_in, "a completed sign-in undid a later sign-out");
+        assert_eq!(app.profile_name, "Sign In");
+    }
+
+    #[test]
+    fn successful_retry_does_not_keep_an_old_error() {
+        let (mut app, _) = Music::__boot();
+        let _ = app.__update(__MusicMessage::Failed(crate::mock_api::ApiError {
+            message: "Earlier failure".into(),
+        }));
+        assert_eq!(app.error, "Earlier failure");
+        let _ = app.__update(__MusicMessage::__BindQuery("nova".into()));
+        let completion = output(app.__update(__MusicMessage::Search));
+        let _ = app.__update(completion);
+        assert!(!app.search_results.is_empty());
+        assert!(app.error.is_empty(), "success still shows a previous error");
+    }
+
+    #[test]
+    fn sign_in_does_not_wait_for_an_unrelated_search() {
+        let (mut app, _) = Music::__boot();
+        let _ = app.__update(__MusicMessage::__BindQuery("nova".into()));
+        let search = app.__update(__MusicMessage::Search);
+        let authentication = maybe_output(app.__update(__MusicMessage::SignIn));
+        assert!(
+            authentication.is_some(),
+            "search disabled an independent sign-in request"
+        );
+        let _ = app.__update(authentication.unwrap());
+        assert!(app.signed_in);
+        let _ = app.__update(output(search));
+        assert!(!app.search_results.is_empty());
+        assert!(app.signed_in);
     }
 }

@@ -19,4 +19,5 @@ ui-lang-build.workspace = true
 workspace = true
 
 [dev-dependencies]
+iced_runtime = "=0.14.0"
 ui-lang-runtime = { workspace = true, features = ["test-runtime"] }

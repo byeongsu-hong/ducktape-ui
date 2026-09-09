@@ -77,7 +77,7 @@ view
                   section=section
                   signed_in=signed_in
                   profile_name=profile_name
-                  loading=loading
+                  signing_in=signing_in
                   current_title=current_title
                   current_artist=current_artist
                   current_cover=current_cover
@@ -96,7 +96,7 @@ view
                   LibraryContent #library
                     with
                       section=section
-                      query=query
+                      query=submitted_query
                       loading=loading
                       error=error
                       top_picks=top_picks
