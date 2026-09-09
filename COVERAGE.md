@@ -2569,3 +2569,18 @@ rule changes; the component uses existing content-based flex layout.
 This covers native Item composition. A caller-authored label/input/action row
 with too much fixed content still needs a compact composition; these tests do
 not claim arbitrary narrow inputs or every list component is now verified.
+
+### Native layout fill portions
+
+`examples/showcase/tests/cases/ui/layout_fill_portions.ice` checks that the
+native generator preserves explicit `fill(n)` through layout decoration
+containers: horizontal columns, vertical rows, stacks, flex layouts and grid
+height retain their declared ratios. Fixed and shrink widths, unsized content
+and padding remain covered by a passing control. The wrapper forwards only
+literal portions; dynamic dimensions are not evaluated again.
+
+The pre-fix horizontal layout allocated 224/224 instead of 336/112 and the
+vertical layout allocated 164/164 instead of 246/82. The grid height assertion
+also exercises the separate grid length representation. This evidence applies
+to native generated layout wrappers; Tree host surfaces and identified-control
+wrappers remain separate verification work.
