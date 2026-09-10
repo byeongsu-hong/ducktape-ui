@@ -260,9 +260,16 @@ impl core::text::Paragraph for Paragraph {
     }
 
     fn hit_test(&self, point: Point) -> Option<Hit> {
-        let cursor = self.internal().buffer.hit(point.x, point.y)?;
+        let buffer = &self.internal().buffer;
+        let cursor = buffer.hit(point.x, point.y)?;
+        // Cosmic cursors are line-local; consumers slice the whole content.
+        // Count the original line ending too (CRLF occupies two bytes).
+        let preceding_bytes: usize = buffer.lines[..cursor.line]
+            .iter()
+            .map(|line| line.text().len() + line.ending().as_str().len())
+            .sum();
 
-        Some(Hit::CharOffset(cursor.index))
+        Some(Hit::CharOffset(preceding_bytes + cursor.index))
     }
 
     fn hit_span(&self, point: Point) -> Option<usize> {
