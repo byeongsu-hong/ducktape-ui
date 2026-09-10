@@ -516,17 +516,16 @@ impl editor::Editor for Editor {
                 affinity: cosmic_text::Affinity::Before,
             });
 
-            if let Some(selection) = cursor.selection {
-                internal
-                    .editor
-                    .set_selection(cosmic_text::Selection::Normal(
-                        cosmic_text::Cursor {
-                            line: selection.line,
-                            index: selection.column,
-                            affinity: cosmic_text::Affinity::Before,
-                        },
-                    ));
-            }
+            let selection = cursor
+                .selection
+                .map_or(cosmic_text::Selection::None, |selection| {
+                    cosmic_text::Selection::Normal(cosmic_text::Cursor {
+                        line: selection.line,
+                        index: selection.column,
+                        affinity: cosmic_text::Affinity::Before,
+                    })
+                });
+            internal.editor.set_selection(selection);
         });
     }
 
@@ -867,6 +866,47 @@ where
         cosmic_text::BufferRef::Owned(buffer) => buffer,
         cosmic_text::BufferRef::Borrowed(buffer) => buffer,
         cosmic_text::BufferRef::Arc(buffer) => buffer,
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+    use crate::core::text::Editor as _;
+
+    #[test]
+    fn a_new_caret_clears_the_previous_drag_anchor_before_editing() {
+        let mut editor = Editor::with_text("alpha beta\ngamma delta");
+        let first_anchor = Position { line: 0, column: 1 };
+        editor.move_to(Cursor {
+            position: Position { line: 0, column: 8 },
+            selection: Some(first_anchor),
+        });
+        assert_eq!(editor.cursor().selection, Some(first_anchor));
+
+        let second_anchor = Position { line: 1, column: 2 };
+        editor.move_to(Cursor {
+            position: second_anchor,
+            selection: None,
+        });
+        assert_eq!(
+            editor.cursor(),
+            Cursor {
+                position: second_anchor,
+                selection: None
+            },
+            "a new press must discard the first drag anchor immediately"
+        );
+        editor.perform(Action::Edit(Edit::Insert('X')));
+        assert_eq!(editor.line(0).unwrap().text, "alpha beta");
+        assert_eq!(editor.line(1).unwrap().text, "gaXmma delta");
+
+        let second_drag = Cursor {
+            position: Position { line: 1, column: 8 },
+            selection: Some(second_anchor),
+        };
+        editor.move_to(second_drag);
+        assert_eq!(editor.cursor(), second_drag);
     }
 }
 
