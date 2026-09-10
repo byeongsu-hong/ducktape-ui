@@ -181,7 +181,8 @@ exclude = ["vendor/iced_graphics", "vendor/iced_tiny_skia", "vendor/iced_winit",
 # Upstream master still has all three original lines; drop the directory and
 # the patch when a release does not.
 [patch.crates-io]
-# Keep justified paragraphs at their finite available line width.
+# Keep justified paragraphs at their finite available line width and return
+# whole-content byte offsets when hit-testing paragraphs with line endings.
 iced_graphics = { path = "vendor/iced_graphics" }
 alacritty_terminal = { path = "vendor/alacritty_terminal" }
 iced_tiny_skia = { path = "vendor/iced_tiny_skia" }

@@ -2493,6 +2493,13 @@ translation fails its location assertion (for example, x=24 instead of about
 three cases. Selection hit testing and highlight drawing now use the paragraph
 anchor used to paint the text.
 
+The same clipboard test drags past the last words across LF and CRLF lines,
+including an empty line and Korean UTF-8 text. The paragraph hit test converts
+Cosmic's line-local cursor into a whole-content byte offset, counting original
+line endings. Before this correction `First line\nlast words` copied only
+`First line`; the regression requires the complete original content and a
+highlight covering the painted glyph bounds.
+
 The Ice fixture proves placement; the owning runtime test proves selection and
 copy because the current Ice test driver cannot assert those effects. This
 slice does not assert justified text or soft-wrapped line geometry; its multiline

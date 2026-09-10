@@ -32,9 +32,13 @@ const VIEWPORT: Size = Size::new(400.0, 200.0);
 /// The label's box is not the window's: a correct origin has to survive it.
 const INSET: f32 = 24.0;
 
-fn view(align_x: text::Alignment, align_y: Vertical) -> Element<'static, (), Theme, Renderer> {
+fn view(
+    content: &'static str,
+    align_x: text::Alignment,
+    align_y: Vertical,
+) -> Element<'static, (), Theme, Renderer> {
     container(selectable_text(
-        text(CONTENT)
+        text(content)
             .size(20.0)
             .width(Length::Fixed(BOX.width))
             .height(Length::Fixed(BOX.height))
@@ -120,11 +124,15 @@ struct Outcome {
 /// Drags the pointer straight across the painted label, copies, and reports
 /// what the reader would have got.
 fn drag_across_the_label(align_x: text::Alignment, align_y: Vertical) -> Outcome {
+    drag_across_text(CONTENT, align_x, align_y)
+}
+
+fn drag_across_text(content: &'static str, align_x: text::Alignment, align_y: Vertical) -> Outcome {
     let mut renderer = Renderer::new(Font::DEFAULT, Pixels(16.0));
     let mut clipboard = Recorder::default();
     let mut messages = Vec::new();
     let mut ui = UserInterface::build(
-        view(align_x, align_y),
+        view(content, align_x, align_y),
         VIEWPORT,
         user_interface::Cache::default(),
         &mut renderer,
@@ -137,13 +145,15 @@ fn drag_across_the_label(align_x: text::Alignment, align_y: Vertical) -> Outcome
         "nothing is selected yet, so nothing may be highlighted"
     );
 
-    // From the leading edge of the first glyph to past the trailing edge of
-    // the last, along their middle: the whole label lies under the drag. The
+    // From the leading edge of the first line to beyond the final line:
+    // the whole label lies under the drag. The
     // press has to land inside the widget's own box, so it starts on the
     // glyphs rather than beside them.
-    let y = glyphs.y + glyphs.height / 2.0;
-    let from = Point::new(glyphs.x + 1.0, y);
-    let to = Point::new(glyphs.x + glyphs.width + 4.0, y);
+    let from = Point::new(glyphs.x + 1.0, glyphs.y + 1.0);
+    let to = Point::new(
+        glyphs.x + glyphs.width + 4.0,
+        glyphs.y + glyphs.height + 4.0,
+    );
 
     for (event, at) in [
         (
@@ -270,4 +280,18 @@ fn a_top_left_label_is_still_selected_where_it_is_painted() {
         "dragging across the painted label must copy it"
     );
     assert_highlight_covers_the_glyphs(&outcome, "top-left");
+}
+
+#[test]
+fn dragging_past_multiline_text_copies_the_last_words() {
+    for content in [
+        "First line\nlast words",
+        "첫 번째 줄\r\n\r\n마지막 단어",
+        "A longer line wraps softly before reaching its last words",
+        "A longer line wraps softly before its end\nlast words",
+    ] {
+        let outcome = drag_across_text(content, text::Alignment::Left, Vertical::Top);
+        assert_eq!(outcome.copied.as_deref(), Some(content));
+        assert_highlight_covers_the_glyphs(&outcome, "multiline");
+    }
 }
