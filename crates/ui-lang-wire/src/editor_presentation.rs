@@ -266,12 +266,21 @@ impl EditorPresentation {
             if let Some(font) = &mut format.font {
                 font.sanitize(text_budget);
             }
-            for edges in [&mut format.padding, &mut format.line_padding] {
-                edges.top = crate::bounded(edges.top);
-                edges.right = crate::bounded(edges.right);
-                edges.bottom = crate::bounded(edges.bottom);
-                edges.left = crate::bounded(edges.left);
-            }
+            // `line_padding` moves layout, so it stays non-negative. A span's
+            // `padding` only grows or shrinks its highlight quad around the
+            // glyph run, so a negative edge is legitimate: it is how a guest
+            // draws a box smaller than the line (a todo's checkbox hugging
+            // its glyph row instead of spanning the full line height).
+            let line_padding = &mut format.line_padding;
+            line_padding.top = crate::bounded(line_padding.top);
+            line_padding.right = crate::bounded(line_padding.right);
+            line_padding.bottom = crate::bounded(line_padding.bottom);
+            line_padding.left = crate::bounded(line_padding.left);
+            let padding = &mut format.padding;
+            padding.top = crate::signed_bounded(padding.top);
+            padding.right = crate::signed_bounded(padding.right);
+            padding.bottom = crate::signed_bounded(padding.bottom);
+            padding.left = crate::signed_bounded(padding.left);
         }
         // Interaction tags/ranges are semantic data: never shorten them.
         // Over-limit metadata is rejected by the bounded decoder, preserving
@@ -419,6 +428,47 @@ mod tests {
             crate::decode::<EditorPresentation>(&crate::encode(&value)).is_err(),
             "over-budget action lists must reject the frame, not publish a different menu"
         );
+    }
+
+    #[test]
+    fn span_padding_may_shrink_its_highlight_but_line_padding_never_goes_negative() {
+        let mut value = EditorPresentation::default();
+        value.formats.push(EditorFormat {
+            padding: Edges {
+                top: -4.5,
+                right: 2.0,
+                bottom: -1e9,
+                left: f32::NAN,
+            },
+            line_padding: Edges {
+                top: -4.5,
+                right: 2.0,
+                bottom: -1e9,
+                left: f32::NAN,
+            },
+            ..Default::default()
+        });
+        let mut budget = crate::MAX_STRING_BYTES;
+        value.sanitize(&mut budget);
+        let format = &value.formats[0];
+        assert_eq!(
+            format.padding.top, -4.5,
+            "a paint-only inset keeps its sign"
+        );
+        assert_eq!(format.padding.right, 2.0);
+        assert_eq!(
+            format.padding.bottom,
+            -crate::MAX_PIXELS,
+            "bounded on the negative side too"
+        );
+        assert_eq!(format.padding.left, 0.0, "NaN reads as 0");
+        assert_eq!(
+            format.line_padding.top, 0.0,
+            "line padding moves layout: never negative"
+        );
+        assert_eq!(format.line_padding.right, 2.0);
+        assert_eq!(format.line_padding.bottom, 0.0);
+        assert_eq!(format.line_padding.left, 0.0);
     }
 
     fn presentation(spans: Vec<EditorSpan>) -> EditorPresentation {
