@@ -2652,6 +2652,15 @@ fn bounded(value: f32) -> f32 {
 /// A number that is not a size: a slider or progress value is the app's,
 /// so it is made finite and nothing more. The host clamps it into the range
 /// it lays out.
+/// A pixel measure that may point either way (a paint-only inset), bounded
+/// on both sides; NaN reads as 0.
+fn signed_bounded(value: f32) -> f32 {
+    match value.is_nan() {
+        true => 0.0,
+        false => value.clamp(-MAX_PIXELS, MAX_PIXELS),
+    }
+}
+
 fn finite(value: f32) -> f32 {
     match value.is_nan() {
         true => 0.0,
