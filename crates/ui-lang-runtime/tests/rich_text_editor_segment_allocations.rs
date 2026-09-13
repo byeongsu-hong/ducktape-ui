@@ -43,7 +43,9 @@ impl text::Highlighter for WholeLine {
 fn performance_contract_format_relayout_reuses_line_segment_storage() {
     const LINES: usize = 4_096;
     const ALLOCATIONS: usize = 1_528;
-    const ALLOCATED_BYTES: usize = 425_554;
+    // Every span's rules (strikethrough and underline colours) ride one
+    // vector: the count holds, the bytes carry the wider element.
+    const ALLOCATED_BYTES: usize = 430_562;
 
     let source = (0..LINES)
         .map(|index| format!("line {index}\n"))

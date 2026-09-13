@@ -412,20 +412,23 @@ fn empty_formatted_lines_keep_their_rich_metrics() {
         document
             .lines
             .iter()
-            .all(|line| line.strikethroughs == [None] && line.height >= 23.0)
+            .all(|line| line.rules == [NO_RULES] && line.height >= 23.0)
     );
 }
+
+const NO_RULES: SpanRules = SpanRules {
+    strikethrough: None,
+    underline: None,
+};
 
 #[test]
 fn strikethrough_keeps_its_explicit_color() {
     let color = Color::from_rgb8(0x12, 0x34, 0x56);
     let mut spans = Vec::new();
-    let mut strikethroughs = Vec::new();
-    let mut underlines = Vec::new();
+    let mut rules = Vec::new();
     push_span(
         &mut spans,
-        &mut strikethroughs,
-        &mut underlines,
+        &mut rules,
         "old".to_owned(),
         Format {
             color: Some(Color::WHITE),
@@ -434,8 +437,13 @@ fn strikethrough_keeps_its_explicit_color() {
         },
     );
 
-    assert_eq!(strikethroughs, vec![Some(color)]);
-    assert_eq!(underlines, vec![None]);
+    assert_eq!(
+        rules,
+        vec![SpanRules {
+            strikethrough: Some(color),
+            underline: None,
+        }]
+    );
     assert!(spans[0].strikethrough);
     assert!(!spans[0].underline);
 }
@@ -444,12 +452,10 @@ fn strikethrough_keeps_its_explicit_color() {
 fn underline_keeps_its_explicit_color() {
     let color = Color::from_rgb8(0x12, 0x34, 0x56);
     let mut spans = Vec::new();
-    let mut strikethroughs = Vec::new();
-    let mut underlines = Vec::new();
+    let mut rules = Vec::new();
     push_span(
         &mut spans,
-        &mut strikethroughs,
-        &mut underlines,
+        &mut rules,
         "under".to_owned(),
         Format {
             underline: Some(color),
@@ -457,8 +463,13 @@ fn underline_keeps_its_explicit_color() {
         },
     );
 
-    assert_eq!(underlines, vec![Some(color)]);
-    assert_eq!(strikethroughs, vec![None]);
+    assert_eq!(
+        rules,
+        vec![SpanRules {
+            strikethrough: None,
+            underline: Some(color),
+        }]
+    );
     assert!(spans[0].underline);
     assert!(!spans[0].strikethrough);
 }

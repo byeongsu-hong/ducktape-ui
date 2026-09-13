@@ -21,8 +21,8 @@ pub(super) struct DocumentLine {
     pub(super) signature: StyledLine,
     pub(super) paragraph: GraphicsParagraph,
     pub(super) spans: Vec<Span<'static, (), Font>>,
-    pub(super) strikethroughs: Vec<Option<Color>>,
-    pub(super) underlines: Vec<Option<Color>>,
+    /// One entry per span: the rules painted over and under its glyph run.
+    pub(super) rules: Vec<SpanRules>,
     pub(super) top: f32,
     pub(super) height: f32,
     #[cfg(test)]
@@ -632,13 +632,11 @@ impl DocumentLine {
         #[cfg(test)]
         static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
         let mut spans = Vec::new();
-        let mut strikethroughs = Vec::new();
-        let mut underlines = Vec::new();
+        let mut rules = Vec::new();
         if signature.segments.is_empty() {
             push_span(
                 &mut spans,
-                &mut strikethroughs,
-                &mut underlines,
+                &mut rules,
                 String::new(),
                 signature.empty_format,
             );
@@ -646,8 +644,7 @@ impl DocumentLine {
             for segment in &signature.segments {
                 push_span(
                     &mut spans,
-                    &mut strikethroughs,
-                    &mut underlines,
+                    &mut rules,
                     signature.text[segment.range.clone()].to_owned(),
                     segment.format,
                 );
@@ -685,8 +682,7 @@ impl DocumentLine {
             signature,
             paragraph,
             spans,
-            strikethroughs,
-            underlines,
+            rules,
             top: 0.0,
             height,
             #[cfg(test)]
@@ -963,15 +959,25 @@ pub(super) fn to_span(source: String, format: Format) -> Span<'static, (), Font>
     span
 }
 
+/// The colored rules a span wears: a strikethrough across it, an underline
+/// beneath it. Both ride one vector so a relayout allocates no more per line
+/// than it did with strikethroughs alone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SpanRules {
+    pub(crate) strikethrough: Option<Color>,
+    pub(crate) underline: Option<Color>,
+}
+
 pub(super) fn push_span(
     spans: &mut Vec<Span<'static, (), Font>>,
-    strikethroughs: &mut Vec<Option<Color>>,
-    underlines: &mut Vec<Option<Color>>,
+    rules: &mut Vec<SpanRules>,
     source: String,
     format: Format,
 ) {
-    strikethroughs.push(format.strikethrough);
-    underlines.push(format.underline);
+    rules.push(SpanRules {
+        strikethrough: format.strikethrough,
+        underline: format.underline,
+    });
     spans.push(to_span(source, format));
 }
 

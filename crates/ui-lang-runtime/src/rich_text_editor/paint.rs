@@ -1,5 +1,5 @@
 use super::composition::CompositionLayout;
-use super::document::{DocumentLayout, DocumentLine, ordered_positions};
+use super::document::{DocumentLayout, SpanRules, ordered_positions};
 use iced::advanced::graphics::text::cosmic_text;
 use iced::advanced::text::{self, Paragraph as _};
 use iced::advanced::{Renderer as _, renderer};
@@ -233,7 +233,7 @@ pub(super) fn draw_strikethroughs(
         document,
         clip,
         origin,
-        |line| &line.strikethroughs,
+        |rules| rules.strikethrough,
         0.55,
     );
     draw_span_rules(
@@ -241,7 +241,7 @@ pub(super) fn draw_strikethroughs(
         document,
         clip,
         origin,
-        |line| &line.underlines,
+        |rules| rules.underline,
         0.92,
     );
 }
@@ -251,7 +251,7 @@ fn draw_span_rules(
     document: &DocumentLayout,
     clip: Rectangle,
     origin: Point,
-    colors: fn(&DocumentLine) -> &[Option<Color>],
+    color_of: fn(&SpanRules) -> Option<Color>,
     depth: f32,
 ) {
     for document_line in &document.lines {
@@ -264,10 +264,11 @@ fn draw_span_rules(
                 document_line.signature.line_padding.left,
                 document_line.top + document_line.signature.line_padding.top,
             );
-        for (index, color) in colors(document_line)
+        for (index, color) in document_line
+            .rules
             .iter()
             .enumerate()
-            .filter_map(|(index, color)| color.map(|color| (index, color)))
+            .filter_map(|(index, rules)| color_of(rules).map(|color| (index, color)))
         {
             for bounds in document_line.paragraph.span_bounds(index) {
                 let line = Rectangle::new(
