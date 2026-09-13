@@ -6,6 +6,15 @@ pub enum LineHeight {
     Relative(f32),
     Absolute(f32),
 }
+/// Where a line's glyph run sits in its column. `Start` follows the text
+/// direction, as an unaligned line does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Align {
+    #[default]
+    Start,
+    Center,
+    End,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Shaping {
     Auto,

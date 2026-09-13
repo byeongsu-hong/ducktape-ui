@@ -27,32 +27,36 @@ pub const WINDOWS: usize = 4;
 
 /// Runs `batch` in a fresh allocator window, up to [`WINDOWS`] times, and
 /// returns the first window whose `(allocations, bytes_allocated)` equal
-/// `expected` — or the last window's stats, when none did.
+/// `expected` — or the FIRST window's stats, when none did. A later window
+/// of a batch that is a no-op once warm measures nothing, so reporting it
+/// would hide the real figure from a contract that moved.
 pub fn clean_window(expected: (usize, usize), mut batch: impl FnMut()) -> Stats {
-    let mut stats = Region::new(GLOBAL).change();
+    let mut first = None;
     for _ in 0..WINDOWS {
         let region = Region::new(GLOBAL);
         batch();
-        stats = region.change();
+        let stats = region.change();
         if (stats.allocations, stats.bytes_allocated) == expected {
-            break;
+            return stats;
         }
+        first.get_or_insert(stats);
     }
-    stats
+    first.expect("at least one window ran")
 }
 
 /// As [`clean_window`], for a contract with an allocation budget only.
 pub fn clean_window_allocations(expected: usize, mut batch: impl FnMut()) -> Stats {
-    let mut stats = Region::new(GLOBAL).change();
+    let mut first = None;
     for _ in 0..WINDOWS {
         let region = Region::new(GLOBAL);
         batch();
-        stats = region.change();
+        let stats = region.change();
         if stats.allocations == expected {
-            break;
+            return stats;
         }
+        first.get_or_insert(stats);
     }
-    stats
+    first.expect("at least one window ran")
 }
 
 /// The sample at percentile `rank`, by the one index rule

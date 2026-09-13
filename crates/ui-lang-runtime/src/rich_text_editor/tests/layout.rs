@@ -286,6 +286,7 @@ fn line_paragraphs_preserve_whole_document_caret_geometry() {
             line_highlight: None,
             line_padding: Padding::ZERO,
             line_rule: None,
+            line_align: text::Alignment::Default,
         },
         StyledLine {
             text: "a body line long enough to wrap".to_owned(),
@@ -297,6 +298,7 @@ fn line_paragraphs_preserve_whole_document_caret_geometry() {
             line_highlight: None,
             line_padding: Padding::ZERO,
             line_rule: None,
+            line_align: text::Alignment::Default,
         },
         StyledLine {
             text: String::new(),
@@ -305,6 +307,7 @@ fn line_paragraphs_preserve_whole_document_caret_geometry() {
             line_highlight: None,
             line_padding: Padding::ZERO,
             line_rule: None,
+            line_align: text::Alignment::Default,
         },
         StyledLine {
             text: "let value = 1;".to_owned(),
@@ -316,6 +319,7 @@ fn line_paragraphs_preserve_whole_document_caret_geometry() {
             line_highlight: None,
             line_padding: Padding::ZERO,
             line_rule: None,
+            line_align: text::Alignment::Default,
         },
     ];
     let style = test_layout_style(120.0);
@@ -733,6 +737,7 @@ fn a_wrapped_line_with_only_tiny_sized_spans_keeps_the_body_line_height() {
             line_highlight: None,
             line_padding: Padding::ZERO,
             line_rule: None,
+            line_align: text::Alignment::Default,
         },
         test_layout_style(180.0),
     );

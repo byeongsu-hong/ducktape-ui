@@ -39,6 +39,11 @@ fn format(value: &wire::editor_presentation::EditorFormat) -> Format {
         line_highlight: highlight(value.line_background, value.line_border),
         line_padding: padding(value.line_padding),
         line_rule: value.line_rule.map(color),
+        line_align: value.line_align.map(|align| match align {
+            wire::Align::Start => iced::advanced::text::Alignment::Default,
+            wire::Align::Center => iced::advanced::text::Alignment::Center,
+            wire::Align::End => iced::advanced::text::Alignment::Right,
+        }),
         strikethrough: value.strikethrough.map(color),
         underline: value.underline.map(color),
         // A span's padding is paint-only (it sizes the highlight quad around
@@ -151,6 +156,20 @@ mod tests {
         let native = lines(&value, "Title\n- 한글").unwrap();
         assert_eq!(native.len(), 1);
         assert_eq!(native[0].line, 1);
+        assert_eq!(native[0].spans[0].1.line_align, None);
+        let centered = EditorPresentation {
+            formats: vec![EditorFormat {
+                line_align: Some(wire::Align::Center),
+                ..Default::default()
+            }],
+            spans: value.spans.clone(),
+            ..Default::default()
+        };
+        let centered = lines(&centered, "Title\n- 한글").unwrap();
+        assert_eq!(
+            centered[0].spans[0].1.line_align,
+            Some(iced::advanced::text::Alignment::Center)
+        );
         assert_eq!(native[0].spans[0].0, 0..2);
         let format = native[0].spans[0].1;
         assert_eq!(format.size, Some(iced::Pixels(0.01)));
