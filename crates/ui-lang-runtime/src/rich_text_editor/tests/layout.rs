@@ -421,9 +421,11 @@ fn strikethrough_keeps_its_explicit_color() {
     let color = Color::from_rgb8(0x12, 0x34, 0x56);
     let mut spans = Vec::new();
     let mut strikethroughs = Vec::new();
+    let mut underlines = Vec::new();
     push_span(
         &mut spans,
         &mut strikethroughs,
+        &mut underlines,
         "old".to_owned(),
         Format {
             color: Some(Color::WHITE),
@@ -433,7 +435,32 @@ fn strikethrough_keeps_its_explicit_color() {
     );
 
     assert_eq!(strikethroughs, vec![Some(color)]);
+    assert_eq!(underlines, vec![None]);
     assert!(spans[0].strikethrough);
+    assert!(!spans[0].underline);
+}
+
+#[test]
+fn underline_keeps_its_explicit_color() {
+    let color = Color::from_rgb8(0x12, 0x34, 0x56);
+    let mut spans = Vec::new();
+    let mut strikethroughs = Vec::new();
+    let mut underlines = Vec::new();
+    push_span(
+        &mut spans,
+        &mut strikethroughs,
+        &mut underlines,
+        "under".to_owned(),
+        Format {
+            underline: Some(color),
+            ..Format::default()
+        },
+    );
+
+    assert_eq!(underlines, vec![Some(color)]);
+    assert_eq!(strikethroughs, vec![None]);
+    assert!(spans[0].underline);
+    assert!(!spans[0].strikethrough);
 }
 
 #[test]

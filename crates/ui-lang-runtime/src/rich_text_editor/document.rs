@@ -22,6 +22,7 @@ pub(super) struct DocumentLine {
     pub(super) paragraph: GraphicsParagraph,
     pub(super) spans: Vec<Span<'static, (), Font>>,
     pub(super) strikethroughs: Vec<Option<Color>>,
+    pub(super) underlines: Vec<Option<Color>>,
     pub(super) top: f32,
     pub(super) height: f32,
     #[cfg(test)]
@@ -632,10 +633,12 @@ impl DocumentLine {
         static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
         let mut spans = Vec::new();
         let mut strikethroughs = Vec::new();
+        let mut underlines = Vec::new();
         if signature.segments.is_empty() {
             push_span(
                 &mut spans,
                 &mut strikethroughs,
+                &mut underlines,
                 String::new(),
                 signature.empty_format,
             );
@@ -644,6 +647,7 @@ impl DocumentLine {
                 push_span(
                     &mut spans,
                     &mut strikethroughs,
+                    &mut underlines,
                     signature.text[segment.range.clone()].to_owned(),
                     segment.format,
                 );
@@ -682,6 +686,7 @@ impl DocumentLine {
             paragraph,
             spans,
             strikethroughs,
+            underlines,
             top: 0.0,
             height,
             #[cfg(test)]
@@ -954,16 +959,19 @@ pub(super) fn to_span(source: String, format: Format) -> Span<'static, (), Font>
     span.highlight = format.highlight;
     span.padding = format.padding;
     span.strikethrough = format.strikethrough.is_some();
+    span.underline = format.underline.is_some();
     span
 }
 
 pub(super) fn push_span(
     spans: &mut Vec<Span<'static, (), Font>>,
     strikethroughs: &mut Vec<Option<Color>>,
+    underlines: &mut Vec<Option<Color>>,
     source: String,
     format: Format,
 ) {
     strikethroughs.push(format.strikethrough);
+    underlines.push(format.underline);
     spans.push(to_span(source, format));
 }
 

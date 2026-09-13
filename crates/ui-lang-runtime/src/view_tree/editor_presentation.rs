@@ -40,6 +40,7 @@ fn format(value: &wire::editor_presentation::EditorFormat) -> Format {
         line_padding: padding(value.line_padding),
         line_rule: value.line_rule.map(color),
         strikethrough: value.strikethrough.map(color),
+        underline: value.underline.map(color),
         // A span's padding is paint-only (it sizes the highlight quad around
         // the glyph run) and the wire lets it go negative on purpose — a
         // guest draws a box smaller than the line with it. `line_padding`
