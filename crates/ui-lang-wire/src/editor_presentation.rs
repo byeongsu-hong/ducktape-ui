@@ -211,6 +211,8 @@ pub struct EditorFormat {
     pub line_padding: Edges,
     pub line_rule: Option<Rgba>,
     pub strikethrough: Option<Rgba>,
+    /// Underline color, drawn along the span's baseline.
+    pub underline: Option<Rgba>,
     pub padding: Edges,
 }
 
@@ -252,6 +254,7 @@ impl EditorPresentation {
                 &mut format.line_background,
                 &mut format.line_rule,
                 &mut format.strikethrough,
+                &mut format.underline,
             ] {
                 crate::bound_color(color);
             }

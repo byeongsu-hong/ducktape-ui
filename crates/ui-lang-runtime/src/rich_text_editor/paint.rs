@@ -1,5 +1,5 @@
 use super::composition::CompositionLayout;
-use super::document::{DocumentLayout, ordered_positions};
+use super::document::{DocumentLayout, SpanRules, ordered_positions};
 use iced::advanced::graphics::text::cosmic_text;
 use iced::advanced::text::{self, Paragraph as _};
 use iced::advanced::{Renderer as _, renderer};
@@ -221,11 +221,38 @@ pub(super) fn draw_selection(
     }
 }
 
+/// Strikethroughs cross the x-height, underlines sit under the glyph run.
 pub(super) fn draw_strikethroughs(
     renderer: &mut iced::Renderer,
     document: &DocumentLayout,
     clip: Rectangle,
     origin: Point,
+) {
+    draw_span_rules(
+        renderer,
+        document,
+        clip,
+        origin,
+        |rules| rules.strikethrough,
+        0.55,
+    );
+    draw_span_rules(
+        renderer,
+        document,
+        clip,
+        origin,
+        |rules| rules.underline,
+        0.92,
+    );
+}
+
+fn draw_span_rules(
+    renderer: &mut iced::Renderer,
+    document: &DocumentLayout,
+    clip: Rectangle,
+    origin: Point,
+    color_of: fn(&SpanRules) -> Option<Color>,
+    depth: f32,
 ) {
     for document_line in &document.lines {
         let top = origin.y + document_line.top;
@@ -238,14 +265,14 @@ pub(super) fn draw_strikethroughs(
                 document_line.top + document_line.signature.line_padding.top,
             );
         for (index, color) in document_line
-            .strikethroughs
+            .rules
             .iter()
             .enumerate()
-            .filter_map(|(index, color)| color.map(|color| (index, color)))
+            .filter_map(|(index, rules)| color_of(rules).map(|color| (index, color)))
         {
             for bounds in document_line.paragraph.span_bounds(index) {
                 let line = Rectangle::new(
-                    Point::new(bounds.x, bounds.y + bounds.height * 0.55) + translation,
+                    Point::new(bounds.x, bounds.y + bounds.height * depth) + translation,
                     Size::new(bounds.width, 1.0),
                 );
                 if let Some(line) = clip.intersection(&line) {

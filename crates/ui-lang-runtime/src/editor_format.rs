@@ -25,6 +25,8 @@ pub struct Format {
     pub line_rule: Option<Color>,
     /// Strikethrough color.
     pub strikethrough: Option<Color>,
+    /// Underline color, along the span's baseline.
+    pub underline: Option<Color>,
     /// Extra paint-only padding around [`Self::highlight`].
     pub padding: Padding,
 }
@@ -41,6 +43,7 @@ impl Default for Format {
             line_padding: Padding::ZERO,
             line_rule: None,
             strikethrough: None,
+            underline: None,
             padding: Padding::ZERO,
         }
     }
@@ -63,6 +66,7 @@ impl Format {
             },
             line_rule: overlay.line_rule.or(self.line_rule),
             strikethrough: overlay.strikethrough.or(self.strikethrough),
+            underline: overlay.underline.or(self.underline),
             padding: if overlay.padding == Padding::ZERO {
                 self.padding
             } else {
