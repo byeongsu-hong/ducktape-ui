@@ -23,6 +23,8 @@ pub struct Format {
     /// A full-width horizontal rule painted across the line's vertical center
     /// — what a markdown divider renders as when its `---` glyphs are hidden.
     pub line_rule: Option<Color>,
+    /// Where every visual line holding the range sits in the column.
+    pub line_align: Option<text::Alignment>,
     /// Strikethrough color.
     pub strikethrough: Option<Color>,
     /// Underline color, along the span's baseline.
@@ -42,6 +44,7 @@ impl Default for Format {
             line_highlight: None,
             line_padding: Padding::ZERO,
             line_rule: None,
+            line_align: None,
             strikethrough: None,
             underline: None,
             padding: Padding::ZERO,
@@ -65,6 +68,7 @@ impl Format {
                 overlay.line_padding
             },
             line_rule: overlay.line_rule.or(self.line_rule),
+            line_align: overlay.line_align.or(self.line_align),
             strikethrough: overlay.strikethrough.or(self.strikethrough),
             underline: overlay.underline.or(self.underline),
             padding: if overlay.padding == Padding::ZERO {

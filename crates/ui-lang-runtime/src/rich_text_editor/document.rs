@@ -37,6 +37,7 @@ pub(super) struct StyledLine {
     pub(super) line_highlight: Option<text::Highlight>,
     pub(super) line_padding: Padding,
     pub(super) line_rule: Option<Color>,
+    pub(super) line_align: text::Alignment,
 }
 
 /// Scratch buffers for per-line format construction. `update` walks up to the
@@ -58,6 +59,7 @@ struct LineMeta {
     line_highlight: Option<text::Highlight>,
     line_padding: Padding,
     line_rule: Option<Color>,
+    line_align: text::Alignment,
 }
 
 impl LineMeta {
@@ -69,6 +71,7 @@ impl LineMeta {
             line_highlight: self.line_highlight,
             line_padding: self.line_padding,
             line_rule: self.line_rule,
+            line_align: self.line_align,
         }
     }
 }
@@ -670,7 +673,7 @@ impl DocumentLine {
             size: style.text_size,
             line_height: style.line_height,
             font: style.font,
-            align_x: text::Alignment::Default,
+            align_x: signature.line_align,
             align_y: alignment::Vertical::Top,
             shaping: text::Shaping::Advanced,
             wrapping: style.wrapping,
@@ -707,6 +710,7 @@ impl StyledLine {
             && self.line_highlight == meta.line_highlight
             && self.line_padding == meta.line_padding
             && self.line_rule == meta.line_rule
+            && self.line_align == meta.line_align
     }
 
     /// Whether the new format agrees with this signature on everything that
@@ -722,6 +726,7 @@ impl StyledLine {
         }
         self.text == text
             && self.line_padding == meta.line_padding
+            && self.line_align == meta.line_align
             && paint_only(&self.empty_format, &meta.empty_format)
             && self.segments.len() == segments.len()
             && self
@@ -875,12 +880,18 @@ where
         .iter()
         .filter_map(|(_, format)| format.line_rule)
         .next_back();
+    let line_align = highlights
+        .iter()
+        .filter_map(|(_, format)| format.line_align)
+        .next_back()
+        .unwrap_or_default();
 
     LineMeta {
         empty_format,
         line_highlight,
         line_padding,
         line_rule,
+        line_align,
     }
 }
 

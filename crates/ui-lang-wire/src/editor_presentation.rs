@@ -1,5 +1,5 @@
 //! Declarative editor formatting. Document identity is the enclosing Editor node's reference.
-use crate::{Border, Edges, LineHeight, NamedFont, Rgba};
+use crate::{Align, Border, Edges, LineHeight, NamedFont, Rgba};
 use serde::{Deserialize, Serialize};
 
 /// Presentation is bounded independently of the canonical document bytes.
@@ -210,6 +210,8 @@ pub struct EditorFormat {
     pub line_border: Option<Border>,
     pub line_padding: Edges,
     pub line_rule: Option<Rgba>,
+    /// Where every visual line holding this span sits in the column.
+    pub line_align: Option<Align>,
     pub strikethrough: Option<Rgba>,
     /// Underline color, drawn along the span's baseline.
     pub underline: Option<Rgba>,

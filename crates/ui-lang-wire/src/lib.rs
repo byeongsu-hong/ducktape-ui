@@ -79,7 +79,8 @@ mod rich_text;
 mod text;
 pub use rich_text::RichSpan;
 pub use text::{
-    FontFamily, FontStretch, FontStyle, LineHeight, NamedFont, Shaping, TextOptions, Wrapping,
+    Align, FontFamily, FontStretch, FontStyle, LineHeight, NamedFont, Shaping, TextOptions,
+    Wrapping,
 };
 mod button;
 pub use button::{ButtonPreset, ButtonRecipe};
