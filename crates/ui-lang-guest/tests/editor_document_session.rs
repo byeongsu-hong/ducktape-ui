@@ -40,6 +40,15 @@ impl<const LARGE: bool> App for DocumentApp<LARGE> {
                 _ => None,
             },
         )
+        .on_rich_edit(|request| wire::EditorDecision::Apply {
+            patches: vec![wire::EditorPatch {
+                start_byte: 0,
+                end_byte: request.state.text.len() as u32,
+                replacement: format!("guest:{}", request.edit.document.blocks[0].text),
+            }],
+            cursor: Default::default(),
+            history: wire::EditorHistoryEffect::Native,
+        })
         .register(Update::Committed, Update::Transaction);
         wire::Node::Editor {
             options: Box::new(wire::EditorOptions {
@@ -220,5 +229,77 @@ fn one_mib_transfers_in_sixteen_bounded_chunks_and_unchanged_views_remain_small(
     assert_eq!(
         document.byte_len as usize,
         wire::editor_document::MAX_EDITOR_DOCUMENT_BYTES
+    );
+}
+
+#[test]
+fn rich_snapshot_decision_is_guest_owned_and_waits_for_commit() {
+    let mut driver = Driver::<DocumentApp>::new();
+    let frame = driver.tick(vec![]);
+    let wire::Node::Editor {
+        document, options, ..
+    } = frame.root.unwrap()
+    else {
+        panic!("editor");
+    };
+    let before = driver.snapshot().unwrap();
+    let id = wire::EditorTransactionId {
+        instance: 41,
+        document: document.document.clone(),
+        reset: document.reset,
+        sequence: 1,
+        attempt: 0,
+        text_revision: document.text_revision,
+        revision: document.revision,
+    };
+    let request = wire::EditorRequest {
+        id: id.clone(),
+        state: document.clone(),
+        input: wire::EditorRequestInput::RichEdit {
+            edit: Box::new(wire::editor_rich::RichEdit {
+                document: wire::editor_rich::RichDocument {
+                    blocks: vec![wire::editor_rich::RichBlock {
+                        kind: "paragraph".into(),
+                        text: "new meaning".into(),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        },
+        input_time_ms: 0,
+    };
+    let frame = driver.tick(vec![wire::Event::EditorRequest {
+        handler: options.binding.unwrap().on_request,
+        request,
+    }]);
+    let response = frame
+        .editor_decisions
+        .iter()
+        .find(|response| response.id == id)
+        .expect("rich callback response");
+    let wire::EditorDecision::Apply { patches, .. } = &response.decision else {
+        panic!("guest decides the format");
+    };
+    assert_eq!(patches[0].replacement, "guest:new meaning");
+    assert!(
+        driver.snapshot().is_err(),
+        "replacement waits for the outstanding decision"
+    );
+    let wire::Node::Editor { options, .. } = frame.root.unwrap() else {
+        panic!("editor");
+    };
+    driver.tick(vec![wire::Event::EditorTransaction {
+        handler: options.binding.unwrap().on_event,
+        event: wire::EditorTransactionEvent::Cancelled {
+            id,
+            state: document,
+        },
+    }]);
+    assert_eq!(
+        driver.snapshot().unwrap(),
+        before,
+        "cancelled rich input cannot mutate the canonical draft"
     );
 }

@@ -1902,7 +1902,7 @@ fn editor(
         "None".into()
     };
     let options = format!(
-        "::std::boxed::Box::new({WIRE}::EditorOptions {{ binding: {binding}, presentation: {presentation}, size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
+        "::std::boxed::Box::new({WIRE}::EditorOptions {{ rich: None, binding: {binding}, presentation: {presentation}, size: {size}, padding: {}, line_height: {line_height}, wrapping: {wrapping}, font: {font}, style: {style} }})",
         option_code(pixels(editor.padding)?)
     );
     let key = key_code(identity, "editor", origin, scope, env, program)?;
