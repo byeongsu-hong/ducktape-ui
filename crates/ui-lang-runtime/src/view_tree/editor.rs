@@ -1150,6 +1150,7 @@ mod tests {
             min_height: None,
             max_height: None,
             options: Box::new(wire::EditorOptions {
+                rich: None,
                 binding: None,
                 presentation: None,
                 size: Some(20.0),

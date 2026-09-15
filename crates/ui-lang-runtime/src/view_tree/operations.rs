@@ -12,6 +12,9 @@ pub fn execute_widget_command(
     command.validate()?;
     let query = matches!(command, C::Focused { .. });
     let mut operation: Box<dyn Operation<Vec<u8>>> = match command {
+        C::EditorAction { .. } => {
+            return Err("editor actions require the host editor transaction lane".into());
+        }
         C::FocusPrevious => Box::new(focusable::focus_previous()),
         C::FocusNext => Box::new(focusable::focus_next()),
         C::Focus { target } => Box::new(focusable::focus(Id::from(target))),

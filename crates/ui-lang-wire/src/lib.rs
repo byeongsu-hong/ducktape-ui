@@ -42,6 +42,7 @@ pub use background::{Background, ColorStop};
 mod editor;
 pub mod editor_document;
 pub mod editor_presentation;
+pub mod editor_rich;
 pub mod editor_transaction;
 pub use editor_transaction::{
     EditorBinding, EditorDecision, EditorEditKind, EditorFault, EditorHistoryEffect,
@@ -475,6 +476,7 @@ pub struct InputOptions {
 /// Copied native multiline editor presentation; state faces share input semantics.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct EditorOptions {
+    pub rich: Option<Box<editor_rich::RichPresentation>>,
     pub binding: Option<Box<EditorBinding>>,
     pub presentation: Option<Box<editor_presentation::EditorPresentation>>,
     pub size: Option<f32>,
@@ -1519,7 +1521,18 @@ fn text_amounts(root: &Node) -> Result<(usize, usize), &'static str> {
                     add(description);
                 }
             }
-            Node::Editor { placeholder, .. } => add(placeholder),
+            Node::Editor {
+                placeholder,
+                options,
+                ..
+            } => {
+                add(placeholder);
+                if let Some(rich) = &options.rich {
+                    for item in &rich.toolbar {
+                        add(&item.label);
+                    }
+                }
+            }
             Node::Image { label, .. }
             | Node::ImageViewer { label, .. }
             | Node::Svg { label, .. } => {
@@ -1573,7 +1586,16 @@ fn text_amounts(root: &Node) -> Result<(usize, usize), &'static str> {
             }
             _ => {}
         }
-        if let Node::Editor { document, .. } = node {
+        if let Node::Editor {
+            document, options, ..
+        } = node
+        {
+            if let Some(rich) = &options.rich {
+                rich.document.validate()?;
+                if rich.toolbar.len() > editor_presentation::MAX_EDITOR_MENU_ITEMS {
+                    return Err("rich toolbar limit");
+                }
+            }
             references.push(document);
         }
         pending.extend(node.children());
@@ -2291,6 +2313,11 @@ fn sanitize_node(
         } => {
             if let Some(presentation) = &mut options.presentation {
                 presentation.sanitize(&mut budgets.text);
+            }
+            if let Some(rich) = &mut options.rich {
+                for item in &mut rich.toolbar {
+                    spend_text(&mut item.label, &mut budgets.text);
+                }
             }
             bound_optional(&mut options.size);
             if let Some(size) = &mut options.size {
