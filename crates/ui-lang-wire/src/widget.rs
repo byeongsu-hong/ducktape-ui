@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 /// `Focused` returns an encoded bool. Targets are the tree's qualified keys.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WidgetCommand {
+    /// Queue a guest-defined action after native edits on this editor settle.
+    /// The host sends EditorInteraction::Action through its transaction lane.
+    EditorAction {
+        target: String,
+        #[serde(deserialize_with = "crate::editor_transaction::decode_document")]
+        tag: String,
+    },
     FocusPrevious,
     FocusNext,
     Focus {
@@ -60,7 +67,8 @@ impl WidgetCommand {
     pub fn validate(&mut self) -> Result<(), String> {
         let target = match self {
             Self::FocusPrevious | Self::FocusNext => return Ok(()),
-            Self::Focus { target }
+            Self::EditorAction { target, .. }
+            | Self::Focus { target }
             | Self::Focused { target }
             | Self::CursorFront { target }
             | Self::CursorEnd { target }
@@ -75,6 +83,12 @@ impl WidgetCommand {
         };
         if target.len() > crate::MAX_STRING_BYTES {
             return Err("widget target exceeds the key byte limit".into());
+        }
+        if let Self::EditorAction { tag, .. } = self {
+            let invalid_tag = tag.is_empty() || tag.len() > crate::MAX_STRING_BYTES;
+            if invalid_tag {
+                return Err("editor action tag exceeds bounds".into());
+            }
         }
         match self {
             Self::Snap { x, y, .. } | Self::ScrollTo { x, y, .. } | Self::ScrollBy { x, y, .. }
@@ -95,6 +109,24 @@ impl WidgetCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn editor_action_keeps_its_target_and_rejects_unbounded_tags() {
+        let mut command = WidgetCommand::EditorAction {
+            target: "Other/body".into(),
+            tag: "send".into(),
+        };
+        assert!(command.validate().is_ok());
+        assert_eq!(
+            crate::decode::<WidgetCommand>(&crate::encode(&command)).unwrap(),
+            command
+        );
+        let WidgetCommand::EditorAction { tag, .. } = &mut command else {
+            unreachable!()
+        };
+        *tag = "x".repeat(crate::MAX_STRING_BYTES + 1);
+        assert!(command.validate().is_err());
+    }
 
     #[test]
     fn widget_targets_are_rejected_whole_instead_of_redirected() {

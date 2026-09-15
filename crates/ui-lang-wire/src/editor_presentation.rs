@@ -76,6 +76,11 @@ pub struct EditorAffordances {
 /// event envelope supplies the instance and canonical document reference.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EditorInteraction {
+    /// A guest-authored control action ordered after pending native input.
+    Action {
+        #[serde(deserialize_with = "crate::editor_transaction::decode_document")]
+        tag: String,
+    },
     LinePress {
         tag: u32,
         position: crate::EditorPosition,
